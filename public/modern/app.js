@@ -38,7 +38,14 @@ const state = {
     stats: {},
     chatLists: {},
     chatMessages: {},
+    chatMetadata: {},
     loadingChats: {},
+    chatDrafts: {},
+    engine: {
+        generating: false,
+        status: '就绪',
+        error: '',
+    },
     selected: {
         character: '',
         chat: '',
@@ -64,6 +71,7 @@ const elements = {
 };
 
 document.documentElement.dataset.theme = state.theme;
+let generationAbortController = null;
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -268,6 +276,7 @@ async function apiFetch(path, options = {}, retry = true) {
         method,
         headers,
         credentials: 'same-origin',
+        signal: options.signal,
     };
 
     if (options.body !== undefined) {
@@ -450,7 +459,9 @@ async function loadChatMessages(character, chatId) {
                 avatar_url: character.avatar,
             },
         });
+        const header = Array.isArray(result) ? result.find(message => message && message.chat_metadata) : null;
         const messages = Array.isArray(result) ? result.filter(message => message && !message.chat_metadata) : [];
+        state.chatMetadata[cacheKey] = header?.chat_metadata || {};
         state.chatMessages[cacheKey] = messages;
         return messages;
     } catch (error) {
@@ -469,6 +480,317 @@ async function prepareChatForSelectedCharacter() {
     }
 
     await loadChatMessages(character, state.selected.chat);
+}
+
+function getCurrentDraftKey() {
+    return getChatCacheKey(state.selected.character, state.selected.chat);
+}
+
+function getCurrentDraft() {
+    return state.chatDrafts[getCurrentDraftKey()] || '';
+}
+
+function setCurrentDraft(value) {
+    state.chatDrafts[getCurrentDraftKey()] = value;
+}
+
+function getCharacterName(character) {
+    return character?.name || character?.data?.name || '未命名角色';
+}
+
+function getUserName() {
+    return state.settings.name1 || state.me?.name || state.me?.handle || 'You';
+}
+
+function formatTemplate(value, character) {
+    const userName = getUserName();
+    const characterName = getCharacterName(character);
+    return String(value ?? '')
+        .replaceAll('{{user}}', userName)
+        .replaceAll('{{char}}', characterName)
+        .trim();
+}
+
+function getMessageTimestamp() {
+    return new Date().toISOString();
+}
+
+function createModernChatId() {
+    return `Modern ${new Date().toISOString().replace(/[:.]/g, '-')}`;
+}
+
+function createUserMessage(text) {
+    return {
+        name: getUserName(),
+        is_user: true,
+        is_system: false,
+        send_date: getMessageTimestamp(),
+        mes: text,
+        extra: { api: 'modern' },
+    };
+}
+
+function createAssistantMessage(text, character, model = '') {
+    return {
+        name: getCharacterName(character),
+        is_user: false,
+        is_system: false,
+        send_date: getMessageTimestamp(),
+        mes: text,
+        extra: { api: 'modern', model },
+    };
+}
+
+function getCharacterGreeting(character) {
+    return formatTemplate(character?.data?.first_mes || character?.first_mes || '', character);
+}
+
+function getSelectedChatMetadata(character, chatId) {
+    return state.chatMetadata[getChatCacheKey(character?.avatar, chatId)] || {};
+}
+
+async function saveModernChat(character, chatId, messages) {
+    if (!character?.avatar || !chatId) {
+        throw new Error('缺少角色或聊天文件');
+    }
+
+    const metadata = getSelectedChatMetadata(character, chatId);
+    const result = await apiFetch('/api/chats/save', {
+        body: {
+            ch_name: getCharacterName(character),
+            file_name: chatId,
+            avatar_url: character.avatar,
+            chat: [
+                { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
+                ...messages,
+            ],
+        },
+    });
+
+    if (result?.error) {
+        throw new Error(result.error === 'integrity' ? '聊天文件已被其他会话修改，请刷新后重试。' : String(result.error));
+    }
+
+    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
+}
+
+function getOaiSettings() {
+    return state.settings.oai_settings || {};
+}
+
+function getChatCompletionModel(settings, source) {
+    const modelFields = {
+        openai: 'openai_model',
+        claude: 'claude_model',
+        openrouter: 'openrouter_model',
+        ai21: 'ai21_model',
+        makersuite: 'google_model',
+        vertexai: 'vertexai_model',
+        mistralai: 'mistralai_model',
+        custom: 'custom_model',
+        cohere: 'cohere_model',
+        perplexity: 'perplexity_model',
+        groq: 'groq_model',
+        chutes: 'chutes_model',
+        electronhub: 'electronhub_model',
+        nanogpt: 'nanogpt_model',
+        deepseek: 'deepseek_model',
+        aimlapi: 'aimlapi_model',
+        xai: 'xai_model',
+        pollinations: 'pollinations_model',
+        moonshot: 'moonshot_model',
+        fireworks: 'fireworks_model',
+        cometapi: 'cometapi_model',
+        azure_openai: 'azure_openai_model',
+        zai: 'zai_model',
+        siliconflow: 'siliconflow_model',
+        workers_ai: 'workers_ai_model',
+        minimax: 'minimax_model',
+    };
+    const field = modelFields[source] || 'openai_model';
+    return settings[field] || settings.openai_model || '';
+}
+
+function getNumberSetting(settings, key, fallback) {
+    const value = Number(settings[key]);
+    return Number.isFinite(value) ? value : fallback;
+}
+
+function getChatCompletionSettings() {
+    const settings = getOaiSettings();
+    const source = settings.chat_completion_source || 'openai';
+    const model = getChatCompletionModel(settings, source);
+
+    if (!model) {
+        throw new Error('当前聊天补全设置没有可用模型。');
+    }
+
+    return {
+        source,
+        model,
+        temperature: getNumberSetting(settings, 'temp_openai', 1),
+        maxTokens: getNumberSetting(settings, 'openai_max_tokens', 300),
+        topP: getNumberSetting(settings, 'top_p_openai', 1),
+        frequencyPenalty: getNumberSetting(settings, 'freq_pen_openai', 0),
+        presencePenalty: getNumberSetting(settings, 'pres_pen_openai', 0),
+        siliconflowEndpoint: settings.siliconflow_endpoint || 'global',
+        minimaxEndpoint: settings.minimax_endpoint || 'global',
+        customUrl: settings.custom_url || '',
+        reverseProxy: settings.reverse_proxy || '',
+        proxyPassword: settings.proxy_password || '',
+    };
+}
+
+function buildModernSystemPrompt(character) {
+    const lines = [
+        `你正在扮演 ${getCharacterName(character)}。保持角色设定，延续当前对话，用自然的语言回复用户。`,
+        character?.data?.description ? `角色描述：${formatTemplate(character.data.description, character)}` : '',
+        character?.data?.personality ? `性格：${formatTemplate(character.data.personality, character)}` : '',
+        character?.data?.scenario ? `场景：${formatTemplate(character.data.scenario, character)}` : '',
+        character?.data?.creator_notes ? `创作者备注：${formatTemplate(character.data.creator_notes, character)}` : '',
+    ];
+    return lines.filter(Boolean).join('\n\n');
+}
+
+function buildModernPromptMessages(character, messages) {
+    const promptMessages = [
+        { role: 'system', content: buildModernSystemPrompt(character) },
+    ];
+
+    messages
+        .filter(message => message?.mes)
+        .slice(-40)
+        .forEach(message => {
+            promptMessages.push({
+                role: message.is_system ? 'system' : (message.is_user ? 'user' : 'assistant'),
+                content: formatTemplate(message.mes, character),
+            });
+        });
+
+    return promptMessages.filter(message => message.content);
+}
+
+function responseContentToText(content) {
+    if (typeof content === 'string') {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        return content.map(item => item?.text || item?.content || '').filter(Boolean).join('\n');
+    }
+    return '';
+}
+
+function extractAssistantText(response) {
+    if (response?.error) {
+        throw new Error(response.error.message || String(response.error));
+    }
+
+    const choice = response?.choices?.[0];
+    const text = responseContentToText(choice?.message?.content)
+        || responseContentToText(choice?.delta?.content)
+        || responseContentToText(choice?.text)
+        || responseContentToText(response?.message?.content)
+        || responseContentToText(response?.content);
+
+    if (!text.trim()) {
+        throw new Error('模型没有返回可显示内容。');
+    }
+
+    return text.trim();
+}
+
+async function generateModernReply(character, messages, signal) {
+    const settings = getChatCompletionSettings();
+    const body = {
+        chat_completion_source: settings.source,
+        messages: buildModernPromptMessages(character, messages),
+        model: settings.model,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+        stream: false,
+        top_p: settings.topP,
+        frequency_penalty: settings.frequencyPenalty,
+        presence_penalty: settings.presencePenalty,
+        siliconflow_endpoint: settings.siliconflowEndpoint,
+        minimax_endpoint: settings.minimaxEndpoint,
+        custom_url: settings.customUrl,
+        reverse_proxy: settings.reverseProxy,
+        proxy_password: settings.proxyPassword,
+        n: 1,
+    };
+    const response = await apiFetch('/api/backends/chat-completions/generate', { body, signal });
+    return {
+        text: extractAssistantText(response),
+        model: settings.model,
+    };
+}
+
+async function refreshSelectedChatList(character) {
+    delete state.chatLists[character.avatar];
+    await loadCharacterChats(character);
+}
+
+async function sendModernMessage() {
+    const draftKey = getCurrentDraftKey();
+    const draft = (state.chatDrafts[draftKey] || '').trim();
+    if (!draft || state.engine.generating) {
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    if (!character?.avatar) {
+        throw new Error('请先选择角色');
+    }
+
+    let chatId = state.selected.chat;
+    let messages = chatId ? [...getSelectedChatMessages()] : [];
+    if (!chatId) {
+        chatId = createModernChatId();
+        state.selected.chat = chatId;
+        state.chatMetadata[getChatCacheKey(character.avatar, chatId)] = {};
+        const greeting = getCharacterGreeting(character);
+        messages = greeting ? [createAssistantMessage(greeting, character)] : [];
+    }
+
+    messages.push(createUserMessage(draft));
+    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
+    state.chatDrafts[draftKey] = '';
+    state.engine.generating = true;
+    state.engine.status = '生成中';
+    state.engine.error = '';
+    render();
+
+    await saveModernChat(character, chatId, messages);
+    generationAbortController = new AbortController();
+
+    try {
+        const reply = await generateModernReply(character, messages, generationAbortController.signal);
+        const savedMessages = [...messages, createAssistantMessage(reply.text, character, reply.model)];
+        await saveModernChat(character, chatId, savedMessages);
+        await refreshSelectedChatList(character);
+        state.engine.status = '就绪';
+        showToast('消息已生成', '回复已保存到当前聊天文件。');
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            state.engine.status = '已停止';
+            showToast('已停止生成', '用户消息已保存，未追加模型回复。');
+        } else {
+            state.engine.error = error.message;
+            state.engine.status = '生成失败';
+            throw error;
+        }
+    } finally {
+        generationAbortController = null;
+        state.engine.generating = false;
+        render();
+    }
+}
+
+function stopModernGeneration() {
+    generationAbortController?.abort();
+    state.engine.generating = false;
+    state.engine.status = '已停止';
+    render();
 }
 
 async function setRoute(routeId) {
@@ -735,16 +1057,23 @@ function renderChatThread(character) {
                     <span class="tag">${formatNumber(messages.length)} 条消息</span>
                     <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
                     <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
+                    <span class="tag">${escapeHtml(state.engine.status)}</span>
                 </div>
             </div>
         </div>
         ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         <div class="composer">
-            <textarea disabled placeholder="当前工作区暂未接入消息发送。"></textarea>
-            <button class="primary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                打开发送
+            <textarea data-chat-input placeholder="输入消息，按 Ctrl/⌘ + Enter 发送">${escapeHtml(getCurrentDraft())}</textarea>
+            <button class="primary-button" type="button" data-send-message ${state.engine.generating ? 'disabled' : ''}>
+                <i class="fa-solid ${state.engine.generating ? 'fa-circle-notch fa-spin' : 'fa-paper-plane'}"></i>
+                ${state.engine.generating ? '生成中' : '发送'}
             </button>
+            ${state.engine.generating ? `
+                <button class="secondary-button" type="button" data-stop-generation>
+                    <i class="fa-solid fa-stop"></i>
+                    停止
+                </button>
+            ` : ''}
         </div>
     `;
 }
@@ -1595,6 +1924,22 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-send-message]')) {
+        try {
+            await sendModernMessage();
+        } catch (error) {
+            state.errors.push({ key: 'modern-send', message: error.message });
+            showToast('发送失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-stop-generation]')) {
+        await stopModernGeneration();
+        return;
+    }
+
     const worldbookButton = event.target.closest('[data-select-worldbook]');
     if (worldbookButton) {
         state.selected.worldbook = worldbookButton.dataset.selectWorldbook;
@@ -1638,6 +1983,11 @@ elements.search.addEventListener('input', event => {
     state.query = normalizeText(event.target.value.trim());
     render();
 });
+elements.content.addEventListener('input', event => {
+    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
+        setCurrentDraft(event.target.value);
+    }
+});
 elements.paletteSearch.addEventListener('input', event => {
     state.paletteQuery = event.target.value.trim();
     renderPalette();
@@ -1651,6 +2001,16 @@ document.addEventListener('click', event => {
     handleClick(event);
 });
 document.addEventListener('keydown', event => {
+    if (event.target instanceof HTMLElement && event.target.matches('[data-chat-input]') && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        sendModernMessage().catch(error => {
+            state.errors.push({ key: 'modern-send', message: error.message });
+            showToast('发送失败', error.message);
+            render();
+        });
+        return;
+    }
+
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         openPalette();
