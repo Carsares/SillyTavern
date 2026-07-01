@@ -78,6 +78,10 @@ const state = {
         key: '',
         name: '',
     },
+    chatDeleteConfirm: {
+        key: '',
+        name: '',
+    },
     worldEntryEditing: {
         worldbookId: '',
         entryKey: '',
@@ -649,6 +653,7 @@ function beginModernChatRename() {
         key: getChatCacheKey(character.avatar, state.selected.chat),
         name: stripJsonlExtension(selectedChat?.file_name || state.selected.chat),
     };
+    state.chatDeleteConfirm = { key: '', name: '' };
     render();
 }
 
@@ -698,6 +703,67 @@ async function saveModernChatRename() {
     await refreshSelectedChatList(character);
     await loadChatMessages(character, renamedChatId);
     showToast('聊天已重命名', `${oldChatId} → ${renamedChatId}`);
+    render();
+}
+
+function beginModernChatDelete() {
+    if (state.engine.generating) {
+        showToast('删除失败', '生成中不能删除聊天文件。');
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    const chatId = stripJsonlExtension(state.selected.chat);
+    if (!character?.avatar || !chatId) {
+        showToast('删除失败', '请先选择一个聊天文件。');
+        return;
+    }
+
+    state.chatDeleteConfirm = {
+        key: getChatCacheKey(character.avatar, state.selected.chat),
+        name: chatId,
+    };
+    state.chatRenaming = { key: '', name: '' };
+    render();
+}
+
+function cancelModernChatDelete() {
+    state.chatDeleteConfirm = { key: '', name: '' };
+    render();
+}
+
+async function confirmModernChatDelete() {
+    const character = getSelectedCharacter();
+    const chatId = stripJsonlExtension(state.chatDeleteConfirm.name);
+    const deleteKey = getChatCacheKey(character?.avatar, state.selected.chat);
+    if (!character?.avatar || !chatId || state.chatDeleteConfirm.key !== deleteKey) {
+        throw new Error('删除目标已变化，请重新选择聊天。');
+    }
+
+    const result = await apiFetch('/api/chats/delete', {
+        body: {
+            avatar_url: character.avatar,
+            chatfile: `${chatId}.jsonl`,
+        },
+    });
+    if (result?.error) {
+        throw new Error('聊天文件删除失败。');
+    }
+
+    const cacheKey = getChatCacheKey(character.avatar, chatId);
+    delete state.chatMessages[cacheKey];
+    delete state.chatMetadata[cacheKey];
+    delete state.chatDrafts[cacheKey];
+    state.chatRenaming = { key: '', name: '' };
+    state.chatDeleteConfirm = { key: '', name: '' };
+    state.selected.chat = '';
+    await refreshSelectedChatList(character);
+    const chats = getSelectedChatList();
+    state.selected.chat = chats[0]?.file_id || '';
+    if (state.selected.chat) {
+        await loadChatMessages(character, state.selected.chat);
+    }
+    showToast('聊天已删除', `${chatId}.jsonl`);
     render();
 }
 
@@ -1679,6 +1745,7 @@ function renderChatThread(character) {
     const selectedChat = chats.find(chat => chat.file_id === state.selected.chat);
     const messages = getSelectedChatMessages();
     const isRenaming = state.chatRenaming.key === getChatCacheKey(character.avatar, state.selected.chat);
+    const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(character.avatar, state.selected.chat);
 
     return `
         <div class="detail-hero">
@@ -1699,10 +1766,15 @@ function renderChatThread(character) {
                         <i class="fa-solid fa-pen-to-square"></i>
                         重命名
                     </button>
+                    <button class="secondary-button danger-action" type="button" data-delete-chat>
+                        <i class="fa-solid fa-trash"></i>
+                        删除
+                    </button>
                 </div>
             ` : ''}
         </div>
         ${isRenaming ? renderChatRenamePanel() : ''}
+        ${isDeleting ? renderChatDeletePanel() : ''}
         ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         <div class="composer">
             <textarea data-chat-input placeholder="输入消息，按 Ctrl/⌘ + Enter 发送">${escapeHtml(getCurrentDraft())}</textarea>
@@ -1726,6 +1798,27 @@ function renderChatThread(character) {
                     停止
                 </button>
             ` : ''}
+        </div>
+    `;
+}
+
+function renderChatDeletePanel() {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除聊天文件</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(state.chatDeleteConfirm.name)}.jsonl，操作不可撤销。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-chat-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-chat-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
         </div>
     `;
 }
@@ -2853,6 +2946,27 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'rename-chat', message: error.message });
             showToast('聊天重命名失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-delete-chat]')) {
+        beginModernChatDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-chat-delete]')) {
+        cancelModernChatDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-chat-delete]')) {
+        try {
+            await confirmModernChatDelete();
+        } catch (error) {
+            state.errors.push({ key: 'delete-chat', message: error.message });
+            showToast('聊天删除失败', error.message);
             render();
         }
         return;

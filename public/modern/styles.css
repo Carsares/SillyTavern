@@ -352,6 +352,11 @@ kbd {
     color: var(--text);
 }
 
+.secondary-button.danger-action {
+    border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+    color: var(--danger);
+}
+
 .mobile-menu {
     display: none;
 }
@@ -489,6 +494,10 @@ kbd {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-muted);
+}
+
+.danger-panel {
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
 }
 
 .field-label {
