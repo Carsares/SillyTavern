@@ -36,8 +36,12 @@ const state = {
     extensions: [],
     secrets: {},
     stats: {},
+    chatLists: {},
+    chatMessages: {},
+    loadingChats: {},
     selected: {
         character: '',
+        chat: '',
         worldbook: '',
     },
     theme: localStorage.getItem('st-modern-theme') || 'light',
@@ -348,6 +352,9 @@ async function loadData({ silent = false } = {}) {
     if (!state.selected.worldbook && state.worldbooks[0]) {
         state.selected.worldbook = state.worldbooks[0].file_id;
     }
+    if (state.route === 'chat') {
+        await prepareChatForSelectedCharacter();
+    }
 
     state.loaded = true;
     state.loading = false;
@@ -372,7 +379,99 @@ async function loadWorldDetail(worldbookId) {
     }
 }
 
-function setRoute(routeId) {
+function getSelectedCharacter() {
+    return state.characters.find(character => character.avatar === state.selected.character) || state.characters[0] || null;
+}
+
+function getSelectedChatList() {
+    return state.chatLists[state.selected.character] || [];
+}
+
+function getSelectedChatMessages() {
+    const cacheKey = getChatCacheKey(state.selected.character, state.selected.chat);
+    return state.chatMessages[cacheKey] || [];
+}
+
+function getChatCacheKey(avatar, chatId) {
+    return `${avatar || ''}::${chatId || ''}`;
+}
+
+function sortChats(chats) {
+    return [...chats].sort((a, b) => {
+        const bTime = new Date(b.last_mes || 0).getTime() || Number(b.last_mes || 0);
+        const aTime = new Date(a.last_mes || 0).getTime() || Number(a.last_mes || 0);
+        return bTime - aTime;
+    });
+}
+
+async function loadCharacterChats(character) {
+    if (!character?.avatar) {
+        return [];
+    }
+    if (state.chatLists[character.avatar]) {
+        return state.chatLists[character.avatar];
+    }
+
+    state.loadingChats[character.avatar] = true;
+    try {
+        const result = await apiFetch('/api/characters/chats', {
+            body: {
+                avatar_url: character.avatar,
+                metadata: true,
+            },
+        });
+        const chats = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
+        state.chatLists[character.avatar] = chats;
+        return chats;
+    } catch (error) {
+        state.errors.push({ key: 'chats', message: error.message });
+        showToast('聊天列表读取失败', error.message);
+        return [];
+    } finally {
+        state.loadingChats[character.avatar] = false;
+    }
+}
+
+async function loadChatMessages(character, chatId) {
+    if (!character?.avatar || !chatId) {
+        return [];
+    }
+
+    const cacheKey = getChatCacheKey(character.avatar, chatId);
+    if (state.chatMessages[cacheKey]) {
+        return state.chatMessages[cacheKey];
+    }
+
+    try {
+        const result = await apiFetch('/api/chats/get', {
+            body: {
+                ch_name: character.name || character.data?.name || '',
+                file_name: chatId,
+                avatar_url: character.avatar,
+            },
+        });
+        const messages = Array.isArray(result) ? result.filter(message => message && !message.chat_metadata) : [];
+        state.chatMessages[cacheKey] = messages;
+        return messages;
+    } catch (error) {
+        state.errors.push({ key: 'chat', message: error.message });
+        showToast('聊天记录读取失败', error.message);
+        return [];
+    }
+}
+
+async function prepareChatForSelectedCharacter() {
+    const character = getSelectedCharacter();
+    const chats = await loadCharacterChats(character);
+
+    if (!state.selected.chat && chats[0]?.file_id) {
+        state.selected.chat = chats[0].file_id;
+    }
+
+    await loadChatMessages(character, state.selected.chat);
+}
+
+async function setRoute(routeId) {
     if (!routeLabels[routeId]) {
         return;
     }
@@ -383,6 +482,11 @@ function setRoute(routeId) {
     window.history.replaceState({}, '', url);
     elements.content.focus({ preventScroll: true });
     render();
+
+    if (routeId === 'chat') {
+        await prepareChatForSelectedCharacter();
+        render();
+    }
 }
 
 function setTheme(theme) {
@@ -547,13 +651,15 @@ function renderCharacterRow(character) {
 
 function renderChat() {
     const characters = state.characters.filter(character => matchesQuery(character.name, character.avatar, character.data?.creator));
-    const selected = state.characters.find(character => character.avatar === state.selected.character) || characters[0];
+    const selected = getSelectedCharacter() || characters[0];
     if (selected && state.selected.character !== selected.avatar) {
         state.selected.character = selected.avatar;
     }
+    const chats = getSelectedChatList();
+    const isLoadingChats = !!state.loadingChats[state.selected.character];
 
     return `
-        ${pageHead('聊天工作区', '第一期先拆出聊天视图和上下文检查器。发送、生成、保存聊天仍回到原版界面，避免绕开现有生成链路。', `
+        ${pageHead('聊天工作区', '按角色切换聊天文件，直接预览 jsonl 消息记录。发送和生成仍走原版链路，避免改变现有保存语义。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 用原版继续聊
@@ -571,6 +677,17 @@ function renderChat() {
                     ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
                 </div>
             </section>
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">聊天文件</h2>
+                        <p class="panel-subtitle">${isLoadingChats ? '读取中' : `${formatNumber(chats.length)} 个会话`}</p>
+                    </div>
+                </div>
+                <div class="resource-list">
+                    ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
+                </div>
+            </section>
             <section class="panel chat-thread">
                 ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '先导入角色卡，再从这里进入聊天工作区。')}
             </section>
@@ -578,39 +695,79 @@ function renderChat() {
     `;
 }
 
+function renderChatFileRow(chat) {
+    const chatId = chat.file_id || String(chat.file_name || '').replace('.jsonl', '');
+    const messageCount = Number(chat.chat_items || 0);
+    const subtitle = [
+        `${formatNumber(messageCount)} 条消息`,
+        chat.file_size || '',
+        formatDate(chat.last_mes),
+    ].filter(Boolean).join(' · ');
+
+    return `
+        <button class="resource-row ${state.selected.chat === chatId ? 'active' : ''}" type="button" data-select-chat="${escapeHtml(chatId)}">
+            <span class="avatar-fallback"><i class="fa-solid fa-message"></i></span>
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(chat.file_name || chatId)}</span>
+                <span class="row-subtitle">${escapeHtml(subtitle)}</span>
+            </span>
+        </button>
+    `;
+}
+
 function renderChatThread(character) {
     const avatar = getAvatarUrl(character);
     const name = character.name || character.data?.name || '未命名角色';
+    const chats = getSelectedChatList();
+    const selectedChat = chats.find(chat => chat.file_id === state.selected.chat);
+    const messages = getSelectedChatMessages();
 
     return `
         <div class="detail-hero">
             ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : '<span class="avatar-fallback large">C</span>'}
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
-                <p class="panel-subtitle">${escapeHtml(character.data?.creator || character.avatar || '角色卡')}</p>
+                <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || character.data?.creator || character.avatar || '角色卡')}</p>
+                <div class="tag-row" style="margin-top: 10px;">
+                    <span class="tag">${formatNumber(messages.length)} 条消息</span>
+                    <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
+                    <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
+                </div>
             </div>
         </div>
-        <div class="message-list">
-            <div class="message">
-                <strong>系统</strong>
-                <div>现代聊天页已接入角色选择和上下文检查器。完整生成链路将在确认交互方案后再迁移。</div>
-            </div>
-            <div class="message user">
-                <strong>你</strong>
-                <div>这里会保留原版聊天的输入习惯，但把配置和资源管理移出聊天页。</div>
-            </div>
-            <div class="message">
-                <strong>${escapeHtml(name)}</strong>
-                <div>第一期不会改写现有聊天保存、提示词拼装、扩展注入和流式生成逻辑。</div>
-            </div>
-        </div>
+        ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '选择原版界面开始聊天后，这里会显示历史记录。')}
         <div class="composer">
-            <textarea disabled placeholder="第一期暂不在现代页发送消息，避免绕过现有生成链路。"></textarea>
+            <textarea disabled placeholder="发送和生成仍使用原版聊天链路。"></textarea>
             <button class="primary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 原版发送
             </button>
         </div>
+    `;
+}
+
+function renderMessageList(messages) {
+    return `
+        <div class="message-list">
+            ${messages.slice(-80).map(message => renderMessage(message)).join('')}
+        </div>
+    `;
+}
+
+function renderMessage(message) {
+    const name = message.name || (message.is_user ? 'You' : 'Character');
+    const text = message.extra?.display_text || message.mes || '[空消息]';
+    const model = message.extra?.model || message.extra?.api || '';
+
+    return `
+        <article class="message ${message.is_user ? 'user' : ''}">
+            <header class="message-meta">
+                <strong>${escapeHtml(name)}</strong>
+                <span>${escapeHtml(formatDate(message.send_date))}</span>
+            </header>
+            <div>${escapeHtml(text)}</div>
+            ${model ? `<footer class="message-foot">${escapeHtml(model)}</footer>` : ''}
+        </article>
     `;
 }
 
@@ -1137,6 +1294,7 @@ function renderInspector() {
     const provider = getProviderInfo();
     const selectedCharacter = state.characters.find(character => character.avatar === state.selected.character);
     const selectedWorldbook = state.worldbooks.find(worldbook => worldbook.file_id === state.selected.worldbook);
+    const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
 
     elements.inspector.innerHTML = `
         <section class="inspector-section">
@@ -1160,6 +1318,7 @@ function renderInspector() {
             <div class="kv-list">
                 ${renderKeyValue('角色', selectedCharacter?.name || selectedCharacter?.data?.name || '未选中')}
                 ${renderKeyValue('角色文件', selectedCharacter?.avatar || '未选中')}
+                ${renderKeyValue('聊天文件', selectedChat?.file_name || state.selected.chat || '未选中')}
                 ${renderKeyValue('世界书', selectedWorldbook?.name || selectedWorldbook?.file_id || '未选中')}
             </div>
         </section>
@@ -1247,7 +1406,7 @@ function openLegacy() {
 async function handleClick(event) {
     const routeButton = event.target.closest('[data-route]');
     if (routeButton) {
-        setRoute(routeButton.dataset.route);
+        await setRoute(routeButton.dataset.route);
         elements.app.querySelector('.sidebar')?.classList.remove('open');
         return;
     }
@@ -1255,6 +1414,18 @@ async function handleClick(event) {
     const characterButton = event.target.closest('[data-select-character]');
     if (characterButton) {
         state.selected.character = characterButton.dataset.selectCharacter;
+        state.selected.chat = '';
+        if (state.route === 'chat') {
+            await prepareChatForSelectedCharacter();
+        }
+        render();
+        return;
+    }
+
+    const chatButton = event.target.closest('[data-select-chat]');
+    if (chatButton) {
+        state.selected.chat = chatButton.dataset.selectChat;
+        await loadChatMessages(getSelectedCharacter(), state.selected.chat);
         render();
         return;
     }
@@ -1281,7 +1452,7 @@ async function handleClick(event) {
             state.selected[select] = id;
         }
         closePalette();
-        setRoute(commandButton.dataset.commandRoute);
+        await setRoute(commandButton.dataset.commandRoute);
         return;
     }
 
