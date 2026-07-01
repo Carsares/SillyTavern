@@ -46,6 +46,11 @@ const state = {
         status: '就绪',
         error: '',
     },
+    apiTest: {
+        running: false,
+        status: '未测试',
+        detail: '尚未从现代界面发起连接测试。',
+    },
     selected: {
         character: '',
         chat: '',
@@ -195,14 +200,15 @@ function getProviderInfo() {
     const settings = state.settings || {};
     const bundle = state.settingsBundle || {};
     const api = settings.main_api || '未选择';
-    const chatSource = settings.chat_completion_source || settings.oai_settings?.chat_completion_source || '';
-    const model = settings.openai_model
-        || settings.oai_settings?.openai_model
+    const oaiSettings = settings.oai_settings || {};
+    const chatSource = settings.chat_completion_source || oaiSettings.chat_completion_source || '';
+    const chatModel = chatSource ? getChatCompletionModel(oaiSettings, chatSource) : '';
+    const model = chatModel
         || settings.textgenerationwebui_settings?.openrouter_model
         || settings.textgenerationwebui_settings?.custom_model
         || settings.model
         || '';
-    const preset = settings.preset_settings || settings.openai_settings || settings.textgenerationwebui_settings || '';
+    const preset = oaiSettings.preset_settings_openai || settings.preset_settings_openai || settings.preset_settings || '';
 
     return {
         api,
@@ -701,9 +707,59 @@ function extractAssistantText(response) {
 
 async function generateModernReply(character, messages, signal) {
     const settings = getChatCompletionSettings();
-    const body = {
+    const response = await apiFetch('/api/backends/chat-completions/generate', {
+        body: createChatCompletionRequestBody(settings, buildModernPromptMessages(character, messages)),
+        signal,
+    });
+    return {
+        text: extractAssistantText(response),
+        model: settings.model,
+    };
+}
+
+async function testApiConnection() {
+    if (state.apiTest.running) {
+        return;
+    }
+
+    const settings = getChatCompletionSettings();
+    const body = createChatCompletionRequestBody(settings, [
+        { role: 'user', content: '请只回复 OK。' },
+    ]);
+    body.max_tokens = Math.min(settings.maxTokens, 20);
+
+    state.apiTest = {
+        running: true,
+        status: '测试中',
+        detail: `${settings.source} / ${settings.model}`,
+    };
+    render();
+
+    try {
+        const response = await apiFetch('/api/backends/chat-completions/generate', { body });
+        const text = extractAssistantText(response);
+        state.apiTest = {
+            running: false,
+            status: '可用',
+            detail: `${settings.model}: ${text.slice(0, 80)}`,
+        };
+        showToast('连接测试成功', state.apiTest.detail);
+    } catch (error) {
+        state.apiTest = {
+            running: false,
+            status: '失败',
+            detail: error.message,
+        };
+        throw error;
+    } finally {
+        render();
+    }
+}
+
+function createChatCompletionRequestBody(settings, messages) {
+    return {
         chat_completion_source: settings.source,
-        messages: buildModernPromptMessages(character, messages),
+        messages,
         model: settings.model,
         temperature: settings.temperature,
         max_tokens: settings.maxTokens,
@@ -717,11 +773,6 @@ async function generateModernReply(character, messages, signal) {
         reverse_proxy: settings.reverseProxy,
         proxy_password: settings.proxyPassword,
         n: 1,
-    };
-    const response = await apiFetch('/api/backends/chat-completions/generate', { body, signal });
-    return {
-        text: extractAssistantText(response),
-        model: settings.model,
     };
 }
 
@@ -1396,6 +1447,10 @@ function renderApi() {
                 <i class="fa-solid fa-key"></i>
                 打开连接配置
             </button>
+            <button class="primary-button" type="button" data-test-api ${state.apiTest.running ? 'disabled' : ''}>
+                <i class="fa-solid ${state.apiTest.running ? 'fa-circle-notch fa-spin' : 'fa-plug-circle-check'}"></i>
+                ${state.apiTest.running ? '测试中' : '测试连接'}
+            </button>
             <button class="secondary-button" type="button" data-refresh>
                 <i class="fa-solid fa-rotate"></i>
                 刷新
@@ -1427,6 +1482,10 @@ function renderApi() {
                         <span class="metric-label">预设</span>
                         <strong>${escapeHtml(provider.preset || '未配置')}</strong>
                     </div>
+                </div>
+                <div class="connection-test">
+                    <span class="badge ${state.apiTest.status === '失败' ? 'danger' : ''}">${escapeHtml(state.apiTest.status)}</span>
+                    <span>${escapeHtml(state.apiTest.detail)}</span>
                 </div>
             </section>
             <section class="panel">
@@ -1507,9 +1566,16 @@ function renderApi() {
 function getApiProfiles() {
     const settings = state.settings || {};
     const textgen = settings.textgenerationwebui_settings || {};
-    const openaiSource = settings.chat_completion_source || settings.oai_settings?.chat_completion_source || '';
-    const openaiModel = settings.openai_model || settings.oai_settings?.openai_model || '';
+    const oaiSettings = settings.oai_settings || {};
+    const openaiSource = settings.chat_completion_source || oaiSettings.chat_completion_source || '';
+    const openaiModel = openaiSource ? getChatCompletionModel(oaiSettings, openaiSource) : '';
     const textgenModel = textgen.openrouter_model || textgen.custom_model || textgen.generic_model || textgen.ollama_model || textgen.model || '';
+    const chatPreset = oaiSettings.preset_settings_openai || settings.preset_settings_openai || '';
+    const chatEndpoint = getChatCompletionEndpoint(openaiSource, oaiSettings);
+    const textgenPreset = settings.textgenerationwebui_preset || settings.textgenerationwebui_settings_preset || '';
+    const textgenEndpoint = maskEndpoint(textgen.server_urls?.[textgen.type] || textgen.api_server || settings.api_server_textgenerationwebui || '');
+    const mainIsChat = settings.main_api === 'openai';
+    const mainIsTextgen = settings.main_api === 'textgenerationwebui';
 
     return [
         {
@@ -1517,9 +1583,9 @@ function getApiProfiles() {
             kind: 'generation',
             active: true,
             source: settings.main_api || '',
-            model: openaiModel || textgenModel || settings.model || '',
-            preset: settings.preset_settings || settings.active_preset || '',
-            endpoint: maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || ''),
+            model: mainIsChat ? openaiModel : (mainIsTextgen ? textgenModel : settings.model || ''),
+            preset: mainIsChat ? chatPreset : (mainIsTextgen ? textgenPreset : settings.preset_settings || settings.active_preset || ''),
+            endpoint: mainIsChat ? chatEndpoint : (mainIsTextgen ? textgenEndpoint : maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || '')),
         },
         {
             title: '聊天补全',
@@ -1527,8 +1593,8 @@ function getApiProfiles() {
             active: settings.main_api === 'openai',
             source: openaiSource,
             model: openaiModel,
-            preset: settings.preset_settings || '',
-            endpoint: maskEndpoint(settings.reverse_proxy || settings.custom_url || settings.openai_reverse_proxy || ''),
+            preset: chatPreset,
+            endpoint: chatEndpoint,
         },
         {
             title: '文本补全',
@@ -1536,10 +1602,26 @@ function getApiProfiles() {
             active: settings.main_api === 'textgenerationwebui',
             source: textgen.type || settings.textgen_type || '',
             model: textgenModel,
-            preset: settings.textgenerationwebui_preset || settings.textgenerationwebui_settings_preset || '',
-            endpoint: maskEndpoint(textgen.server_urls?.[textgen.type] || textgen.api_server || settings.api_server_textgenerationwebui || ''),
+            preset: textgenPreset,
+            endpoint: textgenEndpoint,
         },
     ];
+}
+
+function getChatCompletionEndpoint(source, settings) {
+    if (settings.reverse_proxy) {
+        return maskEndpoint(settings.reverse_proxy);
+    }
+    if (source === 'siliconflow') {
+        return settings.siliconflow_endpoint === 'cn' ? 'https://api.siliconflow.cn/v1' : 'https://api.siliconflow.com/v1';
+    }
+    if (source === 'custom') {
+        return maskEndpoint(settings.custom_url || '');
+    }
+    if (source === 'openai') {
+        return 'https://api.openai.com/v1';
+    }
+    return settings.custom_url ? maskEndpoint(settings.custom_url) : '';
 }
 
 function maskEndpoint(value) {
@@ -1937,6 +2019,17 @@ async function handleClick(event) {
 
     if (event.target.closest('[data-stop-generation]')) {
         await stopModernGeneration();
+        return;
+    }
+
+    if (event.target.closest('[data-test-api]')) {
+        try {
+            await testApiConnection();
+        } catch (error) {
+            state.errors.push({ key: 'api-test', message: error.message });
+            showToast('连接测试失败', error.message);
+            render();
+        }
         return;
     }
 

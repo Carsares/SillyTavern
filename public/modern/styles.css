@@ -295,6 +295,12 @@ kbd {
     background: var(--warning);
 }
 
+.badge.danger {
+    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+    color: var(--danger);
+}
+
 .icon-button,
 .primary-button,
 .secondary-button {
@@ -441,6 +447,21 @@ kbd {
     overflow: hidden;
     margin-top: 5px;
     font-family: var(--mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.connection-test {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    margin-top: 12px;
+    color: var(--text-muted);
+}
+
+.connection-test span:last-child {
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
