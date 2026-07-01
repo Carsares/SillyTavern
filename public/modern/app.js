@@ -662,8 +662,34 @@ function uniqueValues(values) {
     return [...new Set(values.filter(Boolean))];
 }
 
+function getGlobalWorldNames() {
+    return state.settings.world_info_settings?.world_info?.globalSelect || [];
+}
+
+function isGlobalWorldEnabled(worldbookId) {
+    return getGlobalWorldNames().includes(worldbookId);
+}
+
+async function toggleGlobalWorld(worldbookId) {
+    if (!worldbookId) {
+        return;
+    }
+
+    state.settings.world_info_settings = state.settings.world_info_settings || {};
+    state.settings.world_info_settings.world_info = state.settings.world_info_settings.world_info || {};
+    const globalWorlds = getGlobalWorldNames();
+    const nextGlobalWorlds = globalWorlds.includes(worldbookId)
+        ? globalWorlds.filter(name => name !== worldbookId)
+        : [...globalWorlds, worldbookId];
+
+    state.settings.world_info_settings.world_info.globalSelect = nextGlobalWorlds;
+    await apiFetch('/api/settings/save', { body: state.settings });
+    await loadData({ silent: true });
+    showToast(nextGlobalWorlds.includes(worldbookId) ? '世界书已启用' : '世界书已停用', worldbookId);
+}
+
 function getActiveWorldNames(character, chatId) {
-    const globalWorlds = state.settings.world_info_settings?.world_info?.globalSelect || [];
+    const globalWorlds = getGlobalWorldNames();
     const characterWorld = character?.data?.extensions?.world || '';
     const chatWorld = getSelectedChatMetadata(character, chatId)?.world_info || '';
     return uniqueValues([...globalWorlds, characterWorld, chatWorld]);
@@ -1468,15 +1494,7 @@ function renderWorldbooks() {
                     </div>
                 </div>
                 <div class="resource-list">
-                    ${worldbooks.map(worldbook => `
-                        <button class="resource-row ${state.selected.worldbook === worldbook.file_id ? 'active' : ''}" type="button" data-select-worldbook="${escapeHtml(worldbook.file_id)}">
-                            <span class="avatar-fallback"><i class="fa-solid fa-book-open"></i></span>
-                            <span class="row-main">
-                                <span class="row-title">${escapeHtml(worldbook.name || worldbook.file_id)}</span>
-                                <span class="row-subtitle">${escapeHtml(worldbook.file_id)}</span>
-                            </span>
-                        </button>
-                    `).join('') || renderInlineEmpty('暂无世界书')}
+                    ${worldbooks.map(worldbook => renderWorldbookRow(worldbook)).join('') || renderInlineEmpty('暂无世界书')}
                 </div>
             </section>
             <section class="panel">
@@ -1486,10 +1504,26 @@ function renderWorldbooks() {
     `;
 }
 
+function renderWorldbookRow(worldbook) {
+    const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
+
+    return `
+        <button class="resource-row ${state.selected.worldbook === worldbook.file_id ? 'active' : ''}" type="button" data-select-worldbook="${escapeHtml(worldbook.file_id)}">
+            <span class="avatar-fallback"><i class="fa-solid fa-book-open"></i></span>
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(worldbook.name || worldbook.file_id)}</span>
+                <span class="row-subtitle">${escapeHtml(worldbook.file_id)}</span>
+            </span>
+            <span class="badge ${globalEnabled ? '' : 'danger'}">${globalEnabled ? '全局启用' : '未启用'}</span>
+        </button>
+    `;
+}
+
 function renderWorldbookDetail(worldbook) {
     const detail = state.worldDetails[worldbook.file_id];
     const entries = detail?.entries ? Object.values(detail.entries) : [];
     const enabledEntries = entries.filter(entry => !entry.disable);
+    const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
 
     return `
         <div class="panel-header">
@@ -1497,10 +1531,16 @@ function renderWorldbookDetail(worldbook) {
                 <h2 class="panel-title">${escapeHtml(worldbook.name || worldbook.file_id)}</h2>
                 <p class="panel-subtitle">${escapeHtml(worldbook.file_id)}.json</p>
             </div>
-            <button class="secondary-button" type="button" data-load-worldbook="${escapeHtml(worldbook.file_id)}">
-                <i class="fa-solid fa-database"></i>
-                读取条目
-            </button>
+            <div class="page-actions">
+                <button class="secondary-button" type="button" data-toggle-world-global="${escapeHtml(worldbook.file_id)}">
+                    <i class="fa-solid ${globalEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+                    ${globalEnabled ? '停用全局' : '启用全局'}
+                </button>
+                <button class="secondary-button" type="button" data-load-worldbook="${escapeHtml(worldbook.file_id)}">
+                    <i class="fa-solid fa-database"></i>
+                    读取条目
+                </button>
+            </div>
         </div>
         ${detail ? `
             <div class="metrics-grid compact-metrics">
@@ -2292,6 +2332,18 @@ async function handleClick(event) {
     if (loadWorldbookButton) {
         await loadWorldDetail(loadWorldbookButton.dataset.loadWorldbook);
         render();
+        return;
+    }
+
+    const toggleWorldGlobalButton = event.target.closest('[data-toggle-world-global]');
+    if (toggleWorldGlobalButton) {
+        try {
+            await toggleGlobalWorld(toggleWorldGlobalButton.dataset.toggleWorldGlobal);
+        } catch (error) {
+            state.errors.push({ key: 'worldbook', message: error.message });
+            showToast('世界书切换失败', error.message);
+            render();
+        }
         return;
     }
 
