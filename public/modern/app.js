@@ -861,6 +861,24 @@ async function refreshSelectedChatList(character) {
     await loadCharacterChats(character);
 }
 
+async function startNewModernChat() {
+    const character = getSelectedCharacter();
+    if (!character?.avatar) {
+        throw new Error('请先选择角色');
+    }
+
+    const chatId = createModernChatId();
+    const greeting = getCharacterGreeting(character);
+    const messages = greeting ? [createAssistantMessage(greeting, character)] : [];
+    state.selected.chat = chatId;
+    state.chatMetadata[getChatCacheKey(character.avatar, chatId)] = {};
+    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
+    await saveModernChat(character, chatId, messages);
+    await refreshSelectedChatList(character);
+    showToast('新聊天已创建', `${getCharacterName(character)} 的新会话已选中。`);
+    render();
+}
+
 async function sendModernMessage() {
     const draftKey = getCurrentDraftKey();
     const draft = (state.chatDrafts[draftKey] || '').trim();
@@ -1139,6 +1157,9 @@ function renderChat() {
                         <h2 class="panel-title">聊天文件</h2>
                         <p class="panel-subtitle">${isLoadingChats ? '读取中' : `${formatNumber(chats.length)} 个会话`}</p>
                     </div>
+                    <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
                 </div>
                 <div class="resource-list">
                     ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
@@ -2099,6 +2120,17 @@ async function handleClick(event) {
 
     if (event.target.closest('[data-stop-generation]')) {
         await stopModernGeneration();
+        return;
+    }
+
+    if (event.target.closest('[data-new-chat]')) {
+        try {
+            await startNewModernChat();
+        } catch (error) {
+            state.errors.push({ key: 'new-chat', message: error.message });
+            showToast('新聊天创建失败', error.message);
+            render();
+        }
         return;
     }
 

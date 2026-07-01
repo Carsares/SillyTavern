@@ -825,7 +825,8 @@ tr:last-child td {
 }
 
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.icon-button:disabled {
     cursor: not-allowed;
     opacity: 0.62;
 }
