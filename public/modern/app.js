@@ -547,10 +547,9 @@ function renderDashboard() {
     const recentCharacters = [...state.characters]
         .sort((a, b) => Number(b.date_last_chat || b.date_added || 0) - Number(a.date_last_chat || a.date_added || 0))
         .slice(0, 6);
-    const presetGroups = getPresetGroups().filter(group => group.names.length > 0);
 
     return `
-        ${pageHead('现代工作台', '资源、连接和最近会话。', `
+        ${pageHead('工作台', '资源、连接和最近会话。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 打开原版
@@ -601,28 +600,32 @@ function renderDashboard() {
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
-                    <h2 class="panel-title">预设分布</h2>
-                    <p class="panel-subtitle">按 SillyTavern 原有预设目录聚合。</p>
+                    <h2 class="panel-title">快捷入口</h2>
+                    <p class="panel-subtitle">按常用工作流进入对应页面。</p>
                 </div>
             </div>
-            <div class="grid-list">
-                ${presetGroups.map(group => `
-                    <article class="resource-card">
-                        <div class="card-head">
-                            <div>
-                                <h3 class="card-title">${escapeHtml(group.label)}</h3>
-                                <div class="card-meta">${formatNumber(group.names.length)} 个预设</div>
-                            </div>
-                            <span class="badge">${escapeHtml(group.id)}</span>
-                        </div>
-                        <div class="tag-row">
-                            ${group.names.slice(0, 6).map(name => `<span class="tag">${escapeHtml(name)}</span>`).join('')}
-                            ${group.names.length > 6 ? `<span class="tag">+${group.names.length - 6}</span>` : ''}
-                        </div>
-                    </article>
-                `).join('') || renderInlineEmpty('暂无预设')}
+            <div class="action-grid">
+                ${renderActionCard('聊天', '查看角色会话和历史消息', `${formatNumber(state.characters.length)} 个角色`, 'fa-comments', 'chat')}
+                ${renderActionCard('角色', '检查角色卡和关联世界书', `${formatNumber(state.characters.length)} 张卡`, 'fa-address-card', 'characters')}
+                ${renderActionCard('世界书', '查看知识库文件和条目', `${formatNumber(state.worldbooks.length || provider.worldCount)} 本`, 'fa-book-open', 'worldbooks')}
+                ${renderActionCard('预设', '浏览模型参数和提示模板', `${formatNumber(getPresetCount())} 个`, 'fa-sliders', 'presets')}
+                ${renderActionCard('API', '检查连接、模型和密钥状态', provider.api, 'fa-plug', 'api')}
+                ${renderActionCard('扩展', '查看已发现扩展', `${formatNumber(state.extensions.length)} 个`, 'fa-cubes', 'extensions')}
             </div>
         </section>
+    `;
+}
+
+function renderActionCard(title, detail, meta, icon, routeId) {
+    return `
+        <button class="action-card" type="button" data-route="${routeId}">
+            <span class="action-icon"><i class="fa-solid ${icon}"></i></span>
+            <span class="action-body">
+                <strong>${escapeHtml(title)}</strong>
+                <span>${escapeHtml(detail)}</span>
+            </span>
+            <span class="badge">${escapeHtml(meta)}</span>
+        </button>
     `;
 }
 
