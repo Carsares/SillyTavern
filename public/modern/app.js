@@ -717,6 +717,26 @@ async function toggleGlobalWorld(worldbookId) {
     showToast(nextGlobalWorlds.includes(worldbookId) ? '世界书已启用' : '世界书已停用', worldbookId);
 }
 
+async function toggleWorldEntry(worldbookId, entryKey) {
+    if (!worldbookId || entryKey === undefined) {
+        return;
+    }
+
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    const nextDetail = structuredClone(detail);
+    const entry = nextDetail?.entries?.[entryKey];
+    if (!entry) {
+        throw new Error('世界书条目不存在，请刷新后重试。');
+    }
+
+    entry.disable = !entry.disable;
+    await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: nextDetail } });
+    state.worldDetails[worldbookId] = nextDetail;
+    showToast(entry.disable ? '条目已禁用' : '条目已启用', entry.comment || entry.name || entryKey);
+    render();
+}
+
 function getActiveWorldNames(character, chatId) {
     const globalWorlds = getGlobalWorldNames();
     const characterWorld = character?.data?.extensions?.world || '';
@@ -1749,8 +1769,8 @@ function renderWorldbookRow(worldbook) {
 
 function renderWorldbookDetail(worldbook) {
     const detail = state.worldDetails[worldbook.file_id];
-    const entries = detail?.entries ? Object.values(detail.entries) : [];
-    const enabledEntries = entries.filter(entry => !entry.disable);
+    const entries = detail?.entries ? Object.entries(detail.entries) : [];
+    const enabledEntries = entries.filter(([, entry]) => !entry.disable);
     const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
 
     return `
@@ -1779,16 +1799,22 @@ function renderWorldbookDetail(worldbook) {
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>键</th><th>注释</th><th>状态</th></tr>
+                        <tr><th>键</th><th>注释</th><th>状态</th><th>操作</th></tr>
                     </thead>
                     <tbody>
-                        ${entries.slice(0, 30).map(entry => `
+                        ${entries.slice(0, 30).map(([entryKey, entry]) => `
                             <tr>
                                 <td>${escapeHtml(Array.isArray(entry.key) ? entry.key.join(', ') : entry.key || '无关键词')}</td>
                                 <td>${escapeHtml(entry.comment || entry.name || '未命名条目')}</td>
                                 <td>${entry.disable ? '<span class="danger">禁用</span>' : '<span class="success">启用</span>'}</td>
+                                <td>
+                                    <button class="secondary-button" type="button" data-toggle-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                                        <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
+                                        ${entry.disable ? '启用' : '禁用'}
+                                    </button>
+                                </td>
                             </tr>
-                        `).join('') || '<tr><td colspan="3">没有条目</td></tr>'}
+                        `).join('') || '<tr><td colspan="4">没有条目</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -2683,6 +2709,18 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'worldbook', message: error.message });
             showToast('世界书切换失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const toggleWorldEntryButton = event.target.closest('[data-toggle-world-entry]');
+    if (toggleWorldEntryButton) {
+        try {
+            await toggleWorldEntry(toggleWorldEntryButton.dataset.toggleWorldEntry, toggleWorldEntryButton.dataset.worldEntryKey);
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry', message: error.message });
+            showToast('条目切换失败', error.message);
             render();
         }
         return;
