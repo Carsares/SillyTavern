@@ -421,6 +421,29 @@ kbd {
     font-size: 12px;
 }
 
+.api-current {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.api-current > div {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.api-current strong {
+    display: block;
+    overflow: hidden;
+    margin-top: 5px;
+    font-family: var(--mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .dashboard-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
@@ -905,6 +928,10 @@ tr:last-child td {
 
 @media (max-width: 560px) {
     .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .api-current {
         grid-template-columns: 1fr;
     }
 

@@ -1055,52 +1055,214 @@ function renderAssetPreviewTags(detail) {
 
 function renderApi() {
     const provider = getProviderInfo();
-    const settings = state.settings;
+    const profiles = getApiProfiles();
+    const checks = getApiChecks(provider, profiles);
 
     return `
-        ${pageHead('API 配置', '集中检查连接来源、模型字段、密钥显示策略和当前会话状态。这里不会读取或展示密钥明文。', `
+        ${pageHead('API 连接管理', '集中查看当前连接、模型、预设和安全状态。这里不会读取或展示密钥明文。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-key"></i>
                 原版连接配置
+            </button>
+            <button class="secondary-button" type="button" data-refresh>
+                <i class="fa-solid fa-rotate"></i>
+                刷新
             </button>
         `)}
         <div class="dashboard-grid">
             <section class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2 class="panel-title">连接摘要</h2>
-                        <p class="panel-subtitle">读取 settings.json 中的非密钥字段。</p>
+                        <h2 class="panel-title">当前连接</h2>
+                        <p class="panel-subtitle">从 SillyTavern settings.json 读取非密钥字段。</p>
                     </div>
+                    <span class="badge">${escapeHtml(provider.api)}</span>
                 </div>
-                <div class="table-wrap">
-                    <table>
-                        <tbody>
-                            <tr><th>主 API</th><td>${escapeHtml(provider.api)}</td></tr>
-                            <tr><th>聊天补全来源</th><td>${escapeHtml(provider.chatSource || '未配置')}</td></tr>
-                            <tr><th>模型</th><td>${escapeHtml(provider.model || '未配置')}</td></tr>
-                            <tr><th>是否允许显示密钥</th><td>${state.secrets?.allowKeysExposure ? '允许' : '不允许'}</td></tr>
-                            <tr><th>CSRF</th><td>${escapeHtml(state.csrfToken ? '已获取' : '未获取')}</td></tr>
-                        </tbody>
-                    </table>
+                <div class="api-current">
+                    <div>
+                        <span class="metric-label">主 API</span>
+                        <strong>${escapeHtml(provider.api)}</strong>
+                    </div>
+                    <div>
+                        <span class="metric-label">来源</span>
+                        <strong>${escapeHtml(provider.chatSource || '未配置')}</strong>
+                    </div>
+                    <div>
+                        <span class="metric-label">模型</span>
+                        <strong>${escapeHtml(provider.model || '未配置')}</strong>
+                    </div>
+                    <div>
+                        <span class="metric-label">预设</span>
+                        <strong>${escapeHtml(provider.preset || '未配置')}</strong>
+                    </div>
                 </div>
             </section>
             <section class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2 class="panel-title">关键字段</h2>
-                        <p class="panel-subtitle">用于排查“连接配置为空”等问题。</p>
+                        <h2 class="panel-title">检查项</h2>
+                        <p class="panel-subtitle">用于定位配置为空、模型缺失和密钥显示策略。</p>
                     </div>
                 </div>
-                <div class="kv-list">
-                    ${renderKeyValue('main_api', settings.main_api)}
-                    ${renderKeyValue('chat_completion_source', settings.chat_completion_source || settings.oai_settings?.chat_completion_source)}
-                    ${renderKeyValue('openai_model', settings.openai_model || settings.oai_settings?.openai_model)}
-                    ${renderKeyValue('preset_settings', settings.preset_settings)}
-                    ${renderKeyValue('world_info_depth', settings.world_info_depth)}
-                    ${renderKeyValue('max_context', settings.max_context)}
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>项目</th><th>状态</th><th>说明</th></tr>
+                        </thead>
+                        <tbody>${checks.map(check => renderApiCheckRow(check)).join('')}</tbody>
+                    </table>
                 </div>
             </section>
         </div>
+        <section class="panel" style="margin-top: 14px;">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">连接档案</h2>
+                    <p class="panel-subtitle">按调用类型整理当前可见配置，敏感字段已省略。</p>
+                </div>
+            </div>
+            <div class="grid-list">
+                ${profiles.map(profile => `
+                    <article class="resource-card">
+                        <div class="card-head">
+                            <div>
+                                <h3 class="card-title">${escapeHtml(profile.title)}</h3>
+                                <div class="card-meta">${escapeHtml(profile.kind)}</div>
+                            </div>
+                            <span class="badge">${profile.active ? '当前' : '备用'}</span>
+                        </div>
+                        <div class="kv-list">
+                            ${renderKeyValue('来源', profile.source || '未配置')}
+                            ${renderKeyValue('模型', profile.model || '未配置')}
+                            ${renderKeyValue('预设', profile.preset || '未配置')}
+                            ${renderKeyValue('端点', profile.endpoint || '未配置')}
+                        </div>
+                    </article>
+                `).join('')}
+            </div>
+        </section>
+        <section class="panel" style="margin-top: 14px;">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">诊断字段</h2>
+                    <p class="panel-subtitle">保留必要 raw 字段，便于和原版连接配置对照。</p>
+                </div>
+            </div>
+            <div class="grid-list">
+                <article class="resource-card">
+                    <h3 class="card-title">主配置</h3>
+                    <div class="kv-list">
+                        ${renderKeyValue('main_api', provider.api)}
+                        ${renderKeyValue('chat_completion_source', provider.chatSource || '未设置')}
+                        ${renderKeyValue('model', provider.model || '未设置')}
+                        ${renderKeyValue('preset', provider.preset || '未设置')}
+                    </div>
+                </article>
+                <article class="resource-card">
+                    <h3 class="card-title">安全</h3>
+                    <div class="kv-list">
+                        ${renderKeyValue('secrets exposure', state.secrets?.allowKeysExposure ? '允许显示' : '不允许显示')}
+                        ${renderKeyValue('csrf token', state.csrfToken ? '已获取' : '未获取')}
+                        ${renderKeyValue('accounts', state.settingsBundle.enable_accounts ? '开启' : '关闭')}
+                        ${renderKeyValue('extensions', state.settingsBundle.enable_extensions ? '开启' : '关闭')}
+                    </div>
+                </article>
+            </div>
+        </section>
+    `;
+}
+
+function getApiProfiles() {
+    const settings = state.settings || {};
+    const textgen = settings.textgenerationwebui_settings || {};
+    const openaiSource = settings.chat_completion_source || settings.oai_settings?.chat_completion_source || '';
+    const openaiModel = settings.openai_model || settings.oai_settings?.openai_model || '';
+    const textgenModel = textgen.openrouter_model || textgen.custom_model || textgen.generic_model || textgen.ollama_model || textgen.model || '';
+
+    return [
+        {
+            title: '主连接',
+            kind: 'generation',
+            active: true,
+            source: settings.main_api || '',
+            model: openaiModel || textgenModel || settings.model || '',
+            preset: settings.preset_settings || settings.active_preset || '',
+            endpoint: maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || ''),
+        },
+        {
+            title: '聊天补全',
+            kind: 'chat-completions',
+            active: settings.main_api === 'openai',
+            source: openaiSource,
+            model: openaiModel,
+            preset: settings.preset_settings || '',
+            endpoint: maskEndpoint(settings.reverse_proxy || settings.custom_url || settings.openai_reverse_proxy || ''),
+        },
+        {
+            title: '文本补全',
+            kind: 'text-completions',
+            active: settings.main_api === 'textgenerationwebui',
+            source: textgen.type || settings.textgen_type || '',
+            model: textgenModel,
+            preset: settings.textgenerationwebui_preset || settings.textgenerationwebui_settings_preset || '',
+            endpoint: maskEndpoint(textgen.server_urls?.[textgen.type] || textgen.api_server || settings.api_server_textgenerationwebui || ''),
+        },
+    ];
+}
+
+function maskEndpoint(value) {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        const url = new URL(value);
+        return `${url.origin}${url.pathname.replace(/\/+$/, '') || '/'}`;
+    } catch {
+        return String(value).replace(/(key|token|secret)=([^&]+)/gi, '$1=***');
+    }
+}
+
+function getApiChecks(provider, profiles) {
+    return [
+        {
+            label: '主 API',
+            state: provider.api && provider.api !== '未选择' ? 'ok' : 'warn',
+            detail: provider.api && provider.api !== '未选择' ? provider.api : '尚未选择主 API。',
+        },
+        {
+            label: '模型',
+            state: provider.model ? 'ok' : 'warn',
+            detail: provider.model || '未读取到模型字段。',
+        },
+        {
+            label: '连接档案',
+            state: profiles.some(profile => profile.source || profile.model || profile.endpoint) ? 'ok' : 'warn',
+            detail: `${formatNumber(profiles.length)} 个可见档案。`,
+        },
+        {
+            label: '密钥显示',
+            state: state.secrets?.allowKeysExposure ? 'warn' : 'ok',
+            detail: state.secrets?.allowKeysExposure ? '当前允许查看密钥。' : '当前不会暴露密钥明文。',
+        },
+        {
+            label: 'CSRF',
+            state: state.csrfToken ? 'ok' : 'warn',
+            detail: state.csrfToken ? '现代页请求令牌正常。' : '尚未获取请求令牌。',
+        },
+    ];
+}
+
+function renderApiCheckRow(check) {
+    const icon = check.state === 'ok' ? 'fa-circle-check success' : 'fa-triangle-exclamation danger';
+    const label = check.state === 'ok' ? '正常' : '需检查';
+
+    return `
+        <tr>
+            <td>${escapeHtml(check.label)}</td>
+            <td><span class="${check.state === 'ok' ? 'success' : 'danger'}"><i class="fa-solid ${icon}"></i> ${label}</span></td>
+            <td>${escapeHtml(check.detail)}</td>
+        </tr>
     `;
 }
 
