@@ -525,7 +525,7 @@ function pageHead(title, description, actions = '') {
             <div>
                 <p class="eyebrow">${escapeHtml(routeLabels[state.route] || 'Workspace')}</p>
                 <h1 class="page-title">${escapeHtml(title)}</h1>
-                <p class="page-description">${escapeHtml(description)}</p>
+                ${description ? `<p class="page-description">${escapeHtml(description)}</p>` : ''}
             </div>
             <div class="page-actions">${actions}</div>
         </div>
@@ -550,10 +550,10 @@ function renderDashboard() {
     const presetGroups = getPresetGroups().filter(group => group.names.length > 0);
 
     return `
-        ${pageHead('现代工作台', '把聊天入口、资源管理、API 状态和配置检查拆成稳定的工作区。当前版本只读现有数据，不改变旧 UI 行为。', `
+        ${pageHead('现代工作台', '资源、连接和最近会话。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                原版界面
+                打开原版
             </button>
             <button class="primary-button" type="button" data-route="chat">
                 <i class="fa-solid fa-comments"></i>
@@ -598,7 +598,7 @@ function renderDashboard() {
                 </div>
             </section>
         </div>
-        <section class="panel" style="margin-top: 14px;">
+        <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">预设分布</h2>
@@ -659,10 +659,10 @@ function renderChat() {
     const isLoadingChats = !!state.loadingChats[state.selected.character];
 
     return `
-        ${pageHead('聊天工作区', '按角色切换聊天文件，直接预览 jsonl 消息记录。发送和生成仍走原版链路，避免改变现有保存语义。', `
+        ${pageHead('聊天工作区', '角色、会话文件和消息预览。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                用原版继续聊
+                打开聊天
             </button>
         `)}
         <div class="chat-layout">
@@ -689,7 +689,7 @@ function renderChat() {
                 </div>
             </section>
             <section class="panel chat-thread">
-                ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '先导入角色卡，再从这里进入聊天工作区。')}
+                ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
             </section>
         </div>
     `;
@@ -728,19 +728,19 @@ function renderChatThread(character) {
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
                 <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || character.data?.creator || character.avatar || '角色卡')}</p>
-                <div class="tag-row" style="margin-top: 10px;">
+                <div class="tag-row detail-tags">
                     <span class="tag">${formatNumber(messages.length)} 条消息</span>
                     <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
                     <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
                 </div>
             </div>
         </div>
-        ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '选择原版界面开始聊天后，这里会显示历史记录。')}
+        ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         <div class="composer">
-            <textarea disabled placeholder="发送和生成仍使用原版聊天链路。"></textarea>
+            <textarea disabled placeholder="当前工作区暂未接入消息发送。"></textarea>
             <button class="primary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                原版发送
+                打开发送
             </button>
         </div>
     `;
@@ -779,7 +779,7 @@ function renderCharacters() {
     }
 
     return `
-        ${pageHead('角色库', '把角色卡从聊天侧栏中独立出来，便于筛选、检查来源、查看关联世界书和聊天占用。', `
+        ${pageHead('角色库', '角色卡、来源、世界书和聊天占用。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-upload"></i>
                 导入/编辑
@@ -815,7 +815,7 @@ function renderCharacterDetail(character) {
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
                 <p class="panel-subtitle">${escapeHtml(character.avatar || '角色卡')}</p>
-                <div class="tag-row" style="margin-top: 10px;">
+                <div class="tag-row detail-tags">
                     ${tags.slice(0, 8).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('') || '<span class="tag">未打标签</span>'}
                 </div>
             </div>
@@ -832,7 +832,7 @@ function renderCharacterDetail(character) {
                 </tbody>
             </table>
         </div>
-        <p class="detail-text">${escapeHtml(character.description || character.data?.creator_notes || '当前列表接口未返回完整角色描述；需要编辑时请进入原版角色编辑器。')}</p>
+        <p class="detail-text">${escapeHtml(character.description || character.data?.creator_notes || '当前列表接口未返回完整角色描述。')}</p>
     `;
 }
 
@@ -846,10 +846,10 @@ function renderWorldbooks() {
     }
 
     return `
-        ${pageHead('世界书', '把知识库从聊天设置里拆出来，集中查看文件、条目和扩展元数据。编辑动作第一期仍交给原版。', `
+        ${pageHead('世界书', '知识库文件、条目和启用状态。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-pen-to-square"></i>
-                原版编辑
+                打开编辑器
             </button>
         `)}
         <div class="split-grid">
@@ -896,7 +896,7 @@ function renderWorldbookDetail(worldbook) {
             </button>
         </div>
         ${detail ? `
-            <div class="metrics-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
+            <div class="metrics-grid compact-metrics">
                 ${metricCard('条目', formatNumber(entries.length), '全部 entries', 'fa-list')}
                 ${metricCard('启用', formatNumber(enabledEntries.length), '未禁用条目', 'fa-toggle-on')}
                 ${metricCard('扩展字段', formatNumber(Object.keys(detail.extensions || {}).length), 'metadata', 'fa-code-branch')}
@@ -927,10 +927,10 @@ function renderPresets() {
         .filter(group => group.names.length > 0);
 
     return `
-        ${pageHead('预设管理', '把模型参数、指令模板、系统提示词、上下文模板放在统一页面浏览。第一期只读，不写回预设文件。', `
+        ${pageHead('预设管理', '模型参数、指令模板和上下文模板。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-pen-to-square"></i>
-                原版编辑
+                打开编辑器
             </button>
         `)}
         <div class="grid-list">
@@ -943,7 +943,7 @@ function renderPresets() {
                         </div>
                         <span class="badge">${formatNumber(group.names.length)}</span>
                     </div>
-                    <div class="resource-list" style="max-height: 280px;">
+                    <div class="resource-list scroll-list">
                         ${group.names.map((name, index) => `
                             <div class="resource-row">
                                 <span class="avatar-fallback"><i class="fa-solid fa-file-lines"></i></span>
@@ -981,16 +981,16 @@ function renderPersonas() {
     const personas = getPersonas().filter(persona => matchesQuery(persona.name, persona.title, persona.description, persona.avatarId));
 
     return `
-        ${pageHead('用户人设', '用户人设独立于角色卡，用来定义“你是谁”。这里集中查看头像、标题和默认人设。', `
+        ${pageHead('用户人设', '头像、标题和默认身份。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-user-pen"></i>
-                原版管理
+                打开管理
             </button>
         `)}
         <div class="grid-list">
             ${personas.map(persona => `
                 <article class="resource-card">
-                    <div class="detail-hero" style="margin-bottom: 0;">
+                    <div class="detail-hero compact-hero">
                         <img class="avatar large" src="${getPersonaUrl(persona.avatarId)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
                         <div>
                             <h2 class="card-title">${escapeHtml(persona.name || '未命名人设')}</h2>
@@ -1000,7 +1000,7 @@ function renderPersonas() {
                     </div>
                     <p class="detail-text">${escapeHtml(persona.description || '暂无描述')}</p>
                 </article>
-            `).join('') || renderEmptyState('fa-user-gear', '暂无用户人设', '可以在原版用户人设管理中创建。')}
+            `).join('') || renderEmptyState('fa-user-gear', '暂无用户人设', '当前目录没有用户人设。')}
         </div>
     `;
 }
@@ -1010,10 +1010,10 @@ function renderAssets() {
     const backgrounds = state.backgrounds?.images || [];
 
     return `
-        ${pageHead('素材库', '聚合背景、音频、Live2D、VRM 和其他资产，让素材管理从聊天页中分离出来。', `
+        ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-folder-open"></i>
-                原版素材面板
+                打开素材
             </button>
         `)}
         <div class="metrics-grid">
@@ -1059,10 +1059,10 @@ function renderApi() {
     const checks = getApiChecks(provider, profiles);
 
     return `
-        ${pageHead('API 连接管理', '集中查看当前连接、模型、预设和安全状态。这里不会读取或展示密钥明文。', `
+        ${pageHead('API 连接管理', '连接、模型、预设和请求状态。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-key"></i>
-                原版连接配置
+                打开连接配置
             </button>
             <button class="secondary-button" type="button" data-refresh>
                 <i class="fa-solid fa-rotate"></i>
@@ -1107,18 +1107,18 @@ function renderApi() {
                 <div class="table-wrap">
                     <table>
                         <thead>
-                            <tr><th>项目</th><th>状态</th><th>说明</th></tr>
+                            <tr><th>项目</th><th>状态</th><th>详情</th></tr>
                         </thead>
                         <tbody>${checks.map(check => renderApiCheckRow(check)).join('')}</tbody>
                     </table>
                 </div>
             </section>
         </div>
-        <section class="panel" style="margin-top: 14px;">
+        <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">连接档案</h2>
-                    <p class="panel-subtitle">按调用类型整理当前可见配置，敏感字段已省略。</p>
+                    <p class="panel-subtitle">敏感字段已省略。</p>
                 </div>
             </div>
             <div class="grid-list">
@@ -1141,11 +1141,11 @@ function renderApi() {
                 `).join('')}
             </div>
         </section>
-        <section class="panel" style="margin-top: 14px;">
+        <section class="panel section-panel">
             <div class="panel-header">
                 <div>
-                    <h2 class="panel-title">诊断字段</h2>
-                    <p class="panel-subtitle">保留必要 raw 字段，便于和原版连接配置对照。</p>
+                    <h2 class="panel-title">原始字段</h2>
+                    <p class="panel-subtitle">用于排查连接选择。</p>
                 </div>
             </div>
             <div class="grid-list">
@@ -1279,10 +1279,10 @@ function renderExtensions() {
     const extensions = state.extensions.filter(extension => matchesQuery(extension.name, extension.type));
 
     return `
-        ${pageHead('扩展', '扩展独立成管理页，便于区分内置、本地和全局扩展。第一期不执行安装、更新、删除。', `
+        ${pageHead('扩展', '内置、本地和全局扩展。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-puzzle-piece"></i>
-                原版扩展面板
+                打开扩展
             </button>
         `)}
         <div class="table-wrap">
@@ -1309,7 +1309,7 @@ function renderActivity() {
     const rows = Object.entries(stats).slice(0, 60);
 
     return `
-        ${pageHead('活动与统计', '聚合 SillyTavern 已有统计缓存。不同版本统计结构可能不同，所以这里用通用键值表展示。', `
+        ${pageHead('活动与统计', '统计缓存和使用记录。', `
             <button class="secondary-button" type="button" data-refresh>
                 <i class="fa-solid fa-rotate"></i>
                 刷新
@@ -1340,10 +1340,10 @@ function renderSettings() {
     const requestCompression = bundle.request_compression || {};
 
     return `
-        ${pageHead('设置中心', '把账户、扩展、请求压缩、主题和模板等配置集中到后台式页面。第一期只做可读检查。', `
+        ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-gear"></i>
-                原版设置
+                打开设置
             </button>
         `)}
         <div class="grid-list">
