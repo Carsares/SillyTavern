@@ -786,6 +786,12 @@ tr:last-child td {
     font-size: 12px;
 }
 
+.row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .chat-layout {
     display: grid;
     grid-template-columns: 250px 300px minmax(0, 1fr);

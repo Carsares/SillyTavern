@@ -74,6 +74,11 @@ const state = {
         index: -1,
         text: '',
     },
+    worldEntryEditing: {
+        worldbookId: '',
+        entryKey: '',
+        content: '',
+    },
     engine: {
         generating: false,
         status: '就绪',
@@ -734,6 +739,50 @@ async function toggleWorldEntry(worldbookId, entryKey) {
     await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: nextDetail } });
     state.worldDetails[worldbookId] = nextDetail;
     showToast(entry.disable ? '条目已禁用' : '条目已启用', entry.comment || entry.name || entryKey);
+    render();
+}
+
+async function beginWorldEntryEdit(worldbookId, entryKey) {
+    await loadWorldDetail(worldbookId);
+    const entry = state.worldDetails[worldbookId]?.entries?.[entryKey];
+    if (!entry) {
+        showToast('编辑失败', '世界书条目不存在，请刷新后重试。');
+        return;
+    }
+
+    state.worldEntryEditing = {
+        worldbookId,
+        entryKey,
+        content: entry.content || '',
+    };
+    render();
+}
+
+function cancelWorldEntryEdit() {
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', content: '' };
+    render();
+}
+
+async function saveWorldEntryEdit() {
+    const edit = state.worldEntryEditing;
+    const content = edit.content.trim();
+    if (!edit.worldbookId || edit.entryKey === '' || !content) {
+        throw new Error('世界书条目内容不能为空。');
+    }
+
+    await loadWorldDetail(edit.worldbookId);
+    const detail = state.worldDetails[edit.worldbookId];
+    const nextDetail = structuredClone(detail);
+    const entry = nextDetail?.entries?.[edit.entryKey];
+    if (!entry) {
+        throw new Error('世界书条目不存在，请刷新后重试。');
+    }
+
+    entry.content = content;
+    await apiFetch('/api/worldinfo/edit', { body: { name: edit.worldbookId, data: nextDetail } });
+    state.worldDetails[edit.worldbookId] = nextDetail;
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', content: '' };
+    showToast('条目已保存', entry.comment || entry.name || edit.entryKey);
     render();
 }
 
@@ -1802,23 +1851,54 @@ function renderWorldbookDetail(worldbook) {
                         <tr><th>键</th><th>注释</th><th>状态</th><th>操作</th></tr>
                     </thead>
                     <tbody>
-                        ${entries.slice(0, 30).map(([entryKey, entry]) => `
-                            <tr>
-                                <td>${escapeHtml(Array.isArray(entry.key) ? entry.key.join(', ') : entry.key || '无关键词')}</td>
-                                <td>${escapeHtml(entry.comment || entry.name || '未命名条目')}</td>
-                                <td>${entry.disable ? '<span class="danger">禁用</span>' : '<span class="success">启用</span>'}</td>
-                                <td>
-                                    <button class="secondary-button" type="button" data-toggle-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
-                                        <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
-                                        ${entry.disable ? '启用' : '禁用'}
-                                    </button>
-                                </td>
-                            </tr>
-                        `).join('') || '<tr><td colspan="4">没有条目</td></tr>'}
+                        ${entries.slice(0, 30).map(([entryKey, entry]) => renderWorldEntryRow(worldbook, entryKey, entry)).join('') || '<tr><td colspan="4">没有条目</td></tr>'}
                     </tbody>
                 </table>
             </div>
         ` : renderEmptyState('fa-database', '尚未读取条目', '点击“读取条目”查看这个世界书的 entries。')}
+    `;
+}
+
+function renderWorldEntryRow(worldbook, entryKey, entry) {
+    const isEditing = state.worldEntryEditing.worldbookId === worldbook.file_id && state.worldEntryEditing.entryKey === entryKey;
+
+    return `
+        <tr>
+            <td>${escapeHtml(Array.isArray(entry.key) ? entry.key.join(', ') : entry.key || '无关键词')}</td>
+            <td>${escapeHtml(entry.comment || entry.name || '未命名条目')}</td>
+            <td>${entry.disable ? '<span class="danger">禁用</span>' : '<span class="success">启用</span>'}</td>
+            <td>
+                <div class="row-actions">
+                    <button class="secondary-button" type="button" data-edit-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}" ${isEditing ? 'disabled' : ''}>
+                        <i class="fa-solid fa-pen"></i>
+                        编辑
+                    </button>
+                    <button class="secondary-button" type="button" data-toggle-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                        <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
+                        ${entry.disable ? '启用' : '禁用'}
+                    </button>
+                </div>
+            </td>
+        </tr>
+        ${isEditing ? `
+            <tr>
+                <td colspan="4">
+                    <div class="message-edit">
+                        <textarea data-edit-world-entry-input>${escapeHtml(state.worldEntryEditing.content)}</textarea>
+                        <div class="message-edit-actions">
+                            <button class="secondary-button" type="button" data-cancel-world-entry-edit>
+                                <i class="fa-solid fa-xmark"></i>
+                                取消
+                            </button>
+                            <button class="primary-button" type="button" data-save-world-entry-edit>
+                                <i class="fa-solid fa-check"></i>
+                                保存
+                            </button>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        ` : ''}
     `;
 }
 
@@ -2726,6 +2806,28 @@ async function handleClick(event) {
         return;
     }
 
+    const editWorldEntryButton = event.target.closest('[data-edit-world-entry]');
+    if (editWorldEntryButton) {
+        await beginWorldEntryEdit(editWorldEntryButton.dataset.editWorldEntry, editWorldEntryButton.dataset.worldEntryKey);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-world-entry-edit]')) {
+        cancelWorldEntryEdit();
+        return;
+    }
+
+    if (event.target.closest('[data-save-world-entry-edit]')) {
+        try {
+            await saveWorldEntryEdit();
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry-edit', message: error.message });
+            showToast('条目保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const commandButton = event.target.closest('[data-command-route]');
     if (commandButton) {
         const select = commandButton.dataset.commandSelect;
@@ -2761,6 +2863,9 @@ elements.content.addEventListener('input', event => {
     }
     if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
         state.chatEditing.text = event.target.value;
+    }
+    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-world-entry-input]')) {
+        state.worldEntryEditing.content = event.target.value;
     }
 });
 elements.paletteSearch.addEventListener('input', event => {
