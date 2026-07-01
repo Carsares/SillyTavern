@@ -1162,6 +1162,34 @@ async function continueModernReply() {
     await generateAndSaveModernReply(character, state.selected.chat, [...messages], '已继续生成', '新回复已追加到当前聊天。');
 }
 
+async function copyModernMessage(messageIndex) {
+    const index = Number(messageIndex);
+    const messages = getSelectedChatMessages();
+    if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
+        throw new Error('消息位置无效，请刷新后重试。');
+    }
+
+    const message = messages[index];
+    const text = message.extra?.display_text || message.mes || '';
+    if (!text) {
+        throw new Error('消息内容为空。');
+    }
+
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+    } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.append(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+    }
+    showToast('消息已复制', message.name || '当前聊天');
+}
+
 async function deleteModernMessage(messageIndex) {
     if (state.engine.generating) {
         throw new Error('生成中不能删除消息。');
@@ -1573,6 +1601,9 @@ function renderMessage(message, messageIndex) {
                 <strong>${escapeHtml(name)}</strong>
                 <span class="message-actions">
                     <span>${escapeHtml(formatDate(message.send_date))}</span>
+                    <button class="icon-button mini" type="button" data-copy-message="${messageIndex}" title="复制消息">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
                     <button class="icon-button mini" type="button" data-edit-message="${messageIndex}" title="编辑消息" ${isEditing ? 'disabled' : ''}>
                         <i class="fa-solid fa-pen"></i>
                     </button>
@@ -2535,6 +2566,18 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'continue-message', message: error.message });
             showToast('继续生成失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const copyMessageButton = event.target.closest('[data-copy-message]');
+    if (copyMessageButton) {
+        try {
+            await copyModernMessage(copyMessageButton.dataset.copyMessage);
+        } catch (error) {
+            state.errors.push({ key: 'copy-message', message: error.message });
+            showToast('复制消息失败', error.message);
             render();
         }
         return;
