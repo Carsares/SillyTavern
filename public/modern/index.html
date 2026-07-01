@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SillyTavern Modern Workspace</title>
+    <link rel="stylesheet" href="/css/fontawesome.min.css">
+    <link rel="stylesheet" href="/css/solid.min.css">
+    <link rel="stylesheet" href="/modern/styles.css">
+</head>
+<body>
+    <div class="modern-app" id="modernApp">
+        <aside class="sidebar" aria-label="主导航">
+            <a class="brand" href="/modern/" aria-label="SillyTavern Modern">
+                <span class="brand-mark">ST</span>
+                <span>
+                    <span class="brand-title">SillyTavern</span>
+                    <span class="brand-subtitle">Modern Workspace</span>
+                </span>
+            </a>
+            <nav class="nav-list" id="navList"></nav>
+            <div class="sidebar-footer">
+                <a class="ghost-link" href="/" title="返回原版界面">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    <span>原版界面</span>
+                </a>
+            </div>
+        </aside>
+
+        <div class="workspace">
+            <header class="topbar">
+                <button class="icon-button mobile-menu" id="mobileMenuButton" type="button" title="导航">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <label class="command-input" for="globalSearch">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input id="globalSearch" type="search" placeholder="搜索角色、世界书、预设、扩展">
+                    <kbd>⌘K</kbd>
+                </label>
+                <div class="topbar-actions">
+                    <span class="status-pill" id="connectionStatus">
+                        <span class="dot muted"></span>
+                        <span>读取中</span>
+                    </span>
+                    <button class="icon-button" id="refreshButton" type="button" title="刷新数据">
+                        <i class="fa-solid fa-rotate"></i>
+                    </button>
+                    <button class="icon-button" id="themeButton" type="button" title="切换主题">
+                        <i class="fa-solid fa-circle-half-stroke"></i>
+                    </button>
+                </div>
+            </header>
+
+            <main class="content" id="content" tabindex="-1"></main>
+        </div>
+
+        <aside class="inspector" id="inspector" aria-label="上下文检查器"></aside>
+    </div>
+
+    <div class="command-palette" id="commandPalette" hidden>
+        <div class="palette-panel" role="dialog" aria-modal="true" aria-label="快速跳转">
+            <label class="palette-search" for="paletteSearch">
+                <i class="fa-solid fa-terminal"></i>
+                <input id="paletteSearch" type="search" placeholder="输入页面名称或资源名称">
+            </label>
+            <div class="palette-results" id="paletteResults"></div>
+        </div>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+    <script type="module" src="/modern/app.js"></script>
+</body>
+</html>

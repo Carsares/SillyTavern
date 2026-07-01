@@ -221,6 +221,17 @@ app.get('/', cacheBuster.middleware, (request, response) => {
     return response.sendFile('index.html', { root: path.join(serverDirectory, 'public') });
 });
 
+// Host modern workspace page
+app.get(['/modern', '/modern/', '/modern/index.html'], cacheBuster.middleware, (request, response) => {
+    if (shouldRedirectToLogin(request)) {
+        const query = request.url.split('?')[1];
+        const redirectUrl = query ? `/login?${query}` : '/login';
+        return response.redirect(redirectUrl);
+    }
+
+    return response.sendFile('modern/index.html', { root: path.join(serverDirectory, 'public') });
+});
+
 // Callback endpoint for OAuth PKCE flows (e.g. OpenRouter)
 app.get('/callback/:source?', (request, response) => {
     const source = request.params.source;
