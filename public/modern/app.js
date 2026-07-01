@@ -14,6 +14,34 @@ const routes = [
 
 const routeLabels = Object.fromEntries(routes.map(route => [route.id, route.label]));
 const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
+const chatCompletionModelFields = {
+    openai: 'openai_model',
+    claude: 'claude_model',
+    openrouter: 'openrouter_model',
+    ai21: 'ai21_model',
+    makersuite: 'google_model',
+    vertexai: 'vertexai_model',
+    mistralai: 'mistralai_model',
+    custom: 'custom_model',
+    cohere: 'cohere_model',
+    perplexity: 'perplexity_model',
+    groq: 'groq_model',
+    chutes: 'chutes_model',
+    electronhub: 'electronhub_model',
+    nanogpt: 'nanogpt_model',
+    deepseek: 'deepseek_model',
+    aimlapi: 'aimlapi_model',
+    xai: 'xai_model',
+    pollinations: 'pollinations_model',
+    moonshot: 'moonshot_model',
+    fireworks: 'fireworks_model',
+    cometapi: 'cometapi_model',
+    azure_openai: 'azure_openai_model',
+    zai: 'zai_model',
+    siliconflow: 'siliconflow_model',
+    workers_ai: 'workers_ai_model',
+    minimax: 'minimax_model',
+};
 
 const state = {
     route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -596,35 +624,7 @@ function getOaiSettings() {
 }
 
 function getChatCompletionModel(settings, source) {
-    const modelFields = {
-        openai: 'openai_model',
-        claude: 'claude_model',
-        openrouter: 'openrouter_model',
-        ai21: 'ai21_model',
-        makersuite: 'google_model',
-        vertexai: 'vertexai_model',
-        mistralai: 'mistralai_model',
-        custom: 'custom_model',
-        cohere: 'cohere_model',
-        perplexity: 'perplexity_model',
-        groq: 'groq_model',
-        chutes: 'chutes_model',
-        electronhub: 'electronhub_model',
-        nanogpt: 'nanogpt_model',
-        deepseek: 'deepseek_model',
-        aimlapi: 'aimlapi_model',
-        xai: 'xai_model',
-        pollinations: 'pollinations_model',
-        moonshot: 'moonshot_model',
-        fireworks: 'fireworks_model',
-        cometapi: 'cometapi_model',
-        azure_openai: 'azure_openai_model',
-        zai: 'zai_model',
-        siliconflow: 'siliconflow_model',
-        workers_ai: 'workers_ai_model',
-        minimax: 'minimax_model',
-    };
-    const field = modelFields[source] || 'openai_model';
+    const field = chatCompletionModelFields[source] || 'openai_model';
     return settings[field] || settings.openai_model || '';
 }
 
@@ -656,6 +656,30 @@ function getChatCompletionSettings() {
         reverseProxy: settings.reverse_proxy || '',
         proxyPassword: settings.proxy_password || '',
     };
+}
+
+async function saveApiConnectionFromForm() {
+    const oaiSettings = state.settings.oai_settings || {};
+    const source = oaiSettings.chat_completion_source || state.settings.chat_completion_source || '';
+    const modelField = chatCompletionModelFields[source];
+    const modelInput = elements.content.querySelector('[data-api-model]');
+    const endpointInput = elements.content.querySelector('[data-api-endpoint]');
+    const model = modelInput?.value.trim() || '';
+    const endpoint = endpointInput?.value || '';
+
+    if (!modelField || !model) {
+        throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
+    }
+
+    state.settings.oai_settings = oaiSettings;
+    oaiSettings[modelField] = model;
+    if (source === 'siliconflow') {
+        oaiSettings.siliconflow_endpoint = endpoint === 'global' ? 'global' : 'cn';
+    }
+
+    await apiFetch('/api/settings/save', { body: state.settings });
+    await loadData({ silent: true });
+    showToast('连接配置已保存', `${source} / ${model}`);
 }
 
 function uniqueValues(values) {
@@ -1789,6 +1813,7 @@ function renderApi() {
                     <span class="badge ${state.apiTest.status === '失败' ? 'danger' : ''}">${escapeHtml(state.apiTest.status)}</span>
                     <span>${escapeHtml(state.apiTest.detail)}</span>
                 </div>
+                ${renderApiConnectionEditor(provider)}
             </section>
             <section class="panel">
                 <div class="panel-header">
@@ -1862,6 +1887,39 @@ function renderApi() {
                 </article>
             </div>
         </section>
+    `;
+}
+
+function renderApiConnectionEditor(provider) {
+    if (provider.api !== 'openai' || provider.chatSource !== 'siliconflow') {
+        return `
+            <div class="settings-form">
+                <div class="muted">当前连接暂不在现代页编辑，仍可使用原版连接配置。</div>
+            </div>
+        `;
+    }
+
+    const settings = state.settings.oai_settings || {};
+    const endpoint = settings.siliconflow_endpoint === 'global' ? 'global' : 'cn';
+
+    return `
+        <div class="settings-form">
+            <label class="field-label">
+                <span>SiliconFlow 模型</span>
+                <input class="text-input" type="text" data-api-model value="${escapeHtml(provider.model)}" autocomplete="off">
+            </label>
+            <label class="field-label">
+                <span>端点</span>
+                <select class="select-input" data-api-endpoint>
+                    <option value="cn" ${endpoint === 'cn' ? 'selected' : ''}>China (api.siliconflow.cn)</option>
+                    <option value="global" ${endpoint === 'global' ? 'selected' : ''}>Global (api.siliconflow.com)</option>
+                </select>
+            </label>
+            <button class="secondary-button" type="button" data-save-api-connection>
+                <i class="fa-solid fa-floppy-disk"></i>
+                保存连接字段
+            </button>
+        </div>
     `;
 }
 
@@ -2352,6 +2410,17 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'api-test', message: error.message });
             showToast('连接测试失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-save-api-connection]')) {
+        try {
+            await saveApiConnectionFromForm();
+        } catch (error) {
+            state.errors.push({ key: 'api-save', message: error.message });
+            showToast('连接配置保存失败', error.message);
             render();
         }
         return;
