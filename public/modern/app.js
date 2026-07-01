@@ -1053,12 +1053,21 @@ async function sendModernMessage() {
     messages.push(createUserMessage(draft));
     state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
     state.chatDrafts[draftKey] = '';
+
+    await saveModernChat(character, chatId, messages);
+    await generateAndSaveModernReply(character, chatId, messages, '消息已生成', '回复已保存到当前聊天文件。');
+}
+
+async function generateAndSaveModernReply(character, chatId, messages, toastTitle, toastMessage) {
+    if (state.engine.generating) {
+        return;
+    }
+
     state.engine.generating = true;
     state.engine.status = '生成中';
     state.engine.error = '';
     render();
 
-    await saveModernChat(character, chatId, messages);
     generationAbortController = new AbortController();
 
     try {
@@ -1067,11 +1076,11 @@ async function sendModernMessage() {
         await saveModernChat(character, chatId, savedMessages);
         await refreshSelectedChatList(character);
         state.engine.status = '就绪';
-        showToast('消息已生成', '回复已保存到当前聊天文件。');
+        showToast(toastTitle, toastMessage);
     } catch (error) {
         if (error.name === 'AbortError') {
             state.engine.status = '已停止';
-            showToast('已停止生成', '用户消息已保存，未追加模型回复。');
+            showToast('已停止生成', '聊天文件未追加模型回复。');
         } else {
             state.engine.error = error.message;
             state.engine.status = '生成失败';
@@ -1082,6 +1091,28 @@ async function sendModernMessage() {
         state.engine.generating = false;
         render();
     }
+}
+
+async function regenerateModernReply() {
+    if (state.engine.generating) {
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    if (!character?.avatar || !state.selected.chat) {
+        throw new Error('请先选择一个聊天文件');
+    }
+
+    const messages = getSelectedChatMessages();
+    if (!messages.length) {
+        throw new Error('当前聊天没有可重生成的上下文');
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    const replacesAssistant = lastMessage && !lastMessage.is_user && !lastMessage.is_system;
+    const promptMessages = replacesAssistant ? messages.slice(0, -1) : [...messages];
+    const toastMessage = replacesAssistant ? '最后一条助手回复已替换。' : '已为最后一条用户消息追加新回复。';
+    await generateAndSaveModernReply(character, state.selected.chat, promptMessages, '回复已重生成', toastMessage);
 }
 
 function stopModernGeneration() {
@@ -1369,6 +1400,12 @@ function renderChatThread(character) {
                 <i class="fa-solid ${state.engine.generating ? 'fa-circle-notch fa-spin' : 'fa-paper-plane'}"></i>
                 ${state.engine.generating ? '生成中' : '发送'}
             </button>
+            ${!state.engine.generating && messages.length ? `
+                <button class="secondary-button" type="button" data-regenerate-message>
+                    <i class="fa-solid fa-rotate-right"></i>
+                    重生成
+                </button>
+            ` : ''}
             ${state.engine.generating ? `
                 <button class="secondary-button" type="button" data-stop-generation>
                     <i class="fa-solid fa-stop"></i>
@@ -2284,6 +2321,17 @@ async function handleClick(event) {
 
     if (event.target.closest('[data-stop-generation]')) {
         await stopModernGeneration();
+        return;
+    }
+
+    if (event.target.closest('[data-regenerate-message]')) {
+        try {
+            await regenerateModernReply();
+        } catch (error) {
+            state.errors.push({ key: 'regenerate', message: error.message });
+            showToast('重生成失败', error.message);
+            render();
+        }
         return;
     }
 
