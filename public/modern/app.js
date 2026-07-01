@@ -1144,6 +1144,24 @@ async function regenerateModernReply() {
     await generateAndSaveModernReply(character, state.selected.chat, promptMessages, '回复已重生成', toastMessage);
 }
 
+async function continueModernReply() {
+    if (state.engine.generating) {
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    if (!character?.avatar || !state.selected.chat) {
+        throw new Error('请先选择一个聊天文件');
+    }
+
+    const messages = getSelectedChatMessages();
+    if (!messages.length) {
+        throw new Error('当前聊天没有可继续生成的上下文');
+    }
+
+    await generateAndSaveModernReply(character, state.selected.chat, [...messages], '已继续生成', '新回复已追加到当前聊天。');
+}
+
 async function deleteModernMessage(messageIndex) {
     if (state.engine.generating) {
         throw new Error('生成中不能删除消息。');
@@ -1514,6 +1532,10 @@ function renderChatThread(character) {
                 ${state.engine.generating ? '生成中' : '发送'}
             </button>
             ${!state.engine.generating && messages.length ? `
+                <button class="secondary-button" type="button" data-continue-message>
+                    <i class="fa-solid fa-forward-step"></i>
+                    继续
+                </button>
                 <button class="secondary-button" type="button" data-regenerate-message>
                     <i class="fa-solid fa-rotate-right"></i>
                     重生成
@@ -2502,6 +2524,17 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'regenerate', message: error.message });
             showToast('重生成失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-continue-message]')) {
+        try {
+            await continueModernReply();
+        } catch (error) {
+            state.errors.push({ key: 'continue-message', message: error.message });
+            showToast('继续生成失败', error.message);
             render();
         }
         return;
