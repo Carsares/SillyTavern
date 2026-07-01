@@ -647,20 +647,99 @@ function getChatCompletionSettings() {
     };
 }
 
-function buildModernSystemPrompt(character) {
+function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean))];
+}
+
+function getActiveWorldNames(character, chatId) {
+    const globalWorlds = state.settings.world_info_settings?.world_info?.globalSelect || [];
+    const characterWorld = character?.data?.extensions?.world || '';
+    const chatWorld = getSelectedChatMetadata(character, chatId)?.world_info || '';
+    return uniqueValues([...globalWorlds, characterWorld, chatWorld]);
+}
+
+function getWorldEntries(worldName, detail) {
+    const entries = detail?.entries || {};
+    return Object.values(entries).map(entry => ({
+        ...entry,
+        world: worldName,
+    }));
+}
+
+function entryKeywordMatches(entry, text) {
+    if (entry.constant) {
+        return true;
+    }
+    if (!Array.isArray(entry.key) || entry.key.length === 0) {
+        return false;
+    }
+
+    const caseSensitive = entry.caseSensitive ?? state.settings.world_info_settings?.world_info_case_sensitive;
+    const sourceText = caseSensitive ? text : text.toLowerCase();
+    return entry.key.some(keyword => {
+        const value = String(keyword || '').trim();
+        if (!value) {
+            return false;
+        }
+        const needle = caseSensitive ? value : value.toLowerCase();
+        return sourceText.includes(needle);
+    });
+}
+
+function getWorldSearchText(character, messages) {
+    return [
+        getCharacterName(character),
+        character?.data?.scenario || '',
+        ...messages.slice(-8).map(message => message?.mes || ''),
+    ].join('\n');
+}
+
+async function getModernWorldContext(character, messages) {
+    const worldNames = getActiveWorldNames(character, state.selected.chat);
+    if (!worldNames.length) {
+        return '';
+    }
+
+    const searchText = getWorldSearchText(character, messages);
+    const allEntries = [];
+    for (const worldName of worldNames) {
+        await loadWorldDetail(worldName);
+        allEntries.push(...getWorldEntries(worldName, state.worldDetails[worldName]));
+    }
+
+    const matchedEntries = allEntries
+        .filter(entry => !entry.disable && entry.content && entryKeywordMatches(entry, searchText))
+        .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+        .slice(0, 8);
+
+    return matchedEntries.map(entry => {
+        const label = entry.comment || entry.key?.join(', ') || entry.world;
+        return `[${entry.world}${label ? ` / ${label}` : ''}]\n${formatTemplate(entry.content, character)}`;
+    }).join('\n\n');
+}
+
+function getPresetSystemPrompt(character) {
+    const prompts = getOaiSettings().prompts || [];
+    const mainPrompt = prompts.find(prompt => prompt.identifier === 'main' && prompt.content)?.content;
+    return formatTemplate(mainPrompt || state.settings.power_user?.sysprompt?.content || `Write ${getCharacterName(character)}'s next reply in a fictional chat between ${getCharacterName(character)} and ${getUserName()}.`, character);
+}
+
+function buildModernSystemPrompt(character, worldContext = '') {
     const lines = [
-        `你正在扮演 ${getCharacterName(character)}。保持角色设定，延续当前对话，用自然的语言回复用户。`,
+        getPresetSystemPrompt(character),
         character?.data?.description ? `角色描述：${formatTemplate(character.data.description, character)}` : '',
         character?.data?.personality ? `性格：${formatTemplate(character.data.personality, character)}` : '',
         character?.data?.scenario ? `场景：${formatTemplate(character.data.scenario, character)}` : '',
         character?.data?.creator_notes ? `创作者备注：${formatTemplate(character.data.creator_notes, character)}` : '',
+        worldContext ? `世界书：\n${worldContext}` : '',
     ];
     return lines.filter(Boolean).join('\n\n');
 }
 
-function buildModernPromptMessages(character, messages) {
+async function buildModernPromptMessages(character, messages) {
+    const worldContext = await getModernWorldContext(character, messages);
     const promptMessages = [
-        { role: 'system', content: buildModernSystemPrompt(character) },
+        { role: 'system', content: buildModernSystemPrompt(character, worldContext) },
     ];
 
     messages
@@ -707,8 +786,9 @@ function extractAssistantText(response) {
 
 async function generateModernReply(character, messages, signal) {
     const settings = getChatCompletionSettings();
+    const promptMessages = await buildModernPromptMessages(character, messages);
     const response = await apiFetch('/api/backends/chat-completions/generate', {
-        body: createChatCompletionRequestBody(settings, buildModernPromptMessages(character, messages)),
+        body: createChatCompletionRequestBody(settings, promptMessages),
         signal,
     });
     return {
