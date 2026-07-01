@@ -846,6 +846,29 @@ tr:last-child td {
     gap: 8px;
 }
 
+.message-edit {
+    display: grid;
+    gap: 8px;
+}
+
+.message-edit textarea {
+    width: 100%;
+    min-height: 120px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
+.message-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
 .message-foot {
     justify-content: flex-start;
     margin: 8px 0 0;

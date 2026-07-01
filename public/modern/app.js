@@ -69,6 +69,11 @@ const state = {
     chatMetadata: {},
     loadingChats: {},
     chatDrafts: {},
+    chatEditing: {
+        key: '',
+        index: -1,
+        text: '',
+    },
     engine: {
         generating: false,
         status: '就绪',
@@ -1162,6 +1167,67 @@ async function deleteModernMessage(messageIndex) {
     render();
 }
 
+function beginModernMessageEdit(messageIndex) {
+    if (state.engine.generating) {
+        showToast('暂不能编辑', '生成中不能编辑消息。');
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    const index = Number(messageIndex);
+    const messages = getSelectedChatMessages();
+    if (!character?.avatar || !state.selected.chat || !Number.isInteger(index) || index < 0 || index >= messages.length) {
+        showToast('编辑失败', '消息位置无效，请刷新后重试。');
+        return;
+    }
+
+    const message = messages[index];
+    state.chatEditing = {
+        key: getChatCacheKey(character.avatar, state.selected.chat),
+        index,
+        text: message.extra?.display_text || message.mes || '',
+    };
+    render();
+}
+
+function cancelModernMessageEdit() {
+    state.chatEditing = { key: '', index: -1, text: '' };
+    render();
+}
+
+async function saveModernMessageEdit() {
+    if (state.engine.generating) {
+        throw new Error('生成中不能保存编辑。');
+    }
+
+    const character = getSelectedCharacter();
+    const editKey = getChatCacheKey(character?.avatar, state.selected.chat);
+    const edit = state.chatEditing;
+    const text = edit.text.trim();
+    const messages = [...getSelectedChatMessages()];
+    if (!character?.avatar || !state.selected.chat || edit.key !== editKey || edit.index < 0 || edit.index >= messages.length) {
+        throw new Error('编辑目标已变化，请重新选择消息。');
+    }
+    if (!text) {
+        throw new Error('消息内容不能为空。');
+    }
+
+    const nextMessage = {
+        ...messages[edit.index],
+        mes: text,
+    };
+    if (nextMessage.extra?.display_text !== undefined) {
+        nextMessage.extra = { ...nextMessage.extra, display_text: text };
+    }
+    messages[edit.index] = nextMessage;
+
+    await saveModernChat(character, state.selected.chat, messages);
+    await refreshSelectedChatList(character);
+    state.chatEditing = { key: '', index: -1, text: '' };
+    showToast('消息已保存', nextMessage.name || '当前聊天');
+    render();
+}
+
 function stopModernGeneration() {
     generationAbortController?.abort();
     state.engine.generating = false;
@@ -1477,6 +1543,7 @@ function renderMessage(message, messageIndex) {
     const name = message.name || (message.is_user ? 'You' : 'Character');
     const text = message.extra?.display_text || message.mes || '[空消息]';
     const model = message.extra?.model || message.extra?.api || '';
+    const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
 
     return `
         <article class="message ${message.is_user ? 'user' : ''}">
@@ -1484,12 +1551,29 @@ function renderMessage(message, messageIndex) {
                 <strong>${escapeHtml(name)}</strong>
                 <span class="message-actions">
                     <span>${escapeHtml(formatDate(message.send_date))}</span>
+                    <button class="icon-button mini" type="button" data-edit-message="${messageIndex}" title="编辑消息" ${isEditing ? 'disabled' : ''}>
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
                     <button class="icon-button mini danger" type="button" data-delete-message="${messageIndex}" title="删除消息">
                         <i class="fa-solid fa-trash"></i>
                     </button>
                 </span>
             </header>
-            <div>${escapeHtml(text)}</div>
+            ${isEditing ? `
+                <div class="message-edit">
+                    <textarea data-edit-message-input="${messageIndex}">${escapeHtml(state.chatEditing.text)}</textarea>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-edit-message>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="primary-button" type="button" data-save-edit-message>
+                            <i class="fa-solid fa-check"></i>
+                            保存
+                        </button>
+                    </div>
+                </div>
+            ` : `<div>${escapeHtml(text)}</div>`}
             ${model ? `<footer class="message-foot">${escapeHtml(model)}</footer>` : ''}
         </article>
     `;
@@ -2435,6 +2519,28 @@ async function handleClick(event) {
         return;
     }
 
+    const editMessageButton = event.target.closest('[data-edit-message]');
+    if (editMessageButton) {
+        beginModernMessageEdit(editMessageButton.dataset.editMessage);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-edit-message]')) {
+        cancelModernMessageEdit();
+        return;
+    }
+
+    if (event.target.closest('[data-save-edit-message]')) {
+        try {
+            await saveModernMessageEdit();
+        } catch (error) {
+            state.errors.push({ key: 'edit-message', message: error.message });
+            showToast('保存消息失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-new-chat]')) {
         try {
             await startNewModernChat();
@@ -2538,6 +2644,9 @@ elements.search.addEventListener('input', event => {
 elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
         setCurrentDraft(event.target.value);
+    }
+    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
+        state.chatEditing.text = event.target.value;
     }
 });
 elements.paletteSearch.addEventListener('input', event => {
