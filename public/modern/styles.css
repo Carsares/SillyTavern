@@ -483,6 +483,14 @@ kbd {
     border-top: 1px solid var(--border);
 }
 
+.inline-form {
+    margin: 0 0 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
 .field-label {
     display: grid;
     gap: 6px;
@@ -614,6 +622,10 @@ kbd {
     align-items: flex-start;
     gap: 16px;
     margin-bottom: 16px;
+}
+
+.detail-actions {
+    margin-left: auto;
 }
 
 .compact-hero {

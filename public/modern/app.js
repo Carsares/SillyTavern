@@ -74,6 +74,10 @@ const state = {
         index: -1,
         text: '',
     },
+    chatRenaming: {
+        key: '',
+        name: '',
+    },
     worldEntryEditing: {
         worldbookId: '',
         entryKey: '',
@@ -157,6 +161,10 @@ function formatDate(value) {
         hour: '2-digit',
         minute: '2-digit',
     }).format(date);
+}
+
+function stripJsonlExtension(value) {
+    return String(value || '').replace(/\.jsonl$/i, '');
 }
 
 function getAvatarUrl(character) {
@@ -627,6 +635,70 @@ async function saveModernChat(character, chatId, messages) {
     }
 
     state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
+}
+
+function beginModernChatRename() {
+    const character = getSelectedCharacter();
+    if (!character?.avatar || !state.selected.chat) {
+        showToast('重命名失败', '请先选择一个聊天文件。');
+        return;
+    }
+
+    const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
+    state.chatRenaming = {
+        key: getChatCacheKey(character.avatar, state.selected.chat),
+        name: stripJsonlExtension(selectedChat?.file_name || state.selected.chat),
+    };
+    render();
+}
+
+function cancelModernChatRename() {
+    state.chatRenaming = { key: '', name: '' };
+    render();
+}
+
+async function saveModernChatRename() {
+    const character = getSelectedCharacter();
+    const oldChatId = stripJsonlExtension(state.selected.chat);
+    const newChatId = stripJsonlExtension(state.chatRenaming.name.trim());
+    const renameKey = getChatCacheKey(character?.avatar, state.selected.chat);
+    if (!character?.avatar || !oldChatId || !newChatId || state.chatRenaming.key !== renameKey) {
+        throw new Error('重命名目标已变化，请重新选择聊天。');
+    }
+    if (oldChatId === newChatId) {
+        cancelModernChatRename();
+        return;
+    }
+
+    const result = await apiFetch('/api/chats/rename', {
+        body: {
+            avatar_url: character.avatar,
+            original_file: `${oldChatId}.jsonl`,
+            renamed_file: `${newChatId}.jsonl`,
+            is_group: false,
+        },
+    });
+    if (result?.error) {
+        throw new Error('聊天文件重命名失败，可能存在同名文件。');
+    }
+
+    const renamedChatId = stripJsonlExtension(result?.sanitizedFileName || newChatId);
+    const oldKey = getChatCacheKey(character.avatar, oldChatId);
+    const newKey = getChatCacheKey(character.avatar, renamedChatId);
+    state.selected.chat = renamedChatId;
+    if (state.chatMessages[oldKey]) {
+        state.chatMessages[newKey] = state.chatMessages[oldKey];
+        delete state.chatMessages[oldKey];
+    }
+    if (state.chatMetadata[oldKey]) {
+        state.chatMetadata[newKey] = state.chatMetadata[oldKey];
+        delete state.chatMetadata[oldKey];
+    }
+    state.chatRenaming = { key: '', name: '' };
+    await refreshSelectedChatList(character);
+    await loadChatMessages(character, renamedChatId);
+    showToast('聊天已重命名', `${oldChatId} → ${renamedChatId}`);
+    render();
 }
 
 function getOaiSettings() {
@@ -1606,6 +1678,7 @@ function renderChatThread(character) {
     const chats = getSelectedChatList();
     const selectedChat = chats.find(chat => chat.file_id === state.selected.chat);
     const messages = getSelectedChatMessages();
+    const isRenaming = state.chatRenaming.key === getChatCacheKey(character.avatar, state.selected.chat);
 
     return `
         <div class="detail-hero">
@@ -1620,7 +1693,16 @@ function renderChatThread(character) {
                     <span class="tag">${escapeHtml(state.engine.status)}</span>
                 </div>
             </div>
+            ${selectedChat ? `
+                <div class="page-actions detail-actions">
+                    <button class="secondary-button" type="button" data-rename-chat ${isRenaming ? 'disabled' : ''}>
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        重命名
+                    </button>
+                </div>
+            ` : ''}
         </div>
+        ${isRenaming ? renderChatRenamePanel() : ''}
         ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         <div class="composer">
             <textarea data-chat-input placeholder="输入消息，按 Ctrl/⌘ + Enter 发送">${escapeHtml(getCurrentDraft())}</textarea>
@@ -1644,6 +1726,27 @@ function renderChatThread(character) {
                     停止
                 </button>
             ` : ''}
+        </div>
+    `;
+}
+
+function renderChatRenamePanel() {
+    return `
+        <div class="settings-form inline-form">
+            <label class="field-label">
+                <span>聊天文件名</span>
+                <input class="text-input" type="text" data-chat-rename-input value="${escapeHtml(state.chatRenaming.name)}" autocomplete="off">
+            </label>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-chat-rename>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" data-save-chat-rename>
+                    <i class="fa-solid fa-check"></i>
+                    保存
+                </button>
+            </div>
         </div>
     `;
 }
@@ -2734,6 +2837,27 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-rename-chat]')) {
+        beginModernChatRename();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-chat-rename]')) {
+        cancelModernChatRename();
+        return;
+    }
+
+    if (event.target.closest('[data-save-chat-rename]')) {
+        try {
+            await saveModernChatRename();
+        } catch (error) {
+            state.errors.push({ key: 'rename-chat', message: error.message });
+            showToast('聊天重命名失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-test-api]')) {
         try {
             await testApiConnection();
@@ -2866,6 +2990,9 @@ elements.content.addEventListener('input', event => {
     }
     if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-world-entry-input]')) {
         state.worldEntryEditing.content = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-rename-input]')) {
+        state.chatRenaming.name = event.target.value;
     }
 });
 elements.paletteSearch.addEventListener('input', event => {
