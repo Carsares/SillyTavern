@@ -163,6 +163,17 @@ function getPresetCount() {
     return getPresetGroups().reduce((total, group) => total + group.names.length, 0);
 }
 
+function getPresetItems(group) {
+    return group.names
+        .map((name, index) => ({
+            name,
+            content: group.contents[index],
+            active: group.id === 'openai' && name === getOaiSettings().preset_settings_openai,
+            actionable: group.id === 'openai',
+        }))
+        .filter(item => matchesQuery(item.name, group.label, group.id));
+}
+
 function getPersonas() {
     const powerUser = state.settings.power_user || state.settings;
     const personas = powerUser.personas || {};
@@ -722,6 +733,118 @@ function getPresetSystemPrompt(character) {
     const prompts = getOaiSettings().prompts || [];
     const mainPrompt = prompts.find(prompt => prompt.identifier === 'main' && prompt.content)?.content;
     return formatTemplate(mainPrompt || state.settings.power_user?.sysprompt?.content || `Write ${getCharacterName(character)}'s next reply in a fictional chat between ${getCharacterName(character)} and ${getUserName()}.`, character);
+}
+
+function parsePreset(rawPreset) {
+    if (!rawPreset) {
+        return null;
+    }
+    if (typeof rawPreset === 'string') {
+        try {
+            return JSON.parse(rawPreset);
+        } catch {
+            return null;
+        }
+    }
+    return structuredClone(rawPreset);
+}
+
+function applyOpenAiPresetFields(settings, preset) {
+    const fieldMap = {
+        temperature: ['temp_openai', false],
+        frequency_penalty: ['freq_pen_openai', false],
+        presence_penalty: ['pres_pen_openai', false],
+        top_p: ['top_p_openai', false],
+        top_k: ['top_k_openai', false],
+        top_a: ['top_a_openai', false],
+        min_p: ['min_p_openai', false],
+        repetition_penalty: ['repetition_penalty_openai', false],
+        max_context_unlocked: ['max_context_unlocked', false],
+        openai_max_context: ['openai_max_context', false],
+        openai_max_tokens: ['openai_max_tokens', false],
+        names_behavior: ['names_behavior', false],
+        send_if_empty: ['send_if_empty', false],
+        impersonation_prompt: ['impersonation_prompt', false],
+        new_chat_prompt: ['new_chat_prompt', false],
+        new_group_chat_prompt: ['new_group_chat_prompt', false],
+        new_example_chat_prompt: ['new_example_chat_prompt', false],
+        continue_nudge_prompt: ['continue_nudge_prompt', false],
+        bias_preset_selected: ['bias_preset_selected', false],
+        wi_format: ['wi_format', false],
+        scenario_format: ['scenario_format', false],
+        personality_format: ['personality_format', false],
+        group_nudge_prompt: ['group_nudge_prompt', false],
+        stream_openai: ['stream_openai', false],
+        prompts: ['prompts', false],
+        prompt_order: ['prompt_order', false],
+        chat_completion_source: ['chat_completion_source', true],
+        openai_model: ['openai_model', true],
+        claude_model: ['claude_model', true],
+        openrouter_model: ['openrouter_model', true],
+        ai21_model: ['ai21_model', true],
+        mistralai_model: ['mistralai_model', true],
+        cohere_model: ['cohere_model', true],
+        perplexity_model: ['perplexity_model', true],
+        groq_model: ['groq_model', true],
+        chutes_model: ['chutes_model', true],
+        siliconflow_model: ['siliconflow_model', true],
+        siliconflow_endpoint: ['siliconflow_endpoint', true],
+        minimax_model: ['minimax_model', true],
+        minimax_endpoint: ['minimax_endpoint', true],
+        electronhub_model: ['electronhub_model', true],
+        nanogpt_model: ['nanogpt_model', true],
+        deepseek_model: ['deepseek_model', true],
+        aimlapi_model: ['aimlapi_model', true],
+        xai_model: ['xai_model', true],
+        pollinations_model: ['pollinations_model', true],
+        moonshot_model: ['moonshot_model', true],
+        fireworks_model: ['fireworks_model', true],
+        cometapi_model: ['cometapi_model', true],
+        custom_model: ['custom_model', true],
+        custom_url: ['custom_url', true],
+        custom_include_body: ['custom_include_body', true],
+        custom_exclude_body: ['custom_exclude_body', true],
+        custom_include_headers: ['custom_include_headers', true],
+        custom_prompt_post_processing: ['custom_prompt_post_processing', true],
+        google_model: ['google_model', true],
+        vertexai_model: ['vertexai_model', true],
+        zai_model: ['zai_model', true],
+        zai_endpoint: ['zai_endpoint', true],
+        workers_ai_model: ['workers_ai_model', true],
+        workers_ai_account_id: ['workers_ai_account_id', true],
+        reverse_proxy: ['reverse_proxy', true],
+        proxy_password: ['proxy_password', true],
+    };
+    const useConnectionFields = Boolean(settings.bind_preset_to_connection);
+
+    for (const [presetKey, [settingsKey, isConnection]] of Object.entries(fieldMap)) {
+        if (isConnection && !useConnectionFields) {
+            continue;
+        }
+        if (preset[presetKey] !== undefined) {
+            settings[settingsKey] = structuredClone(preset[presetKey]);
+        }
+    }
+
+    if (preset.extensions) {
+        settings.extensions = structuredClone(preset.extensions);
+    }
+}
+
+async function useOpenAiPreset(presetName) {
+    const group = getPresetGroups().find(item => item.id === 'openai');
+    const presetIndex = group?.names.indexOf(presetName) ?? -1;
+    const preset = parsePreset(presetIndex >= 0 ? group.contents[presetIndex] : null);
+    if (!preset) {
+        throw new Error('预设读取失败。');
+    }
+
+    state.settings.oai_settings = state.settings.oai_settings || {};
+    state.settings.oai_settings.preset_settings_openai = presetName;
+    applyOpenAiPresetFields(state.settings.oai_settings, preset);
+    await apiFetch('/api/settings/save', { body: state.settings });
+    await loadData({ silent: true });
+    showToast('预设已切换', `当前聊天补全预设：${presetName}`);
 }
 
 function buildModernSystemPrompt(character, worldContext = '') {
@@ -1407,8 +1530,8 @@ function renderWorldbookDetail(worldbook) {
 
 function renderPresets() {
     const groups = getPresetGroups()
-        .map(group => ({ ...group, names: group.names.filter(name => matchesQuery(name, group.label, group.id)) }))
-        .filter(group => group.names.length > 0);
+        .map(group => ({ ...group, items: getPresetItems(group) }))
+        .filter(group => group.items.length > 0);
 
     return `
         ${pageHead('预设管理', '模型参数、指令模板和上下文模板。', `
@@ -1423,19 +1546,20 @@ function renderPresets() {
                     <div class="card-head">
                         <div>
                             <h2 class="card-title">${escapeHtml(group.label)}</h2>
-                            <div class="card-meta">${escapeHtml(group.id)} · ${formatNumber(group.names.length)} 个</div>
+                            <div class="card-meta">${escapeHtml(group.id)} · ${formatNumber(group.items.length)} 个</div>
                         </div>
-                        <span class="badge">${formatNumber(group.names.length)}</span>
+                        <span class="badge">${formatNumber(group.items.length)}</span>
                     </div>
                     <div class="resource-list scroll-list">
-                        ${group.names.map((name, index) => `
-                            <div class="resource-row">
+                        ${group.items.map(item => `
+                            <${item.actionable ? 'button' : 'div'} class="resource-row ${item.active ? 'active' : ''}" ${item.actionable ? `type="button" data-use-openai-preset="${escapeHtml(item.name)}"` : ''}>
                                 <span class="avatar-fallback"><i class="fa-solid fa-file-lines"></i></span>
                                 <span class="row-main">
-                                    <span class="row-title">${escapeHtml(name)}</span>
-                                    <span class="row-subtitle">${escapeHtml(getPresetSummary(group.contents[index]))}</span>
+                                    <span class="row-title">${escapeHtml(item.name)}</span>
+                                    <span class="row-subtitle">${escapeHtml(getPresetSummary(item.content))}</span>
                                 </span>
-                            </div>
+                                ${item.actionable ? `<span class="badge">${item.active ? '当前' : '使用'}</span>` : ''}
+                            </${item.actionable ? 'button' : 'div'}>
                         `).join('')}
                     </div>
                 </article>
@@ -2140,6 +2264,18 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'api-test', message: error.message });
             showToast('连接测试失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const presetButton = event.target.closest('[data-use-openai-preset]');
+    if (presetButton) {
+        try {
+            await useOpenAiPreset(presetButton.dataset.useOpenaiPreset);
+        } catch (error) {
+            state.errors.push({ key: 'preset', message: error.message });
+            showToast('预设切换失败', error.message);
             render();
         }
         return;
