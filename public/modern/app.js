@@ -1139,6 +1139,29 @@ async function regenerateModernReply() {
     await generateAndSaveModernReply(character, state.selected.chat, promptMessages, '回复已重生成', toastMessage);
 }
 
+async function deleteModernMessage(messageIndex) {
+    if (state.engine.generating) {
+        throw new Error('生成中不能删除消息。');
+    }
+
+    const character = getSelectedCharacter();
+    if (!character?.avatar || !state.selected.chat) {
+        throw new Error('请先选择一个聊天文件');
+    }
+
+    const index = Number(messageIndex);
+    const messages = [...getSelectedChatMessages()];
+    if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
+        throw new Error('消息位置无效，请刷新后重试。');
+    }
+
+    const [deletedMessage] = messages.splice(index, 1);
+    await saveModernChat(character, state.selected.chat, messages);
+    await refreshSelectedChatList(character);
+    showToast('消息已删除', deletedMessage?.name || '当前聊天');
+    render();
+}
+
 function stopModernGeneration() {
     generationAbortController?.abort();
     state.engine.generating = false;
@@ -1441,14 +1464,16 @@ function renderChatThread(character) {
 }
 
 function renderMessageList(messages) {
+    const startIndex = Math.max(messages.length - 80, 0);
+
     return `
         <div class="message-list">
-            ${messages.slice(-80).map(message => renderMessage(message)).join('')}
+            ${messages.slice(-80).map((message, index) => renderMessage(message, startIndex + index)).join('')}
         </div>
     `;
 }
 
-function renderMessage(message) {
+function renderMessage(message, messageIndex) {
     const name = message.name || (message.is_user ? 'You' : 'Character');
     const text = message.extra?.display_text || message.mes || '[空消息]';
     const model = message.extra?.model || message.extra?.api || '';
@@ -1457,7 +1482,12 @@ function renderMessage(message) {
         <article class="message ${message.is_user ? 'user' : ''}">
             <header class="message-meta">
                 <strong>${escapeHtml(name)}</strong>
-                <span>${escapeHtml(formatDate(message.send_date))}</span>
+                <span class="message-actions">
+                    <span>${escapeHtml(formatDate(message.send_date))}</span>
+                    <button class="icon-button mini danger" type="button" data-delete-message="${messageIndex}" title="删除消息">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </span>
             </header>
             <div>${escapeHtml(text)}</div>
             ${model ? `<footer class="message-foot">${escapeHtml(model)}</footer>` : ''}
@@ -2388,6 +2418,18 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'regenerate', message: error.message });
             showToast('重生成失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteMessageButton = event.target.closest('[data-delete-message]');
+    if (deleteMessageButton) {
+        try {
+            await deleteModernMessage(deleteMessageButton.dataset.deleteMessage);
+        } catch (error) {
+            state.errors.push({ key: 'delete-message', message: error.message });
+            showToast('删除消息失败', error.message);
             render();
         }
         return;

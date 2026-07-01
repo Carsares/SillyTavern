@@ -320,6 +320,15 @@ kbd {
     color: var(--text-muted);
 }
 
+.icon-button.mini {
+    width: 28px;
+    min-height: 28px;
+}
+
+.icon-button.danger {
+    color: var(--danger);
+}
+
 .icon-button:hover,
 .secondary-button:hover {
     border-color: var(--border-strong);
@@ -829,6 +838,12 @@ tr:last-child td {
 
 .message-meta strong {
     color: var(--text);
+}
+
+.message-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .message-foot {
