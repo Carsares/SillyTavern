@@ -1,0 +1,13 @@
+.settings-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.settings-tabs {
+    margin: 0 0 14px;
+}
+
+.settings-summary-grid {
+    margin-top: 12px;
+}

@@ -138,12 +138,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.settings-edit-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-}
-
 .form-section {
     display: grid;
     gap: 10px;
@@ -305,16 +299,8 @@
     margin-bottom: 14px;
 }
 
-.settings-tabs {
-    margin: 0 0 14px;
-}
-
 .extension-tabs {
     margin: 0 0 14px;
-}
-
-.settings-summary-grid {
-    margin-top: 12px;
 }
 
 .extension-grid {
