@@ -116,6 +116,23 @@ const state = {
         deleteConfirm: false,
         deleting: false,
     },
+    backgroundRenaming: {
+        filename: '',
+        name: '',
+        running: false,
+    },
+    assetDownload: {
+        active: false,
+        url: '',
+        category: 'bgm',
+        filename: '',
+        running: false,
+    },
+    assetDeleteConfirm: {
+        category: '',
+        filename: '',
+        running: false,
+    },
     openAiPresetDraft: {
         name: '',
     },
@@ -371,6 +388,53 @@ function getAssetGroups() {
 
 function getAssetCount() {
     return getAssetGroups().reduce((total, group) => total + group.count, 0);
+}
+
+function getAssetFileName(assetPath) {
+    return String(assetPath || '').split('/').filter(Boolean).pop() || '';
+}
+
+function getAssetRelativeName(category, assetPath) {
+    const value = String(assetPath || '');
+    const prefix = `assets/${category}/`;
+    return value.startsWith(prefix) ? value.slice(prefix.length) : getAssetFileName(value);
+}
+
+function canDeleteAsset(category, assetPath) {
+    const relativeName = getAssetRelativeName(category, assetPath);
+    return ['bgm', 'ambient', 'blip'].includes(category) && relativeName && !relativeName.includes('/');
+}
+
+function getAssetEntries(group, limit = 8) {
+    const entries = [];
+    if (Array.isArray(group.detail)) {
+        group.detail.forEach(assetPath => {
+            entries.push({
+                category: group.name,
+                filename: getAssetRelativeName(group.name, assetPath),
+                path: assetPath,
+                label: getAssetFileName(assetPath),
+                deletable: canDeleteAsset(group.name, assetPath),
+            });
+        });
+    } else if (group.detail && typeof group.detail === 'object') {
+        Object.entries(group.detail).forEach(([section, items]) => {
+            if (!Array.isArray(items)) {
+                return;
+            }
+            items.forEach(assetPath => {
+                entries.push({
+                    category: group.name,
+                    filename: getAssetRelativeName(group.name, assetPath),
+                    path: assetPath,
+                    label: `${section}/${getAssetFileName(assetPath)}`,
+                    deletable: canDeleteAsset(group.name, assetPath),
+                });
+            });
+        });
+    }
+
+    return entries.slice(0, limit);
 }
 
 function getProviderInfo() {
@@ -1725,6 +1789,41 @@ async function uploadBackgroundFile(file) {
     render();
 }
 
+function beginBackgroundRename(filename) {
+    state.backgroundRenaming = { filename, name: filename, running: false };
+    state.backgroundSelection.deleteConfirm = false;
+    render();
+}
+
+function cancelBackgroundRename() {
+    state.backgroundRenaming = { filename: '', name: '', running: false };
+    render();
+}
+
+async function confirmBackgroundRename() {
+    const oldName = state.backgroundRenaming.filename;
+    const newName = state.backgroundRenaming.name.trim();
+    if (!oldName || !newName) {
+        throw new Error('请输入新的背景文件名。');
+    }
+    if (oldName === newName) {
+        cancelBackgroundRename();
+        return;
+    }
+
+    state.backgroundRenaming.running = true;
+    render();
+    try {
+        await apiFetch('/api/backgrounds/rename', { body: { old_bg: oldName, new_bg: newName } });
+        state.backgroundRenaming = { filename: '', name: '', running: false };
+        await loadData({ silent: true });
+        showToast('背景已重命名', `${oldName} → ${newName}`);
+    } finally {
+        state.backgroundRenaming.running = false;
+        render();
+    }
+}
+
 function setBackgroundSelectionMode(active) {
     state.backgroundSelection = {
         active,
@@ -1775,6 +1874,72 @@ async function confirmBackgroundDelete() {
     await loadData({ silent: true });
     showToast('背景已删除', `${formatNumber(filenames.length)} 个文件`);
     render();
+}
+
+function toggleAssetDownload(active = !state.assetDownload.active) {
+    state.assetDownload = {
+        active,
+        url: active ? state.assetDownload.url : '',
+        category: active ? state.assetDownload.category : 'bgm',
+        filename: active ? state.assetDownload.filename : '',
+        running: false,
+    };
+    render();
+}
+
+async function downloadAssetFromForm() {
+    const url = state.assetDownload.url.trim();
+    const filename = state.assetDownload.filename.trim();
+    const category = state.assetDownload.category;
+    if (!url || !filename) {
+        throw new Error('请输入资产 URL 和文件名。');
+    }
+
+    const parsedUrl = new URL(url);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new Error('资产 URL 只支持 HTTP 或 HTTPS。');
+    }
+
+    state.assetDownload.running = true;
+    render();
+    try {
+        await apiFetch('/api/assets/download', { body: { url, category, filename } });
+        state.assetDownload = { active: false, url: '', category: 'bgm', filename: '', running: false };
+        await loadData({ silent: true });
+        showToast('资产已下载', `${category}/${filename}`);
+    } finally {
+        state.assetDownload.running = false;
+        render();
+    }
+}
+
+function beginAssetDelete(category, filename) {
+    state.assetDeleteConfirm = { category, filename, running: false };
+    render();
+}
+
+function cancelAssetDelete() {
+    state.assetDeleteConfirm = { category: '', filename: '', running: false };
+    render();
+}
+
+async function confirmAssetDelete() {
+    const { category, filename } = state.assetDeleteConfirm;
+    if (!category || !filename) {
+        throw new Error('请选择要删除的资产文件。');
+    }
+
+    state.assetDeleteConfirm.running = true;
+    render();
+    try {
+        await apiFetch('/api/assets/delete', { body: { category, filename } });
+        state.assetDeleteConfirm = { category: '', filename: '', running: false };
+        await loadData({ silent: true });
+        showToast('资产已删除', `${category}/${filename}`);
+    } finally {
+        state.assetDeleteConfirm.running = false;
+        render();
+    }
 }
 
 async function recreateStats() {
@@ -4525,6 +4690,10 @@ function renderAssets() {
 
     return `
         ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
+            <button class="primary-button" type="button" data-toggle-asset-download>
+                <i class="fa-solid ${state.assetDownload.active ? 'fa-xmark' : 'fa-cloud-arrow-down'}"></i>
+                ${state.assetDownload.active ? '取消下载' : '下载资产'}
+            </button>
             <label class="secondary-button file-action">
                 <i class="fa-solid fa-upload"></i>
                 上传背景
@@ -4545,6 +4714,7 @@ function renderAssets() {
                 打开素材
             </button>
         `)}
+        ${state.assetDownload.active ? renderAssetDownloadPanel() : ''}
         <div class="metrics-grid">
             ${metricCard('背景', formatNumber(allBackgrounds.length), '背景图片', 'fa-image')}
             ${metricCard('资产文件', formatNumber(getAssetCount()), 'assets 目录', 'fa-folder-tree')}
@@ -4588,12 +4758,61 @@ function renderAssets() {
                         </div>
                         <span class="badge">${formatNumber(group.count)}</span>
                     </div>
-                    <div class="tag-row">
-                        ${renderAssetPreviewTags(group.detail)}
+                    <div class="resource-list compact-list">
+                        ${getAssetEntries(group).map(entry => renderAssetEntryRow(entry)).join('') || renderInlineEmpty('空分类')}
                     </div>
+                    ${group.count > 8 ? '<p class="panel-subtitle">仅显示前 8 个文件，可用搜索缩小范围。</p>' : ''}
                 </article>
             `).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
         </div>
+    `;
+}
+
+function renderAssetDownloadPanel() {
+    const download = state.assetDownload;
+    const categories = [
+        { value: 'bgm', label: 'BGM' },
+        { value: 'ambient', label: '环境音' },
+        { value: 'blip', label: '提示音' },
+    ];
+
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">下载资产</h2>
+                    <p class="panel-subtitle">把白名单域名下的文件下载到 assets 分类目录。</p>
+                </div>
+            </div>
+            <div class="settings-form">
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>资产 URL</span>
+                        <input class="text-input" type="url" data-asset-download-url value="${escapeHtml(download.url)}" placeholder="https://example.com/file.mp3" autocomplete="off">
+                    </label>
+                    <label class="field-label">
+                        <span>文件名</span>
+                        <input class="text-input" type="text" data-asset-download-filename value="${escapeHtml(download.filename)}" placeholder="sound.mp3" autocomplete="off">
+                    </label>
+                    <label class="field-label">
+                        <span>分类</span>
+                        <select class="select-input" data-asset-download-category>
+                            ${categories.map(category => `<option value="${category.value}" ${download.category === category.value ? 'selected' : ''}>${escapeHtml(category.label)}</option>`).join('')}
+                        </select>
+                    </label>
+                </div>
+                <div class="message-edit-actions">
+                    <button class="secondary-button" type="button" data-toggle-asset-download ${download.running ? 'disabled' : ''}>
+                        <i class="fa-solid fa-xmark"></i>
+                        取消
+                    </button>
+                    <button class="primary-button" type="button" data-download-asset ${download.running ? 'disabled' : ''}>
+                        <i class="fa-solid ${download.running ? 'fa-circle-notch fa-spin' : 'fa-cloud-arrow-down'}"></i>
+                        ${download.running ? '下载中' : '下载'}
+                    </button>
+                </div>
+            </div>
+        </section>
     `;
 }
 
@@ -4602,6 +4821,7 @@ function renderBackgroundCard(background) {
     const isSelected = state.backgroundSelection.filenames.includes(filename);
     const isSelecting = state.backgroundSelection.active;
     const isAnimated = typeof background === 'object' && Boolean(background?.isAnimated);
+    const isRenaming = state.backgroundRenaming.filename === filename;
 
     return `
         <article class="resource-card background-card ${isSelected ? 'selected' : ''}">
@@ -4612,6 +4832,32 @@ function renderBackgroundCard(background) {
                     <div class="card-meta">${isAnimated ? '动画背景' : '静态背景'}</div>
                 </div>
             </div>
+            ${!isSelecting && !isRenaming ? `
+                <div class="row-actions">
+                    <button class="secondary-button" type="button" data-background-rename="${escapeHtml(filename)}">
+                        <i class="fa-solid fa-i-cursor"></i>
+                        重命名
+                    </button>
+                </div>
+            ` : ''}
+            ${isRenaming ? `
+                <div class="settings-form inline-form">
+                    <label class="field-label">
+                        <span>新文件名</span>
+                        <input class="text-input" type="text" data-background-rename-input value="${escapeHtml(state.backgroundRenaming.name)}">
+                    </label>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-background-rename ${state.backgroundRenaming.running ? 'disabled' : ''}>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="primary-button" type="button" data-confirm-background-rename ${state.backgroundRenaming.running ? 'disabled' : ''}>
+                            <i class="fa-solid ${state.backgroundRenaming.running ? 'fa-circle-notch fa-spin' : 'fa-check'}"></i>
+                            ${state.backgroundRenaming.running ? '保存中' : '保存'}
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
             ${isSelecting ? `
                 <label class="selection-row">
                     <input type="checkbox" data-background-select="${escapeHtml(filename)}" ${isSelected ? 'checked' : ''}>
@@ -4622,16 +4868,37 @@ function renderBackgroundCard(background) {
     `;
 }
 
-function renderAssetPreviewTags(detail) {
-    if (Array.isArray(detail)) {
-        return detail.slice(0, 8).map(item => `<span class="tag">${escapeHtml(String(item).split('/').pop())}</span>`).join('') || '<span class="tag">空</span>';
-    }
+function renderAssetEntryRow(entry) {
+    const isDeleting = state.assetDeleteConfirm.category === entry.category && state.assetDeleteConfirm.filename === entry.filename;
+    const isBusy = isDeleting && state.assetDeleteConfirm.running;
 
-    if (detail && typeof detail === 'object') {
-        return Object.entries(detail).map(([key, value]) => `<span class="tag">${escapeHtml(key)} ${Array.isArray(value) ? value.length : 0}</span>`).join('');
-    }
-
-    return '<span class="tag">空</span>';
+    return `
+        <div class="resource-row asset-row">
+            <span class="avatar-fallback"><i class="fa-solid fa-file"></i></span>
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(entry.label || entry.filename)}</span>
+                <span class="row-subtitle">${escapeHtml(entry.path)}</span>
+            </span>
+            ${entry.deletable ? `
+                <span class="row-actions">
+                    ${isDeleting ? `
+                        <button class="secondary-button" type="button" data-cancel-asset-delete ${isBusy ? 'disabled' : ''}>
+                            取消
+                        </button>
+                        <button class="secondary-button danger-action" type="button" data-confirm-asset-delete ${isBusy ? 'disabled' : ''}>
+                            <i class="fa-solid ${isBusy ? 'fa-circle-notch fa-spin' : 'fa-trash'}"></i>
+                            确认
+                        </button>
+                    ` : `
+                        <button class="secondary-button danger-action" type="button" data-delete-asset data-asset-category="${escapeHtml(entry.category)}" data-asset-filename="${escapeHtml(entry.filename)}">
+                            <i class="fa-solid fa-trash"></i>
+                            删除
+                        </button>
+                    `}
+                </span>
+            ` : '<span class="card-meta">只读</span>'}
+        </div>
+    `;
 }
 
 function renderApi() {
@@ -6322,6 +6589,69 @@ async function handleClick(event) {
         return;
     }
 
+    const backgroundRenameButton = event.target.closest('[data-background-rename]');
+    if (backgroundRenameButton) {
+        beginBackgroundRename(backgroundRenameButton.dataset.backgroundRename);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-background-rename]')) {
+        cancelBackgroundRename();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-background-rename]')) {
+        try {
+            await confirmBackgroundRename();
+        } catch (error) {
+            state.errors.push({ key: 'background-rename', message: error.message });
+            showToast('背景重命名失败', error.message);
+            state.backgroundRenaming.running = false;
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-toggle-asset-download]')) {
+        toggleAssetDownload();
+        return;
+    }
+
+    if (event.target.closest('[data-download-asset]')) {
+        try {
+            await downloadAssetFromForm();
+        } catch (error) {
+            state.errors.push({ key: 'asset-download', message: error.message });
+            showToast('资产下载失败', error.message);
+            state.assetDownload.running = false;
+            render();
+        }
+        return;
+    }
+
+    const deleteAssetButton = event.target.closest('[data-delete-asset]');
+    if (deleteAssetButton) {
+        beginAssetDelete(deleteAssetButton.dataset.assetCategory, deleteAssetButton.dataset.assetFilename);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-asset-delete]')) {
+        cancelAssetDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-asset-delete]')) {
+        try {
+            await confirmAssetDelete();
+        } catch (error) {
+            state.errors.push({ key: 'asset-delete', message: error.message });
+            showToast('资产删除失败', error.message);
+            state.assetDeleteConfirm.running = false;
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-toggle-extension-install]')) {
         toggleExtensionInstall();
         return;
@@ -6722,6 +7052,15 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
         state.chatSearch.query = event.target.value;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-rename-input]')) {
+        state.backgroundRenaming.name = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-url]')) {
+        state.assetDownload.url = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-filename]')) {
+        state.assetDownload.filename = event.target.value;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
         state.characterRenaming.name = event.target.value;
     }
@@ -6764,6 +7103,10 @@ elements.content.addEventListener('change', async event => {
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-global]')) {
         state.extensionInstall.global = event.target.checked;
+        return;
+    }
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-asset-download-category]')) {
+        state.assetDownload.category = event.target.value;
         return;
     }
     if (event.target instanceof HTMLSelectElement && event.target.matches('[data-extension-branch]')) {
