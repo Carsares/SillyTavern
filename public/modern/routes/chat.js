@@ -1,4 +1,5 @@
 import { createChatLayoutComponents } from '../components/chat-layout.js';
+import { createChatBackupEvents } from './chat-backup-events.js';
 
 export function createChatRoute(ctx) {
     const {
@@ -12,14 +13,7 @@ export function createChatRoute(ctx) {
         loadChatMessages,
         searchSelectedChats,
         increaseCurrentMessageLimit,
-        toggleChatBackups,
-        loadChatBackups,
         exportModernChat,
-        viewChatBackup,
-        restoreChatBackup,
-        beginChatBackupDelete,
-        cancelChatBackupDelete,
-        confirmChatBackupDelete,
         sendModernMessage,
         stopModernGeneration,
         checkLegacyGenerationEngine,
@@ -45,6 +39,7 @@ export function createChatRoute(ctx) {
         importModernChatFiles,
     } = ctx;
     const { renderChat } = createChatLayoutComponents(ctx);
+    const { handleChatBackupClick } = createChatBackupEvents(ctx);
 
     async function handleClick(event) {
         const chatModeButton = event.target.closest('[data-chat-mode]');
@@ -100,26 +95,7 @@ export function createChatRoute(ctx) {
             return true;
         }
 
-        if (event.target.closest('[data-chat-backups-toggle]')) {
-            try {
-                await toggleChatBackups();
-            } catch (error) {
-                state.errors.push({ key: 'chat-backups', message: error.message });
-                showToast('备份读取失败', error.message);
-                render();
-            }
-            return true;
-        }
-
-        if (event.target.closest('[data-chat-backups-refresh]')) {
-            try {
-                await loadChatBackups({ force: true });
-                render();
-            } catch (error) {
-                state.errors.push({ key: 'chat-backups', message: error.message });
-                showToast('备份刷新失败', error.message);
-                render();
-            }
+        if (await handleChatBackupClick(event)) {
             return true;
         }
 
@@ -130,52 +106,6 @@ export function createChatRoute(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'chat-export', message: error.message });
                 showToast('聊天导出失败', error.message);
-                render();
-            }
-            return true;
-        }
-
-        const viewChatBackupButton = event.target.closest('[data-view-chat-backup]');
-        if (viewChatBackupButton) {
-            try {
-                await viewChatBackup(viewChatBackupButton.dataset.viewChatBackup);
-            } catch (error) {
-                state.errors.push({ key: 'chat-backup-view', message: error.message });
-                showToast('备份预览失败', error.message);
-                render();
-            }
-            return true;
-        }
-
-        const restoreChatBackupButton = event.target.closest('[data-restore-chat-backup]');
-        if (restoreChatBackupButton) {
-            try {
-                await restoreChatBackup(restoreChatBackupButton.dataset.restoreChatBackup);
-            } catch (error) {
-                state.errors.push({ key: 'chat-backup-restore', message: error.message });
-                showToast('备份恢复失败', error.message);
-                render();
-            }
-            return true;
-        }
-
-        const deleteChatBackupButton = event.target.closest('[data-delete-chat-backup]');
-        if (deleteChatBackupButton) {
-            beginChatBackupDelete(deleteChatBackupButton.dataset.deleteChatBackup);
-            return true;
-        }
-
-        if (event.target.closest('[data-cancel-chat-backup-delete]')) {
-            cancelChatBackupDelete();
-            return true;
-        }
-
-        if (event.target.closest('[data-confirm-chat-backup-delete]')) {
-            try {
-                await confirmChatBackupDelete();
-            } catch (error) {
-                state.errors.push({ key: 'chat-backup-delete', message: error.message });
-                showToast('备份删除失败', error.message);
                 render();
             }
             return true;
