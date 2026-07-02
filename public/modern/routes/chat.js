@@ -1,5 +1,6 @@
 import { createChatLayoutComponents } from '../components/chat-layout.js';
 import { createChatBackupEvents } from './chat-backup-events.js';
+import { createChatContextEvents } from './chat-context-events.js';
 import { createChatFileEvents } from './chat-file-events.js';
 import { createChatMessageEvents } from './chat-message-events.js';
 
@@ -10,11 +11,7 @@ export function createChatRoute(ctx) {
         showToast,
         getSelectedChatEntity,
         clearChatSearch,
-        prepareChatForSelectedContext,
-        closeChatSidebarForMobileSelection,
-        loadChatMessages,
         searchSelectedChats,
-        increaseCurrentMessageLimit,
         sendModernMessage,
         cancelModernMessageDelete,
         cancelModernMessageEdit,
@@ -24,60 +21,12 @@ export function createChatRoute(ctx) {
     } = ctx;
     const { renderChat } = createChatLayoutComponents(ctx);
     const { handleChatBackupClick } = createChatBackupEvents(ctx);
+    const { handleChatContextClick } = createChatContextEvents(ctx);
     const { handleChatFileClick } = createChatFileEvents(ctx);
     const { handleChatMessageClick } = createChatMessageEvents(ctx);
 
     async function handleClick(event) {
-        const chatModeButton = event.target.closest('[data-chat-mode]');
-        if (chatModeButton) {
-            const nextMode = chatModeButton.dataset.chatMode === 'group' ? 'group' : 'character';
-            if (state.chatMode !== nextMode) {
-                state.chatMode = nextMode;
-                localStorage.setItem('st-modern-chat-mode', nextMode);
-                state.selected.chat = '';
-                state.chatRenaming = { key: '', name: '' };
-                state.chatDeleteConfirm = { key: '', name: '' };
-                state.chatEditing = { key: '', index: -1, text: '' };
-                clearChatSearch();
-                await prepareChatForSelectedContext();
-            }
-            render();
-            return true;
-        }
-
-        const chatButton = event.target.closest('[data-select-chat]');
-        if (chatButton) {
-            state.selected.chat = chatButton.dataset.selectChat;
-            await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
-            closeChatSidebarForMobileSelection();
-            render();
-            return true;
-        }
-
-        if (event.target.closest('[data-chat-search-run]')) {
-            try {
-                if (!state.chatSearch.query.trim()) {
-                    clearChatSearch();
-                } else {
-                    await searchSelectedChats();
-                }
-                render();
-            } catch (error) {
-                state.errors.push({ key: 'chat-search', message: error.message });
-                showToast('聊天搜索失败', error.message);
-                render();
-            }
-            return true;
-        }
-
-        if (event.target.closest('[data-chat-search-clear]')) {
-            clearChatSearch();
-            render();
-            return true;
-        }
-
-        if (event.target.closest('[data-load-earlier-messages]')) {
-            increaseCurrentMessageLimit();
+        if (await handleChatContextClick(event)) {
             return true;
         }
 
