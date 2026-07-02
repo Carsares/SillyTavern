@@ -377,7 +377,7 @@ export function createSettingsRoute(ctx) {
                         确认恢复
                     </button>
                 ` : `
-                    <button class="secondary-button danger-action" type="button" data-restore-settings-snapshot="${escapeHtml(name)}" ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                    <button class="secondary-button" type="button" data-restore-settings-snapshot="${escapeHtml(name)}" ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
                         <i class="fa-solid fa-rotate-left"></i>
                         恢复
                     </button>
