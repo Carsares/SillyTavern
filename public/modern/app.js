@@ -12,6 +12,7 @@ import {
     worldEntrySelectiveLogicOptions,
 } from './core/constants.js';
 import { createApiClient } from './core/api-client.js';
+import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
 import { createCommonComponents } from './components/common.js';
 import { createInspector } from './shell/inspector.js';
@@ -61,6 +62,7 @@ const apiClient = createApiClient({
 });
 const apiFetch = apiClient.apiFetch;
 const apiFetchResponse = apiClient.apiFetchResponse;
+const { callLegacyBridge } = createLegacyBridge();
 
 const elements = {
     app: document.getElementById('modernApp'),
@@ -388,104 +390,12 @@ const routeModules = {
 };
 const routeRenderers = Object.fromEntries(Object.entries(routeModules).map(([route, module]) => [route, module.render]));
 
-const legacyBridgeSource = 'sillytavern-modern-bridge';
-const legacyBridge = {
-    frame: null,
-    loadPromise: null,
-    pending: new Map(),
-    nextId: 1,
-};
-
 function matchesQuery(...values) {
     if (!state.query) {
         return true;
     }
 
     return values.some(value => normalizeText(value).includes(state.query));
-}
-
-function handleLegacyBridgeMessage(event) {
-    if (event.origin !== window.location.origin || event.data?.source !== legacyBridgeSource) {
-        return;
-    }
-
-    const request = legacyBridge.pending.get(event.data.id);
-    if (!request) {
-        return;
-    }
-
-    window.clearTimeout(request.timer);
-    legacyBridge.pending.delete(event.data.id);
-    if (event.data.error) {
-        request.reject(new Error(event.data.error.message || '生成引擎执行失败。'));
-        return;
-    }
-    request.resolve(event.data.result);
-}
-
-window.addEventListener('message', handleLegacyBridgeMessage);
-
-async function ensureLegacyBridgeFrame() {
-    if (legacyBridge.frame?.contentWindow) {
-        return legacyBridge.frame;
-    }
-    if (legacyBridge.loadPromise) {
-        return legacyBridge.loadPromise;
-    }
-
-    legacyBridge.loadPromise = new Promise((resolve, reject) => {
-        const frame = document.createElement('iframe');
-        const timer = window.setTimeout(() => {
-            reject(new Error('生成引擎加载超时。'));
-        }, 30000);
-
-        frame.hidden = true;
-        frame.title = 'SillyTavern legacy generation engine';
-        frame.src = '/?modernBridge=1';
-        frame.style.display = 'none';
-        frame.addEventListener('load', () => {
-            window.clearTimeout(timer);
-            resolve(frame);
-        }, { once: true });
-        frame.addEventListener('error', () => {
-            window.clearTimeout(timer);
-            reject(new Error('生成引擎加载失败。'));
-        }, { once: true });
-
-        legacyBridge.frame = frame;
-        document.body.append(frame);
-    });
-
-    try {
-        return await legacyBridge.loadPromise;
-    } catch (error) {
-        legacyBridge.frame?.remove();
-        legacyBridge.frame = null;
-        legacyBridge.loadPromise = null;
-        throw error;
-    }
-}
-
-async function callLegacyBridge(action, payload = {}, timeoutMs = 180000) {
-    const frame = await ensureLegacyBridgeFrame();
-    const id = String(legacyBridge.nextId++);
-
-    const responsePromise = new Promise((resolve, reject) => {
-        const timer = window.setTimeout(() => {
-            legacyBridge.pending.delete(id);
-            reject(new Error('生成引擎响应超时。'));
-        }, timeoutMs);
-        legacyBridge.pending.set(id, { resolve, reject, timer });
-    });
-
-    frame.contentWindow.postMessage({
-        source: legacyBridgeSource,
-        id,
-        action,
-        payload,
-    }, window.location.origin);
-
-    return responsePromise;
 }
 
 function getPresetGroups() {
