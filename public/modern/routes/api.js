@@ -9,6 +9,7 @@ export function createApiRoute(ctx) {
         setApiModelSuggestion,
         saveApiConnectionFromForm,
         updateApiSourceFields,
+        updateTextCompletionTypeFields,
     } = ctx;
     const { renderApi } = createApiComponents(ctx);
 
@@ -61,6 +62,11 @@ export function createApiRoute(ctx) {
 
         if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
             updateApiSourceFields(event.target.value);
+            return true;
+        }
+
+        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-textgen-type]')) {
+            updateTextCompletionTypeFields(event.target.value);
             return true;
         }
 

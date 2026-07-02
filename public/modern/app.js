@@ -102,6 +102,7 @@ const {
     setApiModelSuggestion,
     saveApiConnectionFromForm,
     updateApiSourceFields,
+    updateTextCompletionTypeFields,
 } = createApiConnectionActions({
     state,
     elements,
@@ -567,6 +568,7 @@ function createRouteContext() {
         setApiModelSuggestion,
         saveApiConnectionFromForm,
         updateApiSourceFields,
+        updateTextCompletionTypeFields,
         matchesQuery,
         getAssetGroups,
         getAssetCount,

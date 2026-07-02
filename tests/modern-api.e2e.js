@@ -266,6 +266,7 @@ test.describe('Modern API page', () => {
             });
 
             await page.goto('/modern/?view=api');
+            await expect(page.locator('[data-textgen-type]')).toBeVisible();
 
             const typeOptions = await page.locator('[data-textgen-type] option').evaluateAll(options => options.map(option => option.value));
             expect([...typeOptions].sort()).toEqual(textCompletionCases.map(({ type }) => type).sort());
@@ -293,5 +294,71 @@ test.describe('Modern API page', () => {
             expect(savedSettings.textgenerationwebui_settings).not.toHaveProperty('model');
             expect(writtenSecrets.map(({ key, value }) => ({ key, value }))).toEqual(item.expectedSecretWrites);
         }
+    });
+
+    test('refreshes text completion fields when switching source in the modern editor', async ({ page }) => {
+        let savedSettings = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'textgenerationwebui',
+                textgenerationwebui_settings: {
+                    type: 'openrouter',
+                    server_urls: {
+                        openrouter: 'https://openrouter.ai/api',
+                        ollama: 'http://127.0.0.1:11434',
+                    },
+                    openrouter_model: 'openrouter/auto',
+                    ollama_model: 'llama3.1',
+                    preset: 'Text Preset A',
+                },
+            }),
+            textgenerationwebui_preset_names: ['Text Preset A'],
+            textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 })],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle, {
+            api_key_openrouter: [{ id: 'saved', value: '********ret', label: 'saved', active: true }],
+        });
+
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('[data-textgen-type]')).toHaveValue('openrouter');
+        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('https://openrouter.ai/api');
+        await expect(page.locator('[data-textgen-model]')).toHaveValue('openrouter/auto');
+        await expect(page.locator('[data-textgen-secret-status]')).toHaveText('密钥已保存');
+
+        await page.locator('[data-textgen-type]').selectOption('ollama');
+
+        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:11434');
+        await expect(page.locator('[data-textgen-model]')).toHaveValue('llama3.1');
+        await expect(page.locator('[data-textgen-secret-status]')).toHaveText('无密钥字段');
+        await expect(page.locator('[data-textgen-field="api-key"]')).toBeHidden();
+
+        await page.locator('[data-textgen-endpoint]').fill('http://127.0.0.1:11435');
+        await page.locator('[data-textgen-model]').fill('llama3.2');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => savedSettings?.textgenerationwebui_settings?.type).toBe('ollama');
+        expect(savedSettings.textgenerationwebui_settings).toMatchObject({
+            type: 'ollama',
+            ollama_model: 'llama3.2',
+            server_urls: {
+                openrouter: 'https://openrouter.ai/api',
+                ollama: 'http://127.0.0.1:11435',
+            },
+        });
+        expect(savedSettings.textgenerationwebui_settings.openrouter_model).toBe('openrouter/auto');
     });
 });
