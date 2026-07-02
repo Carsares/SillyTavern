@@ -124,6 +124,70 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-toggle-asset-group="bgm"]')).toContainText('收起资产');
     });
 
+    test('uses a focused preset browser and saves selected preset JSON', async ({ page }) => {
+        let savedPreset = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                chat_completion_source: 'siliconflow',
+                oai_settings: {
+                    preset_settings_openai: 'Preset A',
+                    chat_completion_source: 'siliconflow',
+                    siliconflow_model: 'deepseek-ai/DeepSeek-V4-Pro',
+                },
+            }),
+            openai_setting_names: ['Preset A', 'Preset B'],
+            openai_settings: [
+                JSON.stringify({ chat_completion_source: 'siliconflow', siliconflow_model: 'model-a', temperature: 0.7 }),
+                JSON.stringify({ chat_completion_source: 'siliconflow', siliconflow_model: 'model-b', temperature: 0.8 }),
+            ],
+            textgenerationwebui_preset_names: ['Text Preset'],
+            textgenerationwebui_presets: [JSON.stringify({ temp: 0.5, max_length: 200 })],
+        };
+
+        await page.route('**/api/settings/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(settingsBundle),
+        }));
+        await page.route('**/api/presets/save', route => {
+            savedPreset = route.request().postDataJSON();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.goto('/modern/?view=presets');
+
+        await expect(page.locator('.page-title')).toHaveText('预设管理');
+        await expect(page.locator('.preset-workspace')).toBeVisible();
+        await expect(page.locator('[data-select-preset]')).toHaveCount(3);
+        await expect(page.locator('[data-duplicate-preset]')).toHaveCount(1);
+
+        await page.locator('[data-select-preset="Preset B"][data-preset-api="openai"]').click();
+        await expect(page.locator('.preset-detail .detail-title')).toHaveText('Preset B');
+        await expect(page.locator('[data-preset-json-input]')).toContainText('model-b');
+
+        await page.locator('[data-preset-json-input]').fill(JSON.stringify({
+            chat_completion_source: 'siliconflow',
+            siliconflow_model: 'model-b-edited',
+            temperature: 0.33,
+        }, null, 2));
+        await page.locator('[data-save-preset-json]').click();
+
+        await expect.poll(() => savedPreset?.name).toBe('Preset B');
+        expect(savedPreset).toMatchObject({
+            apiId: 'openai',
+            preset: {
+                chat_completion_source: 'siliconflow',
+                siliconflow_model: 'model-b-edited',
+                temperature: 0.33,
+            },
+        });
+    });
+
     test('edits advanced world entry fields without falling back to the legacy editor', async ({ page }) => {
         let savedWorldbook = null;
         const worldbookDetail = {

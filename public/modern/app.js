@@ -192,6 +192,16 @@ const state = {
     openAiPresetDraft: {
         name: '',
     },
+    presetSelection: {
+        apiId: 'openai',
+        name: '',
+    },
+    presetEditor: {
+        apiId: '',
+        name: '',
+        json: '',
+        error: '',
+    },
     presetDeleteConfirm: {
         apiId: '',
         name: '',
@@ -433,6 +443,69 @@ function getPresetItems(group) {
             actionable: group.id === 'openai',
         }))
         .filter(item => matchesQuery(item.name, group.label, group.id));
+}
+
+function getVisiblePresetGroups() {
+    return getPresetGroups()
+        .map(group => ({ ...group, items: getPresetItems(group) }))
+        .filter(group => group.items.length > 0);
+}
+
+function findPresetRecord(groups, apiId, name) {
+    const group = groups.find(item => item.id === apiId);
+    const preset = group?.items.find(item => item.name === name);
+    return group && preset ? { group, preset } : null;
+}
+
+function getSelectedPresetRecord(groups) {
+    const selected = findPresetRecord(groups, state.presetSelection.apiId, state.presetSelection.name);
+    if (selected) {
+        return selected;
+    }
+
+    const fallbackGroup = groups.find(group => group.items.length > 0);
+    const fallbackPreset = fallbackGroup?.items[0];
+    if (fallbackGroup && fallbackPreset) {
+        state.presetSelection = { apiId: fallbackGroup.id, name: fallbackPreset.name };
+        return { group: fallbackGroup, preset: fallbackPreset };
+    }
+
+    state.presetSelection = { apiId: '', name: '' };
+    return null;
+}
+
+function selectPreset(apiId, name) {
+    state.presetSelection = { apiId, name };
+    state.presetEditor = { apiId: '', name: '', json: '', error: '' };
+    state.presetDeleteConfirm = { apiId: '', name: '' };
+    render();
+}
+
+function getPresetEditorText(apiId, name, content) {
+    if (state.presetEditor.apiId === apiId && state.presetEditor.name === name) {
+        return state.presetEditor.json;
+    }
+
+    const preset = parsePreset(content);
+    if (preset) {
+        return JSON.stringify(preset, null, 2);
+    }
+
+    return typeof content === 'string' ? content : '';
+}
+
+function updatePresetEditorText(value) {
+    const selected = getSelectedPresetRecord(getPresetGroups().map(group => ({ ...group, items: getPresetItems(group) })));
+    if (!selected) {
+        return;
+    }
+
+    state.presetEditor = {
+        apiId: selected.group.id,
+        name: selected.preset.name,
+        json: value,
+        error: '',
+    };
 }
 
 function getPersonas() {
@@ -1417,6 +1490,8 @@ async function saveOpenAiPresetFromForm() {
     await apiFetch('/api/presets/save', { body: { apiId: 'openai', name, preset } });
     await apiFetch('/api/settings/save', { body: state.settings });
     state.openAiPresetDraft = { name: '' };
+    state.presetSelection = { apiId: 'openai', name };
+    state.presetEditor = { apiId: '', name: '', json: '', error: '' };
     await loadData({ silent: true });
     showToast('预设已保存', name);
 }
@@ -1442,6 +1517,12 @@ function getUniquePresetName(apiId, baseName) {
     return nextName;
 }
 
+function getAvailablePresetName(apiId, baseName) {
+    const name = String(baseName || 'imported preset').trim() || 'imported preset';
+    const names = new Set(getPresetGroup(apiId)?.names || []);
+    return names.has(name) ? getUniquePresetName(apiId, name) : name;
+}
+
 async function duplicatePreset(apiId, name) {
     const preset = parsePreset(getPresetContent(apiId, name));
     if (!preset) {
@@ -1450,8 +1531,59 @@ async function duplicatePreset(apiId, name) {
 
     const nextName = getUniquePresetName(apiId, name);
     await apiFetch('/api/presets/save', { body: { apiId, name: nextName, preset } });
+    state.presetSelection = { apiId, name: nextName };
+    state.presetEditor = { apiId: '', name: '', json: '', error: '' };
     await loadData({ silent: true });
     showToast('预设已复制', `${name} → ${nextName}`);
+    render();
+}
+
+async function importPresetFile(file) {
+    if (!file) {
+        throw new Error('请选择一个 JSON 预设文件。');
+    }
+
+    const apiId = state.presetSelection.apiId || 'openai';
+    let preset;
+    try {
+        preset = JSON.parse(await file.text());
+    } catch {
+        throw new Error('预设文件不是有效 JSON。');
+    }
+
+    const rawName = file.name.replace(/\.json$/i, '').trim() || 'imported preset';
+    const name = getAvailablePresetName(apiId, rawName);
+    await apiFetch('/api/presets/save', { body: { apiId, name, preset } });
+    state.presetSelection = { apiId, name };
+    state.presetEditor = { apiId: '', name: '', json: '', error: '' };
+    await loadData({ silent: true });
+    showToast('预设已导入', `${getPresetGroup(apiId)?.label || apiId} / ${name}`);
+    render();
+}
+
+async function savePresetJsonFromEditor() {
+    const selected = getSelectedPresetRecord(getVisiblePresetGroups());
+    if (!selected) {
+        throw new Error('请先选择预设。');
+    }
+
+    const apiId = selected.group.id;
+    const name = selected.preset.name;
+    const json = getPresetEditorText(apiId, name, selected.preset.content);
+    let preset;
+    try {
+        preset = JSON.parse(json);
+    } catch (error) {
+        state.presetEditor = { apiId, name, json, error: error.message };
+        render();
+        throw new Error(`JSON 格式错误：${error.message}`);
+    }
+
+    await apiFetch('/api/presets/save', { body: { apiId, name, preset } });
+    state.presetSelection = { apiId, name };
+    state.presetEditor = { apiId, name, json: JSON.stringify(preset, null, 2), error: '' };
+    await loadData({ silent: true });
+    showToast('预设已保存', name);
     render();
 }
 
@@ -1493,14 +1625,16 @@ async function confirmPresetDelete() {
         throw new Error('请先选择预设。');
     }
 
+    const nextName = (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
     await apiFetch('/api/presets/delete', { body: { apiId, name } });
     if (apiId === 'openai' && getOaiSettings().preset_settings_openai === name) {
-        const nextName = (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
         state.settings.oai_settings = state.settings.oai_settings || {};
         state.settings.oai_settings.preset_settings_openai = nextName;
         await apiFetch('/api/settings/save', { body: state.settings });
     }
     state.presetDeleteConfirm = { apiId: '', name: '' };
+    state.presetSelection = { apiId, name: nextName };
+    state.presetEditor = { apiId: '', name: '', json: '', error: '' };
     await loadData({ silent: true });
     showToast('预设已删除', name);
     render();
@@ -5651,45 +5785,91 @@ function renderWorldEntryCheckbox(field, label, checked) {
 }
 
 function renderPresets() {
-    const groups = getPresetGroups()
-        .map(group => ({ ...group, items: getPresetItems(group) }))
-        .filter(group => group.items.length > 0);
+    const groups = getVisiblePresetGroups();
+    const selected = getSelectedPresetRecord(groups);
+    const visibleCount = groups.reduce((total, group) => total + group.items.length, 0);
 
     return `
         ${pageHead('预设管理', '模型参数、指令模板和上下文模板。', `
+            <label class="secondary-button file-action">
+                <i class="fa-solid fa-file-import"></i>
+                导入到当前类型
+                <input class="visually-hidden" type="file" accept=".json,application/json" data-preset-import-file>
+            </label>
             ${legacyMenu('打开原版编辑器')}
         `)}
-        ${renderOpenAiPresetTools()}
-        <div class="grid-list">
-            ${groups.map(group => `
-                <article class="resource-card">
-                    <div class="card-head">
-                        <div>
-                            <h2 class="card-title">${escapeHtml(group.label)}</h2>
-                            <div class="card-meta">${escapeHtml(group.id)} · ${formatNumber(group.items.length)} 个</div>
-                        </div>
-                        <span class="badge">${formatNumber(group.items.length)}</span>
+        <div class="preset-workspace">
+            <section class="panel preset-browser">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">预设库</h2>
+                        <p class="panel-subtitle">显示 ${formatNumber(visibleCount)} / ${formatNumber(getPresetCount())} 个预设。</p>
                     </div>
-                    <div class="resource-list scroll-list">
-                        ${group.items.map(item => renderPresetRow(group, item)).join('')}
-                    </div>
-                </article>
-            `).join('') || renderEmptyState('fa-sliders', '暂无匹配预设', '尝试清空搜索关键词。')}
+                    <span class="badge">${groups.length ? `${formatNumber(groups.length)} 类` : '无结果'}</span>
+                </div>
+                <div class="preset-group-list">
+                    ${groups.map(group => renderPresetGroup(group, selected?.group.id)).join('') || renderInlineEmpty('暂无匹配预设')}
+                </div>
+            </section>
+            <section class="panel preset-detail">
+                ${selected ? renderPresetDetail(selected.group, selected.preset) : renderEmptyState('fa-sliders', '暂无匹配预设', '尝试清空搜索关键词。')}
+            </section>
         </div>
     `;
 }
 
+function renderPresetGroup(group, selectedGroupId) {
+    return `
+        <details class="preset-group" ${group.id === selectedGroupId ? 'open' : ''}>
+            <summary>
+                <span>
+                    <strong>${escapeHtml(group.label)}</strong>
+                    <em>${escapeHtml(group.id)}</em>
+                </span>
+                <span class="badge">${formatNumber(group.items.length)}</span>
+            </summary>
+            <div class="resource-list preset-list">
+                ${group.items.map(item => renderPresetRow(group, item)).join('')}
+            </div>
+        </details>
+    `;
+}
+
 function renderPresetRow(group, item) {
-    const isDeleting = state.presetDeleteConfirm.apiId === group.id && state.presetDeleteConfirm.name === item.name;
+    const selected = state.presetSelection.apiId === group.id && state.presetSelection.name === item.name;
 
     return `
-        <div class="resource-row ${item.active ? 'active' : ''}">
+        <button class="resource-row ${selected ? 'active' : ''}" type="button" data-select-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
             <span class="avatar-fallback"><i class="fa-solid fa-file-lines"></i></span>
             <span class="row-main">
                 <span class="row-title">${escapeHtml(item.name)}</span>
                 <span class="row-subtitle">${escapeHtml(getPresetSummary(item.content))}</span>
             </span>
-            <span class="row-actions">
+            ${item.active ? '<span class="badge">当前</span>' : ''}
+        </button>
+    `;
+}
+
+function renderPresetDetail(group, item) {
+    const isOpenAi = group.id === 'openai';
+    const isDeleting = state.presetDeleteConfirm.apiId === group.id && state.presetDeleteConfirm.name === item.name;
+    const jsonText = getPresetEditorText(group.id, item.name, item.content);
+    const parsedPreset = parsePreset(item.content);
+    const editorError = state.presetEditor.apiId === group.id && state.presetEditor.name === item.name ? state.presetEditor.error : '';
+
+    return `
+        <div class="detail-hero preset-detail-hero">
+            <span class="avatar-fallback large"><i class="fa-solid fa-file-lines"></i></span>
+            <div>
+                <h2 class="detail-title">${escapeHtml(item.name)}</h2>
+                <p class="panel-subtitle">${escapeHtml(group.label)} · ${escapeHtml(group.id)}</p>
+                <div class="tag-row detail-tags">
+                    ${item.active ? '<span class="tag">当前聊天补全预设</span>' : ''}
+                    <span class="tag">${parsedPreset ? 'JSON 可编辑' : '非 JSON 文本'}</span>
+                    <span class="tag">${formatNumber(Object.keys(parsedPreset || {}).length)} 个顶层字段</span>
+                </div>
+            </div>
+            <div class="detail-actions page-actions">
                 ${item.actionable ? `
                     <button class="secondary-button" type="button" data-use-openai-preset="${escapeHtml(item.name)}" ${item.active ? 'disabled' : ''}>
                         <i class="fa-solid fa-check"></i>
@@ -5708,22 +5888,54 @@ function renderPresetRow(group, item) {
                     <i class="fa-solid fa-clock-rotate-left"></i>
                     恢复默认
                 </button>
-                ${isDeleting ? `
+                <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除
+                </button>
+            </div>
+        </div>
+        ${isDeleting ? `
+            <div class="settings-form inline-form danger-panel">
+                <div>
+                    <strong>删除预设</strong>
+                    <p class="panel-subtitle">将删除 ${escapeHtml(group.label)} / ${escapeHtml(item.name)}。</p>
+                </div>
+                <div class="message-edit-actions">
                     <button class="secondary-button" type="button" data-cancel-preset-delete>
+                        <i class="fa-solid fa-xmark"></i>
                         取消
                     </button>
                     <button class="secondary-button danger-action" type="button" data-confirm-preset-delete>
                         <i class="fa-solid fa-trash"></i>
                         确认删除
                     </button>
-                ` : `
-                    <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
-                        <i class="fa-solid fa-trash"></i>
-                        删除
-                    </button>
-                `}
-            </span>
-        </div>
+                </div>
+            </div>
+        ` : ''}
+        ${isOpenAi ? renderOpenAiPresetTools() : ''}
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">摘要</h3>
+                <p class="panel-subtitle">常用字段预览；完整内容在下方 JSON 编辑器。</p>
+            </div>
+            <div class="kv-list">
+                ${renderPresetPreviewRows(parsedPreset)}
+            </div>
+        </section>
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">JSON 编辑</h3>
+                <p class="panel-subtitle">直接编辑预设文件内容，保存后调用原版预设保存接口。</p>
+            </div>
+            <textarea class="preset-json-editor" spellcheck="false" data-preset-json-input>${escapeHtml(jsonText)}</textarea>
+            ${editorError ? `<p class="danger">${escapeHtml(editorError)}</p>` : ''}
+            <div class="message-edit-actions">
+                <button class="primary-button" type="button" data-save-preset-json>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存 JSON
+                </button>
+            </div>
+        </section>
     `;
 }
 
@@ -5732,30 +5944,48 @@ function renderOpenAiPresetTools() {
     const draftName = state.openAiPresetDraft.name || currentPreset;
 
     return `
-        <section class="panel section-panel">
+        <section class="form-section">
             <div class="panel-header">
                 <div>
-                    <h2 class="panel-title">聊天补全预设</h2>
+                    <h3 class="form-section-title">从当前 API 配置保存</h3>
                     <p class="panel-subtitle">保存现代 API 页可编辑的模型、端点和采样参数；高级字段保留在原预设中。</p>
                 </div>
                 <span class="badge">${escapeHtml(currentPreset || '未选择')}</span>
             </div>
-            <div class="settings-form">
-                <div class="form-grid two-columns">
-                    <label class="field-label">
-                        <span>预设名称</span>
-                        <input class="text-input" type="text" data-openai-preset-name value="${escapeHtml(draftName)}" placeholder="输入新名称或覆盖当前预设">
-                    </label>
-                </div>
-                <div class="message-edit-actions">
-                    <button class="secondary-button" type="button" data-save-openai-preset>
-                        <i class="fa-solid fa-floppy-disk"></i>
-                        保存当前配置为预设
-                    </button>
-                </div>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>预设名称</span>
+                    <input class="text-input" type="text" data-openai-preset-name value="${escapeHtml(draftName)}" placeholder="输入新名称或覆盖当前预设">
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-openai-preset>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存当前配置为预设
+                </button>
             </div>
         </section>
     `;
+}
+
+function renderPresetPreviewRows(preset) {
+    if (!preset || typeof preset !== 'object') {
+        return renderKeyValue('格式', '非 JSON 或空预设');
+    }
+
+    const modelFields = ['model', 'openai_model', 'siliconflow_model', 'claude_model', 'openrouter_model', 'custom_model'];
+    const model = modelFields.map(field => preset[field]).find(Boolean);
+    const rows = [
+        ['模型', model || '未设置'],
+        ['来源', preset.chat_completion_source || preset.source || '未设置'],
+        ['Temperature', preset.temperature ?? preset.temp_openai ?? '未设置'],
+        ['Max Tokens', preset.openai_max_tokens ?? preset.max_tokens ?? '未设置'],
+        ['Prompts', Array.isArray(preset.prompts) ? `${formatNumber(preset.prompts.length)} 个` : '未设置'],
+        ['Prompt Order', Array.isArray(preset.prompt_order) ? `${formatNumber(preset.prompt_order.length)} 个` : '未设置'],
+        ['字段数', formatNumber(Object.keys(preset).length)],
+    ];
+
+    return rows.map(([key, value]) => renderKeyValue(key, String(value))).join('');
 }
 
 function getPresetSummary(rawPreset) {
@@ -8699,6 +8929,23 @@ async function handleClick(event) {
         return;
     }
 
+    const selectPresetButton = event.target.closest('[data-select-preset]');
+    if (selectPresetButton) {
+        selectPreset(selectPresetButton.dataset.presetApi, selectPresetButton.dataset.selectPreset);
+        return;
+    }
+
+    if (event.target.closest('[data-save-preset-json]')) {
+        try {
+            await savePresetJsonFromEditor();
+        } catch (error) {
+            state.errors.push({ key: 'preset-json-save', message: error.message });
+            showToast('预设保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const presetButton = event.target.closest('[data-use-openai-preset]');
     if (presetButton) {
         try {
@@ -9038,6 +9285,9 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-openai-preset-name]')) {
         state.openAiPresetDraft.name = event.target.value;
     }
+    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-preset-json-input]')) {
+        updatePresetEditorText(event.target.value);
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-url]')) {
         state.extensionInstall.url = event.target.value;
     }
@@ -9144,6 +9394,18 @@ elements.content.addEventListener('change', async event => {
         } catch (error) {
             state.errors.push({ key: 'chat-import', message: error.message });
             showToast('聊天导入失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-preset-import-file]')) {
+        try {
+            await importPresetFile(event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'preset-import', message: error.message });
+            showToast('预设导入失败', error.message);
             render();
         } finally {
             event.target.value = '';
