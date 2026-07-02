@@ -5934,9 +5934,69 @@ async function confirmSettingsSnapshotRestore() {
     }
 }
 
+function getActivityEntries() {
+    return Object.entries(state.stats || {})
+        .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
+        .map(([id, stats]) => ({
+            id,
+            messages: Number(stats.user_msg_count || 0) + Number(stats.non_user_msg_count || 0),
+            words: Number(stats.user_word_count || 0) + Number(stats.non_user_word_count || 0),
+            size: Number(stats.chat_size || 0),
+            swipes: Number(stats.total_swipe_count || 0),
+            genTime: Number(stats.total_gen_time || 0),
+            first: Number(stats.date_first_chat || 0),
+            last: Number(stats.date_last_chat || 0),
+        }))
+        .sort((a, b) => b.last - a.last);
+}
+
+function getActivitySummary(entries) {
+    return entries.reduce((summary, entry) => ({
+        messages: summary.messages + entry.messages,
+        words: summary.words + entry.words,
+        size: summary.size + entry.size,
+        swipes: summary.swipes + entry.swipes,
+        genTime: summary.genTime + entry.genTime,
+        last: Math.max(summary.last, entry.last),
+    }), { messages: 0, words: 0, size: 0, swipes: 0, genTime: 0, last: 0 });
+}
+
+function formatDurationMs(value) {
+    const ms = Number(value || 0);
+    if (!ms) {
+        return '0s';
+    }
+    if (ms < 1000) {
+        return `${formatNumber(ms)}ms`;
+    }
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) {
+        return `${formatNumber(seconds)}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return `${formatNumber(minutes)}m ${formatNumber(rest)}s`;
+}
+
+function renderActivityEntryRow(entry) {
+    return `
+        <tr>
+            <td class="mono">${escapeHtml(entry.id)}</td>
+            <td>${formatNumber(entry.messages)}</td>
+            <td>${formatNumber(entry.words)}</td>
+            <td>${formatBytes(entry.size)}</td>
+            <td>${formatNumber(entry.swipes)}</td>
+            <td>${escapeHtml(formatDate(entry.last))}</td>
+        </tr>
+    `;
+}
+
 function renderActivity() {
     const stats = state.stats || {};
-    const rows = Object.entries(stats).slice(0, 60);
+    const entries = getActivityEntries();
+    const summary = getActivitySummary(entries);
+    const rawRows = Object.entries(stats).slice(0, 80);
+    const statsUpdatedAt = Number(stats.timestamp || 0);
 
     return `
         ${pageHead('活动与统计', '统计缓存和使用记录。', `
@@ -5949,29 +6009,69 @@ function renderActivity() {
                 刷新
             </button>
         `)}
-        ${rows.length ? `
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr><th>字段</th><th>值</th></tr>
-                    </thead>
-                    <tbody>
-                        ${rows.map(([key, value]) => `
-                            <tr>
-                                <td>${escapeHtml(key)}</td>
-                                <td>${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : value)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
+        <div class="metrics-grid">
+            ${metricCard('统计对象', formatNumber(entries.length), '有聊天统计的角色或群聊', 'fa-id-card')}
+            ${metricCard('消息总量', formatNumber(summary.messages), `${formatNumber(summary.words)} words`, 'fa-message')}
+            ${metricCard('聊天体积', formatBytes(summary.size), `${formatNumber(summary.swipes)} swipes`, 'fa-database')}
+            ${metricCard('最近活动', statsUpdatedAt ? formatDate(statsUpdatedAt) : '未生成', summary.last ? `最近聊天 ${formatDate(summary.last)}` : '无聊天记录', 'fa-clock')}
+        </div>
+        ${entries.length ? `
+            <section class="panel section-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">活跃对象</h2>
+                        <p class="panel-subtitle">按最近聊天时间排序，展示消息、词数和缓存体积。</p>
+                    </div>
+                    <span class="badge">生成耗时 ${escapeHtml(formatDurationMs(summary.genTime))}</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>对象</th><th>消息</th><th>词数</th><th>大小</th><th>候选</th><th>最近聊天</th></tr>
+                        </thead>
+                        <tbody>
+                            ${entries.slice(0, 80).map(renderActivityEntryRow).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         ` : renderEmptyState('fa-chart-line', '暂无统计数据', '统计缓存为空或尚未生成。')}
+        ${rawRows.length ? `
+            <details class="panel section-panel raw-data-panel">
+                <summary>
+                    <span>
+                        <strong>原始统计数据</strong>
+                        <em>${formatNumber(rawRows.length)} 个字段</em>
+                    </span>
+                    <i class="fa-solid fa-chevron-down"></i>
+                </summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>字段</th><th>值</th></tr>
+                        </thead>
+                        <tbody>
+                            ${rawRows.map(([key, value]) => `
+                                <tr>
+                                    <td class="mono">${escapeHtml(key)}</td>
+                                    <td>${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : value)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        ` : ''}
     `;
 }
 
 function renderSettings() {
     const bundle = state.settingsBundle || {};
     const requestCompression = bundle.request_compression || {};
+    const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
+    const snapshotCount = state.settingsSnapshots.items.length;
+    const compressionEnabled = Boolean(requestCompression.enabled);
+    const dataStatus = state.errors.length ? '需要处理' : '正常';
 
     return `
         ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
@@ -5985,9 +6085,16 @@ function renderSettings() {
             </button>
             ${legacyMenu('打开原版设置')}
         `)}
+        <div class="metrics-grid">
+            ${metricCard('数据状态', dataStatus, state.errors.length ? `${formatNumber(state.errors.length)} 个读取错误` : '读取正常', 'fa-heart-pulse')}
+            ${metricCard('扩展', formatNumber(state.extensions.length), bundle.enable_extensions ? '扩展系统开启' : '扩展系统关闭', 'fa-cubes')}
+            ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
+            ${metricCard('设置快照', formatNumber(snapshotCount), state.settingsSnapshots.loading ? '读取中' : '本地备份', 'fa-clock-rotate-left')}
+        </div>
         <div class="grid-list">
             <article class="resource-card">
                 <h2 class="card-title">用户与账户</h2>
+                <p class="card-meta">当前登录与权限状态。</p>
                 <div class="kv-list">
                     ${renderKeyValue('当前用户', state.me?.name || state.me?.handle || '默认用户')}
                     ${renderKeyValue('管理员', state.me?.admin ? '是' : '否')}
@@ -5995,7 +6102,8 @@ function renderSettings() {
                 </div>
             </article>
             <article class="resource-card">
-                <h2 class="card-title">扩展</h2>
+                <h2 class="card-title">扩展能力</h2>
+                <p class="card-meta">第三方扩展发现、安装和更新策略。</p>
                 <div class="kv-list">
                     ${renderKeyValue('扩展启用', bundle.enable_extensions ? '是' : '否')}
                     ${renderKeyValue('自动更新', bundle.enable_extensions_auto_update ? '是' : '否')}
@@ -6004,18 +6112,41 @@ function renderSettings() {
             </article>
             <article class="resource-card">
                 <h2 class="card-title">请求压缩</h2>
+                <p class="card-meta">控制大请求的压缩边界。</p>
                 <div class="kv-list">
-                    ${renderKeyValue('启用', requestCompression.enabled ? '是' : '否')}
+                    ${renderKeyValue('启用', compressionEnabled ? '是' : '否')}
                     ${renderKeyValue('最小载荷', formatBytes(requestCompression.minPayloadSize))}
                     ${renderKeyValue('最大载荷', formatBytes(requestCompression.maxPayloadSize))}
                 </div>
             </article>
             <article class="resource-card">
-                <h2 class="card-title">本页偏好</h2>
+                <h2 class="card-title">现代界面</h2>
+                <p class="card-meta">新版工作区本地偏好。</p>
                 <div class="kv-list">
                     ${renderKeyValue('主题', state.theme)}
-                    ${renderKeyValue('数据状态', state.errors.length ? '部分失败' : '正常')}
+                    ${renderKeyValue('聊天类型', getChatModeLabel())}
+                    ${renderKeyValue('聊天列表', state.chatSidebarOpen ? '展开' : '收起')}
+                    ${renderKeyValue('上下文抽屉', state.inspectorOpen ? '展开' : '收起')}
                     ${renderKeyValue('入口', '/modern/')}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">资源索引</h2>
+                <p class="card-meta">当前用户目录读取到的核心对象。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('角色', formatNumber(state.characters.length))}
+                    ${renderKeyValue('群聊', formatNumber(state.groups.length))}
+                    ${renderKeyValue('世界书', formatNumber(state.worldbooks.length || (state.settingsBundle.world_names || []).length))}
+                    ${renderKeyValue('素材', formatNumber(getAssetCount()))}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">请求安全</h2>
+                <p class="card-meta">现代页请求令牌和密钥状态。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('CSRF', state.csrfToken ? '已获取' : '未获取')}
+                    ${renderKeyValue('密钥状态', savedSecrets ? `${formatNumber(savedSecrets)} 个已保存` : '未读取到')}
+                    ${renderKeyValue('错误状态', dataStatus)}
                 </div>
             </article>
         </div>
