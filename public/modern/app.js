@@ -140,17 +140,7 @@ const assetActions = createAssetActions({
 
 const { getAssetCount } = assetActions;
 
-const {
-    getExtensionFolderName,
-    canManageExtension,
-    toggleExtensionInstall,
-    installExtensionFromForm,
-    loadExtensionDetails,
-    switchExtensionBranch,
-    beginExtensionOperation,
-    cancelExtensionOperation,
-    confirmExtensionOperation,
-} = createExtensionActions({
+const extensionActions = createExtensionActions({
     state,
     apiFetch,
     loadData,
@@ -621,17 +611,7 @@ const routeContext = createRouteContext({
         cancelModernMessageEdit,
         saveModernMessageEdit,
     },
-    extensions: {
-        getExtensionFolderName,
-        canManageExtension,
-        toggleExtensionInstall,
-        installExtensionFromForm,
-        loadExtensionDetails,
-        switchExtensionBranch,
-        beginExtensionOperation,
-        cancelExtensionOperation,
-        confirmExtensionOperation,
-    },
+    extensions: extensionActions,
     groups: {
         defaultGroupForm,
         groupToForm,

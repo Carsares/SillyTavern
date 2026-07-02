@@ -99,6 +99,17 @@ export function createRouteContext({
         toggleBackgroundSelection,
         uploadBackgroundFile,
     } = assets;
+    const {
+        getExtensionFolderName,
+        canManageExtension,
+        toggleExtensionInstall,
+        installExtensionFromForm,
+        loadExtensionDetails,
+        switchExtensionBranch,
+        beginExtensionOperation,
+        cancelExtensionOperation,
+        confirmExtensionOperation,
+    } = extensions;
 
     return {
         state,
@@ -166,7 +177,15 @@ export function createRouteContext({
         ...chatFiles,
         ...chatGeneration,
         ...chatMessages,
-        ...extensions,
+        getExtensionFolderName,
+        canManageExtension,
+        toggleExtensionInstall,
+        installExtensionFromForm,
+        loadExtensionDetails,
+        switchExtensionBranch,
+        beginExtensionOperation,
+        cancelExtensionOperation,
+        confirmExtensionOperation,
         ...groups,
         ...personas,
         getPresetCount,
