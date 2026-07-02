@@ -28,6 +28,7 @@ import { createPresetActions } from './actions/presets.js';
 import { createSettingsActions } from './actions/settings.js';
 import { createWorldbookActions } from './actions/worldbooks.js';
 import { createDataLoader } from './shell/data-loader.js';
+import { createShellElements } from './shell/elements.js';
 import { bindShellEvents } from './shell/events.js';
 import { createInspector } from './shell/inspector.js';
 import { createQueryMatcher, createShellMetadata } from './shell/metadata.js';
@@ -68,21 +69,7 @@ const apiFetch = apiClient.apiFetch;
 const apiFetchResponse = apiClient.apiFetchResponse;
 const { callLegacyBridge } = createLegacyBridge();
 
-const elements = {
-    app: document.getElementById('modernApp'),
-    navList: document.getElementById('navList'),
-    content: document.getElementById('content'),
-    inspector: document.getElementById('inspector'),
-    search: document.getElementById('globalSearch'),
-    refreshButton: document.getElementById('refreshButton'),
-    themeButton: document.getElementById('themeButton'),
-    mobileMenuButton: document.getElementById('mobileMenuButton'),
-    connectionStatus: document.getElementById('connectionStatus'),
-    commandPalette: document.getElementById('commandPalette'),
-    paletteSearch: document.getElementById('paletteSearch'),
-    paletteResults: document.getElementById('paletteResults'),
-    toastStack: document.getElementById('toastStack'),
-};
+const elements = createShellElements();
 
 document.documentElement.dataset.theme = state.theme;
 
