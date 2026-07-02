@@ -224,13 +224,47 @@ async function mockLegacyGenerationBridge(page, fixture) {
         if (request.action === 'generate') {
             const chatId = stripJsonlExtension(payload.chat);
             const currentMessages = fixture.messagesByChat[chatId] || [];
-            const messages = [
-                ...currentMessages,
-                { name: 'Modern User', is_user: true, mes: payload.message || '', send_date: Date.now() - 1000 },
-                { name: fixture.character.name, is_user: false, mes: `generated reply to ${payload.message}`, send_date: Date.now() },
-            ];
+            let messages = [];
+            if (payload.type === 'regenerate') {
+                messages = currentMessages.map((message, index) => {
+                    if (index !== currentMessages.length - 1) return message;
+                    return {
+                        ...message,
+                        mes: 'regenerated bridge reply',
+                        swipes: ['regenerated bridge reply', 'alternate regenerated reply'],
+                        swipe_id: 0,
+                    };
+                });
+            } else if (payload.type === 'continue') {
+                messages = currentMessages.map((message, index) => {
+                    if (index !== currentMessages.length - 1) return message;
+                    return { ...message, mes: `${message.mes} continued by bridge` };
+                });
+            } else {
+                messages = [
+                    ...currentMessages,
+                    { name: 'Modern User', is_user: true, mes: payload.message || '', send_date: Date.now() - 1000 },
+                    { name: fixture.character.name, is_user: false, mes: `generated reply to ${payload.message}`, send_date: Date.now() },
+                ];
+            }
             upsertChat(fixture, chatId, messages);
             return fulfillJson(route, { chat: chatFileName(chatId), messageCount: messages.length });
+        }
+
+        if (request.action === 'swipe') {
+            const chatId = stripJsonlExtension(payload.chat);
+            const messages = (fixture.messagesByChat[chatId] || []).map((message, index) => {
+                if (index !== Number(payload.messageIndex)) return message;
+                const swipes = Array.isArray(message.swipes) && message.swipes.length ? message.swipes : [message.mes || ''];
+                const currentSwipeId = Number(message.swipe_id) || 0;
+                const swipeId = payload.direction === 'left'
+                    ? (currentSwipeId + swipes.length - 1) % swipes.length
+                    : (currentSwipeId + 1) % swipes.length;
+                return { ...message, mes: swipes[swipeId], swipe_id: swipeId, swipes };
+            });
+            const swipedMessage = messages[Number(payload.messageIndex)] || {};
+            upsertChat(fixture, chatId, messages);
+            return fulfillJson(route, { chat: chatFileName(chatId), swipeId: swipedMessage.swipe_id || 0, swipeCount: swipedMessage.swipes?.length || 1 });
         }
 
         if (request.action === 'status') {
@@ -283,6 +317,52 @@ test.describe('Modern chat files', () => {
         await page.locator('[data-copy-message="0"]').click();
         await expect.poll(() => clipboardWrites).toEqual(['edited hello from modern']);
         await expect(page.locator('.toast-stack')).toContainText('消息已复制');
+    });
+
+    test('uses bridge controls to regenerate, continue, and switch response candidates', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        fixture.messagesByChat['existing-chat'][1] = {
+            ...fixture.messagesByChat['existing-chat'][1],
+            swipes: ['reply', 'alternate bridge reply'],
+            swipe_id: 0,
+        };
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.message-foot')).toContainText('候选 1/2');
+        await page.locator('[data-swipe-message="1"][data-swipe-direction="right"]').click();
+        await expect.poll(() => fixture.requests.bridge.at(-1)).toMatchObject({
+            action: 'swipe',
+            payload: {
+                avatar: 'mock.png',
+                chat: 'existing-chat',
+                messageIndex: 1,
+                direction: 'right',
+            },
+        });
+        await expect(page.locator('.chat-thread')).toContainText('alternate bridge reply');
+        await expect(page.locator('.message-foot')).toContainText('候选 2/2');
+
+        await page.locator('[data-regenerate-message]').click();
+        await expect.poll(() => fixture.requests.bridge.at(-1)).toMatchObject({
+            action: 'generate',
+            payload: {
+                chat: 'existing-chat',
+                type: 'regenerate',
+            },
+        });
+        await expect(page.locator('.chat-thread')).toContainText('regenerated bridge reply');
+
+        await page.locator('[data-continue-message]').click();
+        await expect.poll(() => fixture.requests.bridge.at(-1)).toMatchObject({
+            action: 'generate',
+            payload: {
+                chat: 'existing-chat',
+                type: 'continue',
+            },
+        });
+        await expect(page.locator('.chat-thread')).toContainText('regenerated bridge reply continued by bridge');
     });
 
     test('sends a message through the modern generation bridge', async ({ page }) => {
