@@ -162,9 +162,6 @@ export function createChatMessageComponents({
                     <button class="icon-button mini" type="button" data-copy-message="${messageIndex}" title="复制消息">
                         <i class="fa-solid fa-copy"></i>
                     </button>
-                    <button class="icon-button mini" type="button" data-edit-message="${messageIndex}" title="编辑消息" ${isEditing ? 'disabled' : ''}>
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
                     <button class="icon-button mini" type="button" data-delete-message="${messageIndex}" title="管理消息" ${isDeleting ? 'disabled' : ''}>
                         <i class="fa-solid fa-ellipsis"></i>
                     </button>
@@ -188,19 +185,23 @@ export function createChatMessageComponents({
             ${renderMessageReasoning(message)}
             ${renderMessageAttachments(message)}
             ${renderMessageFoot(message, model)}
-            ${isDeleting ? renderMessageDeletePanel(message) : ''}
+            ${isDeleting ? renderMessageManagePanel(message, messageIndex) : ''}
         </article>
     `;
     }
 
-    function renderMessageDeletePanel(message) {
+    function renderMessageManagePanel(message, messageIndex) {
         return `
-        <div class="settings-form inline-form danger-panel message-delete-panel">
+        <div class="settings-form inline-form message-manage-panel message-delete-panel">
             <div>
-                <strong>删除消息</strong>
-                <p class="panel-subtitle">将删除 ${escapeHtml(message.name || '当前消息')} 的这一条记录。</p>
+                <strong>消息管理</strong>
+                <p class="panel-subtitle">编辑或删除 ${escapeHtml(message.name || '当前消息')} 的这一条记录。</p>
             </div>
             <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-edit-message="${messageIndex}">
+                    <i class="fa-solid fa-pen"></i>
+                    编辑消息
+                </button>
                 <button class="secondary-button" type="button" data-cancel-message-delete>
                     <i class="fa-solid fa-xmark"></i>
                     取消

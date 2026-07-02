@@ -223,6 +223,16 @@ test.describe('Modern workspace', () => {
         await page.goto('/modern/?view=chat');
 
         await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+        await expect(page.locator('[data-edit-message]')).toHaveCount(0);
+
+        await page.locator('[data-delete-message="0"]').click();
+        await expect(page.locator('.message-delete-panel')).toBeVisible();
+        await expect(page.locator('[data-edit-message="0"]')).toBeVisible();
+        await page.locator('[data-edit-message="0"]').click();
+        await expect(page.locator('[data-edit-message-input="0"]')).toBeVisible();
+        await page.locator('[data-cancel-edit-message]').click();
+        expect(savedChat).toBeNull();
+
         await page.locator('[data-delete-message="0"]').click();
         await expect(page.locator('.message-delete-panel')).toBeVisible();
         expect(savedChat).toBeNull();
