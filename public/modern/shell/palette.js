@@ -87,5 +87,21 @@ export function createPalette({
         `).join('') || renderInlineEmpty('没有匹配结果');
     }
 
-    return { renderPalette };
+    function openPalette() {
+        elements.commandPalette.hidden = false;
+        state.paletteQuery = '';
+        elements.paletteSearch.value = '';
+        renderPalette();
+        window.setTimeout(() => elements.paletteSearch.focus(), 0);
+    }
+
+    function closePalette() {
+        elements.commandPalette.hidden = true;
+    }
+
+    return {
+        closePalette,
+        openPalette,
+        renderPalette,
+    };
 }

@@ -563,7 +563,7 @@ const { renderInspector } = createInspector({
     isGroupChatMode,
     renderKeyValue,
 });
-const { renderPalette } = createPalette({
+const { closePalette, openPalette, renderPalette } = createPalette({
     state,
     elements,
     getChatId,
@@ -957,18 +957,6 @@ function toggleInspector() {
     state.inspectorOpen = !state.inspectorOpen;
     localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
     renderInspector();
-}
-
-function openPalette() {
-    elements.commandPalette.hidden = false;
-    state.paletteQuery = '';
-    elements.paletteSearch.value = '';
-    renderPalette();
-    window.setTimeout(() => elements.paletteSearch.focus(), 0);
-}
-
-function closePalette() {
-    elements.commandPalette.hidden = true;
 }
 
 elements.refreshButton.addEventListener('click', () => loadData());

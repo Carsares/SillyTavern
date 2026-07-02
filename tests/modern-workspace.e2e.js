@@ -165,6 +165,21 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.toast', { hasText: '刷新完成' })).toHaveCount(0);
     });
 
+    test('opens command palette and navigates to a modern route', async ({ page }) => {
+        await page.goto('/modern/?view=dashboard');
+
+        await page.keyboard.press('Control+K');
+        await expect(page.locator('#commandPalette')).toBeVisible();
+        await expect(page.locator('#paletteSearch')).toBeFocused();
+
+        await page.locator('#paletteSearch').fill('API');
+        await expect(page.locator('[data-command-route="api"]').first()).toBeVisible();
+        await page.locator('[data-command-route="api"]').first().click();
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);
