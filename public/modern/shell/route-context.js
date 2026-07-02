@@ -29,6 +29,11 @@ export function createRouteContext({
         renderKeyValue,
     } = components;
     const {
+        getActivityEntries,
+        getActivitySummary,
+        recreateStats,
+    } = activity;
+    const {
         getOaiSettings,
         getSelectedApiMain,
         getChatCompletionModel,
@@ -133,7 +138,9 @@ export function createRouteContext({
         renderInlineEmpty,
         renderKeyValue,
         ...shell,
-        ...activity,
+        getActivityEntries,
+        getActivitySummary,
+        recreateStats,
         ...constants,
         getSelectedApiMain,
         getChatCompletionModel,

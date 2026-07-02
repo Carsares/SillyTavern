@@ -161,11 +161,7 @@ const settingsActions = createSettingsActions({
     formatBytes,
 });
 
-const {
-    getActivityEntries,
-    getActivitySummary,
-    recreateStats,
-} = createActivityActions({
+const activityActions = createActivityActions({
     state,
     apiFetch,
     loadData,
@@ -500,11 +496,7 @@ const routeContext = createRouteContext({
         render,
         showToast,
     },
-    activity: {
-        getActivityEntries,
-        getActivitySummary,
-        recreateStats,
-    },
+    activity: activityActions,
     constants: {
         chatCompletionSourceOptions,
         secretKeyByChatSource,
