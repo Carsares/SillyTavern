@@ -40,6 +40,7 @@ export function createChatRoute(ctx) {
         beginModernChatDelete,
         cancelModernChatDelete,
         confirmModernChatDelete,
+        getCurrentDraftKey,
         setCurrentDraft,
         importModernChatFiles,
     } = ctx;
@@ -392,6 +393,20 @@ export function createChatRoute(ctx) {
     }
 
     function handleKeydown(event) {
+        if (event.key === 'Escape') {
+            const currentDraftKey = getCurrentDraftKey();
+            if (state.chatEditing.key === currentDraftKey && state.chatEditing.index >= 0) {
+                event.preventDefault();
+                cancelModernMessageEdit();
+                return true;
+            }
+            if (state.chatMessageDeleteConfirm.key === currentDraftKey && state.chatMessageDeleteConfirm.index >= 0) {
+                event.preventDefault();
+                cancelModernMessageDelete();
+                return true;
+            }
+        }
+
         if (event.target instanceof HTMLElement && event.target.matches('[data-chat-input]') && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {
             event.preventDefault();
             sendModernMessage().catch(error => {

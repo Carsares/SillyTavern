@@ -230,8 +230,14 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-edit-message="0"]')).toBeVisible();
         await page.locator('[data-edit-message="0"]').click();
         await expect(page.locator('[data-edit-message-input="0"]')).toBeVisible();
-        await page.locator('[data-cancel-edit-message]').click();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('[data-edit-message-input="0"]')).toHaveCount(0);
         expect(savedChat).toBeNull();
+
+        await page.locator('[data-delete-message="0"]').click();
+        await expect(page.locator('.message-delete-panel')).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.message-delete-panel')).toHaveCount(0);
 
         await page.locator('[data-delete-message="0"]').click();
         await expect(page.locator('.message-delete-panel')).toBeVisible();
