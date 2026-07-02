@@ -219,30 +219,7 @@ const {
     worldEntryDefaults,
 });
 
-const {
-    getCharacterAvatarUrl,
-    getCharacterByAvatar,
-    getCharacterTags,
-    characterToForm,
-    beginCharacterCreate,
-    cancelCharacterCreate,
-    saveCharacterCreate,
-    loadCharacterDetail,
-    beginCharacterEdit,
-    cancelCharacterEdit,
-    saveCharacterEdit,
-    duplicateCharacter,
-    beginCharacterRename,
-    cancelCharacterRename,
-    confirmCharacterRename,
-    exportCharacter,
-    beginCharacterDelete,
-    cancelCharacterDelete,
-    confirmCharacterDelete,
-    updateCharacterFormField,
-    replaceCharacterAvatar,
-    importCharacterFile,
-} = createCharacterActions({
+const characterActions = createCharacterActions({
     state,
     apiFetch,
     apiFetchResponse,
@@ -250,6 +227,11 @@ const {
     render,
     showToast,
 });
+
+const {
+    getCharacterAvatarUrl,
+    beginCharacterCreate,
+} = characterActions;
 
 const {
     isGroupChatMode,
@@ -483,30 +465,7 @@ const routeContext = createRouteContext({
     },
     api: apiConnectionActions,
     assets: assetActions,
-    characters: {
-        getCharacterAvatarUrl,
-        getCharacterTags,
-        characterToForm,
-        beginCharacterCreate,
-        cancelCharacterCreate,
-        saveCharacterCreate,
-        loadCharacterDetail,
-        beginCharacterEdit,
-        cancelCharacterEdit,
-        saveCharacterEdit,
-        duplicateCharacter,
-        getCharacterByAvatar,
-        beginCharacterRename,
-        cancelCharacterRename,
-        confirmCharacterRename,
-        exportCharacter,
-        beginCharacterDelete,
-        cancelCharacterDelete,
-        confirmCharacterDelete,
-        updateCharacterFormField,
-        replaceCharacterAvatar,
-        importCharacterFile,
-    },
+    characters: characterActions,
     chatContext: {
         isGroupChatMode,
         getChatModeLabel,
