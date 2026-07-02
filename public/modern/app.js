@@ -90,20 +90,7 @@ const { setTheme } = createTheme({
     root: document.documentElement,
 });
 
-const {
-    getOaiSettings,
-    getSelectedApiMain,
-    getChatCompletionModel,
-    getApiModelSuggestions,
-    getApiSourceUiState,
-    getNumberSetting,
-    getSecretStateForSource,
-    testApiConnection,
-    setApiModelSuggestion,
-    saveApiConnectionFromForm,
-    updateApiSourceFields,
-    updateTextCompletionTypeFields,
-} = createApiConnectionActions({
+const apiConnectionActions = createApiConnectionActions({
     state,
     elements,
     apiFetch,
@@ -116,6 +103,11 @@ const {
     numberInput,
     uniqueValues,
 });
+
+const {
+    getOaiSettings,
+    getChatCompletionModel,
+} = apiConnectionActions;
 
 const {
     getPresetGroups,
@@ -589,20 +581,7 @@ const routeContext = createRouteContext({
         worldEntryRoleOptions,
         worldEntrySelectiveLogicOptions,
     },
-    api: {
-        getSelectedApiMain,
-        getChatCompletionModel,
-        getApiModelSuggestions,
-        getApiSourceUiState,
-        getNumberSetting,
-        getSecretStateForSource,
-        testApiConnection,
-        setApiModelSuggestion,
-        saveApiConnectionFromForm,
-        updateApiSourceFields,
-        updateTextCompletionTypeFields,
-        maskEndpoint,
-    },
+    api: apiConnectionActions,
     assets: {
         getAssetGroups,
         getAssetCount,

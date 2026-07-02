@@ -28,6 +28,19 @@ export function createRouteContext({
         renderInlineEmpty,
         renderKeyValue,
     } = components;
+    const {
+        getSelectedApiMain,
+        getChatCompletionModel,
+        getApiModelSuggestions,
+        getApiSourceUiState,
+        getNumberSetting,
+        getSecretStateForSource,
+        testApiConnection,
+        setApiModelSuggestion,
+        saveApiConnectionFromForm,
+        updateApiSourceFields,
+        updateTextCompletionTypeFields,
+    } = api;
 
     return {
         state,
@@ -42,7 +55,17 @@ export function createRouteContext({
         ...shell,
         ...activity,
         ...constants,
-        ...api,
+        getSelectedApiMain,
+        getChatCompletionModel,
+        getApiModelSuggestions,
+        getApiSourceUiState,
+        getNumberSetting,
+        getSecretStateForSource,
+        testApiConnection,
+        setApiModelSuggestion,
+        saveApiConnectionFromForm,
+        updateApiSourceFields,
+        updateTextCompletionTypeFields,
         ...assets,
         ...characters,
         ...chatContext,
