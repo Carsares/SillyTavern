@@ -265,6 +265,10 @@
     flex-wrap: wrap;
 }
 
+.chat-manage-panel .message-edit-actions {
+    flex-wrap: wrap;
+}
+
 .message-edit textarea {
     width: 100%;
     min-height: 120px;

@@ -210,6 +210,8 @@ test.describe('Modern chat files', () => {
         const createdChatId = fixture.requests.saves[0].file_name;
         await expect(page.locator('[data-select-chat]').filter({ hasText: chatFileName(createdChatId) })).toBeVisible();
 
+        await page.locator('[data-delete-chat]').click();
+        await expect(page.locator('.chat-manage-panel', { hasText: '聊天文件管理' })).toBeVisible();
         await page.locator('[data-rename-chat]').click();
         await page.locator('[data-chat-rename-input]').fill('renamed-modern-chat');
         await page.locator('[data-save-chat-rename]').click();
@@ -223,6 +225,7 @@ test.describe('Modern chat files', () => {
         });
         await expect(page.locator('[data-select-chat="renamed-modern-chat"]')).toBeVisible();
 
+        await page.locator('[data-delete-chat]').click();
         const txtDownloadPromise = page.waitForEvent('download');
         await page.locator('[data-export-chat="txt"]').click();
         const txtDownload = await txtDownloadPromise;
@@ -245,10 +248,9 @@ test.describe('Modern chat files', () => {
             format: 'jsonl',
         });
 
-        await page.locator('[data-delete-chat]').click();
-        await expect(page.locator('.danger-panel', { hasText: '删除聊天文件' })).toBeVisible();
+        await expect(page.locator('.chat-manage-panel', { hasText: 'renamed-modern-chat.jsonl' })).toBeVisible();
         await page.locator('[data-cancel-chat-delete]').click();
-        await expect(page.locator('.danger-panel', { hasText: '删除聊天文件' })).toHaveCount(0);
+        await expect(page.locator('.chat-manage-panel', { hasText: 'renamed-modern-chat.jsonl' })).toHaveCount(0);
         expect(fixture.requests.deletes).toHaveLength(0);
 
         await page.locator('[data-delete-chat]').click();

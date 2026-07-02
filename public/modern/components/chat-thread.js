@@ -68,28 +68,16 @@ export function createChatThreadComponents(ctx) {
             </div>
             ${selectedChat ? `
                 <div class="page-actions detail-actions">
-                    <button class="secondary-button" type="button" data-export-chat="txt">
-                        <i class="fa-solid fa-file-lines"></i>
-                        导出 TXT
-                    </button>
-                    <button class="secondary-button" type="button" data-export-chat="jsonl">
-                        <i class="fa-solid fa-file-code"></i>
-                        导出 JSONL
-                    </button>
-                    <button class="secondary-button" type="button" data-rename-chat ${isRenaming ? 'disabled' : ''}>
-                        <i class="fa-solid fa-pen-to-square"></i>
-                        重命名
-                    </button>
-                    <button class="secondary-button" type="button" data-delete-chat>
+                    <button class="secondary-button" type="button" data-delete-chat ${isDeleting ? 'disabled' : ''}>
                         <i class="fa-solid fa-ellipsis"></i>
-                        管理
+                        管理聊天
                     </button>
                 </div>
             ` : ''}
         </div>
         ${renderGenerationEnginePanel(entity, selectedChat)}
         ${isRenaming ? renderChatRenamePanel() : ''}
-        ${isDeleting ? renderChatDeletePanel() : ''}
+        ${isDeleting ? renderChatManagePanel() : ''}
         ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         ${renderChatComposer(messages)}
     `;
@@ -118,14 +106,26 @@ export function createChatThreadComponents(ctx) {
     `;
     }
 
-    function renderChatDeletePanel() {
+    function renderChatManagePanel() {
         return `
-        <div class="settings-form inline-form danger-panel">
+        <div class="settings-form inline-form chat-manage-panel">
             <div>
-                <strong>删除聊天文件</strong>
-                <p class="panel-subtitle">将删除 ${escapeHtml(state.chatDeleteConfirm.name)}.jsonl，操作不可撤销。</p>
+                <strong>聊天文件管理</strong>
+                <p class="panel-subtitle">导出、重命名，或删除 ${escapeHtml(state.chatDeleteConfirm.name)}.jsonl。</p>
             </div>
             <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-export-chat="txt">
+                    <i class="fa-solid fa-file-lines"></i>
+                    导出 TXT
+                </button>
+                <button class="secondary-button" type="button" data-export-chat="jsonl">
+                    <i class="fa-solid fa-file-code"></i>
+                    导出 JSONL
+                </button>
+                <button class="secondary-button" type="button" data-rename-chat>
+                    <i class="fa-solid fa-pen-to-square"></i>
+                    重命名
+                </button>
                 <button class="secondary-button" type="button" data-cancel-chat-delete>
                     <i class="fa-solid fa-xmark"></i>
                     取消
