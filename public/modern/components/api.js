@@ -377,10 +377,12 @@ export function createApiComponents(ctx) {
     }
 
     function renderApiMainSelect(mainApi) {
+        const isModernMainApi = mainApi === 'openai' || mainApi === 'textgenerationwebui';
         return `
         <label class="field-label">
             <span>主 API</span>
             <select class="select-input" data-api-main>
+                ${isModernMainApi ? '' : `<option value="${escapeHtml(mainApi)}" selected disabled>当前：${escapeHtml(mainApi || '未选择')}（暂不支持编辑）</option>`}
                 <option value="openai" ${mainApi === 'openai' ? 'selected' : ''}>聊天补全</option>
                 <option value="textgenerationwebui" ${mainApi === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
             </select>

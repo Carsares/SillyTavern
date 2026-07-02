@@ -123,6 +123,41 @@ async function mockModernApiShell(page, settingsBundle, secretState = {}) {
 }
 
 test.describe('Modern API page', () => {
+    test('keeps unsupported main API visible before switching to a modern editor', async ({ page }) => {
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'kobold',
+                preset_settings: 'Legacy Kobold Preset',
+                textgenerationwebui_settings: {
+                    type: 'ooba',
+                    server_urls: {
+                        ooba: 'http://127.0.0.1:5000',
+                    },
+                    custom_model: 'ooba/saved-model',
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('.form-section-title', { hasText: '连接' })).toBeVisible();
+        await expect(page.locator('[data-api-main]')).toHaveValue('kobold');
+        await expect(page.locator('[data-api-main] option:checked')).toHaveText('当前：kobold（暂不支持编辑）');
+        await expect(page.locator('text=当前主 API 暂不支持在现代页编辑。')).toBeVisible();
+
+        await page.locator('[data-api-main]').selectOption('textgenerationwebui');
+
+        await expect(page.locator('[data-textgen-type]')).toHaveValue('ooba');
+        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:5000');
+        await expect(page.locator('[data-textgen-model]')).toHaveValue('ooba/saved-model');
+    });
+
     test('edits and tests text completion connection without exposing secrets', async ({ page }) => {
         let savedSettings = null;
         let writtenSecret = null;
