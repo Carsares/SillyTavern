@@ -1,4 +1,5 @@
 import {
+    apiModelSuggestions,
     characterFormDefaults,
     chatCompletionModelFields,
     chatCompletionSourceOptions,
@@ -249,6 +250,7 @@ const state = {
         status: '未测试',
         detail: '尚未从现代界面发起连接测试。',
     },
+    apiTestHistory: [],
     apiMainDraft: '',
     extensionOperation: {
         name: '',
@@ -1301,6 +1303,34 @@ function getChatCompletionModel(settings, source) {
     return settings[field] || settings.openai_model || '';
 }
 
+function getApiModelSuggestions(source, currentModel) {
+    return uniqueValues([
+        currentModel,
+        ...(apiModelSuggestions[source] || []),
+    ]).slice(0, 8);
+}
+
+function setApiModelSuggestion(model) {
+    const input = elements.content.querySelector('[data-api-model]');
+    if (input) {
+        input.value = model;
+        input.focus();
+    }
+}
+
+function recordApiTestResult(status, detail, settings) {
+    state.apiTestHistory = [
+        {
+            status,
+            detail,
+            source: settings.source,
+            model: settings.model,
+            time: Date.now(),
+        },
+        ...state.apiTestHistory,
+    ].slice(0, 5);
+}
+
 function getApiSourceUiState(source) {
     const settings = getOaiSettings();
     const secretState = getSecretStateForSource(source);
@@ -1357,28 +1387,28 @@ function getNumberSetting(settings, key, fallback) {
     return Number.isFinite(value) ? value : fallback;
 }
 
-function getChatCompletionSettings() {
-    const settings = getOaiSettings();
-    const source = settings.chat_completion_source || 'openai';
-    const model = getChatCompletionModel(settings, source);
+function getChatCompletionSettingsFromForm() {
+    const savedSettings = getOaiSettings();
+    const source = elements.content.querySelector('[data-api-source]')?.value || savedSettings.chat_completion_source || 'openai';
+    const model = elements.content.querySelector('[data-api-model]')?.value.trim() || getChatCompletionModel(savedSettings, source);
 
     if (!model) {
-        throw new Error('当前聊天补全设置没有可用模型。');
+        throw new Error('当前聊天补全表单没有可用模型。');
     }
 
     return {
         source,
         model,
-        temperature: getNumberSetting(settings, 'temp_openai', 1),
-        maxTokens: getNumberSetting(settings, 'openai_max_tokens', 300),
-        topP: getNumberSetting(settings, 'top_p_openai', 1),
-        frequencyPenalty: getNumberSetting(settings, 'freq_pen_openai', 0),
-        presencePenalty: getNumberSetting(settings, 'pres_pen_openai', 0),
-        siliconflowEndpoint: settings.siliconflow_endpoint || 'global',
-        minimaxEndpoint: settings.minimax_endpoint || 'global',
-        customUrl: settings.custom_url || '',
-        reverseProxy: settings.reverse_proxy || '',
-        proxyPassword: settings.proxy_password || '',
+        temperature: numberInput(elements.content.querySelector('[data-api-temperature]')?.value, getNumberSetting(savedSettings, 'temp_openai', 1)),
+        maxTokens: numberInput(elements.content.querySelector('[data-api-max-tokens]')?.value, getNumberSetting(savedSettings, 'openai_max_tokens', 300)),
+        topP: numberInput(elements.content.querySelector('[data-api-top-p]')?.value, getNumberSetting(savedSettings, 'top_p_openai', 1)),
+        frequencyPenalty: numberInput(elements.content.querySelector('[data-api-frequency-penalty]')?.value, getNumberSetting(savedSettings, 'freq_pen_openai', 0)),
+        presencePenalty: numberInput(elements.content.querySelector('[data-api-presence-penalty]')?.value, getNumberSetting(savedSettings, 'pres_pen_openai', 0)),
+        siliconflowEndpoint: elements.content.querySelector('[data-api-endpoint]')?.value || savedSettings.siliconflow_endpoint || 'global',
+        minimaxEndpoint: savedSettings.minimax_endpoint || 'global',
+        customUrl: elements.content.querySelector('[data-api-custom-url]')?.value.trim() || savedSettings.custom_url || '',
+        reverseProxy: elements.content.querySelector('[data-api-reverse-proxy]')?.value.trim() || savedSettings.reverse_proxy || '',
+        proxyPassword: savedSettings.proxy_password || '',
     };
 }
 
@@ -3441,7 +3471,7 @@ async function testApiConnection() {
         throw new Error('现代页当前只支持测试聊天补全连接；文本补全请使用原版连接配置。');
     }
 
-    const settings = getChatCompletionSettings();
+    const settings = getChatCompletionSettingsFromForm();
     const body = createChatCompletionRequestBody(settings, [
         { role: 'user', content: '请只回复 OK。' },
     ]);
@@ -3462,6 +3492,7 @@ async function testApiConnection() {
             status: '可用',
             detail: `${settings.model}: ${text.slice(0, 80)}`,
         };
+        recordApiTestResult('可用', state.apiTest.detail, settings);
         showToast('连接测试成功', state.apiTest.detail);
     } catch (error) {
         state.apiTest = {
@@ -3469,6 +3500,7 @@ async function testApiConnection() {
             status: '失败',
             detail: error.message,
         };
+        recordApiTestResult('失败', error.message, settings);
         throw error;
     } finally {
         render();
@@ -6603,18 +6635,12 @@ function renderApi() {
             <section class="panel">
                 <div class="panel-header">
                     <div>
-                        <h2 class="panel-title">检查项</h2>
-                        <p class="panel-subtitle">用于定位配置为空、模型缺失和密钥显示策略。</p>
+                        <h2 class="panel-title">连接诊断</h2>
+                        <p class="panel-subtitle">集中显示模型、密钥、CSRF 和测试结果。</p>
                     </div>
                 </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr><th>项目</th><th>状态</th><th>详情</th></tr>
-                        </thead>
-                        <tbody>${checks.map(check => renderApiCheckRow(check)).join('')}</tbody>
-                    </table>
-                </div>
+                ${renderApiDiagnostics(checks)}
+                ${renderApiTestHistory()}
             </section>
         </div>
         <section class="panel section-panel">
@@ -6625,32 +6651,17 @@ function renderApi() {
                 </div>
             </div>
             <div class="grid-list">
-                ${profiles.map(profile => `
-                    <article class="resource-card">
-                        <div class="card-head">
-                            <div>
-                                <h3 class="card-title">${escapeHtml(profile.title)}</h3>
-                                <div class="card-meta">${escapeHtml(profile.kind)}</div>
-                            </div>
-                            <span class="badge">${profile.active ? '当前' : '备用'}</span>
-                        </div>
-                        <div class="kv-list">
-                            ${renderKeyValue('来源', profile.source || '未配置')}
-                            ${renderKeyValue('模型', profile.model || '未配置')}
-                            ${renderKeyValue('预设', profile.preset || '未配置')}
-                            ${renderKeyValue('端点', profile.endpoint || '未配置')}
-                        </div>
-                    </article>
-                `).join('')}
+                ${profiles.map(profile => renderApiProfileCard(profile)).join('')}
             </div>
         </section>
-        <section class="panel section-panel">
-            <div class="panel-header">
-                <div>
-                    <h2 class="panel-title">原始字段</h2>
-                    <p class="panel-subtitle">用于排查连接选择。</p>
-                </div>
-            </div>
+        <details class="panel section-panel raw-data-panel">
+            <summary>
+                <span>
+                    <strong>原始字段</strong>
+                    <em>用于排查连接选择，默认折叠。</em>
+                </span>
+                <i class="fa-solid fa-chevron-down"></i>
+            </summary>
             <div class="grid-list">
                 <article class="resource-card">
                     <h3 class="card-title">主配置</h3>
@@ -6671,7 +6682,74 @@ function renderApi() {
                     </div>
                 </article>
             </div>
+        </details>
+    `;
+}
+
+function renderApiDiagnostics(checks) {
+    return `
+        <div class="api-diagnostic-list">
+            ${checks.map(check => `
+                <article class="api-diagnostic-card ${check.state === 'ok' ? '' : 'needs-attention'}">
+                    <span class="avatar-fallback"><i class="fa-solid ${check.state === 'ok' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i></span>
+                    <span class="row-main">
+                        <strong>${escapeHtml(check.label)}</strong>
+                        <span class="row-subtitle">${escapeHtml(check.detail)}</span>
+                    </span>
+                    <span class="${check.state === 'ok' ? 'success' : 'danger'}">${check.state === 'ok' ? '正常' : '需检查'}</span>
+                </article>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderApiTestHistory() {
+    return `
+        <section class="form-section api-history-panel">
+            <div>
+                <h3 class="form-section-title">测试历史</h3>
+                <p class="panel-subtitle">保留最近 5 次本页连接测试。</p>
+            </div>
+            <div class="resource-list compact-list">
+                ${state.apiTestHistory.map(item => `
+                    <article class="resource-row">
+                        <span class="avatar-fallback"><i class="fa-solid ${item.status === '可用' ? 'fa-plug-circle-check' : 'fa-triangle-exclamation'}"></i></span>
+                        <span class="row-main">
+                            <span class="row-title">${escapeHtml(item.source)} / ${escapeHtml(item.model)}</span>
+                            <span class="row-subtitle">${escapeHtml(formatDate(item.time))} · ${escapeHtml(item.detail)}</span>
+                        </span>
+                        <span class="${item.status === '可用' ? 'success' : 'danger'}">${escapeHtml(item.status)}</span>
+                    </article>
+                `).join('') || renderInlineEmpty('还没有测试记录')}
+            </div>
         </section>
+    `;
+}
+
+function renderApiProfileCard(profile) {
+    const canSelect = profile.mainApi && profile.title !== '主连接';
+    return `
+        <article class="resource-card api-profile-card">
+            <div class="card-head">
+                <div>
+                    <h3 class="card-title">${escapeHtml(profile.title)}</h3>
+                    <div class="card-meta">${escapeHtml(profile.kind)}</div>
+                </div>
+                <span class="badge">${profile.active ? '当前' : '备用'}</span>
+            </div>
+            <div class="kv-list">
+                ${renderKeyValue('来源', profile.source || '未配置')}
+                ${renderKeyValue('模型', profile.model || '未配置')}
+                ${renderKeyValue('预设', profile.preset || '未配置')}
+                ${renderKeyValue('端点', profile.endpoint || '未配置')}
+            </div>
+            ${canSelect ? `
+                <button class="secondary-button" type="button" data-api-profile-main="${escapeHtml(profile.mainApi)}">
+                    <i class="fa-solid fa-arrow-right"></i>
+                    查看${escapeHtml(profile.title)}
+                </button>
+            ` : ''}
+        </article>
     `;
 }
 
@@ -6755,6 +6833,16 @@ function renderApiConnectionEditor(provider) {
                         <span>模型</span>
                         <input class="text-input" type="text" data-api-model value="${escapeHtml(model)}" autocomplete="off" placeholder="例如 deepseek-ai/DeepSeek-V4-Pro">
                     </label>
+                    <div class="field-label api-model-suggestions">
+                        <span>常用模型</span>
+                        <div class="tag-row">
+                            ${getApiModelSuggestions(source, model).map(item => `
+                                <button class="secondary-button compact-button" type="button" data-api-model-suggestion="${escapeHtml(item)}">
+                                    ${escapeHtml(item)}
+                                </button>
+                            `).join('') || '<span class="card-meta">当前来源暂无建议</span>'}
+                        </div>
+                    </div>
                     <label class="field-label">
                         <span>聊天补全预设</span>
                         <select class="select-input" data-api-preset>
@@ -6838,6 +6926,7 @@ function getApiProfiles() {
         {
             title: '主连接',
             kind: 'generation',
+            mainApi: settings.main_api || '',
             active: true,
             source: settings.main_api || '',
             model: mainIsChat ? openaiModel : (mainIsTextgen ? textgenModel : settings.model || ''),
@@ -6847,6 +6936,7 @@ function getApiProfiles() {
         {
             title: '聊天补全',
             kind: 'chat-completions',
+            mainApi: 'openai',
             active: settings.main_api === 'openai',
             source: openaiSource,
             model: openaiModel,
@@ -6856,6 +6946,7 @@ function getApiProfiles() {
         {
             title: '文本补全',
             kind: 'text-completions',
+            mainApi: 'textgenerationwebui',
             active: settings.main_api === 'textgenerationwebui',
             source: textgen.type || settings.textgen_type || '',
             model: textgenModel,
@@ -6917,19 +7008,6 @@ function getApiChecks(provider, profiles) {
             detail: state.csrfToken ? '现代页请求令牌正常。' : '尚未获取请求令牌。',
         },
     ];
-}
-
-function renderApiCheckRow(check) {
-    const icon = check.state === 'ok' ? 'fa-circle-check success' : 'fa-triangle-exclamation danger';
-    const label = check.state === 'ok' ? '正常' : '需检查';
-
-    return `
-        <tr>
-            <td>${escapeHtml(check.label)}</td>
-            <td><span class="${check.state === 'ok' ? 'success' : 'danger'}"><i class="fa-solid ${icon}"></i> ${label}</span></td>
-            <td>${escapeHtml(check.detail)}</td>
-        </tr>
-    `;
 }
 
 function renderKeyValue(key, value) {
@@ -8904,6 +8982,19 @@ async function handleClick(event) {
             showToast('连接测试失败', error.message);
             render();
         }
+        return;
+    }
+
+    const apiProfileButton = event.target.closest('[data-api-profile-main]');
+    if (apiProfileButton) {
+        state.apiMainDraft = apiProfileButton.dataset.apiProfileMain;
+        render();
+        return;
+    }
+
+    const apiModelSuggestionButton = event.target.closest('[data-api-model-suggestion]');
+    if (apiModelSuggestionButton) {
+        setApiModelSuggestion(apiModelSuggestionButton.dataset.apiModelSuggestion);
         return;
     }
 

@@ -65,6 +65,16 @@ export const chatCompletionSourceOptions = [
     { id: 'minimax', label: 'MiniMax' },
 ];
 
+export const apiModelSuggestions = {
+    openai: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
+    siliconflow: ['deepseek-ai/DeepSeek-V4-Pro', 'deepseek-ai/DeepSeek-V3', 'Qwen/Qwen3-235B-A22B', 'moonshotai/Kimi-K2-Instruct'],
+    deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    openrouter: ['openai/gpt-4.1', 'anthropic/claude-sonnet-4', 'deepseek/deepseek-chat-v3-0324'],
+    custom: ['deepseek-ai/DeepSeek-V4-Pro', 'gpt-4.1-mini'],
+    claude: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022'],
+    groq: ['llama-3.3-70b-versatile', 'meta-llama/llama-4-scout-17b-16e-instruct'],
+};
+
 export const secretKeyByChatSource = {
     openai: 'api_key_openai',
     claude: 'api_key_claude',

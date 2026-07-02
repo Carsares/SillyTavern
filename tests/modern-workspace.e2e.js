@@ -56,6 +56,53 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-api-field="custom-url"]')).toBeHidden();
     });
 
+    test('shows API diagnostics, model suggestions, and test history', async ({ page }) => {
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                chat_completion_source: 'siliconflow',
+                oai_settings: {
+                    chat_completion_source: 'siliconflow',
+                    siliconflow_model: 'deepseek-ai/DeepSeek-V3',
+                    siliconflow_endpoint: 'cn',
+                    openai_max_tokens: 300,
+                },
+                textgenerationwebui_settings: {
+                    type: 'openrouter',
+                    openrouter_model: 'openrouter/model',
+                },
+            }),
+            openai_setting_names: ['Default'],
+            openai_settings: [JSON.stringify({ chat_completion_source: 'siliconflow' })],
+        };
+
+        await page.route('**/api/settings/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(settingsBundle),
+        }));
+        await page.route('**/api/backends/chat-completions/generate', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ message: { content: 'OK' } }] }),
+        }));
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('.api-diagnostic-card')).toHaveCount(6);
+        await page.locator('[data-api-model-suggestion="deepseek-ai/DeepSeek-V4-Pro"]').click();
+        await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-ai/DeepSeek-V4-Pro');
+
+        await page.locator('[data-test-api]').click();
+
+        await expect(page.locator('.api-history-panel')).toContainText('可用');
+        await expect(page.locator('.api-history-panel')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
+
+        await page.locator('[data-api-profile-main="textgenerationwebui"]').click();
+        await expect(page.locator('.form-section-title', { hasText: '文本补全档案' })).toBeVisible();
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
+    });
+
     test('does not show refresh toast on initial load', async ({ page }) => {
         await page.goto('/modern/?view=dashboard');
 

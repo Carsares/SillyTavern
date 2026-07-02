@@ -362,6 +362,12 @@ kbd {
     color: var(--text);
 }
 
+.compact-button {
+    min-height: 30px;
+    padding: 0 9px;
+    font-size: 12px;
+}
+
 .secondary-button.danger-action {
     border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
     color: var(--danger);
@@ -533,6 +539,39 @@ kbd {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.api-diagnostic-list {
+    display: grid;
+    gap: 8px;
+}
+
+.api-diagnostic-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.api-diagnostic-card.needs-attention {
+    border-color: color-mix(in srgb, var(--warning) 36%, var(--border));
+    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+.api-history-panel {
+    margin-top: 12px;
+}
+
+.api-model-suggestions {
+    align-self: end;
+}
+
+.api-profile-card .secondary-button {
+    width: fit-content;
 }
 
 .settings-form {
