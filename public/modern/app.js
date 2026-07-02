@@ -28,6 +28,7 @@ import { createPresetActions } from './actions/presets.js';
 import { createSettingsActions } from './actions/settings.js';
 import { createWorldbookActions } from './actions/worldbooks.js';
 import { createDataLoader } from './shell/data-loader.js';
+import { bindShellEvents } from './shell/events.js';
 import { createInspector } from './shell/inspector.js';
 import { createQueryMatcher, createShellMetadata } from './shell/metadata.js';
 import { createNav } from './shell/nav.js';
@@ -870,57 +871,21 @@ function render() {
     shellRenderer.render();
 }
 
-elements.refreshButton.addEventListener('click', () => loadData());
-elements.themeButton.addEventListener('click', () => setTheme(state.theme === 'dark' ? 'light' : 'dark'));
-elements.mobileMenuButton.addEventListener('click', () => elements.app.querySelector('.sidebar')?.classList.toggle('open'));
-elements.search.addEventListener('input', event => {
-    state.query = normalizeText(event.target.value.trim());
-    if (state.route === 'assets') {
-        state.backgroundVisibleCount = backgroundPageSize;
-    }
-    render();
-});
-elements.content.addEventListener('input', event => {
-    const routeInputHandler = routeModules[state.route]?.handleInput;
-    if (routeInputHandler && routeInputHandler(event) !== false) {
-        return;
-    }
-});
-elements.content.addEventListener('change', async event => {
-    const routeChangeHandler = routeModules[state.route]?.handleChange;
-    if (routeChangeHandler && await routeChangeHandler(event) !== false) {
-        return;
-    }
-});
-elements.paletteSearch.addEventListener('input', event => {
-    state.paletteQuery = event.target.value.trim();
-    renderPalette();
-});
-elements.commandPalette.addEventListener('click', event => {
-    if (event.target === elements.commandPalette) {
-        closePalette();
-    }
-});
-document.addEventListener('click', event => {
-    handleClick(event);
-});
-document.addEventListener('keydown', event => {
-    const routeKeydownHandler = routeModules[state.route]?.handleKeydown;
-    if (routeKeydownHandler && routeKeydownHandler(event) !== false) {
-        return;
-    }
-
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        openPalette();
-    }
-    if (event.key === 'Escape') {
-        closePalette();
-        elements.app.querySelector('.sidebar')?.classList.remove('open');
-        if (closeChatSidebarOverlay() || closeChatBackups()) {
-            event.preventDefault();
-        }
-    }
+bindShellEvents({
+    state,
+    elements,
+    routeModules,
+    backgroundPageSize,
+    normalizeText,
+    loadData,
+    setTheme,
+    render,
+    renderPalette,
+    closePalette,
+    openPalette,
+    closeChatSidebarOverlay,
+    closeChatBackups,
+    handleClick,
 });
 
 render();
