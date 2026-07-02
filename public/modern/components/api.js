@@ -49,6 +49,15 @@ const secretKeyByTextCompletionType = {
     huggingface: 'api_key_huggingface',
 };
 
+const textCompletionSamplingFields = [
+    { key: 'temp', label: '温度', step: '0.01', fallback: 0.7 },
+    { key: 'top_p', label: 'Top P', step: '0.01', fallback: 0.5 },
+    { key: 'top_k', label: 'Top K', step: '1', fallback: 40 },
+    { key: 'min_p', label: 'Min P', step: '0.01', fallback: 0 },
+    { key: 'rep_pen', label: '重复惩罚', step: '0.01', fallback: 1.2 },
+    { key: 'rep_pen_range', label: '重复范围', step: '1', fallback: 0 },
+];
+
 export function createApiComponents(ctx) {
     const {
         state,
@@ -392,6 +401,7 @@ export function createApiComponents(ctx) {
 
     function renderTextCompletionEditor(mainApi) {
         const profile = getTextCompletionProfile();
+        const textgenSettings = state.settings?.textgenerationwebui_settings || {};
         const textgenPresetNames = getPresetGroups().find(group => group.id === 'textgenerationwebui')?.names || [];
         const secretUiState = getTextCompletionSecretUiState(profile.source);
         const typeOptions = getTextCompletionTypeOptions(profile.source);
@@ -436,6 +446,15 @@ export function createApiComponents(ctx) {
                     </label>
                 </div>
             </section>
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">基础采样</h3>
+                    <p class="panel-subtitle">承接文本补全常用采样字段，保存为旧设置同名字段。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    ${textCompletionSamplingFields.map(field => renderTextCompletionSamplingField(field, textgenSettings)).join('')}
+                </div>
+            </section>
             <div class="form-section">
                 <div>
                     <h3 class="form-section-title">安全密钥</h3>
@@ -457,6 +476,15 @@ export function createApiComponents(ctx) {
                 </button>
             </div>
         </div>
+    `;
+    }
+
+    function renderTextCompletionSamplingField(field, settings) {
+        return `
+        <label class="field-label">
+            <span>${escapeHtml(field.label)}</span>
+            <input class="text-input" type="number" step="${escapeHtml(field.step)}" data-textgen-sampling="${escapeHtml(field.key)}" value="${escapeHtml(getNumberSetting(settings, field.key, field.fallback))}">
+        </label>
     `;
     }
 

@@ -172,6 +172,12 @@ test.describe('Modern API page', () => {
                     },
                     openrouter_model: 'openrouter/auto',
                     preset: 'Text Preset A',
+                    temp: 0.7,
+                    top_p: 0.5,
+                    top_k: 40,
+                    min_p: 0.01,
+                    rep_pen: 1.2,
+                    rep_pen_range: 0,
                 },
             }),
             textgenerationwebui_preset_names: ['Text Preset A', 'Text Preset B'],
@@ -220,12 +226,24 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-textgen-type]')).toHaveValue('openrouter');
         await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('https://openrouter.ai/api');
         await expect(page.locator('[data-textgen-model]')).toHaveValue('openrouter/auto');
+        await expect(page.locator('[data-textgen-sampling="temp"]')).toHaveValue('0.7');
+        await expect(page.locator('[data-textgen-sampling="top_p"]')).toHaveValue('0.5');
+        await expect(page.locator('[data-textgen-sampling="top_k"]')).toHaveValue('40');
+        await expect(page.locator('[data-textgen-sampling="min_p"]')).toHaveValue('0.01');
+        await expect(page.locator('[data-textgen-sampling="rep_pen"]')).toHaveValue('1.2');
+        await expect(page.locator('[data-textgen-sampling="rep_pen_range"]')).toHaveValue('0');
         await expect(page.locator('[data-textgen-secret-status]')).toHaveText('密钥已保存');
         await expect(page.locator('body')).not.toContainText('sk-secret');
 
         await page.locator('[data-textgen-endpoint]').fill('https://openrouter.ai/api/v1');
         await page.locator('[data-textgen-model]').fill('openrouter/new-model');
         await page.locator('[data-textgen-preset]').selectOption('Text Preset B');
+        await page.locator('[data-textgen-sampling="temp"]').fill('0.82');
+        await page.locator('[data-textgen-sampling="top_p"]').fill('0.91');
+        await page.locator('[data-textgen-sampling="top_k"]').fill('64');
+        await page.locator('[data-textgen-sampling="min_p"]').fill('0.04');
+        await page.locator('[data-textgen-sampling="rep_pen"]').fill('1.08');
+        await page.locator('[data-textgen-sampling="rep_pen_range"]').fill('256');
         await page.locator('[data-textgen-api-key]').fill('sk-secret-textgen');
         await page.locator('[data-save-api-connection]').click();
 
@@ -234,6 +252,14 @@ test.describe('Modern API page', () => {
         expect(savedSettings.textgenerationwebui_settings.type).toBe('openrouter');
         expect(savedSettings.textgenerationwebui_settings.server_urls.openrouter).toBe('https://openrouter.ai/api/v1');
         expect(savedSettings.textgenerationwebui_settings.preset).toBe('Text Preset B');
+        expect(savedSettings.textgenerationwebui_settings).toMatchObject({
+            temp: 0.82,
+            top_p: 0.91,
+            top_k: 64,
+            min_p: 0.04,
+            rep_pen: 1.08,
+            rep_pen_range: 256,
+        });
         expect(writtenSecret).toMatchObject({
             key: 'api_key_openrouter',
             value: 'sk-secret-textgen',

@@ -31,6 +31,15 @@ const secretKeyByTextCompletionType = {
     huggingface: 'api_key_huggingface',
 };
 
+const textCompletionSamplingDefaults = {
+    temp: 0.7,
+    top_p: 0.5,
+    top_k: 40,
+    min_p: 0,
+    rep_pen: 1.2,
+    rep_pen_range: 0,
+};
+
 export function createApiConnectionActions({
     state,
     elements,
@@ -303,7 +312,15 @@ export function createApiConnectionActions({
             endpoint,
             model,
             preset,
+            sampling: getTextCompletionSamplingSettings(savedSettings),
         };
+    }
+
+    function getTextCompletionSamplingSettings(savedSettings) {
+        return Object.fromEntries(Object.entries(textCompletionSamplingDefaults).map(([key, fallback]) => {
+            const input = elements.content.querySelector(`[data-textgen-sampling="${key}"]`);
+            return [key, numberInput(input?.value, getNumberSetting(savedSettings, key, fallback))];
+        }));
     }
 
     async function saveTextCompletionConnectionFromForm() {
@@ -322,6 +339,7 @@ export function createApiConnectionActions({
         textgenSettings.type = settings.source;
         textgenSettings.server_urls = { ...(textgenSettings.server_urls || {}), [settings.source]: settings.endpoint };
         textgenSettings.preset = settings.preset;
+        Object.assign(textgenSettings, settings.sampling);
         if (modelField) {
             textgenSettings[modelField] = settings.model;
         }
