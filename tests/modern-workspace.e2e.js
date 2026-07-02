@@ -184,6 +184,57 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-check-generation-engine]')).toBeVisible();
     });
 
+    test('requires confirmation before deleting a chat message', async ({ page }) => {
+        let savedChat = null;
+        await page.route('**/api/characters/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ avatar: 'mock.png', name: 'Mock Character', data: { name: 'Mock Character' } }]),
+        }));
+        await page.route('**/api/groups/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        }));
+        await page.route('**/api/characters/chats', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ file_id: 'mock-chat', file_name: 'mock-chat.jsonl', chat_items: 2, last_mes: Date.now() }]),
+        }));
+        await page.route('**/api/chats/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                { chat_metadata: {}, user_name: 'User', character_name: 'Mock Character' },
+                { name: 'User', is_user: true, mes: 'hello', send_date: Date.now() },
+                { name: 'Mock Character', is_user: false, mes: 'reply', send_date: Date.now() },
+            ]),
+        }));
+        await page.route('**/api/chats/save', route => {
+            savedChat = route.request().postDataJSON();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+        await page.locator('[data-delete-message="0"]').click();
+        await expect(page.locator('.message-delete-panel')).toBeVisible();
+        expect(savedChat).toBeNull();
+
+        await page.locator('[data-cancel-message-delete]').click();
+        await expect(page.locator('.message-delete-panel')).toHaveCount(0);
+
+        await page.locator('[data-delete-message="0"]').click();
+        await page.locator('[data-confirm-message-delete]').click();
+        await expect.poll(() => savedChat?.chat?.length).toBe(2);
+        expect(savedChat.chat.some(message => message.mes === 'hello')).toBe(false);
+    });
+
     test('prioritizes the chat thread on mobile', async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.goto('/modern/?view=chat');

@@ -52,7 +52,9 @@ export function createChatRoute(ctx) {
         continueModernReply,
         swipeModernMessage,
         copyModernMessage,
-        deleteModernMessage,
+        beginModernMessageDelete,
+        cancelModernMessageDelete,
+        confirmModernMessageDelete,
         beginModernMessageEdit,
         cancelModernMessageEdit,
         saveModernMessageEdit,
@@ -244,9 +246,9 @@ export function createChatRoute(ctx) {
                         <i class="fa-solid fa-pen-to-square"></i>
                         重命名
                     </button>
-                    <button class="secondary-button danger-action" type="button" data-delete-chat>
-                        <i class="fa-solid fa-trash"></i>
-                        删除
+                    <button class="secondary-button" type="button" data-delete-chat>
+                        <i class="fa-solid fa-ellipsis"></i>
+                        管理
                     </button>
                 </div>
             ` : ''}
@@ -417,9 +419,9 @@ export function createChatRoute(ctx) {
                         确认删除
                     </button>
                 ` : `
-                    <button class="secondary-button danger-action" type="button" data-delete-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
-                        <i class="fa-solid fa-trash"></i>
-                        删除
+                    <button class="secondary-button" type="button" data-delete-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                        <i class="fa-solid fa-ellipsis"></i>
+                        管理
                     </button>
                 `}
             </div>
@@ -561,6 +563,7 @@ export function createChatRoute(ctx) {
         const text = message.extra?.display_text || message.mes || '[空消息]';
         const model = message.extra?.model || message.extra?.api || '';
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
+        const isDeleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
         const canSwipe = !message.is_user && !message.is_system && messageIndex === getSelectedChatMessages().length - 1;
 
         return `
@@ -583,8 +586,8 @@ export function createChatRoute(ctx) {
                     <button class="icon-button mini" type="button" data-edit-message="${messageIndex}" title="编辑消息" ${isEditing ? 'disabled' : ''}>
                         <i class="fa-solid fa-pen"></i>
                     </button>
-                    <button class="icon-button mini danger" type="button" data-delete-message="${messageIndex}" title="删除消息">
-                        <i class="fa-solid fa-trash"></i>
+                    <button class="icon-button mini" type="button" data-delete-message="${messageIndex}" title="管理消息" ${isDeleting ? 'disabled' : ''}>
+                        <i class="fa-solid fa-ellipsis"></i>
                     </button>
                 </span>
             </header>
@@ -606,7 +609,29 @@ export function createChatRoute(ctx) {
             ${renderMessageReasoning(message)}
             ${renderMessageAttachments(message)}
             ${renderMessageFoot(message, model)}
+            ${isDeleting ? renderMessageDeletePanel(message) : ''}
         </article>
+    `;
+    }
+
+    function renderMessageDeletePanel(message) {
+        return `
+        <div class="settings-form inline-form danger-panel message-delete-panel">
+            <div>
+                <strong>删除消息</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(message.name || '当前消息')} 的这一条记录。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-message-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-message-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
     `;
     }
 
@@ -819,8 +844,18 @@ export function createChatRoute(ctx) {
 
         const deleteMessageButton = event.target.closest('[data-delete-message]');
         if (deleteMessageButton) {
+            beginModernMessageDelete(deleteMessageButton.dataset.deleteMessage);
+            return true;
+        }
+
+        if (event.target.closest('[data-cancel-message-delete]')) {
+            cancelModernMessageDelete();
+            return true;
+        }
+
+        if (event.target.closest('[data-confirm-message-delete]')) {
             try {
-                await deleteModernMessage(deleteMessageButton.dataset.deleteMessage);
+                await confirmModernMessageDelete();
             } catch (error) {
                 state.errors.push({ key: 'delete-message', message: error.message });
                 showToast('删除消息失败', error.message);

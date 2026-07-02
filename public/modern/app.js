@@ -254,6 +254,9 @@ function createRouteContext() {
         swipeModernMessage,
         copyModernMessage,
         deleteModernMessage,
+        beginModernMessageDelete,
+        cancelModernMessageDelete,
+        confirmModernMessageDelete,
         beginModernMessageEdit,
         cancelModernMessageEdit,
         saveModernMessageEdit,
@@ -831,6 +834,7 @@ function useChatMode(mode, { resetChat = false } = {}) {
         state.chatRenaming = { key: '', name: '' };
         state.chatDeleteConfirm = { key: '', name: '' };
         state.chatEditing = { key: '', index: -1, text: '' };
+        state.chatMessageDeleteConfirm = { key: '', index: -1 };
         clearChatSearch();
     }
     return true;
@@ -3896,8 +3900,48 @@ async function deleteModernMessage(messageIndex) {
     const [deletedMessage] = messages.splice(index, 1);
     await saveModernChat(entity, state.selected.chat, messages);
     await refreshSelectedChatList(entity);
+    state.chatMessageDeleteConfirm = { key: '', index: -1 };
     showToast('消息已删除', deletedMessage?.name || '当前聊天');
     render();
+}
+
+function beginModernMessageDelete(messageIndex) {
+    if (state.engine.generating) {
+        showToast('删除失败', '生成中不能删除消息。');
+        return;
+    }
+
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !state.selected.chat) {
+        showToast('删除失败', '请先选择一个聊天文件。');
+        return;
+    }
+
+    const index = Number(messageIndex);
+    const messages = getSelectedChatMessages();
+    if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
+        showToast('删除失败', '消息位置无效，请刷新后重试。');
+        return;
+    }
+
+    state.chatMessageDeleteConfirm = { key: getCurrentDraftKey(), index };
+    state.chatEditing = { key: '', index: -1, text: '' };
+    render();
+}
+
+function cancelModernMessageDelete() {
+    state.chatMessageDeleteConfirm = { key: '', index: -1 };
+    render();
+}
+
+async function confirmModernMessageDelete() {
+    const confirm = state.chatMessageDeleteConfirm;
+    if (confirm.key !== getCurrentDraftKey() || confirm.index < 0) {
+        throw new Error('删除目标已变化，请重新选择消息。');
+    }
+
+    await deleteModernMessage(confirm.index);
 }
 
 async function importModernChatFiles(files) {
@@ -4106,6 +4150,7 @@ function beginModernMessageEdit(messageIndex) {
         index,
         text: message.extra?.display_text || message.mes || '',
     };
+    state.chatMessageDeleteConfirm = { key: '', index: -1 };
     render();
 }
 

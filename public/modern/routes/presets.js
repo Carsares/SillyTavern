@@ -132,9 +132,9 @@ export function createPresetsRoute(ctx) {
                     <i class="fa-solid fa-clock-rotate-left"></i>
                     恢复默认
                 </button>
-                <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
-                    <i class="fa-solid fa-trash"></i>
-                    删除
+                <button class="secondary-button" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-ellipsis"></i>
+                    管理
                 </button>
             </div>
         </div>

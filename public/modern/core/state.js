@@ -67,6 +67,10 @@ export function createModernState() {
             index: -1,
             text: '',
         },
+        chatMessageDeleteConfirm: {
+            key: '',
+            index: -1,
+        },
         chatRenaming: {
             key: '',
             name: '',

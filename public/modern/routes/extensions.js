@@ -145,9 +145,9 @@ export function createExtensionsRoute(ctx) {
                             ${extension.type === 'global' ? '移到本地' : '移到全局'}
                         </button>
                     ` : ''}
-                    <button class="secondary-button danger-action" type="button" data-extension-action="delete" data-extension-name="${escapeHtml(name)}" data-extension-type="${escapeHtml(extension.type)}">
-                        <i class="fa-solid fa-trash"></i>
-                        删除
+                    <button class="secondary-button" type="button" data-extension-action="delete" data-extension-name="${escapeHtml(name)}" data-extension-type="${escapeHtml(extension.type)}">
+                        <i class="fa-solid fa-ellipsis"></i>
+                        管理
                     </button>
                 ` : `
                     <span class="badge"><i class="fa-solid fa-lock"></i> 受保护</span>

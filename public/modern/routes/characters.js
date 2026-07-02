@@ -126,9 +126,9 @@ export function createCharactersRoute(ctx) {
                     <i class="fa-solid fa-file-code"></i>
                     JSON
                 </button>
-                <button class="secondary-button danger-action" type="button" data-delete-character="${escapeHtml(character.avatar)}">
-                    <i class="fa-solid fa-trash"></i>
-                    删除
+                <button class="secondary-button" type="button" data-delete-character="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-ellipsis"></i>
+                    管理
                 </button>
             </div>
         </div>

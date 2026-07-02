@@ -1524,6 +1524,10 @@ tr:last-child td {
     gap: 8px;
 }
 
+.message-delete-panel {
+    margin-top: 10px;
+}
+
 .message-edit textarea {
     width: 100%;
     min-height: 120px;

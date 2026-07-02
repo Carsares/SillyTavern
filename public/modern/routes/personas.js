@@ -60,9 +60,9 @@ export function createPersonasRoute(ctx) {
                             替换头像
                             <input class="visually-hidden" type="file" accept="image/*" data-persona-avatar-file="${escapeHtml(persona.avatarId)}">
                         </label>
-                        <button class="secondary-button danger-action" type="button" data-delete-persona="${escapeHtml(persona.avatarId)}">
-                            <i class="fa-solid fa-trash"></i>
-                            删除
+                        <button class="secondary-button" type="button" data-delete-persona="${escapeHtml(persona.avatarId)}">
+                            <i class="fa-solid fa-ellipsis"></i>
+                            管理
                         </button>
                     </div>
                     ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel(persona) : ''}
