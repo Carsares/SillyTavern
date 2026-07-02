@@ -1,49 +1,20 @@
 import { createActivityComponents } from '../components/activity.js';
+import { createActivityEvents } from './activity-events.js';
 
 export function createActivityRoute(ctx) {
-    const {
-        state,
-        render,
-        showToast,
-        recreateStats,
-    } = ctx;
     const { renderActivity } = createActivityComponents(ctx);
+    const { handleActivityClick, handleActivityInput, handleActivityChange } = createActivityEvents(ctx);
 
     async function handleClick(event) {
-        if (event.target.closest('[data-recreate-stats]')) {
-            try {
-                await recreateStats();
-            } catch (error) {
-                state.errors.push({ key: 'stats-recreate', message: error.message });
-                showToast('统计重建失败', error.message);
-                render();
-            }
-            return;
-        }
-
-
-        return false;
+        return handleActivityClick(event);
     }
 
     function handleInput(event) {
-        if (event.target instanceof HTMLInputElement && event.target.matches('[data-activity-filter]')) {
-            state.activityFilter = event.target.value;
-            render();
-            return true;
-        }
-
-        return false;
+        return handleActivityInput(event);
     }
 
     function handleChange(event) {
-        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-activity-sort]')) {
-            state.activitySort = event.target.value;
-            localStorage.setItem('st-modern-activity-sort', state.activitySort);
-            render();
-            return true;
-        }
-
-        return false;
+        return handleActivityChange(event);
     }
 
     return {
