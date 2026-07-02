@@ -10,6 +10,7 @@ export function createCharactersRoute(ctx) {
         renderCharacterRow,
         renderEmptyState,
         renderInlineEmpty,
+        renderKeyValue,
         matchesQuery,
         getCharacterAvatarUrl,
         getCharacterTags,
@@ -134,17 +135,13 @@ export function createCharactersRoute(ctx) {
         ${isRenaming ? renderCharacterRenamePanel(detail) : ''}
         ${isDeleting ? renderCharacterDeletePanel(detail) : ''}
         ${isEditing ? renderCharacterEditPanel(detail) : ''}
-        <div class="table-wrap">
-            <table>
-                <tbody>
-                    <tr><th>创建时间</th><td>${escapeHtml(formatDate(detail.create_date || detail.date_added))}</td></tr>
-                    <tr><th>最近聊天</th><td>${escapeHtml(formatDate(detail.date_last_chat))}</td></tr>
-                    <tr><th>聊天占用</th><td>${escapeHtml(formatBytes(detail.chat_size))}</td></tr>
-                    <tr><th>卡片大小</th><td>${escapeHtml(formatBytes(detail.data_size))}</td></tr>
-                    <tr><th>作者</th><td>${escapeHtml(detail.data?.creator || '未知')}</td></tr>
-                    <tr><th>关联世界书</th><td>${escapeHtml(detail.data?.extensions?.world || '未关联')}</td></tr>
-                </tbody>
-            </table>
+        <div class="character-meta-grid">
+            ${renderKeyValue('创建时间', formatDate(detail.create_date || detail.date_added))}
+            ${renderKeyValue('最近聊天', formatDate(detail.date_last_chat))}
+            ${renderKeyValue('聊天占用', formatBytes(detail.chat_size))}
+            ${renderKeyValue('卡片大小', formatBytes(detail.data_size))}
+            ${renderKeyValue('作者', detail.data?.creator || '未知')}
+            ${renderKeyValue('关联世界书', detail.data?.extensions?.world || '未关联')}
         </div>
         <p class="detail-text">${escapeHtml(detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。')}</p>
     `;

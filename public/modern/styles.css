@@ -1631,6 +1631,25 @@ tr:last-child td {
     gap: 14px;
 }
 
+.connection-summary-list {
+    gap: 10px;
+}
+
+.character-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.character-meta-grid .kv-row,
+.connection-summary-list .kv-row {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
 .kv-key {
     color: var(--text-muted);
 }
@@ -1837,6 +1856,10 @@ tr:last-child td {
 
     .list-toolbar,
     .settings-edit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .character-meta-grid {
         grid-template-columns: 1fr;
     }
 }

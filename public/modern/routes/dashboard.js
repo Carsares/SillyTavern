@@ -7,6 +7,7 @@ export function createDashboardRoute(ctx) {
         pageHead,
         renderCharacterRow,
         renderInlineEmpty,
+        renderKeyValue,
         getPresetCount,
         getProviderInfo,
     } = ctx;
@@ -39,15 +40,11 @@ export function createDashboardRoute(ctx) {
                     </div>
                     <span class="badge">${provider.extensionsEnabled ? '扩展开启' : '扩展关闭'}</span>
                 </div>
-                <div class="table-wrap">
-                    <table>
-                        <tbody>
-                            <tr><th>主 API</th><td>${escapeHtml(provider.api)}</td></tr>
-                            <tr><th>聊天补全来源</th><td>${escapeHtml(provider.chatSource || '未配置')}</td></tr>
-                            <tr><th>模型</th><td>${escapeHtml(provider.model || '未读取到模型字段')}</td></tr>
-                            <tr><th>预设字段</th><td>${escapeHtml(provider.preset || '未读取到当前预设字段')}</td></tr>
-                        </tbody>
-                    </table>
+                <div class="kv-list connection-summary-list">
+                    ${renderKeyValue('主 API', provider.api)}
+                    ${renderKeyValue('聊天补全来源', provider.chatSource || '未配置')}
+                    ${renderKeyValue('模型', provider.model || '未读取到模型字段')}
+                    ${renderKeyValue('预设字段', provider.preset || '未读取到当前预设字段')}
                 </div>
             </section>
             <section class="panel">
