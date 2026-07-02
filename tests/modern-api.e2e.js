@@ -1,5 +1,47 @@
 import { test, expect } from '@playwright/test';
 
+function createTextCompletionCase(type, modelField, secretKey) {
+    const initialModel = modelField ? `${type}/saved-model` : '';
+    const modelValue = modelField ? `${type}/modern-model` : 'model-field-should-not-be-saved';
+    const modelSettings = modelField ? { [modelField]: initialModel } : {};
+    const expectedModelSettings = modelField ? { [modelField]: modelValue } : {};
+    const secretValue = secretKey ? `sk-${type}` : '';
+    const expectedSecretWrites = secretKey ? [{ key: secretKey, value: secretValue }] : [];
+
+    return {
+        type,
+        initialModel,
+        modelValue,
+        modelSettings,
+        expectedModelSettings,
+        secretValue,
+        expectedSecretWrites,
+    };
+}
+
+const textCompletionCases = [
+    createTextCompletionCase('ooba', 'custom_model', 'api_key_ooba'),
+    createTextCompletionCase('mancer', 'mancer_model', 'api_key_mancer'),
+    createTextCompletionCase('vllm', 'vllm_model', 'api_key_vllm'),
+    createTextCompletionCase('aphrodite', 'aphrodite_model', 'api_key_aphrodite'),
+    createTextCompletionCase('tabby', 'tabby_model', 'api_key_tabby'),
+    createTextCompletionCase('koboldcpp', '', 'api_key_koboldcpp'),
+    createTextCompletionCase('togetherai', 'togetherai_model', 'api_key_togetherai'),
+    createTextCompletionCase('llamacpp', 'llamacpp_model', 'api_key_llamacpp'),
+    createTextCompletionCase('ollama', 'ollama_model', ''),
+    createTextCompletionCase('infermaticai', 'infermaticai_model', 'api_key_infermaticai'),
+    createTextCompletionCase('dreamgen', 'dreamgen_model', 'api_key_dreamgen'),
+    createTextCompletionCase('openrouter', 'openrouter_model', 'api_key_openrouter'),
+    createTextCompletionCase('featherless', 'featherless_model', 'api_key_featherless'),
+    createTextCompletionCase('huggingface', '', 'api_key_huggingface'),
+    createTextCompletionCase('generic', 'generic_model', 'api_key_generic'),
+];
+
+function setInputValue(input, value) {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 async function mockModernApiShell(page, settingsBundle, secretState = {}) {
     await page.route('**/csrf-token', route => route.fulfill({
         status: 200,
@@ -170,5 +212,86 @@ test.describe('Modern API page', () => {
             api_type: 'openrouter',
         });
         await expect(page.locator('.api-history-panel')).toContainText('openrouter/new-model');
+    });
+
+    test('saves every legacy text completion type with its model and secret mapping', async ({ page }) => {
+        let savedSettings = null;
+        const writtenSecrets = [];
+        const settingsBundle = {
+            settings: '',
+            textgenerationwebui_preset_names: ['Text Preset A'],
+            textgenerationwebui_presets: [
+                JSON.stringify({ temp: 0.7 }),
+            ],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+
+        await page.route('**/api/secrets/write', route => {
+            writtenSecrets.push(route.request().postDataJSON());
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        for (const [index, item] of textCompletionCases.entries()) {
+            const savedTextgen = {
+                type: item.type,
+                server_urls: {
+                    [item.type]: `http://127.0.0.1:${9100 + index}/saved`,
+                },
+                preset: 'Text Preset A',
+                ...item.modelSettings,
+            };
+
+            savedSettings = null;
+            writtenSecrets.length = 0;
+            settingsBundle.settings = JSON.stringify({
+                main_api: 'textgenerationwebui',
+                textgenerationwebui_settings: savedTextgen,
+            });
+
+            await page.goto('/modern/?view=api');
+
+            const typeOptions = await page.locator('[data-textgen-type] option').evaluateAll(options => options.map(option => option.value));
+            expect([...typeOptions].sort()).toEqual(textCompletionCases.map(({ type }) => type).sort());
+            await expect(page.locator('[data-textgen-type]')).toHaveValue(item.type);
+            await expect(page.locator('[data-textgen-endpoint]')).toHaveValue(savedTextgen.server_urls[item.type]);
+            await expect(page.locator('[data-textgen-model]')).toHaveValue(item.initialModel);
+
+            const newEndpoint = `http://127.0.0.1:${9200 + index}/${item.type}`;
+            await page.locator('[data-textgen-endpoint]').fill(newEndpoint);
+            await page.locator('[data-textgen-preset]').selectOption('Text Preset A');
+            await page.locator('[data-textgen-model]').fill(item.modelValue);
+            await page.locator('[data-textgen-api-key]').evaluate(setInputValue, item.secretValue);
+            await page.locator('[data-save-api-connection]').click();
+
+            await expect.poll(() => savedSettings?.textgenerationwebui_settings?.type).toBe(item.type);
+            expect(savedSettings.main_api).toBe('textgenerationwebui');
+            expect(savedSettings.textgenerationwebui_settings).toMatchObject({
+                type: item.type,
+                preset: 'Text Preset A',
+                server_urls: {
+                    [item.type]: newEndpoint,
+                },
+                ...item.expectedModelSettings,
+            });
+            expect(savedSettings.textgenerationwebui_settings).not.toHaveProperty('model');
+            expect(writtenSecrets.map(({ key, value }) => ({ key, value }))).toEqual(item.expectedSecretWrites);
+        }
     });
 });

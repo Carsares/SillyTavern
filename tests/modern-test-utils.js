@@ -111,6 +111,7 @@ function createRequestsLog() {
         characterCreate: [],
         characterMerge: [],
         characterDelete: [],
+        characterImport: [],
         groupCreate: [],
         groupEdit: [],
         groupDelete: [],
@@ -137,6 +138,20 @@ function modernSlug(value, fallback) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
     return slug || fallback;
+}
+
+function multipartFieldValue(bodyText, fieldName) {
+    const match = new RegExp(`name="${fieldName}"\\r?\\n\\r?\\n([^\\r\\n]*)`).exec(bodyText);
+    return match?.[1]?.trim() || '';
+}
+
+function multipartFileName(bodyText, fieldName) {
+    const match = new RegExp(`name="${fieldName}"; filename="([^"]+)"`).exec(bodyText);
+    return match?.[1]?.trim() || '';
+}
+
+function stripFileExtension(fileName) {
+    return String(fileName || '').replace(/\.[^.]+$/u, '').trim();
 }
 
 function characterFromCreatePayload(payload, avatar) {
@@ -254,6 +269,44 @@ export async function mockModernWorkspace(page, fixture = createModernResourceFi
         const avatar = `${modernSlug(payload.ch_name, `character-${fixture.requests.characterCreate.length}`)}.png`;
         updateCharacter(fixture, avatar, characterFromCreatePayload(payload, avatar));
         return fulfillJson(route, avatar);
+    });
+    await page.route('**/api/characters/import', route => {
+        const bodyText = route.request().postData() || '';
+        const preservedName = multipartFieldValue(bodyText, 'preserved_name') || multipartFileName(bodyText, 'avatar') || `imported-${fixture.requests.characterImport.length + 1}.json`;
+        const name = stripFileExtension(preservedName) || `Imported Character ${fixture.requests.characterImport.length + 1}`;
+        const avatar = `${modernSlug(name, `imported-${fixture.requests.characterImport.length + 1}`)}.png`;
+        fixture.requests.characterImport.push({
+            bodyText,
+            contentType: route.request().headers()['content-type'] || '',
+            fileName: multipartFileName(bodyText, 'avatar'),
+            fileType: multipartFieldValue(bodyText, 'file_type'),
+            preservedName,
+        });
+        updateCharacter(fixture, avatar, {
+            avatar,
+            name,
+            description: 'Imported character visible description.',
+            data: {
+                name,
+                description: 'Imported character visible description.',
+                personality: 'Imported through upload.',
+                scenario: '',
+                first_mes: 'Imported hello.',
+                creator: 'Modern import',
+                tags: ['imported'],
+                extensions: {
+                    world: '',
+                    talkativeness: 0.5,
+                    fav: false,
+                    depth_prompt: {
+                        prompt: '',
+                        depth: 4,
+                        role: 'system',
+                    },
+                },
+            },
+        });
+        return fulfillJson(route, { file_name: avatar });
     });
     await page.route('**/api/characters/merge-attributes', route => {
         const payload = postJson(route);

@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
@@ -68,5 +69,39 @@ test.describe('Modern character resources', () => {
             avatar_url: 'alice.png',
             delete_chats: true,
         });
+    });
+
+    test('imports a character file through the upload endpoint', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+
+        await page.locator('[data-character-import-file]').setInputFiles({
+            name: 'Imported Modern Character.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify({
+                spec: 'chara_card_v2',
+                data: {
+                    name: 'Imported Modern Character',
+                    description: 'Imported character visible description.',
+                },
+            })),
+        });
+
+        await expect(page.locator('[data-select-character="imported-modern-character.png"]')).toBeVisible();
+        await expect(page.locator('.detail-title')).toHaveText('Imported Modern Character');
+        await expect(page.locator('.detail-text')).toContainText('Imported character visible description.');
+
+        expect(fixture.requests.characterImport).toHaveLength(1);
+        expect(fixture.requests.characterImport[0]).toMatchObject({
+            fileName: 'Imported Modern Character.json',
+            fileType: 'json',
+            preservedName: 'Imported Modern Character.json',
+        });
+        expect(fixture.requests.characterImport[0].contentType).toContain('multipart/form-data');
+        expect(fixture.requests.characterImport[0].bodyText).toContain('name="avatar"; filename="Imported Modern Character.json"');
+        expect(fixture.requests.characterImport[0].bodyText).toContain('name="file_type"');
+        expect(fixture.requests.characterImport[0].bodyText).toContain('name="preserved_name"');
     });
 });
