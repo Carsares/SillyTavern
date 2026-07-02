@@ -9,6 +9,7 @@ import {
     worldEntryPageSize,
     worldEntryPositions,
 } from './core/constants.js';
+import { createApiClient } from './core/api-client.js';
 import {
     escapeHtml,
     formatBytes,
@@ -28,7 +29,6 @@ const state = {
     query: '',
     paletteQuery: '',
     csrfToken: '',
-    csrfTokenRequest: null,
     loaded: false,
     loading: false,
     errors: [],
@@ -213,6 +213,14 @@ const state = {
     },
     theme: localStorage.getItem('st-modern-theme') || 'light',
 };
+
+const apiClient = createApiClient({
+    onTokenChange: token => {
+        state.csrfToken = token;
+    },
+});
+const apiFetch = apiClient.apiFetch;
+const apiFetchResponse = apiClient.apiFetchResponse;
 
 const elements = {
     app: document.getElementById('modernApp'),
@@ -483,121 +491,6 @@ function getRouteCount(routeId) {
         default:
             return '';
     }
-}
-
-async function ensureCsrfToken() {
-    if (state.csrfToken) {
-        return state.csrfToken;
-    }
-
-    if (state.csrfTokenRequest) {
-        return state.csrfTokenRequest;
-    }
-
-    state.csrfTokenRequest = (async () => {
-        try {
-            const response = await fetch('/csrf-token', { credentials: 'same-origin' });
-            if (!response.ok) {
-                throw new Error(`CSRF token request failed: ${response.status}`);
-            }
-
-            const data = await response.json();
-            state.csrfToken = data.token;
-            return state.csrfToken;
-        } finally {
-            state.csrfTokenRequest = null;
-        }
-    })();
-
-    return state.csrfTokenRequest;
-}
-
-async function apiFetch(path, options = {}, retry = true) {
-    const method = options.method || 'POST';
-    const token = await ensureCsrfToken();
-    const headers = {
-        'X-CSRF-Token': token,
-    };
-
-    if (options.body !== undefined && !options.omitContentType) {
-        headers['Content-Type'] = 'application/json';
-    }
-
-    const request = {
-        method,
-        headers,
-        credentials: 'same-origin',
-        signal: options.signal,
-    };
-
-    if (options.body !== undefined) {
-        request.body = options.omitContentType ? options.body : JSON.stringify(options.body);
-    }
-
-    const response = await fetch(path, request);
-    if (response.status === 403 && retry) {
-        state.csrfToken = '';
-        state.csrfTokenRequest = null;
-        return apiFetch(path, options, false);
-    }
-    if (response.status === 403) {
-        throw new Error('当前会话没有访问权限，请先登录。');
-    }
-    if (!response.ok) {
-        throw new Error(`${path} failed: ${response.status}`);
-    }
-    if (response.status === 204) {
-        return null;
-    }
-
-    const text = await response.text();
-    if (!text) {
-        return null;
-    }
-
-    try {
-        return JSON.parse(text);
-    } catch {
-        return text;
-    }
-}
-
-async function apiFetchResponse(path, options = {}, retry = true) {
-    const method = options.method || 'POST';
-    const token = await ensureCsrfToken();
-    const headers = {
-        'X-CSRF-Token': token,
-    };
-
-    if (options.body !== undefined && !options.omitContentType) {
-        headers['Content-Type'] = 'application/json';
-    }
-
-    const request = {
-        method,
-        headers,
-        credentials: 'same-origin',
-        signal: options.signal,
-    };
-
-    if (options.body !== undefined) {
-        request.body = options.omitContentType ? options.body : JSON.stringify(options.body);
-    }
-
-    const response = await fetch(path, request);
-    if (response.status === 403 && retry) {
-        state.csrfToken = '';
-        state.csrfTokenRequest = null;
-        return apiFetchResponse(path, options, false);
-    }
-    if (response.status === 403) {
-        throw new Error('当前会话没有访问权限，请先登录。');
-    }
-    if (!response.ok) {
-        throw new Error(`${path} failed: ${response.status}`);
-    }
-
-    return response;
 }
 
 function downloadFile(content, fileName, contentType = 'application/octet-stream') {
