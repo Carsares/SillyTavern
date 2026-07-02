@@ -1,0 +1,273 @@
+export function createSettingsRoute(ctx) {
+    const {
+        state,
+        escapeHtml,
+        formatBytes,
+        formatDate,
+        formatNumber,
+        metricCard,
+        pageHead,
+        renderEmptyState,
+        renderInlineEmpty,
+        renderKeyValue,
+        getAssetCount,
+        getChatModeLabel,
+        getRequestCompressionSettings,
+    } = ctx;
+
+    function renderSettings() {
+        const bundle = state.settingsBundle || {};
+        const requestCompression = getRequestCompressionSettings();
+        const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
+        const snapshotCount = state.settingsSnapshots.items.length;
+        const compressionEnabled = Boolean(requestCompression.enabled);
+        const dataStatus = state.errors.length ? '需要处理' : '正常';
+
+        return `
+        ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
+            <button class="primary-button" type="button" data-create-settings-snapshot ${state.settingsSnapshots.creating ? 'disabled' : ''}>
+                <i class="fa-solid ${state.settingsSnapshots.creating ? 'fa-circle-notch fa-spin' : 'fa-camera'}"></i>
+                创建快照
+            </button>
+            <button class="secondary-button" type="button" data-load-settings-snapshots ${state.settingsSnapshots.loading ? 'disabled' : ''}>
+                <i class="fa-solid ${state.settingsSnapshots.loading ? 'fa-circle-notch fa-spin' : 'fa-clock-rotate-left'}"></i>
+                设置快照
+            </button>
+        `)}
+        <div class="metrics-grid">
+            ${metricCard('数据状态', dataStatus, state.errors.length ? `${formatNumber(state.errors.length)} 个读取错误` : '读取正常', 'fa-heart-pulse')}
+            ${metricCard('扩展', formatNumber(state.extensions.length), bundle.enable_extensions ? '扩展系统开启' : '扩展系统关闭', 'fa-cubes')}
+            ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
+            ${metricCard('设置快照', formatNumber(snapshotCount), state.settingsSnapshots.loading ? '读取中' : '本地备份', 'fa-clock-rotate-left')}
+        </div>
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">可编辑设置</h2>
+                    <p class="panel-subtitle">现代页本地偏好与 settings.json 中的请求压缩参数。</p>
+                </div>
+            </div>
+            <div class="settings-edit-grid">
+                ${renderModernPreferencesForm()}
+                ${renderRequestCompressionForm(requestCompression)}
+            </div>
+        </section>
+        <div class="grid-list">
+            <article class="resource-card">
+                <h2 class="card-title">用户与账户</h2>
+                <p class="card-meta">当前登录与权限状态。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('当前用户', state.me?.name || state.me?.handle || '默认用户')}
+                    ${renderKeyValue('管理员', state.me?.admin ? '是' : '否')}
+                    ${renderKeyValue('账户系统', bundle.enable_accounts ? '开启' : '关闭')}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">扩展能力</h2>
+                <p class="card-meta">第三方扩展发现、安装和更新策略。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('扩展启用', bundle.enable_extensions ? '是' : '否')}
+                    ${renderKeyValue('自动更新', bundle.enable_extensions_auto_update ? '是' : '否')}
+                    ${renderKeyValue('发现数量', state.extensions.length)}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">请求压缩</h2>
+                <p class="card-meta">控制大请求的压缩边界。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('启用', compressionEnabled ? '是' : '否')}
+                    ${renderKeyValue('最小载荷', formatBytes(requestCompression.minPayloadSize))}
+                    ${renderKeyValue('最大载荷', formatBytes(requestCompression.maxPayloadSize))}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">现代界面</h2>
+                <p class="card-meta">新版工作区本地偏好。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('主题', state.theme)}
+                    ${renderKeyValue('聊天类型', getChatModeLabel())}
+                    ${renderKeyValue('聊天列表', state.chatSidebarOpen ? '展开' : '收起')}
+                    ${renderKeyValue('上下文抽屉', state.inspectorOpen ? '展开' : '收起')}
+                    ${renderKeyValue('入口', '/modern/')}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">资源索引</h2>
+                <p class="card-meta">当前用户目录读取到的核心对象。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('角色', formatNumber(state.characters.length))}
+                    ${renderKeyValue('群聊', formatNumber(state.groups.length))}
+                    ${renderKeyValue('世界书', formatNumber(state.worldbooks.length || (state.settingsBundle.world_names || []).length))}
+                    ${renderKeyValue('素材', formatNumber(getAssetCount()))}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">请求安全</h2>
+                <p class="card-meta">现代页请求令牌和密钥状态。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('CSRF', state.csrfToken ? '已获取' : '未获取')}
+                    ${renderKeyValue('密钥状态', savedSecrets ? `${formatNumber(savedSecrets)} 个已保存` : '未读取到')}
+                    ${renderKeyValue('错误状态', dataStatus)}
+                </div>
+            </article>
+        </div>
+        ${renderSettingsSnapshots()}
+    `;
+    }
+
+    function renderModernPreferencesForm() {
+        const defaultChatSidebarOpen = localStorage.getItem('st-modern-chat-sidebar-open') === null
+            ? state.chatSidebarOpen
+            : localStorage.getItem('st-modern-chat-sidebar-open') === 'true';
+        const defaultInspectorOpen = localStorage.getItem('st-modern-inspector-open') === null
+            ? state.inspectorOpen
+            : localStorage.getItem('st-modern-inspector-open') === 'true';
+
+        return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">现代界面偏好</h3>
+                <p class="panel-subtitle">保存到浏览器本地，只影响新版工作区。</p>
+            </div>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>主题</span>
+                    <select class="select-input" data-modern-theme>
+                        <option value="light" ${state.theme === 'light' ? 'selected' : ''}>浅色</option>
+                        <option value="dark" ${state.theme === 'dark' ? 'selected' : ''}>深色</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>默认聊天类型</span>
+                    <select class="select-input" data-modern-chat-mode>
+                        <option value="character" ${state.chatMode === 'character' ? 'selected' : ''}>角色</option>
+                        <option value="group" ${state.chatMode === 'group' ? 'selected' : ''}>群聊</option>
+                    </select>
+                </label>
+            </div>
+            <div class="checkbox-grid compact-checkbox-grid">
+                <label class="checkbox-card">
+                    <input type="checkbox" data-modern-chat-sidebar-open ${defaultChatSidebarOpen ? 'checked' : ''}>
+                    <span>默认展开聊天列表</span>
+                </label>
+                <label class="checkbox-card">
+                    <input type="checkbox" data-modern-inspector-open ${defaultInspectorOpen ? 'checked' : ''}>
+                    <span>默认展开上下文抽屉</span>
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-modern-preferences>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存界面偏好
+                </button>
+            </div>
+        </section>
+    `;
+    }
+
+    function renderRequestCompressionForm(requestCompression) {
+        return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">请求压缩</h3>
+                <p class="panel-subtitle">控制大请求压缩边界，保存到 settings.json。</p>
+            </div>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-request-compression-enabled ${requestCompression.enabled ? 'checked' : ''}>
+                <span>启用请求压缩</span>
+            </label>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>最小载荷 Byte</span>
+                    <input class="text-input" type="number" min="0" step="1" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}">
+                </label>
+                <label class="field-label">
+                    <span>最大载荷 Byte</span>
+                    <input class="text-input" type="number" min="0" step="1" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}">
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-request-compression>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存请求压缩
+                </button>
+            </div>
+        </section>
+    `;
+    }
+
+    function renderSettingsSnapshots() {
+        const snapshots = state.settingsSnapshots.items;
+        const selectedSnapshot = state.settingsSnapshots.previewName;
+        const isLoading = state.settingsSnapshots.loading;
+
+        return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">设置快照</h2>
+                    <p class="panel-subtitle">备份和恢复 settings.json。恢复前会要求二次确认。</p>
+                </div>
+                <button class="secondary-button" type="button" data-load-settings-snapshots ${isLoading ? 'disabled' : ''}>
+                    <i class="fa-solid ${isLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
+                    刷新
+                </button>
+            </div>
+            <div class="backup-layout">
+                <div class="resource-list backup-list">
+                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(isLoading ? '正在读取设置快照' : '暂无设置快照')}
+                </div>
+                <div class="backup-preview">
+                    ${selectedSnapshot ? `
+                        <div class="panel-header compact-header">
+                            <div>
+                                <h3 class="panel-title">${escapeHtml(selectedSnapshot)}</h3>
+                                <p class="panel-subtitle">只读预览。恢复会替换当前 settings.json。</p>
+                            </div>
+                        </div>
+                        <textarea readonly>${escapeHtml(state.settingsSnapshots.previewText)}</textarea>
+                    ` : renderEmptyState('fa-file-code', '未选择快照', '点击“预览”查看快照内容。')}
+                </div>
+            </div>
+        </section>
+    `;
+    }
+
+    function renderSettingsSnapshotRow(snapshot) {
+        const name = snapshot.name || '';
+        const isConfirming = state.settingsSnapshots.restoreConfirm === name;
+        const isBusy = state.settingsSnapshots.restoring && isConfirming;
+        return `
+        <article class="backup-row ${state.settingsSnapshots.previewName === name ? 'active' : ''}">
+            <div class="row-main">
+                <strong class="row-title">${escapeHtml(name)}</strong>
+                <span class="row-subtitle">${escapeHtml(formatDate(snapshot.date))} · ${escapeHtml(formatBytes(snapshot.size))}</span>
+            </div>
+            <div class="row-actions">
+                <button class="secondary-button" type="button" data-preview-settings-snapshot="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                    <i class="fa-solid fa-eye"></i>
+                    预览
+                </button>
+                ${isConfirming ? `
+                    <button class="secondary-button" type="button" data-cancel-settings-restore ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        取消
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-confirm-settings-restore ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        <i class="fa-solid ${state.settingsSnapshots.restoring ? 'fa-circle-notch fa-spin' : 'fa-rotate-left'}"></i>
+                        确认恢复
+                    </button>
+                ` : `
+                    <button class="secondary-button danger-action" type="button" data-restore-settings-snapshot="${escapeHtml(name)}" ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        <i class="fa-solid fa-rotate-left"></i>
+                        恢复
+                    </button>
+                `}
+            </div>
+        </article>
+    `;
+    }
+
+    return {
+        render: renderSettings,
+    };
+}
