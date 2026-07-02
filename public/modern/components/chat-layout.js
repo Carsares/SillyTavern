@@ -67,6 +67,7 @@ export function createChatLayoutComponents(ctx) {
             </button>
         `)}
         <div class="chat-layout ${state.chatSidebarOpen ? '' : 'chat-sidebar-collapsed'}">
+            ${state.chatSidebarOpen ? '<button class="chat-sidebar-scrim" type="button" data-toggle-chat-sidebar aria-label="关闭聊天列表"></button>' : ''}
             ${state.chatSidebarOpen ? renderChatSidebar({
         resourceCount,
         resourceRows,
@@ -79,7 +80,12 @@ export function createChatLayoutComponents(ctx) {
                 ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState(isGroupChatMode() ? 'fa-users' : 'fa-address-card', getChatEntityEmptyTitle(), getChatEntityEmptyDescription())}
             </section>
         </div>
-        ${state.chatBackups.open ? renderChatBackupsPanel() : ''}
+        ${state.chatBackups.open ? `
+            <button class="chat-tools-scrim" type="button" data-chat-backups-toggle aria-label="关闭聊天备份"></button>
+            <aside class="chat-tools-drawer" aria-label="聊天备份">
+                ${renderChatBackupsPanel()}
+            </aside>
+        ` : ''}
     `;
     }
 

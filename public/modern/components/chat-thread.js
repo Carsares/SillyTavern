@@ -101,20 +101,20 @@ export function createChatThreadComponents(ctx) {
         const statusClass = engine.error ? 'danger' : (engine.ready ? 'success' : '');
 
         return `
-        <div class="settings-form inline-form engine-panel">
-            <div>
+        <section class="engine-panel">
+            <div class="engine-panel-main">
                 <strong>生成引擎</strong>
                 <p class="panel-subtitle">${escapeHtml(engine.detail || '生成引擎会在首次发送时自动加载。')}</p>
                 ${engine.error ? `<p class="danger">${escapeHtml(engine.error)}</p>` : ''}
             </div>
-            <div class="message-edit-actions">
+            <div class="engine-panel-actions">
                 <span class="badge ${statusClass}">${escapeHtml(engine.status)}</span>
                 <button class="secondary-button" type="button" data-check-generation-engine ${isBusy || !entity ? 'disabled' : ''}>
                     <i class="fa-solid ${engine.checking ? 'fa-circle-notch fa-spin' : 'fa-plug-circle-check'}"></i>
                     ${engine.checking ? '检查中' : (selectedChat ? '检查引擎' : '预热引擎')}
                 </button>
             </div>
-        </div>
+        </section>
     `;
     }
 

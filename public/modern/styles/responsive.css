@@ -61,7 +61,6 @@
     }
 
     .chat-layout,
-    .chat-browser,
     .backup-layout {
         grid-template-columns: 1fr;
         grid-template-rows: auto;
@@ -73,12 +72,40 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .chat-thread {
-        order: -1;
+    .chat-sidebar-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 18;
+        display: block;
+        border: 0;
+        background: rgba(0, 0, 0, 0.28);
+        cursor: pointer;
     }
 
     .chat-browser {
-        order: 1;
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 19;
+        width: min(380px, calc(100vw - 44px));
+        height: 100vh;
+        overflow: auto;
+        padding: 12px;
+        background: color-mix(in srgb, var(--surface) 96%, var(--surface-muted));
+        border-right: 1px solid var(--border);
+        box-shadow: var(--shadow);
+    }
+
+    .engine-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .engine-panel-actions {
+        justify-content: space-between;
+    }
+
+    .chat-tools-drawer {
+        width: min(560px, calc(100vw - 24px));
+        padding: 12px;
     }
 
     .checkbox-grid {

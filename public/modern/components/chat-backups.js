@@ -14,7 +14,7 @@ export function createChatBackupComponents({
         const targetLabel = `当前选中${getChatModeLabel()}`;
 
         return `
-        <section class="panel section-panel">
+        <section class="panel chat-tool-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">聊天备份</h2>

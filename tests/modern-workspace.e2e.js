@@ -243,6 +243,10 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.chat-thread')).toBeVisible();
         await expect(page.locator('.chat-browser')).toHaveCount(0);
         await expect(page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' })).toBeVisible();
+
+        await page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' }).click();
+        await expect(page.locator('.chat-browser')).toBeVisible();
+        await expect(page.locator('.chat-sidebar-scrim')).toBeVisible();
     });
 
     test('loads more backgrounds instead of hard truncating asset grid', async ({ page }) => {
