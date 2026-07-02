@@ -45,6 +45,58 @@ export function createInspector({
         return Object.values(state.assets || {}).reduce((total, entries) => total + (Array.isArray(entries) ? entries.length : 0), 0);
     }
 
+    function getBackgroundFilename(background) {
+        return typeof background === 'string' ? background : background?.filename || '';
+    }
+
+    function getSelectedBackgroundName() {
+        const selected = state.selected.background;
+        if (!selected) {
+            return '未选中';
+        }
+        const match = (state.backgrounds?.images || []).find(background => getBackgroundFilename(background) === selected);
+        return getBackgroundFilename(match) || selected;
+    }
+
+    function getSelectedAssetName() {
+        const selected = state.selected.asset || '';
+        const separatorIndex = selected.indexOf(':');
+        if (separatorIndex < 0) {
+            return '未选中';
+        }
+
+        const category = selected.slice(0, separatorIndex);
+        const selectedPath = selected.slice(separatorIndex + 1);
+        const entries = getAssetEntriesForCategory(category);
+        const match = entries.find(entry => entry.path === selectedPath);
+        return match?.label || match?.filename || selectedPath.split('/').filter(Boolean).pop() || selectedPath || '未选中';
+    }
+
+    function getAssetEntriesForCategory(category) {
+        const value = state.assets?.[category];
+        const entries = [];
+        if (Array.isArray(value)) {
+            value.forEach(path => entries.push(formatAssetEntry(category, path)));
+        } else if (value && typeof value === 'object') {
+            Object.entries(value).forEach(([section, items]) => {
+                if (!Array.isArray(items)) {
+                    return;
+                }
+                items.forEach(path => entries.push(formatAssetEntry(category, path, section)));
+            });
+        }
+        return entries;
+    }
+
+    function formatAssetEntry(category, path, section = '') {
+        const filename = String(path || '').split('/').filter(Boolean).pop() || '';
+        return {
+            path,
+            filename,
+            label: section ? `${section}/${filename}` : filename,
+        };
+    }
+
     function getBackgroundCount() {
         return Array.isArray(state.backgrounds?.images) ? state.backgrounds.images.length : 0;
     }
@@ -107,8 +159,28 @@ export function createInspector({
             ['背景数量', `${formatNumber(getBackgroundCount())} 个`],
             ['资产文件', `${formatNumber(getAssetFileCount())} 个`],
             ['背景文件夹', `${formatNumber(getBackgroundFolderCount())} 个`],
+            ['当前背景', getSelectedBackgroundName()],
+            ['当前资产', getSelectedAssetName()],
+            ['文件夹筛选', state.backgroundFolderFilter || '全部背景'],
             ['选择模式', state.backgroundSelection.active ? '已开启' : '未开启'],
             ['选中背景', `${formatNumber(state.backgroundSelection.filenames.length)} 个`],
+        ]);
+    }
+
+    function renderDashboardContextSection(provider) {
+        const selectedCharacter = state.characters.find(character => character.avatar === state.selected.character);
+        const selectedGroup = state.groups.find(group => group.id === state.selected.group);
+        const selectedWorldbook = getSelectedWorldbook();
+
+        return renderSection('工作台状态', [
+            ['主 API', provider.api],
+            ['聊天来源', provider.chatSource || '未配置'],
+            ['角色 / 群组', `${formatNumber(state.characters.length)} / ${formatNumber(state.groups.length)}`],
+            ['世界书', `${formatNumber(state.worldbooks.length || provider.worldCount || 0)} 个`],
+            ['素材', `${formatNumber(getBackgroundCount())} 背景 / ${formatNumber(getAssetFileCount())} 文件`],
+            ['选中角色', selectedCharacter?.name || selectedCharacter?.data?.name || selectedCharacter?.avatar || '未选中'],
+            ['选中群组', selectedGroup?.name || selectedGroup?.id || '未选中'],
+            ['选中世界书', selectedWorldbook?.name || selectedWorldbook?.file_id || '未选中'],
         ]);
     }
 
@@ -219,6 +291,8 @@ export function createInspector({
 
     function renderRouteContextSection(provider, selectedCharacter, selectedGroup, selectedEntity, selectedChat) {
         switch (state.route) {
+            case 'dashboard':
+                return renderDashboardContextSection(provider);
             case 'chat':
                 return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat);
             case 'api':

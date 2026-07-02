@@ -127,6 +127,12 @@ test.describe('Modern inspector', () => {
     test('shows route-specific context instead of a generic summary', async ({ page }) => {
         await mockModernInspectorWorkspace(page);
 
+        await page.goto('/modern/?view=dashboard');
+        const dashboardSection = page.locator('.inspector-section', { hasText: '工作台状态' });
+        await expect(dashboardSection).toContainText('siliconflow');
+        await expect(dashboardSection).toContainText('1 / 1');
+        await expect(dashboardSection).toContainText('2 背景 / 2 文件');
+
         await page.goto('/modern/?view=chat');
         const chatSection = page.locator('.inspector-section', { hasText: '聊天状态' });
         await expect(chatSection).toContainText('Mock Character');
@@ -153,6 +159,18 @@ test.describe('Modern inspector', () => {
         await expect(assetSection).toContainText('背景数量');
         await expect(assetSection).toContainText('资产文件');
         await expect(assetSection).toContainText('2 个');
+        await expect(assetSection).toContainText('当前背景');
+        await expect(assetSection).toContainText('当前资产');
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-row[data-command-route="assets"][data-command-id="one.jpg"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=assets/);
+        await expect(assetSection).toContainText('one.jpg');
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-row[data-command-route="assets"][data-command-id="bgm:assets/bgm/theme.mp3"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=assets/);
+        await expect(assetSection).toContainText('theme.mp3');
 
         await page.goto('/modern/?view=settings');
         const settingsSection = page.locator('.inspector-section', { hasText: '设置状态' });
