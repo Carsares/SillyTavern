@@ -103,6 +103,60 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
 
+    test('edits modern preferences and request compression settings', async ({ page }) => {
+        let savedSettings = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                request_compression: {
+                    enabled: false,
+                    minPayloadSize: 1024,
+                    maxPayloadSize: 4096,
+                },
+            }),
+            request_compression: {
+                enabled: false,
+                minPayloadSize: 1024,
+                maxPayloadSize: 4096,
+            },
+        };
+
+        await page.route('**/api/settings/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(settingsBundle),
+        }));
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.goto('/modern/?view=settings');
+
+        await expect(page.locator('.page-title')).toHaveText('设置中心');
+        await page.locator('[data-modern-theme]').selectOption('dark');
+        await page.locator('[data-modern-chat-mode]').selectOption('group');
+        await page.locator('[data-modern-inspector-open]').check();
+        await page.locator('[data-save-modern-preferences]').click();
+
+        await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+        await expect.poll(() => page.evaluate('window.localStorage.getItem("st-modern-chat-mode")')).toBe('group');
+
+        await page.locator('[data-request-compression-enabled]').check();
+        await page.locator('[data-request-compression-min]').fill('2048');
+        await page.locator('[data-request-compression-max]').fill('8192');
+        await page.locator('[data-save-request-compression]').click();
+
+        await expect.poll(() => savedSettings?.request_compression?.enabled).toBe(true);
+        expect(savedSettings.request_compression).toMatchObject({
+            minPayloadSize: 2048,
+            maxPayloadSize: 8192,
+        });
+    });
+
     test('does not show refresh toast on initial load', async ({ page }) => {
         await page.goto('/modern/?view=dashboard');
 

@@ -7457,6 +7457,50 @@ async function confirmSettingsSnapshotRestore() {
     }
 }
 
+function getRequestCompressionSettings() {
+    return state.settings.request_compression || state.settingsBundle.request_compression || {};
+}
+
+function saveModernPreferencesFromForm() {
+    const theme = elements.content.querySelector('[data-modern-theme]')?.value === 'dark' ? 'dark' : 'light';
+    const chatMode = elements.content.querySelector('[data-modern-chat-mode]')?.value === 'group' ? 'group' : 'character';
+    const chatSidebarOpen = Boolean(elements.content.querySelector('[data-modern-chat-sidebar-open]')?.checked);
+    const inspectorOpen = Boolean(elements.content.querySelector('[data-modern-inspector-open]')?.checked);
+
+    setTheme(theme);
+    state.chatMode = chatMode;
+    localStorage.setItem('st-modern-chat-mode', chatMode);
+    localStorage.setItem('st-modern-chat-sidebar-open', String(chatSidebarOpen));
+    localStorage.setItem('st-modern-inspector-open', String(inspectorOpen));
+    showToast('界面偏好已保存', `${theme} / ${getChatModeLabel()}`);
+    render();
+}
+
+async function saveRequestCompressionFromForm() {
+    const current = getRequestCompressionSettings();
+    const enabled = Boolean(elements.content.querySelector('[data-request-compression-enabled]')?.checked);
+    const minPayloadSize = numberInput(elements.content.querySelector('[data-request-compression-min]')?.value, Number(current.minPayloadSize || 0));
+    const maxPayloadSize = numberInput(elements.content.querySelector('[data-request-compression-max]')?.value, Number(current.maxPayloadSize || 0));
+
+    if (minPayloadSize < 0 || maxPayloadSize < 0) {
+        throw new Error('请求压缩载荷大小不能小于 0。');
+    }
+    if (maxPayloadSize && minPayloadSize > maxPayloadSize) {
+        throw new Error('最小载荷不能大于最大载荷。');
+    }
+
+    state.settings.request_compression = {
+        ...current,
+        enabled,
+        minPayloadSize,
+        maxPayloadSize,
+    };
+    await apiFetch('/api/settings/save', { body: state.settings });
+    await loadData({ silent: true });
+    showToast('请求压缩设置已保存', `${formatBytes(minPayloadSize)} - ${formatBytes(maxPayloadSize)}`);
+    render();
+}
+
 function getActivityEntries() {
     return Object.entries(state.stats || {})
         .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
@@ -7573,7 +7617,7 @@ function renderActivity() {
 
 function renderSettings() {
     const bundle = state.settingsBundle || {};
-    const requestCompression = bundle.request_compression || {};
+    const requestCompression = getRequestCompressionSettings();
     const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
     const snapshotCount = state.settingsSnapshots.items.length;
     const compressionEnabled = Boolean(requestCompression.enabled);
@@ -7597,6 +7641,18 @@ function renderSettings() {
             ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
             ${metricCard('设置快照', formatNumber(snapshotCount), state.settingsSnapshots.loading ? '读取中' : '本地备份', 'fa-clock-rotate-left')}
         </div>
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">可编辑设置</h2>
+                    <p class="panel-subtitle">现代页本地偏好与 settings.json 中的请求压缩参数。</p>
+                </div>
+            </div>
+            <div class="settings-edit-grid">
+                ${renderModernPreferencesForm()}
+                ${renderRequestCompressionForm(requestCompression)}
+            </div>
+        </section>
         <div class="grid-list">
             <article class="resource-card">
                 <h2 class="card-title">用户与账户</h2>
@@ -7657,6 +7713,87 @@ function renderSettings() {
             </article>
         </div>
         ${renderSettingsSnapshots()}
+    `;
+}
+
+function renderModernPreferencesForm() {
+    const defaultChatSidebarOpen = localStorage.getItem('st-modern-chat-sidebar-open') === null
+        ? state.chatSidebarOpen
+        : localStorage.getItem('st-modern-chat-sidebar-open') === 'true';
+    const defaultInspectorOpen = localStorage.getItem('st-modern-inspector-open') === null
+        ? state.inspectorOpen
+        : localStorage.getItem('st-modern-inspector-open') === 'true';
+
+    return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">现代界面偏好</h3>
+                <p class="panel-subtitle">保存到浏览器本地，只影响新版工作区。</p>
+            </div>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>主题</span>
+                    <select class="select-input" data-modern-theme>
+                        <option value="light" ${state.theme === 'light' ? 'selected' : ''}>浅色</option>
+                        <option value="dark" ${state.theme === 'dark' ? 'selected' : ''}>深色</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>默认聊天类型</span>
+                    <select class="select-input" data-modern-chat-mode>
+                        <option value="character" ${state.chatMode === 'character' ? 'selected' : ''}>角色</option>
+                        <option value="group" ${state.chatMode === 'group' ? 'selected' : ''}>群聊</option>
+                    </select>
+                </label>
+            </div>
+            <div class="checkbox-grid compact-checkbox-grid">
+                <label class="checkbox-card">
+                    <input type="checkbox" data-modern-chat-sidebar-open ${defaultChatSidebarOpen ? 'checked' : ''}>
+                    <span>默认展开聊天列表</span>
+                </label>
+                <label class="checkbox-card">
+                    <input type="checkbox" data-modern-inspector-open ${defaultInspectorOpen ? 'checked' : ''}>
+                    <span>默认展开上下文抽屉</span>
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-modern-preferences>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存界面偏好
+                </button>
+            </div>
+        </section>
+    `;
+}
+
+function renderRequestCompressionForm(requestCompression) {
+    return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">请求压缩</h3>
+                <p class="panel-subtitle">控制大请求压缩边界，保存到 settings.json。</p>
+            </div>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-request-compression-enabled ${requestCompression.enabled ? 'checked' : ''}>
+                <span>启用请求压缩</span>
+            </label>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>最小载荷 Byte</span>
+                    <input class="text-input" type="number" min="0" step="1" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}">
+                </label>
+                <label class="field-label">
+                    <span>最大载荷 Byte</span>
+                    <input class="text-input" type="number" min="0" step="1" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}">
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-request-compression>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存请求压缩
+                </button>
+            </div>
+        </section>
     `;
 }
 
@@ -8935,6 +9072,22 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'settings-snapshot-create', message: error.message });
             showToast('设置快照创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-save-modern-preferences]')) {
+        saveModernPreferencesFromForm();
+        return;
+    }
+
+    if (event.target.closest('[data-save-request-compression]')) {
+        try {
+            await saveRequestCompressionFromForm();
+        } catch (error) {
+            state.errors.push({ key: 'request-compression-save', message: error.message });
+            showToast('请求压缩保存失败', error.message);
             render();
         }
         return;
