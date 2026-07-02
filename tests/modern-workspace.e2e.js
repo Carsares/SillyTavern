@@ -34,4 +34,14 @@ test.describe('Modern workspace', () => {
             expect(errors).toEqual([]);
         });
     }
+
+    test('shows text completion API as read-only in the modern editor', async ({ page }) => {
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await page.locator('[data-api-main]').selectOption('textgenerationwebui');
+
+        await expect(page.locator('.form-section-title', { hasText: '文本补全档案' })).toBeVisible();
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
+    });
 });

@@ -222,6 +222,7 @@ const state = {
         status: '未测试',
         detail: '尚未从现代界面发起连接测试。',
     },
+    apiMainDraft: '',
     extensionOperation: {
         name: '',
         type: '',
@@ -1201,6 +1202,10 @@ function getOaiSettings() {
     return state.settings.oai_settings || {};
 }
 
+function getSelectedApiMain() {
+    return state.apiMainDraft || state.settings.main_api || 'openai';
+}
+
 function getChatCompletionModel(settings, source) {
     const field = chatCompletionModelFields[source] || 'openai_model';
     return settings[field] || settings.openai_model || '';
@@ -1300,6 +1305,9 @@ async function saveApiConnectionFromForm() {
     const keyInput = elements.content.querySelector('[data-api-key]');
     const model = modelInput?.value.trim() || '';
 
+    if (mainApi !== 'openai') {
+        throw new Error('现代页暂不支持保存文本补全连接，请使用原版连接配置。');
+    }
     if (!modelField || !model) {
         throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
     }
@@ -1335,6 +1343,7 @@ async function saveApiConnectionFromForm() {
     }
 
     await apiFetch('/api/settings/save', { body: state.settings });
+    state.apiMainDraft = '';
     await loadData({ silent: true });
     showToast('连接配置已保存', `${source} / ${model}`);
 }
@@ -3222,6 +3231,9 @@ function extractAssistantText(response) {
 async function testApiConnection() {
     if (state.apiTest.running) {
         return;
+    }
+    if (getSelectedApiMain() !== 'openai') {
+        throw new Error('现代页当前只支持测试聊天补全连接；文本补全请使用原版连接配置。');
     }
 
     const settings = getChatCompletionSettings();
@@ -6102,10 +6114,11 @@ function renderApi() {
     const provider = getProviderInfo();
     const profiles = getApiProfiles();
     const checks = getApiChecks(provider, profiles);
+    const canTestConnection = getSelectedApiMain() === 'openai';
 
     return `
         ${pageHead('API 连接管理', '连接、模型、预设和请求状态。', `
-            <button class="primary-button" type="button" data-test-api ${state.apiTest.running ? 'disabled' : ''}>
+            <button class="primary-button" type="button" data-test-api ${state.apiTest.running || !canTestConnection ? 'disabled' : ''}>
                 <i class="fa-solid ${state.apiTest.running ? 'fa-circle-notch fa-spin' : 'fa-plug-circle-check'}"></i>
                 ${state.apiTest.running ? '测试中' : '测试连接'}
             </button>
@@ -6230,6 +6243,36 @@ function renderApiConnectionEditor(provider) {
     const endpoint = settings.siliconflow_endpoint === 'global' ? 'global' : 'cn';
     const apiUiState = getApiSourceUiState(source);
     const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
+    const mainApi = getSelectedApiMain();
+
+    if (mainApi !== 'openai') {
+        const textgenProfile = getApiProfiles().find(profile => profile.title === '文本补全') || {};
+        return `
+            <div class="settings-form">
+                <section class="form-section">
+                    <div>
+                        <h3 class="form-section-title">连接</h3>
+                        <p class="panel-subtitle">现代页当前只编辑聊天补全连接；文本补全连接保持只读。</p>
+                    </div>
+                    <div class="form-grid two-columns">
+                        ${renderApiMainSelect(mainApi)}
+                    </div>
+                </section>
+                <section class="form-section">
+                    <div>
+                        <h3 class="form-section-title">文本补全档案</h3>
+                        <p class="panel-subtitle">如需修改文本补全来源、端点和采样参数，请打开原版连接配置。</p>
+                    </div>
+                    <div class="kv-list">
+                        ${renderKeyValue('来源', textgenProfile.source || '未配置')}
+                        ${renderKeyValue('模型', textgenProfile.model || '未配置')}
+                        ${renderKeyValue('预设', textgenProfile.preset || '未配置')}
+                        ${renderKeyValue('端点', textgenProfile.endpoint || '未配置')}
+                    </div>
+                </section>
+            </div>
+        `;
+    }
 
     return `
         <div class="settings-form">
@@ -6239,13 +6282,7 @@ function renderApiConnectionEditor(provider) {
                     <p class="panel-subtitle">选择主 API、来源和端点。</p>
                 </div>
                 <div class="form-grid two-columns">
-                    <label class="field-label">
-                        <span>主 API</span>
-                        <select class="select-input" data-api-main>
-                            <option value="openai" ${(state.settings.main_api || 'openai') === 'openai' ? 'selected' : ''}>聊天补全</option>
-                            <option value="textgenerationwebui" ${state.settings.main_api === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
-                        </select>
-                    </label>
+                    ${renderApiMainSelect(mainApi)}
                     <label class="field-label">
                         <span>聊天补全来源</span>
                         <select class="select-input" data-api-source>
@@ -6329,6 +6366,18 @@ function renderApiConnectionEditor(provider) {
                 </button>
             </div>
         </div>
+    `;
+}
+
+function renderApiMainSelect(mainApi) {
+    return `
+        <label class="field-label">
+            <span>主 API</span>
+            <select class="select-input" data-api-main>
+                <option value="openai" ${mainApi === 'openai' ? 'selected' : ''}>聊天补全</option>
+                <option value="textgenerationwebui" ${mainApi === 'textgenerationwebui' ? 'selected' : ''}>文本补全（只读）</option>
+            </select>
+        </label>
     `;
 }
 
@@ -8784,6 +8833,11 @@ elements.content.addEventListener('input', event => {
     }
 });
 elements.content.addEventListener('change', async event => {
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-main]')) {
+        state.apiMainDraft = event.target.value;
+        render();
+        return;
+    }
     if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
         updateApiSourceFields(event.target.value);
         return;
