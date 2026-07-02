@@ -367,7 +367,7 @@
     bottom: 12px;
     z-index: 3;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 8px;
     margin-top: 10px;
     padding: 8px;
@@ -379,6 +379,8 @@
 }
 
 .composer textarea {
+    grid-column: 1;
+    grid-row: 1;
     min-height: 46px;
     max-height: 120px;
     resize: vertical;
@@ -389,7 +391,17 @@
     padding: 11px 12px;
 }
 
+.composer-status {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
 .composer button {
+    grid-row: 1;
     align-self: end;
 }
 

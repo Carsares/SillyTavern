@@ -152,6 +152,13 @@
         grid-template-columns: 1fr;
     }
 
+    .composer textarea,
+    .composer-status,
+    .composer button {
+        grid-column: 1;
+        grid-row: auto;
+    }
+
     .checkbox-grid {
         grid-template-columns: 1fr;
     }

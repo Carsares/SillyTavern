@@ -196,6 +196,14 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('.page-title')).toHaveText('聊天工作区');
         await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
         await expect(page.locator('.detail-title')).toHaveText('Mock Character');
+        await expect(page.locator('[data-send-message]')).toBeDisabled();
+        await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+
+        await page.locator('[data-chat-input]').fill('hello modern composer');
+        await expect(page.locator('[data-send-message]')).toBeEnabled();
+        await expect(page.locator('[data-composer-status]')).toContainText('准备发送');
+        await page.locator('[data-chat-input]').fill('');
+        await expect(page.locator('[data-send-message]')).toBeDisabled();
 
         await page.locator('[data-new-chat]').click();
         await expect.poll(() => fixture.requests.saves.length).toBe(1);

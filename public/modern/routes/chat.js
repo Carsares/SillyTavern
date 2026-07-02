@@ -357,6 +357,7 @@ export function createChatRoute(ctx) {
     function handleInput(event) {
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
             setCurrentDraft(event.target.value);
+            updateComposerSendState(event.target);
             return true;
         }
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
@@ -373,6 +374,35 @@ export function createChatRoute(ctx) {
         }
 
         return false;
+    }
+
+    function updateComposerSendState(input) {
+        const draftLength = input.value.trim().length;
+        const hasTarget = Boolean(getSelectedChatEntity());
+        const canSend = !state.engine.generating && hasTarget && draftLength > 0;
+        const composer = input.closest('.composer');
+        const sendButton = composer?.querySelector('[data-send-message]');
+        const status = composer?.querySelector('[data-composer-status]');
+
+        if (sendButton instanceof HTMLButtonElement) {
+            sendButton.disabled = !canSend;
+        }
+        if (status) {
+            status.textContent = getComposerStatusText(draftLength, hasTarget);
+        }
+    }
+
+    function getComposerStatusText(draftLength, hasTarget) {
+        if (!hasTarget) {
+            return '先选择角色或群聊。';
+        }
+        if (state.engine.generating) {
+            return state.engine.detail || '生成中，请等待当前回复完成。';
+        }
+        if (draftLength > 0) {
+            return `${draftLength} 字，准备发送。`;
+        }
+        return '输入消息后可发送；空消息不会提交。';
     }
 
     async function handleChange(event) {
