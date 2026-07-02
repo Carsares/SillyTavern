@@ -132,6 +132,19 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
             last_mes: now,
         }]);
     });
+    await page.route('**/api/chats/search', route => {
+        const payload = route.request().postDataJSON();
+        if (payload.group_id) {
+            return fulfillJson(route, [{
+                file_id: `${payload.group_id}-chat`,
+                file_name: `${payload.group_id}-chat.jsonl`,
+                chat_items: 2,
+                file_size: '2 KB',
+                last_mes: now,
+            }]);
+        }
+        return fulfillJson(route, []);
+    });
     await page.route('**/api/chats/get', route => {
         const payload = route.request().postDataJSON();
         const character = characters.find(item => item.avatar === payload.avatar_url) || characters[0];
@@ -139,6 +152,14 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
             { chat_metadata: {}, user_name: 'Modern User', character_name: character.name },
             { name: 'Modern User', is_user: true, mes: `hello ${character.name}`, send_date: now - 1000 },
             { name: character.name, is_user: false, mes: `reply ${character.name}`, send_date: now },
+        ]);
+    });
+    await page.route('**/api/chats/group/get', route => {
+        const payload = route.request().postDataJSON();
+        return fulfillJson(route, [
+            { chat_metadata: {}, group_name: 'Alpha Group' },
+            { name: 'Modern User', is_user: true, mes: `hello ${payload.id}`, send_date: now - 1000 },
+            { name: 'Alpha Group', is_user: false, mes: `reply ${payload.id}`, send_date: now },
         ]);
     });
 }
@@ -223,6 +244,18 @@ test.describe('Modern dashboard and activity', () => {
         await page.locator('.dashboard-resource-row[data-command-route="assets"][data-command-id="dashboard-bg.png"]').click();
         await expect(page).toHaveURL(/\/modern\/\?view=assets/);
         await expect(page.locator('.background-card.selected[data-background-card="dashboard-bg.png"]')).toBeVisible();
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-item', { hasText: 'Bruno Fixture' }).locator('[data-open-character-chat="bruno.png"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=chat/);
+        await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
+        await expect(page.locator('[data-select-chat="bruno.png-chat"]')).toBeVisible();
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-item', { hasText: 'Alpha Group' }).locator('[data-open-group-chat="group-alpha"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=chat/);
+        await expect(page.locator('.detail-title')).toHaveText('Alpha Group');
+        await expect(page.locator('[data-select-chat="group-alpha-chat"]')).toBeVisible();
     });
 
     test('surfaces incomplete API connection from dashboard', async ({ page }) => {

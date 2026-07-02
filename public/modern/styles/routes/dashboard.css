@@ -31,6 +31,22 @@
     overflow-wrap: anywhere;
 }
 
+.dashboard-resource-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+}
+
+.dashboard-resource-item .dashboard-resource-row {
+    min-width: 0;
+}
+
+.dashboard-resource-chat {
+    width: 38px;
+    height: 38px;
+}
+
 .dashboard-resource-row .row-subtitle {
     overflow: hidden;
     text-overflow: ellipsis;

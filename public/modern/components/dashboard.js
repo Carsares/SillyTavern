@@ -142,16 +142,27 @@ export function createDashboardComponents(ctx) {
     `;
     }
 
-    function renderOverviewRow({ title, subtitle, badge, icon, route, select, id }) {
+    function renderOverviewRow({ title, subtitle, badge, icon, route, select, id, chatType = '' }) {
+        const chatAttrs = chatType === 'group'
+            ? `data-route="chat" data-open-group-chat="${escapeHtml(id)}"`
+            : (chatType === 'character' ? `data-route="chat" data-open-character-chat="${escapeHtml(id)}"` : '');
+
         return `
-        <button class="resource-row dashboard-resource-row" type="button" data-command-route="${escapeHtml(route)}" data-command-select="${escapeHtml(select)}" data-command-id="${escapeHtml(id)}">
-            <span class="avatar-fallback"><i class="fa-solid ${icon}"></i></span>
-            <span class="row-main">
-                <span class="row-title">${escapeHtml(title)}</span>
-                <span class="row-subtitle">${escapeHtml(subtitle)}</span>
-            </span>
-            <span class="badge">${escapeHtml(badge)}</span>
-        </button>
+        <div class="dashboard-resource-item">
+            <button class="resource-row dashboard-resource-row" type="button" data-command-route="${escapeHtml(route)}" data-command-select="${escapeHtml(select)}" data-command-id="${escapeHtml(id)}">
+                <span class="avatar-fallback"><i class="fa-solid ${icon}"></i></span>
+                <span class="row-main">
+                    <span class="row-title">${escapeHtml(title)}</span>
+                    <span class="row-subtitle">${escapeHtml(subtitle)}</span>
+                </span>
+                <span class="badge">${escapeHtml(badge)}</span>
+            </button>
+            ${chatAttrs ? `
+                <button class="icon-button dashboard-resource-chat" type="button" ${chatAttrs} title="打开聊天" aria-label="打开 ${escapeHtml(title)} 的聊天">
+                    <i class="fa-solid fa-comments"></i>
+                </button>
+            ` : ''}
+        </div>
     `;
     }
 
@@ -171,6 +182,7 @@ export function createDashboardComponents(ctx) {
             route: 'characters',
             select: 'character',
             id: character.avatar,
+            chatType: 'character',
         });
     }
 
@@ -183,6 +195,7 @@ export function createDashboardComponents(ctx) {
             route: 'groups',
             select: 'group',
             id: group.id,
+            chatType: 'group',
         });
     }
 
