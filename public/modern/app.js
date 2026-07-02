@@ -384,21 +384,7 @@ const {
     createModernChatFile,
 });
 
-const {
-    defaultGroupForm,
-    groupToForm,
-    beginGroupCreate,
-    cancelGroupCreate,
-    saveGroupCreate,
-    beginGroupEdit,
-    cancelGroupEdit,
-    saveGroupEdit,
-    beginGroupDelete,
-    cancelGroupDelete,
-    confirmGroupDelete,
-    updateGroupFormField,
-    toggleGroupFormMember,
-} = createGroupActions({
+const groupActions = createGroupActions({
     state,
     apiFetch,
     loadData,
@@ -406,6 +392,8 @@ const {
     showToast,
     ensureAvailableChatMode,
 });
+
+const { beginGroupCreate } = groupActions;
 
 const {
     getPersonas,
@@ -594,21 +582,7 @@ const routeContext = createRouteContext({
         saveModernMessageEdit,
     },
     extensions: extensionActions,
-    groups: {
-        defaultGroupForm,
-        groupToForm,
-        beginGroupCreate,
-        cancelGroupCreate,
-        saveGroupCreate,
-        beginGroupEdit,
-        cancelGroupEdit,
-        saveGroupEdit,
-        beginGroupDelete,
-        cancelGroupDelete,
-        confirmGroupDelete,
-        updateGroupFormField,
-        toggleGroupFormMember,
-    },
+    groups: groupActions,
     personas: {
         getPersonaUrl,
         getPersonas,
