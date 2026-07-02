@@ -666,6 +666,7 @@ async function loadData({ silent = false } = {}) {
     if (!state.selected.worldbook && state.worldbooks[0]) {
         state.selected.worldbook = state.worldbooks[0].file_id;
     }
+    ensureAvailableChatMode();
     if (state.route === 'chat') {
         await prepareChatForSelectedContext();
     }
@@ -723,6 +724,34 @@ function getSelectedGroup() {
 
 function isGroupChatMode() {
     return state.chatMode === 'group';
+}
+
+function useChatMode(mode, { resetChat = false } = {}) {
+    const nextMode = mode === 'group' ? 'group' : 'character';
+    if (state.chatMode === nextMode) {
+        return false;
+    }
+
+    state.chatMode = nextMode;
+    localStorage.setItem('st-modern-chat-mode', nextMode);
+    if (resetChat) {
+        state.selected.chat = '';
+        state.chatRenaming = { key: '', name: '' };
+        state.chatDeleteConfirm = { key: '', name: '' };
+        state.chatEditing = { key: '', index: -1, text: '' };
+        clearChatSearch();
+    }
+    return true;
+}
+
+function ensureAvailableChatMode() {
+    if (state.chatMode === 'group' && !state.groups.length && state.characters.length) {
+        return useChatMode('character', { resetChat: true });
+    }
+    if (state.chatMode === 'character' && !state.characters.length && state.groups.length) {
+        return useChatMode('group', { resetChat: true });
+    }
+    return false;
 }
 
 function getChatModeLabel() {
