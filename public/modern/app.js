@@ -509,20 +509,17 @@ const {
     showToast,
 });
 
-const {
-    metricCard,
-    pageHead,
-    renderCharacterRow,
-    renderEmptyState,
-    renderGroupRow,
-    renderInlineEmpty,
-    renderKeyValue,
-    renderLoading,
-} = createCommonComponents({
+const commonComponents = createCommonComponents({
     state,
     getCharacterAvatarUrl,
     getChatEntityAvatarUrl,
 });
+
+const {
+    renderInlineEmpty,
+    renderKeyValue,
+    renderLoading,
+} = commonComponents;
 
 const { getProviderInfo, getRouteCount } = createShellMetadata({
     state,
@@ -572,15 +569,7 @@ const routeContext = createRouteContext({
         parsePreset,
         uniqueValues,
     },
-    components: {
-        metricCard,
-        pageHead,
-        renderCharacterRow,
-        renderEmptyState,
-        renderGroupRow,
-        renderInlineEmpty,
-        renderKeyValue,
-    },
+    components: commonComponents,
     shell: {
         getProviderInfo,
         matchesQuery,

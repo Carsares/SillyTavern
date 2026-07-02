@@ -19,10 +19,26 @@ export function createRouteContext({
     utils,
     worldbooks,
 }) {
+    const {
+        metricCard,
+        pageHead,
+        renderCharacterRow,
+        renderEmptyState,
+        renderGroupRow,
+        renderInlineEmpty,
+        renderKeyValue,
+    } = components;
+
     return {
         state,
         ...utils,
-        ...components,
+        metricCard,
+        pageHead,
+        renderCharacterRow,
+        renderEmptyState,
+        renderGroupRow,
+        renderInlineEmpty,
+        renderKeyValue,
         ...shell,
         ...activity,
         ...constants,
