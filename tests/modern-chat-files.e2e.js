@@ -54,6 +54,7 @@ function createChatFixture() {
             backupDownloads: [],
             backupDeletes: [],
             bridge: [],
+            searches: [],
             groupSaves: [],
             groupDeletes: [],
             groupImports: [],
@@ -140,6 +141,7 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     await page.route('**/api/characters/chats', route => fulfillJson(route, fixture.chats));
     await page.route('**/api/chats/search', route => {
         const payload = route.request().postDataJSON();
+        fixture.requests.searches.push(payload);
         const source = payload.group_id ? fixture.groupChats : fixture.chats;
         const query = String(payload.query || '').toLowerCase();
         const chats = query
@@ -350,6 +352,61 @@ async function mockLegacyGenerationBridge(page, fixture) {
 }
 
 test.describe('Modern chat files', () => {
+    test('searches and clears character chat files inside the modern workspace', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats.push({
+            file_id: 'needle-chat',
+            file_name: 'needle-chat.jsonl',
+            chat_items: 2,
+            file_size: '2 KB',
+            last_mes: now + 1000,
+        });
+        fixture.messagesByChat['needle-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'find this conversation', send_date: now },
+            { name: 'Mock Character', is_user: false, mes: 'needle reply', send_date: now + 1000 },
+        ];
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await expect(page.locator('[data-select-chat="needle-chat"]')).toBeVisible();
+
+        await page.locator('[data-chat-search-input]').fill('needle');
+        await page.locator('[data-chat-search-run]').click();
+
+        await expect.poll(() => fixture.requests.searches.length).toBe(1);
+        expect(fixture.requests.searches[0]).toMatchObject({
+            query: 'needle',
+            avatar_url: 'mock.png',
+            group_id: null,
+        });
+        await expect(page.locator('[data-select-chat="needle-chat"]')).toBeVisible();
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toHaveCount(0);
+        await expect(page.locator('.panel-subtitle').filter({ hasText: '搜索结果' })).toContainText('1 个搜索结果 / 2 个会话');
+
+        await page.locator('[data-select-chat="needle-chat"]').click();
+        await expect(page.locator('.chat-thread')).toContainText('needle reply');
+
+        await page.locator('[data-chat-search-input]').fill('existing');
+        await page.locator('[data-chat-search-input]').press('Enter');
+
+        await expect.poll(() => fixture.requests.searches.length).toBe(2);
+        expect(fixture.requests.searches[1]).toMatchObject({
+            query: 'existing',
+            avatar_url: 'mock.png',
+            group_id: null,
+        });
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await expect(page.locator('[data-select-chat="needle-chat"]')).toHaveCount(0);
+
+        await page.locator('[data-chat-search-clear]').click();
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await expect(page.locator('[data-select-chat="needle-chat"]')).toBeVisible();
+        await expect(page.locator('[data-chat-search-input]')).toHaveValue('');
+    });
+
     test('edits and copies chat messages inside the modern workspace', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
         const clipboardWrites = [];
