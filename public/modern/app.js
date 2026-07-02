@@ -32,6 +32,7 @@ import { createQueryMatcher, createShellMetadata } from './shell/metadata.js';
 import { createNav } from './shell/nav.js';
 import { createPalette } from './shell/palette.js';
 import { createRouter } from './shell/router.js';
+import { createToast } from './shell/toast.js';
 import { createTopbar } from './shell/topbar.js';
 import { createDashboardRoute } from './routes/dashboard.js';
 import { createChatRoute } from './routes/chat.js';
@@ -95,6 +96,10 @@ document.documentElement.dataset.theme = state.theme;
 const { matchesQuery } = createQueryMatcher({
     state,
     formatText: normalizeText,
+});
+const { showToast } = createToast({
+    elements,
+    escapeHtml,
 });
 
 const {
@@ -953,14 +958,6 @@ function toggleInspector() {
     state.inspectorOpen = !state.inspectorOpen;
     localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
     renderInspector();
-}
-
-function showToast(title, message) {
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(message)}</span>`;
-    elements.toastStack.append(toast);
-    window.setTimeout(() => toast.remove(), 4200);
 }
 
 function openPalette() {
