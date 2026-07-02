@@ -99,6 +99,31 @@ async function mockModernInspectorWorkspace(page) {
 }
 
 test.describe('Modern inspector', () => {
+    test('toggles inspector drawer from modern shell controls', async ({ page }) => {
+        await mockModernInspectorWorkspace(page);
+
+        await page.goto('/modern/?view=dashboard');
+
+        const inspector = page.locator('#inspector');
+        const topbarToggle = page.locator('[data-toggle-inspector][aria-label="上下文"]');
+
+        await expect(inspector).toHaveClass(/open/);
+        await expect(inspector).toHaveAttribute('aria-hidden', 'false');
+        await expect(topbarToggle).toHaveAttribute('aria-pressed', 'true');
+
+        await page.locator('[data-toggle-inspector][title="关闭上下文"]').click();
+        await expect(inspector).not.toHaveClass(/open/);
+        await expect(inspector).toHaveAttribute('aria-hidden', 'true');
+        await expect(topbarToggle).toHaveAttribute('aria-pressed', 'false');
+        await expect.poll(() => page.evaluate('window.localStorage.getItem("st-modern-inspector-open")')).toBe('false');
+
+        await topbarToggle.click();
+        await expect(inspector).toHaveClass(/open/);
+        await expect(inspector).toHaveAttribute('aria-hidden', 'false');
+        await expect(topbarToggle).toHaveAttribute('aria-pressed', 'true');
+        await expect.poll(() => page.evaluate('window.localStorage.getItem("st-modern-inspector-open")')).toBe('true');
+    });
+
     test('shows route-specific context instead of a generic summary', async ({ page }) => {
         await mockModernInspectorWorkspace(page);
 

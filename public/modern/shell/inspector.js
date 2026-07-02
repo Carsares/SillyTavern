@@ -287,5 +287,14 @@ export function createInspector({
         `;
     }
 
-    return { renderInspector };
+    function toggleInspector() {
+        state.inspectorOpen = !state.inspectorOpen;
+        localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
+        renderInspector();
+    }
+
+    return {
+        renderInspector,
+        toggleInspector,
+    };
 }

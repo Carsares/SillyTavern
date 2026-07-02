@@ -550,7 +550,7 @@ const { getProviderInfo, getRouteCount } = createShellMetadata({
 });
 const { renderNav } = createNav({ state, elements, getRouteCount });
 const { renderStatus } = createTopbar({ state, elements, getProviderInfo });
-const { renderInspector } = createInspector({
+const { renderInspector, toggleInspector } = createInspector({
     state,
     elements,
     getPersonas,
@@ -950,12 +950,6 @@ function render() {
     renderNav();
     renderStatus();
     renderContent();
-    renderInspector();
-}
-
-function toggleInspector() {
-    state.inspectorOpen = !state.inspectorOpen;
-    localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
     renderInspector();
 }
 
