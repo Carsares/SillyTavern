@@ -180,6 +180,35 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.page-title')).toHaveText('API 连接管理');
     });
 
+    test('opens global search results from the topbar search input', async ({ page }) => {
+        await page.route('**/api/characters/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{
+                avatar: 'atlas.png',
+                name: 'Atlas Fixture',
+                data: {
+                    name: 'Atlas Fixture',
+                    creator: 'Modern E2E',
+                },
+            }]),
+        }));
+
+        await page.goto('/modern/?view=dashboard');
+
+        await page.locator('#globalSearch').fill('atlas');
+
+        await expect(page.locator('#commandPalette')).toBeVisible();
+        await expect(page.locator('#paletteSearch')).toHaveValue('atlas');
+        await expect(page.locator('[data-command-route="characters"]')).toContainText('Atlas Fixture');
+
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('角色库');
+        await expect(page.locator('.detail-title')).toHaveText('Atlas Fixture');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);

@@ -18,11 +18,15 @@ export function bindShellEvents({
     elements.themeButton.addEventListener('click', () => setTheme(state.theme === 'dark' ? 'light' : 'dark'));
     elements.mobileMenuButton.addEventListener('click', () => elements.app.querySelector('.sidebar')?.classList.toggle('open'));
     elements.search.addEventListener('input', event => {
-        state.query = normalizeText(event.target.value.trim());
+        const query = event.target.value.trim();
+        state.query = normalizeText(query);
         if (state.route === 'assets') {
             state.backgroundVisibleCount = backgroundPageSize;
         }
         render();
+        if (query) {
+            openPalette(query);
+        }
     });
     elements.content.addEventListener('input', event => {
         const routeInputHandler = routeModules[state.route]?.handleInput;

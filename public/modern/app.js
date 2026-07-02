@@ -419,6 +419,7 @@ shellRenderer = createRenderer({
     renderNav,
     renderStatus,
     renderInspector,
+    renderPalette,
 });
 dataLoader = createDataLoader({
     state,

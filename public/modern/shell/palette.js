@@ -87,10 +87,10 @@ export function createPalette({
         `).join('') || renderInlineEmpty('没有匹配结果');
     }
 
-    function openPalette() {
+    function openPalette(query = '') {
         elements.commandPalette.hidden = false;
-        state.paletteQuery = '';
-        elements.paletteSearch.value = '';
+        state.paletteQuery = query;
+        elements.paletteSearch.value = query;
         renderPalette();
         window.setTimeout(() => elements.paletteSearch.focus(), 0);
     }

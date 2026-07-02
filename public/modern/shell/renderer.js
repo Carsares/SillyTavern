@@ -6,6 +6,7 @@ export function createRenderer({
     renderNav,
     renderStatus,
     renderInspector,
+    renderPalette,
 }) {
     function renderContent() {
         if (state.loading && !state.loaded) {
@@ -22,6 +23,9 @@ export function createRenderer({
         renderStatus();
         renderContent();
         renderInspector();
+        if (!elements.commandPalette.hidden) {
+            renderPalette();
+        }
     }
 
     return {
