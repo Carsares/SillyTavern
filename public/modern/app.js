@@ -226,6 +226,7 @@ const state = {
         status: '就绪',
         error: '',
     },
+    inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
     apiTest: {
         running: false,
         status: '未测试',
@@ -2686,31 +2687,33 @@ function renderChat() {
             </button>
         `)}
         <div class="chat-layout">
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2 class="panel-title">角色</h2>
-                        <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
+            <aside class="chat-browser">
+                <section class="panel chat-browser-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2 class="panel-title">角色</h2>
+                            <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
+                        </div>
                     </div>
-                </div>
-                <div class="resource-list">
-                    ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
-                </div>
-            </section>
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2 class="panel-title">聊天文件</h2>
-                        <p class="panel-subtitle">${isLoadingChats ? '读取中' : `${formatNumber(chats.length)} 个会话`}</p>
+                    <div class="resource-list">
+                        ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
                     </div>
-                    <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                </div>
-                <div class="resource-list">
-                    ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
-                </div>
-            </section>
+                </section>
+                <section class="panel chat-browser-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2 class="panel-title">聊天文件</h2>
+                            <p class="panel-subtitle">${isLoadingChats ? '读取中' : `${formatNumber(chats.length)} 个会话`}</p>
+                        </div>
+                        <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
+                    <div class="resource-list">
+                        ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
+                    </div>
+                </section>
+            </aside>
             <section class="panel chat-thread">
                 ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
             </section>
@@ -4258,7 +4261,23 @@ function renderInspector() {
     const selectedWorldbook = state.worldbooks.find(worldbook => worldbook.file_id === state.selected.worldbook);
     const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
 
+    elements.inspector.classList.toggle('open', state.inspectorOpen);
+    elements.inspector.setAttribute('aria-hidden', state.inspectorOpen ? 'false' : 'true');
+    document.querySelectorAll('[data-toggle-inspector]').forEach(button => {
+        button.classList.toggle('active', state.inspectorOpen);
+        button.setAttribute('aria-pressed', state.inspectorOpen ? 'true' : 'false');
+    });
+
     elements.inspector.innerHTML = `
+        <section class="inspector-section inspector-head">
+            <div>
+                <h2 class="inspector-title">上下文</h2>
+                <p class="panel-subtitle">当前页面、连接和选中资源。</p>
+            </div>
+            <button class="icon-button mini" type="button" data-toggle-inspector title="关闭上下文">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </section>
         <section class="inspector-section">
             <h2 class="inspector-title">会话</h2>
             <div class="kv-list">
@@ -4341,6 +4360,12 @@ function render() {
     renderInspector();
 }
 
+function toggleInspector() {
+    state.inspectorOpen = !state.inspectorOpen;
+    localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
+    renderInspector();
+}
+
 function showToast(title, message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
@@ -4366,6 +4391,11 @@ function openLegacy() {
 }
 
 async function handleClick(event) {
+    if (event.target.closest('[data-toggle-inspector]')) {
+        toggleInspector();
+        return;
+    }
+
     const routeButton = event.target.closest('[data-route]');
     if (routeButton) {
         await setRoute(routeButton.dataset.route);

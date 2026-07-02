@@ -77,7 +77,7 @@ a {
 
 .modern-app {
     display: grid;
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     min-height: 100vh;
 }
 
@@ -333,6 +333,12 @@ kbd {
 .secondary-button:hover {
     border-color: var(--border-strong);
     color: var(--text);
+}
+
+.icon-button.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
 }
 
 .primary-button,
@@ -917,9 +923,26 @@ tr:last-child td {
 
 .chat-layout {
     display: grid;
-    grid-template-columns: 250px 300px minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
     gap: 14px;
     min-height: calc(100vh - 155px);
+}
+
+.chat-browser {
+    display: grid;
+    grid-template-rows: minmax(220px, 0.9fr) minmax(260px, 1.1fr);
+    gap: 14px;
+    min-height: 0;
+}
+
+.chat-browser-panel {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.chat-browser-panel .resource-list {
+    max-height: none;
+    overflow: auto;
 }
 
 .chat-thread {
@@ -1034,18 +1057,35 @@ tr:last-child td {
 }
 
 .inspector {
-    position: sticky;
+    position: fixed;
     top: 0;
+    right: 0;
+    z-index: 18;
     height: 100vh;
+    width: min(var(--inspector-width), calc(100vw - 32px));
     overflow: auto;
     padding: 18px;
     background: var(--surface);
     border-left: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    transform: translateX(105%);
+    transition: transform 180ms ease;
+}
+
+.inspector.open {
+    transform: translateX(0);
 }
 
 .inspector-section {
     padding: 14px 0;
     border-bottom: 1px solid var(--border);
+}
+
+.inspector-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
 }
 
 .inspector-section:first-child {
@@ -1185,14 +1225,13 @@ tr:last-child td {
         grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     }
 
-    .inspector {
-        display: none;
+    .dashboard-grid,
+    .split-grid {
+        grid-template-columns: 1fr;
     }
 
-    .dashboard-grid,
-    .split-grid,
     .chat-layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
     }
 }
 
@@ -1240,6 +1279,12 @@ tr:last-child td {
     .command-input kbd,
     .status-pill span:last-child {
         display: none;
+    }
+
+    .chat-layout,
+    .chat-browser {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
     }
 }
 
