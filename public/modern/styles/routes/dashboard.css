@@ -31,6 +31,12 @@
     overflow-wrap: anywhere;
 }
 
+.dashboard-resource-row .row-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (max-width: 720px) {
     .dashboard-connection-warning {
         grid-template-columns: auto minmax(0, 1fr);

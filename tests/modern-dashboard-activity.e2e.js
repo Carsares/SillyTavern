@@ -51,6 +51,16 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
         chat_size: 3072,
         date_last_chat: now - 500,
     }];
+    const worldbooks = [{ file_id: 'ModernLore', name: 'ModernLore' }];
+    const backgrounds = {
+        images: [
+            { filename: 'dashboard-bg.png', isAnimated: false },
+            { filename: 'animated-city.webp', isAnimated: true },
+        ],
+    };
+    const assets = {
+        bgm: ['assets/bgm/dashboard-theme.mp3'],
+    };
     const stats = {
         timestamp: now,
         'alice.png': {
@@ -96,10 +106,17 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
     }));
     await page.route('**/api/characters/all', route => fulfillJson(route, characters));
     await page.route('**/api/groups/all', route => fulfillJson(route, groups));
-    await page.route('**/api/worldinfo/list', route => fulfillJson(route, []));
-    await page.route('**/api/backgrounds/all', route => fulfillJson(route, { images: [] }));
+    await page.route('**/api/worldinfo/list', route => fulfillJson(route, worldbooks));
+    await page.route('**/api/worldinfo/get', route => {
+        const payload = route.request().postDataJSON();
+        return fulfillJson(route, {
+            originalData: { name: payload.name },
+            entries: {},
+        });
+    });
+    await page.route('**/api/backgrounds/all', route => fulfillJson(route, backgrounds));
     await page.route('**/api/backgrounds/folders', route => fulfillJson(route, { folders: [], imageFolderMap: {} }));
-    await page.route('**/api/assets/get', route => fulfillJson(route, {}));
+    await page.route('**/api/assets/get', route => fulfillJson(route, assets));
     await page.route('**/api/extensions/discover', route => fulfillJson(route, []));
     await page.route('**/api/secrets/settings', route => fulfillJson(route, { allowKeysExposure: false }));
     await page.route('**/api/secrets/read', route => fulfillJson(route, {}));
@@ -134,7 +151,7 @@ test.describe('Modern dashboard and activity', () => {
 
         await expect(page.locator('.page-title')).toHaveText('工作台');
         await expect(page.locator('.action-card[data-route="activity"]')).toBeVisible();
-        await page.locator('[data-open-character-chat="alice.png"]').click();
+        await page.locator('.page-head [data-route="chat"]').click();
 
         await expect(page).toHaveURL(/\/modern\/\?view=chat/);
         await expect(page.locator('.detail-title')).toHaveText('Alice Fixture');
@@ -180,6 +197,32 @@ test.describe('Modern dashboard and activity', () => {
         await expect(page).toHaveURL(/\/modern\/\?view=groups/);
         await expect(page.locator('.detail-title')).toHaveText('Alpha Group');
         await expect(page.locator('[data-select-group="group-alpha"]')).toHaveClass(/active/);
+    });
+
+    test('opens resource overview items from dashboard', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page);
+
+        await page.goto('/modern/?view=dashboard');
+
+        await expect(page.locator('.page-title')).toHaveText('工作台');
+        await page.locator('.dashboard-resource-row[data-command-route="characters"][data-command-id="alice.png"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=characters/);
+        await expect(page.locator('.detail-title')).toHaveText('Alice Fixture');
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-row[data-command-route="groups"][data-command-id="group-alpha"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=groups/);
+        await expect(page.locator('.detail-title')).toHaveText('Alpha Group');
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-row[data-command-route="worldbooks"][data-command-id="ModernLore"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=worldbooks/);
+        await expect(page.locator('[data-select-worldbook="ModernLore"]')).toHaveClass(/active/);
+
+        await page.goto('/modern/?view=dashboard');
+        await page.locator('.dashboard-resource-row[data-command-route="assets"][data-command-id="dashboard-bg.png"]').click();
+        await expect(page).toHaveURL(/\/modern\/\?view=assets/);
+        await expect(page.locator('.background-card.selected[data-background-card="dashboard-bg.png"]')).toBeVisible();
     });
 
     test('surfaces incomplete API connection from dashboard', async ({ page }) => {

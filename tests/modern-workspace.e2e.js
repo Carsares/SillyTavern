@@ -173,7 +173,7 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('#paletteSearch')).toBeFocused();
 
         await page.locator('#paletteSearch').fill('API');
-        await expect(page.locator('[data-command-route="api"]').first()).toBeVisible();
+        await expect(page.locator('#paletteResults [data-command-route="api"]').first()).toBeVisible();
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
@@ -200,7 +200,7 @@ test.describe('Modern workspace', () => {
 
         await expect(page.locator('#commandPalette')).toBeVisible();
         await expect(page.locator('#paletteSearch')).toHaveValue('atlas');
-        await expect(page.locator('[data-command-route="characters"]')).toContainText('Atlas Fixture');
+        await expect(page.locator('#paletteResults [data-command-route="characters"]')).toContainText('Atlas Fixture');
 
         await page.keyboard.press('Enter');
 
@@ -272,7 +272,7 @@ test.describe('Modern workspace', () => {
 
         await page.keyboard.press('Control+K');
         await page.locator('#paletteSearch').fill('Beta Persona');
-        await expect(page.locator('[data-command-route="personas"]', { hasText: 'Beta Persona' })).toBeVisible();
+        await expect(page.locator('#paletteResults [data-command-route="personas"]', { hasText: 'Beta Persona' })).toBeVisible();
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
@@ -298,7 +298,7 @@ test.describe('Modern workspace', () => {
 
         await page.keyboard.press('Control+K');
         await page.locator('#paletteSearch').fill('global-ext');
-        await expect(page.locator('[data-command-route="extensions"]', { hasText: 'global-ext' })).toBeVisible();
+        await expect(page.locator('#paletteResults [data-command-route="extensions"]', { hasText: 'global-ext' })).toBeVisible();
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
@@ -335,7 +335,7 @@ test.describe('Modern workspace', () => {
 
         await page.keyboard.press('Control+K');
         await page.locator('#paletteSearch').fill('forest.webp');
-        await expect(page.locator('[data-command-route="assets"]', { hasText: 'forest.webp' })).toBeVisible();
+        await expect(page.locator('#paletteResults [data-command-route="assets"]', { hasText: 'forest.webp' })).toBeVisible();
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
@@ -347,7 +347,7 @@ test.describe('Modern workspace', () => {
 
         await page.keyboard.press('Control+K');
         await page.locator('#paletteSearch').fill('theme.mp3');
-        await expect(page.locator('[data-command-route="assets"]', { hasText: 'theme.mp3' })).toBeVisible();
+        await expect(page.locator('#paletteResults [data-command-route="assets"]', { hasText: 'theme.mp3' })).toBeVisible();
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
