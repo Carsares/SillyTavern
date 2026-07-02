@@ -51,6 +51,7 @@ const state = {
     characterDetails: {},
     worldDetails: {},
     backgrounds: [],
+    backgroundFolders: { folders: [], imageFolderMap: {} },
     assets: {},
     extensions: [],
     secrets: {},
@@ -110,6 +111,7 @@ const state = {
         name: '',
         deleteChats: false,
     },
+    avatarCacheBust: {},
     groupCreating: {
         active: false,
         form: {},
@@ -142,6 +144,13 @@ const state = {
     },
     backgroundRenaming: {
         filename: '',
+        name: '',
+        running: false,
+    },
+    backgroundFolderFilter: '',
+    backgroundFolderAssignment: '',
+    backgroundFolderCreating: {
+        active: false,
         name: '',
         running: false,
     },
@@ -539,6 +548,7 @@ async function loadData({ silent = false } = {}) {
         groups: apiFetch('/api/groups/all'),
         worldbooks: apiFetch('/api/worldinfo/list'),
         backgrounds: apiFetch('/api/backgrounds/all'),
+        backgroundFolders: apiFetch('/api/backgrounds/folders'),
         assets: apiFetch('/api/assets/get'),
         extensions: apiFetch('/api/extensions/discover', { method: 'GET' }),
         secrets: apiFetch('/api/secrets/settings'),
@@ -693,7 +703,14 @@ function getChatEntityAvatarUrl(entity = getSelectedChatEntity()) {
     if (isGroupChatMode()) {
         return entity?.avatar_url || '';
     }
-    return getAvatarUrl(entity);
+    return getCharacterAvatarUrl(entity);
+}
+
+function getCharacterAvatarUrl(character) {
+    const url = getAvatarUrl(character);
+    const avatar = character?.avatar || '';
+    const cacheBust = avatar ? state.avatarCacheBust[avatar] : '';
+    return url && cacheBust ? `${url}?v=${encodeURIComponent(cacheBust)}` : url;
 }
 
 function getChatEntityFallbackIcon() {
@@ -1784,6 +1801,29 @@ async function importCharacterFile(file) {
     render();
 }
 
+async function replaceCharacterAvatar(avatar, file) {
+    if (!avatar) {
+        throw new Error('请选择要替换头像的角色。');
+    }
+    if (!file) {
+        return;
+    }
+    if (file.type && !file.type.startsWith('image/')) {
+        throw new Error('角色头像只支持图片文件。');
+    }
+
+    const formData = new FormData();
+    formData.set('avatar', file, file.name || 'avatar.png');
+    formData.set('avatar_url', avatar);
+    await apiFetch('/api/characters/edit-avatar', { body: formData, omitContentType: true });
+    state.avatarCacheBust[avatar] = String(Date.now());
+    clearCharacterCache(avatar);
+    await loadData({ silent: true });
+    await loadCharacterDetail(avatar, { force: true });
+    showToast('角色头像已替换', avatar);
+    render();
+}
+
 function updateCharacterFormField(element) {
     const form = element.dataset.characterScope === 'create'
         ? state.characterCreating.form
@@ -2155,6 +2195,39 @@ function getBackgroundFilename(background) {
     return typeof background === 'string' ? background : background?.filename || '';
 }
 
+function getBackgroundFolderData() {
+    return {
+        folders: Array.isArray(state.backgroundFolders?.folders) ? state.backgroundFolders.folders : [],
+        imageFolderMap: state.backgroundFolders?.imageFolderMap || {},
+    };
+}
+
+function getBackgroundFolderById(folderId) {
+    return getBackgroundFolderData().folders.find(folder => folder.id === folderId) || null;
+}
+
+function getBackgroundFolderIds(filename) {
+    const map = getBackgroundFolderData().imageFolderMap;
+    return Array.isArray(map[filename]) ? map[filename] : [];
+}
+
+function getBackgroundFoldersFor(filename) {
+    return getBackgroundFolderIds(filename).map(getBackgroundFolderById).filter(Boolean);
+}
+
+function getBackgroundFolderCounts() {
+    const counts = {};
+    for (const folder of getBackgroundFolderData().folders) {
+        counts[folder.id] = 0;
+    }
+    for (const folderIds of Object.values(getBackgroundFolderData().imageFolderMap)) {
+        for (const folderId of new Set(Array.isArray(folderIds) ? folderIds : [])) {
+            counts[folderId] = (counts[folderId] || 0) + 1;
+        }
+    }
+    return counts;
+}
+
 async function uploadBackgroundFile(file) {
     if (!file) {
         return;
@@ -2165,6 +2238,64 @@ async function uploadBackgroundFile(file) {
     const filename = await apiFetch('/api/backgrounds/upload', { body: formData, omitContentType: true });
     await loadData({ silent: true });
     showToast('背景已上传', filename || file.name);
+    render();
+}
+
+function setBackgroundFolderFilter(folderId) {
+    state.backgroundFolderFilter = folderId && getBackgroundFolderById(folderId) ? folderId : '';
+    render();
+}
+
+function toggleBackgroundFolderCreate(active = !state.backgroundFolderCreating.active) {
+    state.backgroundFolderCreating = {
+        active,
+        name: active ? state.backgroundFolderCreating.name : '',
+        running: false,
+    };
+    render();
+}
+
+async function createBackgroundFolder() {
+    const name = state.backgroundFolderCreating.name.trim();
+    if (!name) {
+        throw new Error('请输入背景文件夹名称。');
+    }
+
+    state.backgroundFolderCreating.running = true;
+    render();
+    try {
+        const folder = await apiFetch('/api/image-metadata/folders/create', { body: { name } });
+        state.backgroundFolderCreating = { active: false, name: '', running: false };
+        state.backgroundFolderFilter = folder?.id || '';
+        state.backgroundFolderAssignment = folder?.id || '';
+        await loadData({ silent: true });
+        showToast('背景文件夹已创建', folder?.name || name);
+    } finally {
+        state.backgroundFolderCreating.running = false;
+        render();
+    }
+}
+
+async function assignSelectedBackgroundsToFolder(remove = false) {
+    const folderId = state.backgroundFolderAssignment || state.backgroundFolderFilter;
+    const folder = getBackgroundFolderById(folderId);
+    const filenames = [...state.backgroundSelection.filenames];
+    if (!folder) {
+        throw new Error('请选择目标背景文件夹。');
+    }
+    if (!filenames.length) {
+        throw new Error('请选择要处理的背景。');
+    }
+
+    const endpoint = remove ? '/api/image-metadata/folders/unassign' : '/api/image-metadata/folders/assign';
+    await apiFetch(endpoint, {
+        body: {
+            id: folder.id,
+            paths: filenames.map(filename => `backgrounds/${filename}`),
+        },
+    });
+    await loadData({ silent: true });
+    showToast(remove ? '已移出背景文件夹' : '已加入背景文件夹', `${formatNumber(filenames.length)} 个背景 · ${folder.name}`);
     render();
 }
 
@@ -3783,7 +3914,7 @@ function renderInlineEmpty(text) {
 }
 
 function renderCharacterRow(character) {
-    const avatar = getAvatarUrl(character);
+    const avatar = getCharacterAvatarUrl(character);
     const title = character.name || character.data?.name || character.avatar || '未命名角色';
     const subtitle = [
         character.data?.creator ? `作者 ${character.data.creator}` : '',
@@ -4384,7 +4515,7 @@ function renderCharacters() {
 
 function renderCharacterDetail(character) {
     const detail = state.characterDetails[character.avatar] || character;
-    const avatar = getAvatarUrl(detail);
+    const avatar = getCharacterAvatarUrl(detail);
     const name = detail.name || detail.data?.name || '未命名角色';
     const tags = getCharacterTags(detail);
     const isEditing = state.characterEditing.avatar === character.avatar;
@@ -4418,6 +4549,11 @@ function renderCharacterDetail(character) {
                     <i class="fa-solid fa-i-cursor"></i>
                     重命名
                 </button>
+                <label class="secondary-button file-action">
+                    <i class="fa-solid fa-image"></i>
+                    替换头像
+                    <input class="visually-hidden" type="file" accept="image/*" data-character-avatar-file="${escapeHtml(character.avatar)}">
+                </label>
                 <button class="secondary-button" type="button" data-export-character="${escapeHtml(character.avatar)}" data-character-export-format="png">
                     <i class="fa-solid fa-image"></i>
                     PNG
@@ -5501,9 +5637,20 @@ function renderPersonaDeletePanel(persona) {
 function renderAssets() {
     const groups = getAssetGroups().filter(group => matchesQuery(group.name));
     const allBackgrounds = state.backgrounds?.images || [];
-    const backgrounds = allBackgrounds.filter(background => matchesQuery(getBackgroundFilename(background)));
+    const backgroundFolders = getBackgroundFolderData().folders;
+    const folderCounts = getBackgroundFolderCounts();
+    if (state.backgroundFolderFilter && !getBackgroundFolderById(state.backgroundFolderFilter)) {
+        state.backgroundFolderFilter = '';
+    }
+    if (!state.backgroundFolderAssignment && backgroundFolders[0]) {
+        state.backgroundFolderAssignment = backgroundFolders[0].id;
+    }
+    const backgrounds = allBackgrounds
+        .filter(background => matchesQuery(getBackgroundFilename(background)))
+        .filter(background => !state.backgroundFolderFilter || getBackgroundFolderIds(getBackgroundFilename(background)).includes(state.backgroundFolderFilter));
     const selection = state.backgroundSelection;
     const selectedCount = selection.filenames.length;
+    const folderFilterName = getBackgroundFolderById(state.backgroundFolderFilter)?.name || '全部背景';
 
     return `
         ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
@@ -5532,14 +5679,15 @@ function renderAssets() {
         <div class="metrics-grid">
             ${metricCard('背景', formatNumber(allBackgrounds.length), '背景图片', 'fa-image')}
             ${metricCard('资产文件', formatNumber(getAssetCount()), 'assets 目录', 'fa-folder-tree')}
-            ${metricCard('素材分类', formatNumber(groups.length), '有效分类', 'fa-layer-group')}
+            ${metricCard('背景文件夹', formatNumber(backgroundFolders.length), folderFilterName, 'fa-folder')}
             ${metricCard('动画背景', formatNumber(allBackgrounds.filter(item => item.isAnimated).length), 'metadata 标记', 'fa-film')}
         </div>
+        ${renderBackgroundFoldersPanel(backgroundFolders, folderCounts, selectedCount)}
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景</h2>
-                    <p class="panel-subtitle">${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
+                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · ${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
                 </div>
             </div>
             ${selection.deleteConfirm ? `
@@ -5579,6 +5727,80 @@ function renderAssets() {
                 </article>
             `).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
         </div>
+    `;
+}
+
+function renderBackgroundFoldersPanel(folders, folderCounts, selectedCount) {
+    const creating = state.backgroundFolderCreating;
+    const assignmentOptions = folders.map(folder => `
+        <option value="${escapeHtml(folder.id)}" ${state.backgroundFolderAssignment === folder.id ? 'selected' : ''}>${escapeHtml(folder.name)}</option>
+    `).join('');
+
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">背景文件夹</h2>
+                    <p class="panel-subtitle">使用原版 image metadata 文件夹能力筛选和批量归档背景。</p>
+                </div>
+                <button class="secondary-button" type="button" data-toggle-background-folder-create>
+                    <i class="fa-solid ${creating.active ? 'fa-xmark' : 'fa-folder-plus'}"></i>
+                    ${creating.active ? '取消新建' : '新建文件夹'}
+                </button>
+            </div>
+            <div class="tag-row">
+                <button class="secondary-button ${state.backgroundFolderFilter ? '' : 'active'}" type="button" data-background-folder-filter="">
+                    <i class="fa-solid fa-layer-group"></i>
+                    全部背景
+                    <span class="badge">${formatNumber(state.backgrounds?.images?.length || 0)}</span>
+                </button>
+                ${folders.map(folder => `
+                    <button class="secondary-button ${state.backgroundFolderFilter === folder.id ? 'active' : ''}" type="button" data-background-folder-filter="${escapeHtml(folder.id)}">
+                        <i class="fa-solid fa-folder"></i>
+                        ${escapeHtml(folder.name)}
+                        <span class="badge">${formatNumber(folderCounts[folder.id] || 0)}</span>
+                    </button>
+                `).join('') || renderInlineEmpty('还没有背景文件夹')}
+            </div>
+            ${creating.active ? `
+                <div class="settings-form inline-form">
+                    <label class="field-label">
+                        <span>文件夹名称</span>
+                        <input class="text-input" type="text" data-background-folder-create-name value="${escapeHtml(creating.name)}" autocomplete="off">
+                    </label>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-background-folder-create ${creating.running ? 'disabled' : ''}>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="primary-button" type="button" data-save-background-folder-create ${creating.running ? 'disabled' : ''}>
+                            <i class="fa-solid ${creating.running ? 'fa-circle-notch fa-spin' : 'fa-check'}"></i>
+                            ${creating.running ? '创建中' : '创建'}
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+            ${state.backgroundSelection.active ? `
+                <div class="list-toolbar">
+                    <label class="field-label">
+                        <span>批量归档目标</span>
+                        <select class="select-input" data-background-folder-assignment ${folders.length ? '' : 'disabled'}>
+                            ${assignmentOptions || '<option value="">暂无文件夹</option>'}
+                        </select>
+                    </label>
+                    <div class="toolbar-actions">
+                        <button class="secondary-button" type="button" data-assign-selected-backgrounds ${selectedCount && folders.length ? '' : 'disabled'}>
+                            <i class="fa-solid fa-folder-plus"></i>
+                            加入文件夹 ${formatNumber(selectedCount)}
+                        </button>
+                        <button class="secondary-button" type="button" data-unassign-selected-backgrounds ${selectedCount && folders.length ? '' : 'disabled'}>
+                            <i class="fa-solid fa-folder-minus"></i>
+                            移出文件夹 ${formatNumber(selectedCount)}
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+        </section>
     `;
 }
 
@@ -5636,6 +5858,8 @@ function renderBackgroundCard(background) {
     const isSelecting = state.backgroundSelection.active;
     const isAnimated = typeof background === 'object' && Boolean(background?.isAnimated);
     const isRenaming = state.backgroundRenaming.filename === filename;
+    const folders = getBackgroundFoldersFor(filename);
+    const folderText = folders.length ? folders.map(folder => folder.name).join(', ') : '未归档';
 
     return `
         <article class="resource-card background-card ${isSelected ? 'selected' : ''}">
@@ -5643,7 +5867,7 @@ function renderBackgroundCard(background) {
             <div class="card-head">
                 <div>
                     <h3 class="card-title">${escapeHtml(filename)}</h3>
-                    <div class="card-meta">${isAnimated ? '动画背景' : '静态背景'}</div>
+                    <div class="card-meta">${isAnimated ? '动画背景' : '静态背景'} · ${escapeHtml(folderText)}</div>
                 </div>
             </div>
             ${!isSelecting && !isRenaming ? `
@@ -7662,6 +7886,56 @@ async function handleClick(event) {
         return;
     }
 
+    const backgroundFolderFilterButton = event.target.closest('[data-background-folder-filter]');
+    if (backgroundFolderFilterButton) {
+        setBackgroundFolderFilter(backgroundFolderFilterButton.dataset.backgroundFolderFilter || '');
+        return;
+    }
+
+    if (event.target.closest('[data-toggle-background-folder-create]')) {
+        toggleBackgroundFolderCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-background-folder-create]')) {
+        toggleBackgroundFolderCreate(false);
+        return;
+    }
+
+    if (event.target.closest('[data-save-background-folder-create]')) {
+        try {
+            await createBackgroundFolder();
+        } catch (error) {
+            state.errors.push({ key: 'background-folder-create', message: error.message });
+            showToast('背景文件夹创建失败', error.message);
+            state.backgroundFolderCreating.running = false;
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-assign-selected-backgrounds]')) {
+        try {
+            await assignSelectedBackgroundsToFolder(false);
+        } catch (error) {
+            state.errors.push({ key: 'background-folder-assign', message: error.message });
+            showToast('背景归档失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-unassign-selected-backgrounds]')) {
+        try {
+            await assignSelectedBackgroundsToFolder(true);
+        } catch (error) {
+            state.errors.push({ key: 'background-folder-unassign', message: error.message });
+            showToast('移出背景文件夹失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-delete-selected-backgrounds]')) {
         try {
             beginBackgroundBatchDelete();
@@ -8253,6 +8527,9 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-rename-input]')) {
         state.backgroundRenaming.name = event.target.value;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-folder-create-name]')) {
+        state.backgroundFolderCreating.name = event.target.value;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-url]')) {
         state.assetDownload.url = event.target.value;
     }
@@ -8302,6 +8579,10 @@ elements.content.addEventListener('change', async event => {
         toggleBackgroundSelection(event.target.dataset.backgroundSelect, event.target.checked);
         return;
     }
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-background-folder-assignment]')) {
+        state.backgroundFolderAssignment = event.target.value;
+        return;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-global]')) {
         state.extensionInstall.global = event.target.checked;
         return;
@@ -8326,6 +8607,18 @@ elements.content.addEventListener('change', async event => {
         } catch (error) {
             state.errors.push({ key: 'persona-avatar', message: error.message });
             showToast('头像替换失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-avatar-file]')) {
+        try {
+            await replaceCharacterAvatar(event.target.dataset.characterAvatarFile, event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'character-avatar', message: error.message });
+            showToast('角色头像替换失败', error.message);
             render();
         } finally {
             event.target.value = '';
