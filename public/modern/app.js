@@ -969,6 +969,53 @@ function getChatCompletionModel(settings, source) {
     return settings[field] || settings.openai_model || '';
 }
 
+function getApiSourceUiState(source) {
+    const secretState = getSecretStateForSource(source);
+    return {
+        hasSecretMapping: Boolean(secretKeyByChatSource[source]),
+        secretKey: secretKeyByChatSource[source] || '当前来源没有密钥映射',
+        secretSaved: secretState.length > 0,
+        showEndpoint: source === 'siliconflow',
+        showCustomUrl: source === 'custom',
+    };
+}
+
+function updateApiSourceFields(source) {
+    const uiState = getApiSourceUiState(source);
+    const settings = getOaiSettings();
+    const modelInput = elements.content.querySelector('[data-api-model]');
+
+    if (modelInput) {
+        modelInput.value = getChatCompletionModel(settings, source);
+    }
+
+    elements.content.querySelectorAll('[data-api-field]').forEach(field => {
+        const fieldName = field.dataset.apiField;
+        const isVisible = (
+            fieldName === 'siliconflow-endpoint' && uiState.showEndpoint
+            || fieldName === 'custom-url' && uiState.showCustomUrl
+            || fieldName === 'api-key' && uiState.hasSecretMapping
+        );
+        field.hidden = !isVisible;
+    });
+
+    const keyInput = elements.content.querySelector('[data-api-key]');
+    if (keyInput) {
+        keyInput.placeholder = uiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets';
+        keyInput.value = '';
+    }
+
+    const secretBadge = elements.content.querySelector('[data-api-secret-status]');
+    if (secretBadge) {
+        secretBadge.textContent = uiState.secretSaved ? '密钥已保存' : (uiState.hasSecretMapping ? '未保存密钥' : '无密钥字段');
+    }
+
+    const secretKey = elements.content.querySelector('[data-api-secret-key]');
+    if (secretKey) {
+        secretKey.textContent = uiState.secretKey;
+    }
+}
+
 function getNumberSetting(settings, key, fallback) {
     const value = Number(settings[key]);
     return Number.isFinite(value) ? value : fallback;
@@ -3856,79 +3903,99 @@ function renderApiConnectionEditor(provider) {
     const source = provider.chatSource || settings.chat_completion_source || 'openai';
     const model = getChatCompletionModel(settings, source);
     const endpoint = settings.siliconflow_endpoint === 'global' ? 'global' : 'cn';
-    const secretState = getSecretStateForSource(source);
+    const apiUiState = getApiSourceUiState(source);
     const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
 
     return `
         <div class="settings-form">
-            <div class="form-grid two-columns">
-                <label class="field-label">
-                    <span>主 API</span>
-                    <select class="select-input" data-api-main>
-                        <option value="openai" ${(state.settings.main_api || 'openai') === 'openai' ? 'selected' : ''}>聊天补全</option>
-                        <option value="textgenerationwebui" ${state.settings.main_api === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
-                    </select>
-                </label>
-                <label class="field-label">
-                    <span>聊天补全来源</span>
-                    <select class="select-input" data-api-source>
-                        ${chatCompletionSourceOptions.map(option => `<option value="${escapeHtml(option.id)}" ${source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
-                    </select>
-                </label>
-                <label class="field-label">
-                    <span>模型</span>
-                    <input class="text-input" type="text" data-api-model value="${escapeHtml(model)}" autocomplete="off" placeholder="例如 deepseek-ai/DeepSeek-V4-Pro">
-                </label>
-                <label class="field-label">
-                    <span>聊天补全预设</span>
-                    <select class="select-input" data-api-preset>
-                        <option value="">未选择</option>
-                        ${openAiPresetNames.map(name => `<option value="${escapeHtml(name)}" ${settings.preset_settings_openai === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
-                    </select>
-                </label>
-                <label class="field-label">
-                    <span>SiliconFlow 端点</span>
-                    <select class="select-input" data-api-endpoint>
-                        <option value="cn" ${endpoint === 'cn' ? 'selected' : ''}>China (api.siliconflow.cn)</option>
-                        <option value="global" ${endpoint === 'global' ? 'selected' : ''}>Global (api.siliconflow.com)</option>
-                    </select>
-                </label>
-                <label class="field-label">
-                    <span>Custom URL</span>
-                    <input class="text-input" type="url" data-api-custom-url value="${escapeHtml(settings.custom_url || '')}" autocomplete="off" placeholder="OpenAI-compatible base URL">
-                </label>
-                <label class="field-label">
-                    <span>Reverse Proxy</span>
-                    <input class="text-input" type="url" data-api-reverse-proxy value="${escapeHtml(settings.reverse_proxy || '')}" autocomplete="off" placeholder="可选">
-                </label>
-                <label class="field-label">
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">连接</h3>
+                    <p class="panel-subtitle">选择主 API、来源和端点。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>主 API</span>
+                        <select class="select-input" data-api-main>
+                            <option value="openai" ${(state.settings.main_api || 'openai') === 'openai' ? 'selected' : ''}>聊天补全</option>
+                            <option value="textgenerationwebui" ${state.settings.main_api === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
+                        </select>
+                    </label>
+                    <label class="field-label">
+                        <span>聊天补全来源</span>
+                        <select class="select-input" data-api-source>
+                            ${chatCompletionSourceOptions.map(option => `<option value="${escapeHtml(option.id)}" ${source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="field-label" data-api-field="siliconflow-endpoint" ${apiUiState.showEndpoint ? '' : 'hidden'}>
+                        <span>SiliconFlow 端点</span>
+                        <select class="select-input" data-api-endpoint>
+                            <option value="cn" ${endpoint === 'cn' ? 'selected' : ''}>China (api.siliconflow.cn)</option>
+                            <option value="global" ${endpoint === 'global' ? 'selected' : ''}>Global (api.siliconflow.com)</option>
+                        </select>
+                    </label>
+                    <label class="field-label" data-api-field="custom-url" ${apiUiState.showCustomUrl ? '' : 'hidden'}>
+                        <span>Custom URL</span>
+                        <input class="text-input" type="url" data-api-custom-url value="${escapeHtml(settings.custom_url || '')}" autocomplete="off" placeholder="OpenAI-compatible base URL">
+                    </label>
+                    <label class="field-label">
+                        <span>Reverse Proxy</span>
+                        <input class="text-input" type="url" data-api-reverse-proxy value="${escapeHtml(settings.reverse_proxy || '')}" autocomplete="off" placeholder="可选">
+                    </label>
+                </div>
+            </section>
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">模型参数</h3>
+                    <p class="panel-subtitle">模型、预设和采样参数。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>模型</span>
+                        <input class="text-input" type="text" data-api-model value="${escapeHtml(model)}" autocomplete="off" placeholder="例如 deepseek-ai/DeepSeek-V4-Pro">
+                    </label>
+                    <label class="field-label">
+                        <span>聊天补全预设</span>
+                        <select class="select-input" data-api-preset>
+                            <option value="">未选择</option>
+                            ${openAiPresetNames.map(name => `<option value="${escapeHtml(name)}" ${settings.preset_settings_openai === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="field-label">
+                        <span>Temperature</span>
+                        <input class="text-input" type="number" step="0.01" data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
+                    </label>
+                    <label class="field-label">
+                        <span>Max Tokens</span>
+                        <input class="text-input" type="number" step="1" min="1" data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
+                    </label>
+                    <label class="field-label">
+                        <span>Top P</span>
+                        <input class="text-input" type="number" step="0.01" data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">
+                    </label>
+                    <label class="field-label">
+                        <span>Frequency Penalty</span>
+                        <input class="text-input" type="number" step="0.01" data-api-frequency-penalty value="${escapeHtml(getNumberSetting(settings, 'freq_pen_openai', 0))}">
+                    </label>
+                    <label class="field-label">
+                        <span>Presence Penalty</span>
+                        <input class="text-input" type="number" step="0.01" data-api-presence-penalty value="${escapeHtml(getNumberSetting(settings, 'pres_pen_openai', 0))}">
+                    </label>
+                </div>
+            </section>
+            <div class="form-section">
+                <div>
+                    <h3 class="form-section-title">安全密钥</h3>
+                    <p class="panel-subtitle">密钥仍写入原版 secrets，不在页面回显。</p>
+                </div>
+                <label class="field-label" data-api-field="api-key" ${apiUiState.hasSecretMapping ? '' : 'hidden'}>
                     <span>API Key</span>
-                    <input class="text-input" type="password" data-api-key value="" autocomplete="new-password" placeholder="${secretState.length ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
-                </label>
-                <label class="field-label">
-                    <span>Temperature</span>
-                    <input class="text-input" type="number" step="0.01" data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
-                </label>
-                <label class="field-label">
-                    <span>Max Tokens</span>
-                    <input class="text-input" type="number" step="1" min="1" data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
-                </label>
-                <label class="field-label">
-                    <span>Top P</span>
-                    <input class="text-input" type="number" step="0.01" data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">
-                </label>
-                <label class="field-label">
-                    <span>Frequency Penalty</span>
-                    <input class="text-input" type="number" step="0.01" data-api-frequency-penalty value="${escapeHtml(getNumberSetting(settings, 'freq_pen_openai', 0))}">
-                </label>
-                <label class="field-label">
-                    <span>Presence Penalty</span>
-                    <input class="text-input" type="number" step="0.01" data-api-presence-penalty value="${escapeHtml(getNumberSetting(settings, 'pres_pen_openai', 0))}">
+                    <input class="text-input" type="password" data-api-key value="" autocomplete="new-password" placeholder="${apiUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
                 </label>
             </div>
             <div class="connection-test">
-                <span class="badge">${secretState.length ? '密钥已保存' : '未保存密钥'}</span>
-                <span>${escapeHtml(secretKeyByChatSource[source] || '当前来源没有密钥映射')}</span>
+                <span class="badge" data-api-secret-status>${apiUiState.secretSaved ? '密钥已保存' : (apiUiState.hasSecretMapping ? '未保存密钥' : '无密钥字段')}</span>
+                <span data-api-secret-key>${escapeHtml(apiUiState.secretKey)}</span>
             </div>
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-save-api-connection>
@@ -5000,6 +5067,10 @@ elements.content.addEventListener('input', event => {
     }
 });
 elements.content.addEventListener('change', async event => {
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
+        updateApiSourceFields(event.target.value);
+        return;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-import-file]')) {
         try {
             await importCharacterFile(event.target.files?.[0]);
