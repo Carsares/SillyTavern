@@ -34,6 +34,8 @@ function createChatFixture() {
         chats: [
             { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now },
         ],
+        groups: [],
+        groupChats: [],
         messagesByChat: {
             'existing-chat': [
                 { name: 'Modern User', is_user: true, mes: 'hello', send_date: now - 1000 },
@@ -52,6 +54,10 @@ function createChatFixture() {
             backupDownloads: [],
             backupDeletes: [],
             bridge: [],
+            groupSaves: [],
+            groupDeletes: [],
+            groupImports: [],
+            groupEdits: [],
         },
     };
 }
@@ -79,6 +85,22 @@ function chatResponse(fixture, chatId) {
     ];
 }
 
+function upsertGroupChat(fixture, chatId, messages) {
+    const fileName = chatFileName(chatId);
+    const item = {
+        file_id: stripJsonlExtension(chatId),
+        file_name: fileName,
+        chat_items: messages.length,
+        file_size: `${Math.max(messages.length, 1)} KB`,
+        last_mes: Date.now(),
+    };
+    fixture.messagesByChat[item.file_id] = messages;
+    fixture.groupChats = [
+        item,
+        ...fixture.groupChats.filter(chat => stripJsonlExtension(chat.file_id || chat.file_name) !== item.file_id),
+    ];
+}
+
 function fulfillJson(route, body, status = 200) {
     return route.fulfill({
         status,
@@ -100,7 +122,13 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
         textgenerationwebui_presets: [],
     }));
     await page.route('**/api/characters/all', route => fulfillJson(route, [fixture.character]));
-    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/groups/all', route => fulfillJson(route, fixture.groups));
+    await page.route('**/api/groups/edit', route => {
+        const payload = route.request().postDataJSON();
+        fixture.requests.groupEdits.push(payload);
+        fixture.groups = fixture.groups.map(group => group.id === payload.id ? { ...group, ...payload } : group);
+        return fulfillJson(route, { ok: true });
+    });
     await page.route('**/api/worldinfo/list', route => fulfillJson(route, []));
     await page.route('**/api/backgrounds/all', route => fulfillJson(route, { images: [] }));
     await page.route('**/api/backgrounds/folders', route => fulfillJson(route, { folders: [], imageFolderMap: {} }));
@@ -110,14 +138,33 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     await page.route('**/api/secrets/read', route => fulfillJson(route, {}));
     await page.route('**/api/stats/get', route => fulfillJson(route, {}));
     await page.route('**/api/characters/chats', route => fulfillJson(route, fixture.chats));
+    await page.route('**/api/chats/search', route => {
+        const payload = route.request().postDataJSON();
+        const source = payload.group_id ? fixture.groupChats : fixture.chats;
+        const query = String(payload.query || '').toLowerCase();
+        const chats = query
+            ? source.filter(chat => String(chat.file_name || chat.file_id || '').toLowerCase().includes(query))
+            : source;
+        return fulfillJson(route, chats);
+    });
     await page.route('**/api/chats/get', route => {
         const payload = route.request().postDataJSON();
         return fulfillJson(route, chatResponse(fixture, payload.file_name));
+    });
+    await page.route('**/api/chats/group/get', route => {
+        const payload = route.request().postDataJSON();
+        return fulfillJson(route, chatResponse(fixture, payload.id));
     });
     await page.route('**/api/chats/save', route => {
         const payload = route.request().postDataJSON();
         fixture.requests.saves.push(payload);
         upsertChat(fixture, payload.file_name, payload.chat.filter(message => !message.chat_metadata));
+        return fulfillJson(route, { ok: true });
+    });
+    await page.route('**/api/chats/group/save', route => {
+        const payload = route.request().postDataJSON();
+        fixture.requests.groupSaves.push(payload);
+        upsertGroupChat(fixture, payload.id, payload.chat.filter(message => !message.chat_metadata));
         return fulfillJson(route, { ok: true });
     });
     await page.route('**/api/chats/rename', route => {
@@ -142,6 +189,14 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
         delete fixture.messagesByChat[chatId];
         return fulfillJson(route, { ok: true });
     });
+    await page.route('**/api/chats/group/delete', route => {
+        const payload = route.request().postDataJSON();
+        const chatId = stripJsonlExtension(payload.id);
+        fixture.requests.groupDeletes.push(payload);
+        fixture.groupChats = fixture.groupChats.filter(chat => stripJsonlExtension(chat.file_id || chat.file_name) !== chatId);
+        delete fixture.messagesByChat[chatId];
+        return fulfillJson(route, { ok: true });
+    });
     await page.route('**/api/chats/import', route => {
         const bodyText = route.request().postData() || '';
         const fileName = multipartFileName(bodyText, 'avatar');
@@ -159,6 +214,24 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
             { name: 'Modern User', is_user: true, mes: `imported ${chatId}`, send_date: Date.now() },
         ]);
         return fulfillJson(route, { fileNames: [chatFileName(chatId)] });
+    });
+    await page.route('**/api/chats/group/import', route => {
+        const bodyText = route.request().postData() || '';
+        const fileName = multipartFileName(bodyText, 'avatar');
+        const chatId = stripJsonlExtension(fileName);
+        fixture.requests.groupImports.push({
+            bodyText,
+            contentType: route.request().headers()['content-type'] || '',
+            fileName,
+            fileType: multipartFieldValue(bodyText, 'file_type'),
+            avatarUrl: multipartFieldValue(bodyText, 'avatar_url'),
+            userName: multipartFieldValue(bodyText, 'user_name'),
+            characterName: multipartFieldValue(bodyText, 'character_name'),
+        });
+        upsertGroupChat(fixture, chatId, [
+            { name: 'Modern User', is_user: true, mes: `imported ${chatId}`, send_date: Date.now() },
+        ]);
+        return fulfillJson(route, { res: chatFileName(chatId) });
     });
     await page.route('**/api/chats/export', route => {
         const payload = route.request().postDataJSON();
@@ -390,6 +463,80 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-chat-input]')).toHaveValue('');
         await expect(page.locator('[data-send-message]')).toBeDisabled();
         await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+    });
+
+    test('manages group chat files through group endpoints', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.groups = [{
+            id: 'group-alpha',
+            name: 'Mock Group',
+            members: ['mock.png'],
+            chats: ['group-chat'],
+            chat_id: 'group-chat',
+        }];
+        fixture.groupChats = [
+            { file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '3 KB', last_mes: now },
+        ];
+        fixture.messagesByChat['group-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'group hello', send_date: now - 1000 },
+            { name: 'Mock Group', is_user: false, mes: 'group reply', send_date: now },
+        ];
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-chat-mode="group"]').click();
+
+        await expect(page.locator('.detail-title')).toHaveText('Mock Group');
+        await expect(page.locator('[data-select-chat="group-chat"]')).toBeVisible();
+        await expect(page.locator('.chat-thread')).toContainText('group reply');
+
+        await page.locator('[data-delete-chat]').click();
+        const jsonlDownloadPromise = page.waitForEvent('download');
+        await page.locator('[data-export-chat="jsonl"]').click();
+        const jsonlDownload = await jsonlDownloadPromise;
+        expect(jsonlDownload.suggestedFilename()).toBe('group-chat.jsonl');
+        expect(fixture.requests.exports[0]).toMatchObject({
+            is_group: true,
+            avatar_url: null,
+            file: 'group-chat.jsonl',
+            exportfilename: 'group-chat.jsonl',
+            format: 'jsonl',
+        });
+
+        await page.locator('[data-confirm-chat-delete]').click();
+        await expect.poll(() => fixture.requests.groupDeletes.length).toBe(1);
+        expect(fixture.requests.groupDeletes[0]).toEqual({ id: 'group-chat' });
+        await expect.poll(() => fixture.requests.groupEdits.length).toBe(1);
+        expect(fixture.requests.groupEdits[0]).toMatchObject({
+            id: 'group-alpha',
+            chats: [],
+            chat_id: '',
+        });
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveCount(0);
+
+        await page.locator('[data-chat-import-file]').setInputFiles({
+            name: 'imported-group-chat.jsonl',
+            mimeType: 'application/jsonl',
+            buffer: Buffer.from(JSON.stringify({ name: 'Modern User', mes: 'Imported group hello' })),
+        });
+
+        await expect.poll(() => fixture.requests.groupImports.length).toBe(1);
+        expect(fixture.requests.groupImports[0]).toMatchObject({
+            fileName: 'imported-group-chat.jsonl',
+            fileType: 'jsonl',
+            avatarUrl: '',
+            userName: 'Modern User',
+            characterName: 'Mock Group',
+        });
+        await expect.poll(() => fixture.requests.groupEdits.length).toBe(2);
+        expect(fixture.requests.groupEdits[1]).toMatchObject({
+            id: 'group-alpha',
+            chats: ['imported-group-chat'],
+            chat_id: 'imported-group-chat',
+        });
+        await expect(page.locator('[data-select-chat="imported-group-chat"]')).toBeVisible();
+        await expect(page.locator('.chat-thread')).toContainText('imported imported-group-chat');
     });
 
     test('manages character chat files and backups inside the modern workspace', async ({ page }) => {
