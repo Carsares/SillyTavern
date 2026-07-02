@@ -147,6 +147,12 @@ function createRouteContext() {
         getApiSourceUiState,
         getNumberSetting,
         getSecretStateForSource,
+        render,
+        showToast,
+        testApiConnection,
+        setApiModelSuggestion,
+        saveApiConnectionFromForm,
+        updateApiSourceFields,
         matchesQuery,
         getAssetGroups,
         getAssetCount,
@@ -158,6 +164,32 @@ function createRouteContext() {
         getBackgroundFolderIds,
         getBackgroundFoldersFor,
         getBackgroundFolderCounts,
+        setBackgroundSelectionMode,
+        setBackgroundFolderFilter,
+        toggleBackgroundFolderCreate,
+        createBackgroundFolder,
+        beginBackgroundFolderRename,
+        cancelBackgroundFolderRename,
+        confirmBackgroundFolderRename,
+        beginBackgroundFolderDelete,
+        cancelBackgroundFolderDelete,
+        confirmBackgroundFolderDelete,
+        assignSelectedBackgroundsToFolder,
+        beginBackgroundBatchDelete,
+        showMoreBackgrounds,
+        cancelBackgroundDelete,
+        confirmBackgroundDelete,
+        beginBackgroundRename,
+        cancelBackgroundRename,
+        confirmBackgroundRename,
+        toggleAssetDownload,
+        downloadAssetFromForm,
+        toggleAssetGroup,
+        beginAssetDelete,
+        cancelAssetDelete,
+        confirmAssetDelete,
+        toggleBackgroundSelection,
+        uploadBackgroundFile,
         uniqueValues,
         renderCharacterRow,
         getCharacterAvatarUrl,
@@ -197,6 +229,14 @@ function createRouteContext() {
         getPresetEditorText,
         getOaiSettings,
         getRequestCompressionSettings,
+        loadSettingsSnapshots,
+        createSettingsSnapshot,
+        saveModernPreferencesFromForm,
+        saveRequestCompressionFromForm,
+        previewSettingsSnapshot,
+        beginSettingsSnapshotRestore,
+        cancelSettingsSnapshotRestore,
+        confirmSettingsSnapshotRestore,
         worldEntryPageSize,
         worldEntryPositions,
         worldEntryRoleOptions,
@@ -211,20 +251,21 @@ function createRouteContext() {
 }
 
 const routeContext = createRouteContext();
-const routeRenderers = {
-    dashboard: createDashboardRoute(routeContext).render,
-    chat: createChatRoute(routeContext).render,
-    characters: createCharactersRoute(routeContext).render,
-    groups: createGroupsRoute(routeContext).render,
-    worldbooks: createWorldbooksRoute(routeContext).render,
-    presets: createPresetsRoute(routeContext).render,
-    personas: createPersonasRoute(routeContext).render,
-    assets: createAssetsRoute(routeContext).render,
-    api: createApiRoute(routeContext).render,
-    extensions: createExtensionsRoute(routeContext).render,
-    activity: createActivityRoute(routeContext).render,
-    settings: createSettingsRoute(routeContext).render,
+const routeModules = {
+    dashboard: createDashboardRoute(routeContext),
+    chat: createChatRoute(routeContext),
+    characters: createCharactersRoute(routeContext),
+    groups: createGroupsRoute(routeContext),
+    worldbooks: createWorldbooksRoute(routeContext),
+    presets: createPresetsRoute(routeContext),
+    personas: createPersonasRoute(routeContext),
+    assets: createAssetsRoute(routeContext),
+    api: createApiRoute(routeContext),
+    extensions: createExtensionsRoute(routeContext),
+    activity: createActivityRoute(routeContext),
+    settings: createSettingsRoute(routeContext),
 };
+const routeRenderers = Object.fromEntries(Object.entries(routeModules).map(([route, module]) => [route, module.render]));
 
 const legacyBridgeSource = 'sillytavern-modern-bridge';
 const legacyBridge = {
@@ -5041,219 +5082,8 @@ async function handleClick(event) {
         return;
     }
 
-    if (event.target.closest('[data-toggle-background-selection]')) {
-        setBackgroundSelectionMode(!state.backgroundSelection.active);
-        return;
-    }
-
-    const assetTabButton = event.target.closest('[data-asset-tab]');
-    if (assetTabButton) {
-        state.assetTab = assetTabButton.dataset.assetTab === 'files' ? 'files' : 'backgrounds';
-        localStorage.setItem('st-modern-asset-tab', state.assetTab);
-        render();
-        return;
-    }
-
-    const backgroundFolderFilterButton = event.target.closest('[data-background-folder-filter]');
-    if (backgroundFolderFilterButton) {
-        setBackgroundFolderFilter(backgroundFolderFilterButton.dataset.backgroundFolderFilter || '');
-        return;
-    }
-
-    if (event.target.closest('[data-toggle-background-folder-create]')) {
-        toggleBackgroundFolderCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-background-folder-create]')) {
-        toggleBackgroundFolderCreate(false);
-        return;
-    }
-
-    if (event.target.closest('[data-save-background-folder-create]')) {
-        try {
-            await createBackgroundFolder();
-        } catch (error) {
-            state.errors.push({ key: 'background-folder-create', message: error.message });
-            showToast('背景文件夹创建失败', error.message);
-            state.backgroundFolderCreating.running = false;
-            render();
-        }
-        return;
-    }
-
-    const renameBackgroundFolderButton = event.target.closest('[data-rename-background-folder]');
-    if (renameBackgroundFolderButton) {
-        try {
-            beginBackgroundFolderRename(renameBackgroundFolderButton.dataset.renameBackgroundFolder);
-        } catch (error) {
-            showToast('背景文件夹不可编辑', error.message);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-background-folder-rename]')) {
-        cancelBackgroundFolderRename();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-background-folder-rename]')) {
-        try {
-            await confirmBackgroundFolderRename();
-        } catch (error) {
-            state.errors.push({ key: 'background-folder-rename', message: error.message });
-            showToast('背景文件夹重命名失败', error.message);
-            state.backgroundFolderRenaming.running = false;
-            render();
-        }
-        return;
-    }
-
-    const deleteBackgroundFolderButton = event.target.closest('[data-delete-background-folder]');
-    if (deleteBackgroundFolderButton) {
-        try {
-            beginBackgroundFolderDelete(deleteBackgroundFolderButton.dataset.deleteBackgroundFolder);
-        } catch (error) {
-            showToast('背景文件夹不可删除', error.message);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-background-folder-delete]')) {
-        cancelBackgroundFolderDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-background-folder-delete]')) {
-        try {
-            await confirmBackgroundFolderDelete();
-        } catch (error) {
-            state.errors.push({ key: 'background-folder-delete', message: error.message });
-            showToast('背景文件夹删除失败', error.message);
-            state.backgroundFolderDeleteConfirm.running = false;
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-assign-selected-backgrounds]')) {
-        try {
-            await assignSelectedBackgroundsToFolder(false);
-        } catch (error) {
-            state.errors.push({ key: 'background-folder-assign', message: error.message });
-            showToast('背景归档失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-unassign-selected-backgrounds]')) {
-        try {
-            await assignSelectedBackgroundsToFolder(true);
-        } catch (error) {
-            state.errors.push({ key: 'background-folder-unassign', message: error.message });
-            showToast('移出背景文件夹失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-delete-selected-backgrounds]')) {
-        try {
-            beginBackgroundBatchDelete();
-        } catch (error) {
-            showToast('请选择背景', error.message);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-load-more-backgrounds]')) {
-        showMoreBackgrounds();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-background-delete]')) {
-        cancelBackgroundDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-background-delete]')) {
-        try {
-            await confirmBackgroundDelete();
-        } catch (error) {
-            state.errors.push({ key: 'background-delete', message: error.message });
-            showToast('背景删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const backgroundRenameButton = event.target.closest('[data-background-rename]');
-    if (backgroundRenameButton) {
-        beginBackgroundRename(backgroundRenameButton.dataset.backgroundRename);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-background-rename]')) {
-        cancelBackgroundRename();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-background-rename]')) {
-        try {
-            await confirmBackgroundRename();
-        } catch (error) {
-            state.errors.push({ key: 'background-rename', message: error.message });
-            showToast('背景重命名失败', error.message);
-            state.backgroundRenaming.running = false;
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-toggle-asset-download]')) {
-        toggleAssetDownload();
-        return;
-    }
-
-    if (event.target.closest('[data-download-asset]')) {
-        try {
-            await downloadAssetFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'asset-download', message: error.message });
-            showToast('资产下载失败', error.message);
-            state.assetDownload.running = false;
-            render();
-        }
-        return;
-    }
-
-    const toggleAssetGroupButton = event.target.closest('[data-toggle-asset-group]');
-    if (toggleAssetGroupButton) {
-        toggleAssetGroup(toggleAssetGroupButton.dataset.toggleAssetGroup);
-        return;
-    }
-
-    const deleteAssetButton = event.target.closest('[data-delete-asset]');
-    if (deleteAssetButton) {
-        beginAssetDelete(deleteAssetButton.dataset.assetCategory, deleteAssetButton.dataset.assetFilename);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-asset-delete]')) {
-        cancelAssetDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-asset-delete]')) {
-        try {
-            await confirmAssetDelete();
-        } catch (error) {
-            state.errors.push({ key: 'asset-delete', message: error.message });
-            showToast('资产删除失败', error.message);
-            state.assetDeleteConfirm.running = false;
-            render();
-        }
+    const routeClickHandler = routeModules[state.route]?.handleClick;
+    if (routeClickHandler && await routeClickHandler(event) !== false) {
         return;
     }
 
@@ -5347,114 +5177,6 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'stats-recreate', message: error.message });
             showToast('统计重建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-load-settings-snapshots]')) {
-        try {
-            await loadSettingsSnapshots({ force: true });
-            render();
-        } catch (error) {
-            state.errors.push({ key: 'settings-snapshots', message: error.message });
-            showToast('设置快照读取失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-create-settings-snapshot]')) {
-        try {
-            await createSettingsSnapshot();
-        } catch (error) {
-            state.errors.push({ key: 'settings-snapshot-create', message: error.message });
-            showToast('设置快照创建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-save-modern-preferences]')) {
-        saveModernPreferencesFromForm();
-        return;
-    }
-
-    if (event.target.closest('[data-save-request-compression]')) {
-        try {
-            await saveRequestCompressionFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'request-compression-save', message: error.message });
-            showToast('请求压缩保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const previewSettingsSnapshotButton = event.target.closest('[data-preview-settings-snapshot]');
-    if (previewSettingsSnapshotButton) {
-        try {
-            await previewSettingsSnapshot(previewSettingsSnapshotButton.dataset.previewSettingsSnapshot);
-        } catch (error) {
-            state.errors.push({ key: 'settings-snapshot-preview', message: error.message });
-            showToast('设置快照预览失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const restoreSettingsSnapshotButton = event.target.closest('[data-restore-settings-snapshot]');
-    if (restoreSettingsSnapshotButton) {
-        beginSettingsSnapshotRestore(restoreSettingsSnapshotButton.dataset.restoreSettingsSnapshot);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-settings-restore]')) {
-        cancelSettingsSnapshotRestore();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-settings-restore]')) {
-        try {
-            await confirmSettingsSnapshotRestore();
-        } catch (error) {
-            state.errors.push({ key: 'settings-snapshot-restore', message: error.message });
-            showToast('设置快照恢复失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-test-api]')) {
-        try {
-            await testApiConnection();
-        } catch (error) {
-            state.errors.push({ key: 'api-test', message: error.message });
-            showToast('连接测试失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const apiProfileButton = event.target.closest('[data-api-profile-main]');
-    if (apiProfileButton) {
-        state.apiMainDraft = apiProfileButton.dataset.apiProfileMain;
-        render();
-        return;
-    }
-
-    const apiModelSuggestionButton = event.target.closest('[data-api-model-suggestion]');
-    if (apiModelSuggestionButton) {
-        setApiModelSuggestion(apiModelSuggestionButton.dataset.apiModelSuggestion);
-        return;
-    }
-
-    if (event.target.closest('[data-save-api-connection]')) {
-        try {
-            await saveApiConnectionFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'api-save', message: error.message });
-            showToast('连接配置保存失败', error.message);
             render();
         }
         return;
@@ -5789,6 +5511,10 @@ elements.search.addEventListener('input', event => {
     render();
 });
 elements.content.addEventListener('input', event => {
+    const routeInputHandler = routeModules[state.route]?.handleInput;
+    if (routeInputHandler && routeInputHandler(event) !== false) {
+        return;
+    }
     if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
         setCurrentDraft(event.target.value);
     }
@@ -5800,21 +5526,6 @@ elements.content.addEventListener('input', event => {
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
         state.chatSearch.query = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-rename-input]')) {
-        state.backgroundRenaming.name = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-folder-create-name]')) {
-        state.backgroundFolderCreating.name = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-folder-rename-name]')) {
-        state.backgroundFolderRenaming.name = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-url]')) {
-        state.assetDownload.url = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-filename]')) {
-        state.assetDownload.filename = event.target.value;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
         state.characterRenaming.name = event.target.value;
@@ -5854,29 +5565,12 @@ elements.content.addEventListener('input', event => {
     }
 });
 elements.content.addEventListener('change', async event => {
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-main]')) {
-        state.apiMainDraft = event.target.value;
-        render();
-        return;
-    }
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
-        updateApiSourceFields(event.target.value);
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-select]')) {
-        toggleBackgroundSelection(event.target.dataset.backgroundSelect, event.target.checked);
-        return;
-    }
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-background-folder-assignment]')) {
-        state.backgroundFolderAssignment = event.target.value;
+    const routeChangeHandler = routeModules[state.route]?.handleChange;
+    if (routeChangeHandler && await routeChangeHandler(event) !== false) {
         return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-global]')) {
         state.extensionInstall.global = event.target.checked;
-        return;
-    }
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-asset-download-category]')) {
-        state.assetDownload.category = event.target.value;
         return;
     }
     if (event.target instanceof HTMLSelectElement && event.target.matches('[data-extension-branch]')) {
@@ -5955,18 +5649,6 @@ elements.content.addEventListener('change', async event => {
         } catch (error) {
             state.errors.push({ key: 'worldbook-import', message: error.message });
             showToast('世界书导入失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-upload-file]')) {
-        try {
-            await uploadBackgroundFile(event.target.files?.[0]);
-        } catch (error) {
-            state.errors.push({ key: 'background-upload', message: error.message });
-            showToast('背景上传失败', error.message);
             render();
         } finally {
             event.target.value = '';
