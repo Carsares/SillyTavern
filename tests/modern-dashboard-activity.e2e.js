@@ -8,8 +8,20 @@ function fulfillJson(route, body, status = 200) {
     });
 }
 
-async function mockModernDashboardActivityWorkspace(page) {
+async function mockModernDashboardActivityWorkspace(page, settingsOverride = null) {
     const now = Date.now();
+    const settingsPayload = settingsOverride || {
+        name1: 'Modern User',
+        main_api: 'openai',
+        chat_completion_source: 'siliconflow',
+        oai_settings: {
+            chat_completion_source: 'siliconflow',
+            siliconflow_model: 'deepseek-ai/DeepSeek-V3',
+            preset_settings_openai: 'Dashboard Preset',
+        },
+    };
+    const presetName = settingsPayload.oai_settings?.preset_settings_openai || settingsPayload.preset_settings_openai || settingsPayload.preset_settings || '';
+    const chatCompletionSource = settingsPayload.oai_settings?.chat_completion_source || settingsPayload.chat_completion_source || '';
     const characters = [
         {
             avatar: 'alice.png',
@@ -57,18 +69,9 @@ async function mockModernDashboardActivityWorkspace(page) {
     await page.route('**/csrf-token', route => fulfillJson(route, { token: 'modern-dashboard-activity-token' }));
     await page.route('**/api/users/me', route => fulfillJson(route, { name: 'Modern User', handle: 'modern-user' }));
     await page.route('**/api/settings/get', route => fulfillJson(route, {
-        settings: JSON.stringify({
-            name1: 'Modern User',
-            main_api: 'openai',
-            chat_completion_source: 'siliconflow',
-            oai_settings: {
-                chat_completion_source: 'siliconflow',
-                siliconflow_model: 'deepseek-ai/DeepSeek-V3',
-                preset_settings_openai: 'Dashboard Preset',
-            },
-        }),
-        openai_setting_names: ['Dashboard Preset'],
-        openai_settings: [JSON.stringify({ chat_completion_source: 'siliconflow' })],
+        settings: JSON.stringify(settingsPayload),
+        openai_setting_names: presetName ? [presetName] : [],
+        openai_settings: [JSON.stringify({ chat_completion_source: chatCompletionSource })],
         textgenerationwebui_preset_names: [],
         textgenerationwebui_presets: [],
     }));
@@ -135,5 +138,22 @@ test.describe('Modern dashboard and activity', () => {
         await expect(page).toHaveURL(/\/modern\/\?view=chat/);
         await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
         await expect(page.locator('[data-select-chat="bruno.png-chat"]')).toBeVisible();
+    });
+
+    test('surfaces incomplete API connection from dashboard', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page, {});
+
+        await page.goto('/modern/?view=dashboard');
+
+        const warning = page.locator('.dashboard-connection-warning');
+        await expect(warning).toBeVisible();
+        await expect(warning).toContainText('主 API 未选择');
+        await expect(warning).toContainText('聊天补全来源未配置');
+        await expect(warning).toContainText('模型未配置');
+
+        await warning.locator('[data-route="api"]').click();
+
+        await expect(page).toHaveURL(/\/modern\/\?view=api/);
+        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
     });
 });

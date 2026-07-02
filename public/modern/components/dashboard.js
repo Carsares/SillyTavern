@@ -14,6 +14,7 @@ export function createDashboardComponents(ctx) {
 
     function renderDashboard() {
         const provider = getProviderInfo();
+        const connectionIssues = getConnectionIssues(provider);
         const recentCharacters = [...state.characters]
             .sort((a, b) => Number(b.date_last_chat || b.date_added || 0) - Number(a.date_last_chat || a.date_added || 0))
             .slice(0, 6);
@@ -49,6 +50,7 @@ export function createDashboardComponents(ctx) {
                     ${renderKeyValue('模型', provider.model || '未读取到模型字段')}
                     ${renderKeyValue('预设字段', provider.preset || '未读取到当前预设字段')}
                 </div>
+                ${renderConnectionIssues(connectionIssues)}
             </section>
             <section class="panel">
                 <div class="panel-header">
@@ -80,6 +82,34 @@ export function createDashboardComponents(ctx) {
                 ${renderActionCard('扩展', '查看已发现扩展', `${formatNumber(state.extensions.length)} 个`, 'fa-cubes', 'extensions')}
             </div>
         </section>
+    `;
+    }
+
+    function getConnectionIssues(provider) {
+        const issues = [];
+        if (!provider.api || provider.api === '未选择') {
+            issues.push('主 API 未选择');
+        }
+        if (!provider.chatSource) {
+            issues.push('聊天补全来源未配置');
+        }
+        if (!provider.model) {
+            issues.push('模型未配置');
+        }
+        return issues;
+    }
+
+    function renderConnectionIssues(issues) {
+        if (!issues.length) {
+            return '';
+        }
+
+        return `
+        <div class="dashboard-connection-warning">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>连接配置不完整：${escapeHtml(issues.join('、'))}</span>
+            <button class="secondary-button" type="button" data-route="api">打开 API</button>
+        </div>
     `;
     }
 
