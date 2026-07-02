@@ -273,6 +273,12 @@ test.describe('Modern chat files', () => {
         await page.locator('[data-chat-backups-toggle]').click();
         await expect(page.locator('.chat-tool-panel')).toBeVisible();
         await expect(page.locator('.backup-row', { hasText: 'backup-chat.jsonl' })).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.chat-tool-panel')).toHaveCount(0);
+
+        await page.locator('[data-chat-backups-toggle]').click();
+        await expect(page.locator('.chat-tool-panel')).toBeVisible();
+        await expect(page.locator('.backup-row', { hasText: 'backup-chat.jsonl' })).toBeVisible();
 
         await page.locator('[data-view-chat-backup="backup-chat.jsonl"]').click();
         await expect.poll(() => fixture.requests.backupDownloads.length).toBe(1);

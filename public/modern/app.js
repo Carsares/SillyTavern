@@ -354,6 +354,7 @@ const {
     createModernChatFile,
     toggleChatSidebar,
     closeChatSidebarForMobileSelection,
+    closeChatSidebarOverlay,
 } = createChatContextActions({
     state,
     apiFetch,
@@ -374,6 +375,7 @@ const {
     exportModernChat,
     loadChatBackups,
     toggleChatBackups,
+    closeChatBackups,
     viewChatBackup,
     restoreChatBackup,
     beginChatBackupDelete,
@@ -1189,6 +1191,9 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
         closePalette();
         elements.app.querySelector('.sidebar')?.classList.remove('open');
+        if (closeChatSidebarOverlay() || closeChatBackups()) {
+            event.preventDefault();
+        }
     }
 });
 

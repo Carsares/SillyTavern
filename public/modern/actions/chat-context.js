@@ -452,6 +452,15 @@ export function createChatContextActions({
         return true;
     }
 
+    function closeChatSidebarOverlay() {
+        if (!closeChatSidebarForMobileSelection()) {
+            return false;
+        }
+
+        render();
+        return true;
+    }
+
     return {
         getSelectedCharacter,
         getSelectedGroup,
@@ -493,5 +502,6 @@ export function createChatContextActions({
         createModernChatFile,
         toggleChatSidebar,
         closeChatSidebarForMobileSelection,
+        closeChatSidebarOverlay,
     };
 }

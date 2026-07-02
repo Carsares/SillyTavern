@@ -273,6 +273,12 @@ test.describe('Modern workspace', () => {
         await page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' }).click();
         await expect(page.locator('.chat-browser')).toBeVisible();
         await expect(page.locator('.chat-sidebar-scrim')).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.chat-browser')).toHaveCount(0);
+        await expect(page.locator('.chat-sidebar-scrim')).toHaveCount(0);
+
+        await page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' }).click();
+        await expect(page.locator('.chat-browser')).toBeVisible();
 
         await page.locator('[data-select-character="mock-mobile.png"]').click();
         await expect(page.locator('.chat-browser')).toHaveCount(0);

@@ -288,6 +288,16 @@ export function createChatFileActions({
         render();
     }
 
+    function closeChatBackups() {
+        if (!state.chatBackups.open) {
+            return false;
+        }
+
+        state.chatBackups.open = false;
+        render();
+        return true;
+    }
+
     function formatBackupPreview(rawText) {
         const lines = String(rawText || '').split('\n').filter(Boolean);
         const messages = [];
@@ -384,6 +394,7 @@ export function createChatFileActions({
         exportModernChat,
         loadChatBackups,
         toggleChatBackups,
+        closeChatBackups,
         viewChatBackup,
         restoreChatBackup,
         beginChatBackupDelete,
