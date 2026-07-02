@@ -786,6 +786,14 @@ kbd {
     margin-bottom: 14px;
 }
 
+.settings-tabs {
+    margin: 0 0 14px;
+}
+
+.settings-summary-grid {
+    margin-top: 12px;
+}
+
 .resource-row {
     padding: 9px;
 }

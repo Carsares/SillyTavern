@@ -32,6 +32,7 @@ export function createSettingsRoute(ctx) {
         const snapshotCount = state.settingsSnapshots.items.length;
         const compressionEnabled = Boolean(requestCompression.enabled);
         const dataStatus = state.errors.length ? '需要处理' : '正常';
+        const activeSection = getSettingsSection();
 
         return `
         ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
@@ -50,6 +51,46 @@ export function createSettingsRoute(ctx) {
             ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
             ${metricCard('设置快照', formatNumber(snapshotCount), state.settingsSnapshots.loading ? '读取中' : '本地备份', 'fa-clock-rotate-left')}
         </div>
+        ${renderSettingsTabs(activeSection)}
+        ${activeSection === 'preferences' ? renderSettingsPreferencesSection(requestCompression, compressionEnabled) : ''}
+        ${activeSection === 'status' ? renderSettingsStatusSection(bundle, savedSecrets, dataStatus, compressionEnabled, requestCompression) : ''}
+        ${activeSection === 'snapshots' ? renderSettingsSnapshots() : ''}
+        ${activeSection === 'diagnostics' ? renderSettingsDiagnosticsSection(bundle, savedSecrets, dataStatus) : ''}
+    `;
+    }
+
+    function getSettingsSection() {
+        return ['preferences', 'status', 'snapshots', 'diagnostics'].includes(state.settingsSection)
+            ? state.settingsSection
+            : 'preferences';
+    }
+
+    function setSettingsSection(section) {
+        state.settingsSection = ['preferences', 'status', 'snapshots', 'diagnostics'].includes(section) ? section : 'preferences';
+        localStorage.setItem('st-modern-settings-section', state.settingsSection);
+    }
+
+    function renderSettingsTabs(activeSection) {
+        const tabs = [
+            ['preferences', 'fa-sliders', '界面与请求'],
+            ['status', 'fa-gauge-high', '账户与资源'],
+            ['snapshots', 'fa-clock-rotate-left', '设置快照'],
+            ['diagnostics', 'fa-shield-halved', '安全诊断'],
+        ];
+        return `
+        <div class="segmented-control settings-tabs" role="tablist" aria-label="设置分区">
+            ${tabs.map(([id, icon, label]) => `
+                <button class="${activeSection === id ? 'active' : ''}" type="button" data-settings-section="${id}" aria-selected="${activeSection === id}">
+                    <i class="fa-solid ${icon}"></i>
+                    ${label}
+                </button>
+            `).join('')}
+        </div>
+    `;
+    }
+
+    function renderSettingsPreferencesSection(requestCompression, compressionEnabled) {
+        return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
@@ -62,6 +103,33 @@ export function createSettingsRoute(ctx) {
                 ${renderRequestCompressionForm(requestCompression)}
             </div>
         </section>
+        <div class="grid-list settings-summary-grid">
+            <article class="resource-card">
+                <h2 class="card-title">现代界面</h2>
+                <p class="card-meta">新版工作区本地偏好。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('主题', state.theme)}
+                    ${renderKeyValue('聊天类型', getChatModeLabel())}
+                    ${renderKeyValue('聊天列表', state.chatSidebarOpen ? '展开' : '收起')}
+                    ${renderKeyValue('上下文抽屉', state.inspectorOpen ? '展开' : '收起')}
+                    ${renderKeyValue('入口', '/modern/')}
+                </div>
+            </article>
+            <article class="resource-card">
+                <h2 class="card-title">请求压缩</h2>
+                <p class="card-meta">控制大请求的压缩边界。</p>
+                <div class="kv-list">
+                    ${renderKeyValue('启用', compressionEnabled ? '是' : '否')}
+                    ${renderKeyValue('最小载荷', formatBytes(requestCompression.minPayloadSize))}
+                    ${renderKeyValue('最大载荷', formatBytes(requestCompression.maxPayloadSize))}
+                </div>
+            </article>
+        </div>
+    `;
+    }
+
+    function renderSettingsStatusSection(bundle, savedSecrets, dataStatus, compressionEnabled, requestCompression) {
+        return `
         <div class="grid-list">
             <article class="resource-card">
                 <h2 class="card-title">用户与账户</h2>
@@ -121,7 +189,49 @@ export function createSettingsRoute(ctx) {
                 </div>
             </article>
         </div>
-        ${renderSettingsSnapshots()}
+    `;
+    }
+
+    function renderSettingsDiagnosticsSection(bundle, savedSecrets, dataStatus) {
+        return `
+        <div class="dashboard-grid">
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">安全与请求状态</h2>
+                        <p class="panel-subtitle">新版界面只展示密钥保存状态，不暴露密钥内容。</p>
+                    </div>
+                </div>
+                <div class="kv-list">
+                    ${renderKeyValue('CSRF', state.csrfToken ? '已获取' : '未获取')}
+                    ${renderKeyValue('密钥状态', savedSecrets ? `${formatNumber(savedSecrets)} 个已保存` : '未读取到')}
+                    ${renderKeyValue('账户系统', bundle.enable_accounts ? '开启' : '关闭')}
+                    ${renderKeyValue('扩展系统', bundle.enable_extensions ? '开启' : '关闭')}
+                    ${renderKeyValue('错误状态', dataStatus)}
+                </div>
+            </section>
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">读取错误</h2>
+                        <p class="panel-subtitle">当前数据加载链路的错误会集中显示在这里。</p>
+                    </div>
+                </div>
+                ${state.errors.length ? `
+                    <div class="resource-list compact-list">
+                        ${state.errors.map(error => `
+                            <article class="resource-row">
+                                <span class="avatar-fallback"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                <span class="row-main">
+                                    <span class="row-title">${escapeHtml(error.key)}</span>
+                                    <span class="row-subtitle">${escapeHtml(error.message)}</span>
+                                </span>
+                            </article>
+                        `).join('')}
+                    </div>
+                ` : renderEmptyState('fa-circle-check', '暂无错误', '当前 modern 数据读取正常。')}
+            </section>
+        </div>
     `;
     }
 
@@ -278,8 +388,16 @@ export function createSettingsRoute(ctx) {
     }
 
     async function handleClick(event) {
+        const settingsSectionButton = event.target.closest('[data-settings-section]');
+        if (settingsSectionButton) {
+            setSettingsSection(settingsSectionButton.dataset.settingsSection);
+            render();
+            return true;
+        }
+
         if (event.target.closest('[data-load-settings-snapshots]')) {
             try {
+                setSettingsSection('snapshots');
                 await loadSettingsSnapshots({ force: true });
                 render();
             } catch (error) {
@@ -292,6 +410,7 @@ export function createSettingsRoute(ctx) {
 
         if (event.target.closest('[data-create-settings-snapshot]')) {
             try {
+                setSettingsSection('snapshots');
                 await createSettingsSnapshot();
             } catch (error) {
                 state.errors.push({ key: 'settings-snapshot-create', message: error.message });

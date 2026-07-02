@@ -214,6 +214,7 @@ export function createModernState() {
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),
         inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
+        settingsSection: localStorage.getItem('st-modern-settings-section') || 'preferences',
         apiTest: {
             running: false,
             status: '未测试',
