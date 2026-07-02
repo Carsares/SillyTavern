@@ -522,6 +522,29 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
     });
 
+    test('sends a message with the composer keyboard shortcut', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await page.locator('[data-chat-input]').fill('keyboard bridge generation');
+        await page.locator('[data-chat-input]').press('Control+Enter');
+
+        await expect.poll(() => fixture.requests.bridge.map(request => request.action)).toContain('generate');
+        expect(fixture.requests.bridge.at(-1)).toMatchObject({
+            action: 'generate',
+            payload: {
+                avatar: 'mock.png',
+                chat: 'existing-chat',
+                type: 'normal',
+                message: 'keyboard bridge generation',
+            },
+        });
+        await expect(page.locator('.chat-thread')).toContainText('keyboard bridge generation');
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to keyboard bridge generation');
+    });
+
     test('manages group chat files through group endpoints', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();
