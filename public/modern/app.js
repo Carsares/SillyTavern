@@ -2630,6 +2630,38 @@ function cancelModernMessageEdit() {
     render();
 }
 
+function formatEditedModernMessage(message, text) {
+    const nextMessage = {
+        ...message,
+        mes: text,
+    };
+
+    if (nextMessage.extra?.display_text !== undefined) {
+        nextMessage.extra = { ...nextMessage.extra, display_text: text };
+    }
+
+    if (nextMessage.swipe_id !== undefined) {
+        const swipeId = Math.max(0, Number(nextMessage.swipe_id) || 0);
+        const swipes = Array.isArray(nextMessage.swipes) ? [...nextMessage.swipes] : [message.mes || ''];
+        while (swipes.length <= swipeId) {
+            swipes.push('');
+        }
+        swipes[swipeId] = text;
+        nextMessage.swipes = swipes;
+
+        if (Array.isArray(nextMessage.swipe_info)) {
+            nextMessage.swipe_info = nextMessage.swipe_info.map((item, index) => {
+                if (index !== swipeId || item?.extra?.display_text === undefined) {
+                    return item;
+                }
+                return { ...item, extra: { ...item.extra, display_text: text } };
+            });
+        }
+    }
+
+    return nextMessage;
+}
+
 async function saveModernMessageEdit() {
     if (state.engine.generating) {
         throw new Error('生成中不能保存编辑。');
@@ -2647,13 +2679,7 @@ async function saveModernMessageEdit() {
         throw new Error('消息内容不能为空。');
     }
 
-    const nextMessage = {
-        ...messages[edit.index],
-        mes: text,
-    };
-    if (nextMessage.extra?.display_text !== undefined) {
-        nextMessage.extra = { ...nextMessage.extra, display_text: text };
-    }
+    const nextMessage = formatEditedModernMessage(messages[edit.index], text);
     messages[edit.index] = nextMessage;
 
     await saveModernChat(character, state.selected.chat, messages);
