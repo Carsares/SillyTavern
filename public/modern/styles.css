@@ -1024,6 +1024,11 @@ tr:last-child td {
     font-size: 12px;
 }
 
+.asset-readonly {
+    max-width: 210px;
+    text-align: right;
+}
+
 .tag-row {
     display: flex;
     flex-wrap: wrap;

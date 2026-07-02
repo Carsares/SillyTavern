@@ -5108,6 +5108,9 @@ function renderBackgroundCard(background) {
 function renderAssetEntryRow(entry) {
     const isDeleting = state.assetDeleteConfirm.category === entry.category && state.assetDeleteConfirm.filename === entry.filename;
     const isBusy = isDeleting && state.assetDeleteConfirm.running;
+    const readOnlyReason = entry.filename?.includes('/')
+        ? '嵌套资源需在原版资源目录管理'
+        : '当前分类不支持删除';
 
     return `
         <div class="resource-row asset-row">
@@ -5133,7 +5136,7 @@ function renderAssetEntryRow(entry) {
                         </button>
                     `}
                 </span>
-            ` : '<span class="card-meta">只读</span>'}
+            ` : `<span class="card-meta asset-readonly">${escapeHtml(readOnlyReason)}</span>`}
         </div>
     `;
 }
