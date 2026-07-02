@@ -20,6 +20,18 @@ async function mockModernInspectorWorkspace(page) {
             request_compression: {
                 enabled: true,
             },
+            power_user: {
+                personas: {
+                    'inspector-persona.png': 'Inspector Persona',
+                },
+                persona_descriptions: {
+                    'inspector-persona.png': {
+                        title: 'Inspector Title',
+                        description: 'Persona description',
+                    },
+                },
+                default_persona: 'inspector-persona.png',
+            },
             oai_settings: {
                 chat_completion_source: 'siliconflow',
                 siliconflow_model: 'deepseek-ai/DeepSeek-V3',
@@ -39,7 +51,11 @@ async function mockModernInspectorWorkspace(page) {
             creator: 'Inspector E2E',
         },
     }]));
-    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/groups/all', route => fulfillJson(route, [{
+        id: 'inspector-group',
+        name: 'Inspector Group',
+        members: ['mock.png', 'other.png'],
+    }]));
     await page.route('**/api/worldinfo/list', route => fulfillJson(route, [{ file_id: 'InspectorWorld', name: 'InspectorWorld' }]));
     await page.route('**/api/worldinfo/get', route => fulfillJson(route, {
         entries: {
@@ -61,7 +77,10 @@ async function mockModernInspectorWorkspace(page) {
         bgm: ['assets/bgm/theme.mp3'],
         ambient: ['assets/ambient/rain.ogg'],
     }));
-    await page.route('**/api/extensions/discover', route => fulfillJson(route, []));
+    await page.route('**/api/extensions/discover', route => fulfillJson(route, [
+        { type: 'system', name: 'assets' },
+        { type: 'local', name: 'third-party/inspector-extension' },
+    ]));
     await page.route('**/api/secrets/settings', route => fulfillJson(route, { allowKeysExposure: false }));
     await page.route('**/api/secrets/read', route => fulfillJson(route, {}));
     await page.route('**/api/stats/get', route => fulfillJson(route, {}));
@@ -105,5 +124,32 @@ test.describe('Modern inspector', () => {
         const settingsSection = page.locator('.inspector-section', { hasText: '设置状态' });
         await expect(settingsSection).toContainText('请求压缩');
         await expect(settingsSection).toContainText('已开启');
+
+        await page.goto('/modern/?view=characters');
+        const characterSection = page.locator('.inspector-section', { hasText: '角色状态' });
+        await expect(characterSection).toContainText('Mock Character');
+        await expect(characterSection).toContainText('Inspector E2E');
+
+        await page.goto('/modern/?view=groups');
+        const groupSection = page.locator('.inspector-section', { hasText: '群组状态' });
+        await expect(groupSection).toContainText('Inspector Group');
+        await expect(groupSection).toContainText('2 个');
+
+        await page.goto('/modern/?view=personas');
+        const personaSection = page.locator('.inspector-section', { hasText: '人设状态' });
+        await expect(personaSection).toContainText('Inspector Persona');
+
+        await page.goto('/modern/?view=presets');
+        const presetSection = page.locator('.inspector-section', { hasText: '预设状态' });
+        await expect(presetSection).toContainText('Inspector Preset');
+
+        await page.goto('/modern/?view=extensions');
+        const extensionSection = page.locator('.inspector-section', { hasText: '扩展状态' });
+        await expect(extensionSection).toContainText('发现数量');
+        await expect(extensionSection).toContainText('2 个');
+
+        await page.goto('/modern/?view=activity');
+        const activitySection = page.locator('.inspector-section', { hasText: '活动状态' });
+        await expect(activitySection).toContainText('recent');
     });
 });

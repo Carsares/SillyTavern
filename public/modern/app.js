@@ -517,6 +517,8 @@ const { renderStatus } = createTopbar({ state, elements, getProviderInfo });
 const { renderInspector } = createInspector({
     state,
     elements,
+    getPersonas,
+    getPresetGroups,
     getChatEntityName,
     getChatModeLabel,
     getProviderInfo,

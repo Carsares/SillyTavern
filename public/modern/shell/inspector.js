@@ -1,9 +1,11 @@
 import { routeLabels } from '../core/constants.js';
-import { formatNumber, stripJsonlExtension } from '../core/utils.js';
+import { formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
 
 export function createInspector({
     state,
     elements,
+    getPersonas,
+    getPresetGroups,
     getChatEntityName,
     getChatModeLabel,
     getProviderInfo,
@@ -121,6 +123,89 @@ export function createInspector({
         ]);
     }
 
+    function renderCharacterContextSection(selectedCharacter) {
+        const detail = state.characterDetails?.[selectedCharacter?.avatar] || selectedCharacter || {};
+        const name = detail.name || detail.data?.name || selectedCharacter?.avatar || '未选中';
+        const tags = Array.isArray(detail.data?.tags) ? detail.data.tags : [];
+
+        return renderSection('角色状态', [
+            ['当前角色', name],
+            ['角色文件', detail.avatar || selectedCharacter?.avatar || '未选中'],
+            ['作者', detail.data?.creator || '未知'],
+            ['标签数量', `${formatNumber(tags.length)} 个`],
+            ['聊天占用', formatBytes(detail.chat_size)],
+            ['编辑状态', state.characterEditing.avatar ? `编辑 ${state.characterEditing.avatar}` : '未编辑'],
+            ['删除确认', state.characterDeleteConfirm.avatar || '无'],
+        ]);
+    }
+
+    function renderGroupContextSection(selectedGroup) {
+        const members = Array.isArray(selectedGroup?.members) ? selectedGroup.members : [];
+
+        return renderSection('群组状态', [
+            ['当前群组', selectedGroup?.name || selectedGroup?.id || '未选中'],
+            ['群组 ID', selectedGroup?.id || '未选中'],
+            ['成员数量', `${formatNumber(members.length)} 个`],
+            ['群组数量', `${formatNumber(state.groups.length)} 个`],
+            ['编辑状态', state.groupEditing.id ? `编辑 ${state.groupEditing.id}` : '未编辑'],
+            ['删除确认', state.groupDeleteConfirm.id || '无'],
+        ]);
+    }
+
+    function renderPersonaContextSection() {
+        const personas = getPersonas();
+        const defaultPersona = personas.find(persona => persona.default);
+
+        return renderSection('人设状态', [
+            ['人设数量', `${formatNumber(personas.length)} 个`],
+            ['默认人设', defaultPersona?.name || '未设置'],
+            ['创建面板', state.personaCreating.active ? '已打开' : '未打开'],
+            ['编辑状态', state.personaEditing.avatarId || '未编辑'],
+            ['删除确认', state.personaDeleteConfirm.avatarId || '无'],
+        ]);
+    }
+
+    function renderPresetContextSection() {
+        const groups = getPresetGroups();
+        const selectedGroup = groups.find(group => group.id === state.presetSelection.apiId);
+        const total = groups.reduce((sum, group) => sum + group.names.length, 0);
+
+        return renderSection('预设状态', [
+            ['预设总数', `${formatNumber(total)} 个`],
+            ['分组数量', `${formatNumber(groups.length)} 个`],
+            ['当前分组', selectedGroup?.label || state.presetSelection.apiId || '未选中'],
+            ['当前预设', state.presetSelection.name || '未选中'],
+            ['编辑器', state.presetEditor.name ? `编辑 ${state.presetEditor.name}` : '未编辑'],
+            ['删除确认', state.presetDeleteConfirm.name || '无'],
+        ]);
+    }
+
+    function renderExtensionContextSection() {
+        const systemCount = state.extensions.filter(extension => extension.type === 'system').length;
+        const manageableCount = state.extensions.filter(extension => extension.type === 'local' || extension.type === 'global').length;
+
+        return renderSection('扩展状态', [
+            ['当前筛选', state.extensionView],
+            ['发现数量', `${formatNumber(state.extensions.length)} 个`],
+            ['系统扩展', `${formatNumber(systemCount)} 个`],
+            ['可管理扩展', `${formatNumber(manageableCount)} 个`],
+            ['安装面板', state.extensionInstall.active ? '已打开' : '未打开'],
+            ['详情面板', state.extensionDetails.name || '未打开'],
+            ['待执行操作', state.extensionOperation.action || '无'],
+        ]);
+    }
+
+    function renderActivityContextSection() {
+        const stats = state.stats || {};
+
+        return renderSection('活动状态', [
+            ['筛选条件', state.activityFilter || '未筛选'],
+            ['排序方式', state.activitySort],
+            ['统计字段', `${formatNumber(Object.keys(stats).length)} 个`],
+            ['统计时间', stats.timestamp ? formatDate(stats.timestamp) : '未生成'],
+        ]);
+    }
+
     function renderGenericContextSection(provider) {
         return renderSection('当前页面', [
             ['入口', routeLabels[state.route]],
@@ -144,6 +229,18 @@ export function createInspector({
                 return renderAssetContextSection();
             case 'settings':
                 return renderSettingsContextSection();
+            case 'characters':
+                return renderCharacterContextSection(selectedCharacter);
+            case 'groups':
+                return renderGroupContextSection(selectedGroup);
+            case 'personas':
+                return renderPersonaContextSection();
+            case 'presets':
+                return renderPresetContextSection();
+            case 'extensions':
+                return renderExtensionContextSection();
+            case 'activity':
+                return renderActivityContextSection();
             default:
                 return renderGenericContextSection(provider);
         }
