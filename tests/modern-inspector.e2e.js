@@ -114,6 +114,15 @@ test.describe('Modern inspector', () => {
         await expect(apiSection).toContainText('deepseek-ai/DeepSeek-V3');
         await expect(apiSection).toContainText('Inspector Preset');
 
+        await page.goto('/modern/?view=worldbooks');
+        const worldbookSection = page.locator('.inspector-section', { hasText: '世界书状态' });
+        await expect(worldbookSection).toContainText('InspectorWorld');
+        await expect(worldbookSection).toContainText('2 条');
+        await expect(worldbookSection).toContainText('1 条');
+        await page.locator('[data-world-entry-select="1"]').check();
+        await expect(worldbookSection).toContainText('选中条目');
+        await expect(worldbookSection).toContainText('1 条');
+
         await page.goto('/modern/?view=assets');
         const assetSection = page.locator('.inspector-section', { hasText: '素材状态' });
         await expect(assetSection).toContainText('背景数量');
