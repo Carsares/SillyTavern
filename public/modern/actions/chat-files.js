@@ -1,0 +1,393 @@
+import {
+    downloadFile,
+    stripJsonlExtension,
+    uniqueValues,
+} from '../core/utils.js';
+
+export function createChatFileActions({
+    state,
+    apiFetch,
+    apiFetchResponse,
+    render,
+    showToast,
+    formatDate,
+    formatNumber,
+    getSelectedChatEntity,
+    getChatContextKey,
+    getChatEntityName,
+    isGroupChatMode,
+    getSelectedChatList,
+    getChatId,
+    getChatCacheKey,
+    getUserName,
+    sortChats,
+    clearChatSearch,
+    loadChatMessages,
+    refreshSelectedChatList,
+    createModernChatFile,
+    saveGroupMetadata,
+}) {
+    function beginModernChatRename() {
+        const entity = getSelectedChatEntity();
+        const contextKey = getChatContextKey(entity);
+        if (!contextKey || !state.selected.chat) {
+            showToast('重命名失败', '请先选择一个聊天文件。');
+            return;
+        }
+
+        const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
+        state.chatRenaming = {
+            key: getChatCacheKey(contextKey, state.selected.chat),
+            name: stripJsonlExtension(selectedChat?.file_name || state.selected.chat),
+        };
+        state.chatDeleteConfirm = { key: '', name: '' };
+        render();
+    }
+
+    function cancelModernChatRename() {
+        state.chatRenaming = { key: '', name: '' };
+        render();
+    }
+
+    async function saveModernChatRename() {
+        const entity = getSelectedChatEntity();
+        const contextKey = getChatContextKey(entity);
+        const oldChatId = stripJsonlExtension(state.selected.chat);
+        const newChatId = stripJsonlExtension(state.chatRenaming.name.trim());
+        const renameKey = getChatCacheKey(contextKey, state.selected.chat);
+        if (!contextKey || !oldChatId || !newChatId || state.chatRenaming.key !== renameKey) {
+            throw new Error('重命名目标已变化，请重新选择聊天。');
+        }
+        if (oldChatId === newChatId) {
+            cancelModernChatRename();
+            return;
+        }
+
+        const result = await apiFetch('/api/chats/rename', {
+            body: {
+                avatar_url: isGroupChatMode() ? null : entity.avatar,
+                original_file: `${oldChatId}.jsonl`,
+                renamed_file: `${newChatId}.jsonl`,
+                is_group: isGroupChatMode(),
+            },
+        });
+        if (result?.error) {
+            throw new Error('聊天文件重命名失败，可能存在同名文件。');
+        }
+
+        const renamedChatId = stripJsonlExtension(result?.sanitizedFileName || newChatId);
+        if (isGroupChatMode()) {
+            const index = entity.chats?.indexOf(oldChatId) ?? -1;
+            if (index >= 0) {
+                entity.chats.splice(index, 1, renamedChatId);
+            }
+            if (entity.chat_id === oldChatId) {
+                entity.chat_id = renamedChatId;
+            }
+            await saveGroupMetadata(entity);
+        }
+
+        const oldKey = getChatCacheKey(contextKey, oldChatId);
+        const newKey = getChatCacheKey(contextKey, renamedChatId);
+        state.selected.chat = renamedChatId;
+        if (state.chatMessages[oldKey]) {
+            state.chatMessages[newKey] = state.chatMessages[oldKey];
+            delete state.chatMessages[oldKey];
+        }
+        if (state.chatMetadata[oldKey]) {
+            state.chatMetadata[newKey] = state.chatMetadata[oldKey];
+            delete state.chatMetadata[oldKey];
+        }
+        state.chatRenaming = { key: '', name: '' };
+        await refreshSelectedChatList(entity);
+        await loadChatMessages(entity, renamedChatId);
+        showToast('聊天已重命名', `${oldChatId} → ${renamedChatId}`);
+        render();
+    }
+
+    function beginModernChatDelete() {
+        if (state.engine.generating) {
+            showToast('删除失败', '生成中不能删除聊天文件。');
+            return;
+        }
+
+        const entity = getSelectedChatEntity();
+        const contextKey = getChatContextKey(entity);
+        const chatId = stripJsonlExtension(state.selected.chat);
+        if (!contextKey || !chatId) {
+            showToast('删除失败', '请先选择一个聊天文件。');
+            return;
+        }
+
+        state.chatDeleteConfirm = {
+            key: getChatCacheKey(contextKey, state.selected.chat),
+            name: chatId,
+        };
+        state.chatRenaming = { key: '', name: '' };
+        render();
+    }
+
+    function cancelModernChatDelete() {
+        state.chatDeleteConfirm = { key: '', name: '' };
+        render();
+    }
+
+    async function confirmModernChatDelete() {
+        const entity = getSelectedChatEntity();
+        const contextKey = getChatContextKey(entity);
+        const chatId = stripJsonlExtension(state.chatDeleteConfirm.name);
+        const deleteKey = getChatCacheKey(contextKey, state.selected.chat);
+        if (!contextKey || !chatId || state.chatDeleteConfirm.key !== deleteKey) {
+            throw new Error('删除目标已变化，请重新选择聊天。');
+        }
+
+        const result = isGroupChatMode()
+            ? await apiFetch('/api/chats/group/delete', { body: { id: chatId } })
+            : await apiFetch('/api/chats/delete', {
+                body: {
+                    avatar_url: entity.avatar,
+                    chatfile: `${chatId}.jsonl`,
+                },
+            });
+        if (result?.error) {
+            throw new Error('聊天文件删除失败。');
+        }
+
+        if (isGroupChatMode()) {
+            entity.chats = (entity.chats || []).filter(item => item !== chatId);
+            if (entity.chat_id === chatId) {
+                entity.chat_id = entity.chats[0] || '';
+            }
+            await saveGroupMetadata(entity);
+        }
+
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        delete state.chatMessages[cacheKey];
+        delete state.chatMessageLimits[cacheKey];
+        delete state.chatMetadata[cacheKey];
+        delete state.chatDrafts[cacheKey];
+        state.chatRenaming = { key: '', name: '' };
+        state.chatDeleteConfirm = { key: '', name: '' };
+        state.selected.chat = '';
+        await refreshSelectedChatList(entity);
+        const chats = getSelectedChatList();
+        state.selected.chat = chats[0]?.file_id || '';
+        if (state.selected.chat) {
+            await loadChatMessages(entity, state.selected.chat);
+        }
+        showToast('聊天已删除', `${chatId}.jsonl`);
+        render();
+    }
+
+    async function startNewModernChat() {
+        const entity = getSelectedChatEntity();
+        const chatId = await createModernChatFile(entity);
+        showToast('新聊天已创建', `${getChatEntityName(entity)} 的新会话已选中。`);
+        render();
+        return chatId;
+    }
+
+    async function importModernChatFiles(files) {
+        const entity = getSelectedChatEntity();
+        const contextKey = getChatContextKey(entity);
+        if (!contextKey) {
+            throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
+        }
+
+        const importedFileNames = [];
+        for (const file of Array.from(files || [])) {
+            const format = file.name.split('.').pop()?.toLowerCase() || '';
+            if (!['json', 'jsonl'].includes(format)) {
+                throw new Error('聊天导入仅支持 JSON 或 JSONL 文件。');
+            }
+            if (isGroupChatMode() && format !== 'jsonl') {
+                throw new Error('群聊导入仅支持 SillyTavern JSONL 文件。');
+            }
+
+            const formData = new FormData();
+            formData.set('file_type', format);
+            formData.set('avatar', file, file.name);
+            formData.set('avatar_url', isGroupChatMode() ? '' : entity.avatar);
+            formData.set('user_name', getUserName());
+            formData.set('character_name', getChatEntityName(entity));
+            const result = await apiFetch(isGroupChatMode() ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
+            if (result?.error) {
+                throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
+            }
+            if (isGroupChatMode()) {
+                importedFileNames.push(result.res);
+            } else {
+                importedFileNames.push(...(result?.fileNames || []));
+            }
+        }
+
+        if (!importedFileNames.length) {
+            throw new Error('没有导入任何聊天文件。');
+        }
+
+        if (isGroupChatMode()) {
+            entity.chats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
+            entity.chat_id = stripJsonlExtension(importedFileNames[0]);
+            await saveGroupMetadata(entity);
+        }
+        clearChatSearch();
+        await refreshSelectedChatList(entity);
+        state.selected.chat = getChatId({ file_name: importedFileNames[0] });
+        await loadChatMessages(entity, state.selected.chat, { force: true });
+        showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);
+        render();
+    }
+
+    async function exportModernChat(format) {
+        const entity = getSelectedChatEntity();
+        const chatId = stripJsonlExtension(state.selected.chat);
+        if (!getChatContextKey(entity) || !chatId) {
+            throw new Error('请先选择一个聊天文件。');
+        }
+
+        const safeFormat = format === 'jsonl' ? 'jsonl' : 'txt';
+        const result = await apiFetch('/api/chats/export', {
+            body: {
+                is_group: isGroupChatMode(),
+                avatar_url: isGroupChatMode() ? null : entity.avatar,
+                file: `${chatId}.jsonl`,
+                exportfilename: `${chatId}.${safeFormat}`,
+                format: safeFormat,
+            },
+        });
+        if (!result?.result) {
+            throw new Error('聊天导出结果为空。');
+        }
+
+        downloadFile(result.result, `${chatId}.${safeFormat}`, safeFormat === 'txt' ? 'text/plain' : 'application/jsonl');
+        showToast('导出已开始', `${chatId}.${safeFormat}`);
+    }
+
+    async function loadChatBackups({ force = false } = {}) {
+        if (state.chatBackups.items.length && !force) {
+            return state.chatBackups.items;
+        }
+
+        state.chatBackups.loading = true;
+        render();
+        try {
+            const result = await apiFetch('/api/backups/chat/get');
+            const backups = Array.isArray(result) ? sortChats(result.filter(item => item.file_name)) : [];
+            state.chatBackups.items = backups;
+            return backups;
+        } finally {
+            state.chatBackups.loading = false;
+        }
+    }
+
+    async function toggleChatBackups() {
+        state.chatBackups.open = !state.chatBackups.open;
+        if (state.chatBackups.open) {
+            await loadChatBackups();
+        }
+        render();
+    }
+
+    function formatBackupPreview(rawText) {
+        const lines = String(rawText || '').split('\n').filter(Boolean);
+        const messages = [];
+        for (const line of lines) {
+            try {
+                const item = JSON.parse(line);
+                if (item?.mes) {
+                    messages.push(`${item.name || 'Unknown'} · ${formatDate(item.send_date)}\n${item.extra?.display_text || item.mes}`);
+                }
+            } catch {
+                // Ignore broken lines in a backup preview; restore still uses the original file.
+            }
+        }
+
+        return messages.slice(-40).join('\n\n') || '这个备份没有可预览的消息。';
+    }
+
+    async function downloadChatBackup(name) {
+        return apiFetchResponse('/api/backups/chat/download', { body: { name } });
+    }
+
+    async function viewChatBackup(name) {
+        const response = await downloadChatBackup(name);
+        const rawText = await response.text();
+        state.chatBackups.previewName = name;
+        state.chatBackups.previewText = formatBackupPreview(rawText);
+        render();
+    }
+
+    async function restoreChatBackup(name) {
+        const entity = getSelectedChatEntity();
+        if (!getChatContextKey(entity)) {
+            throw new Error(isGroupChatMode() ? '请先选择要恢复到的群聊。' : '请先选择要恢复到的角色。');
+        }
+
+        state.chatBackups.restoring = name;
+        render();
+        try {
+            const response = await downloadChatBackup(name);
+            const blob = await response.blob();
+            const file = new File([blob], name, { type: 'application/octet-stream' });
+            await importModernChatFiles([file]);
+            state.chatBackups.restoring = '';
+            showToast('备份已恢复', `${name} 已导入到 ${getChatEntityName(entity)}`);
+            render();
+        } catch (error) {
+            state.chatBackups.restoring = '';
+            throw error;
+        }
+    }
+
+    function beginChatBackupDelete(name) {
+        state.chatBackups.deleteConfirm = name;
+        render();
+    }
+
+    function cancelChatBackupDelete() {
+        state.chatBackups.deleteConfirm = '';
+        render();
+    }
+
+    async function confirmChatBackupDelete() {
+        const name = state.chatBackups.deleteConfirm;
+        if (!name) {
+            throw new Error('请先选择一个备份。');
+        }
+
+        state.chatBackups.deleting = true;
+        render();
+        try {
+            await apiFetch('/api/backups/chat/delete', { body: { name } });
+            state.chatBackups.items = state.chatBackups.items.filter(item => item.file_name !== name);
+            if (state.chatBackups.previewName === name) {
+                state.chatBackups.previewName = '';
+                state.chatBackups.previewText = '';
+            }
+            state.chatBackups.deleteConfirm = '';
+            showToast('备份已删除', name);
+        } finally {
+            state.chatBackups.deleting = false;
+            render();
+        }
+    }
+
+    return {
+        startNewModernChat,
+        beginModernChatRename,
+        cancelModernChatRename,
+        saveModernChatRename,
+        beginModernChatDelete,
+        cancelModernChatDelete,
+        confirmModernChatDelete,
+        importModernChatFiles,
+        exportModernChat,
+        loadChatBackups,
+        toggleChatBackups,
+        viewChatBackup,
+        restoreChatBackup,
+        beginChatBackupDelete,
+        cancelChatBackupDelete,
+        confirmChatBackupDelete,
+    };
+}
