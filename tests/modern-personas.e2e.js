@@ -30,6 +30,38 @@ test.describe('Modern persona resources', () => {
         expect(fixture.requests.settingsSave.at(-1).power_user.default_persona).toBe('persona-beta.png');
     });
 
+    test('creates a persona with an uploaded avatar in the modern workspace', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'personas', '用户人设');
+
+        await page.locator('[data-create-persona]').click();
+        await page.locator('[data-persona-field="name"][data-persona-scope="create"]').fill('Created Persona');
+        await page.locator('[data-persona-field="title"][data-persona-scope="create"]').fill('Created title');
+        await page.locator('[data-persona-field="description"][data-persona-scope="create"]').fill('Created persona description.');
+        await page.locator('[data-persona-create-file]').setInputFiles({
+            name: 'created-persona.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('created persona avatar'),
+        });
+        await page.locator('[data-save-persona-create]').click();
+
+        await expect(page.locator('.toast', { hasText: '用户人设已创建' })).toBeVisible();
+        await expect(page.locator('.resource-card', { hasText: 'Created Persona' })).toContainText('Created persona description.');
+        expect(fixture.requests.avatarUpload[0]).toMatchObject({
+            fileName: 'created-persona.png',
+            overwriteName: '',
+            path: 'created-persona.png',
+        });
+        expect(fixture.requests.avatarUpload[0].bodyText).toContain('name="avatar"; filename="created-persona.png"');
+        expect(fixture.requests.settingsSave[0].power_user.personas['created-persona.png']).toBe('Created Persona');
+        expect(fixture.requests.settingsSave[0].power_user.persona_descriptions['created-persona.png']).toMatchObject({
+            title: 'Created title',
+            description: 'Created persona description.',
+        });
+    });
+
     test('opens create panel and requires confirmation before deleting a persona', async ({ page }) => {
         const fixture = createModernResourceFixture();
         await mockModernWorkspace(page, fixture);
