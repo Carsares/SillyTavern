@@ -54,8 +54,16 @@
     gap: 12px;
 }
 
+.activity-controls {
+    margin-bottom: 14px;
+}
+
 .activity-card {
     align-content: start;
+}
+
+.activity-card > .secondary-button {
+    justify-self: start;
 }
 
 .activity-stat-grid {

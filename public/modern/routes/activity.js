@@ -16,13 +16,67 @@ export function createActivityRoute(ctx) {
         recreateStats,
     } = ctx;
 
+    function getEntryTarget(entry) {
+        const character = state.characters.find(item => item.avatar === entry.id || item.name === entry.id || item.data?.name === entry.id);
+        if (character) {
+            return {
+                type: 'character',
+                id: character.avatar,
+                name: character.name || character.data?.name || character.avatar,
+            };
+        }
+
+        const group = state.groups.find(item => item.id === entry.id || item.name === entry.id);
+        if (group) {
+            return {
+                type: 'group',
+                id: group.id,
+                name: group.name || group.id,
+            };
+        }
+
+        return {
+            type: '',
+            id: '',
+            name: entry.id,
+        };
+    }
+
+    function getVisibleActivityEntries(entries) {
+        const query = state.activityFilter.trim().toLowerCase();
+        const filtered = query
+            ? entries.filter(entry => {
+                const target = getEntryTarget(entry);
+                return [entry.id, target.name, target.type].some(value => String(value || '').toLowerCase().includes(query));
+            })
+            : entries;
+
+        return [...filtered].sort((a, b) => {
+            switch (state.activitySort) {
+                case 'messages':
+                    return b.messages - a.messages;
+                case 'words':
+                    return b.words - a.words;
+                case 'size':
+                    return b.size - a.size;
+                default:
+                    return b.last - a.last;
+            }
+        });
+    }
+
     function renderActivityEntryCard(entry) {
+        const target = getEntryTarget(entry);
+        const routeAttrs = target.type === 'group'
+            ? `data-route="chat" data-open-group-chat="${escapeHtml(target.id)}"`
+            : (target.type === 'character' ? `data-route="chat" data-open-character-chat="${escapeHtml(target.id)}"` : '');
+
         return `
         <article class="resource-card activity-card">
             <div class="card-head">
                 <div class="row-main">
-                    <h3 class="card-title mono">${escapeHtml(entry.id)}</h3>
-                    <p class="row-subtitle">最近聊天 ${escapeHtml(formatDate(entry.last))}</p>
+                    <h3 class="card-title mono">${escapeHtml(target.name || entry.id)}</h3>
+                    <p class="row-subtitle">${escapeHtml(entry.id)} · 最近聊天 ${escapeHtml(formatDate(entry.last))}</p>
                 </div>
                 <span class="badge">${formatNumber(entry.messages)} 条消息</span>
             </div>
@@ -32,6 +86,12 @@ export function createActivityRoute(ctx) {
                 <span><strong>${formatNumber(entry.swipes)}</strong><em>候选</em></span>
                 <span><strong>${escapeHtml(formatDurationMs(entry.genTime))}</strong><em>生成耗时</em></span>
             </div>
+            ${routeAttrs ? `
+                <button class="secondary-button" type="button" ${routeAttrs}>
+                    <i class="fa-solid fa-comments"></i>
+                    打开聊天
+                </button>
+            ` : ''}
         </article>
     `;
     }
@@ -52,7 +112,8 @@ export function createActivityRoute(ctx) {
     function renderActivity() {
         const stats = state.stats || {};
         const entries = getActivityEntries();
-        const summary = getActivitySummary(entries);
+        const visibleEntries = getVisibleActivityEntries(entries);
+        const summary = getActivitySummary(visibleEntries);
         const rawRows = Object.entries(stats).slice(0, 80);
         const statsUpdatedAt = Number(stats.timestamp || 0);
 
@@ -68,7 +129,7 @@ export function createActivityRoute(ctx) {
             </button>
         `)}
         <div class="metrics-grid">
-            ${metricCard('统计对象', formatNumber(entries.length), '有聊天统计的角色或群聊', 'fa-id-card')}
+            ${metricCard('统计对象', formatNumber(visibleEntries.length), `${formatNumber(entries.length)} 个总对象`, 'fa-id-card')}
             ${metricCard('消息总量', formatNumber(summary.messages), `${formatNumber(summary.words)} words`, 'fa-message')}
             ${metricCard('聊天体积', formatBytes(summary.size), `${formatNumber(summary.swipes)} swipes`, 'fa-database')}
             ${metricCard('最近活动', statsUpdatedAt ? formatDate(statsUpdatedAt) : '未生成', summary.last ? `最近聊天 ${formatDate(summary.last)}` : '无聊天记录', 'fa-clock')}
@@ -78,12 +139,27 @@ export function createActivityRoute(ctx) {
                 <div class="panel-header">
                     <div>
                         <h2 class="panel-title">活跃对象</h2>
-                        <p class="panel-subtitle">按最近聊天时间排序，展示消息、词数和缓存体积。</p>
+                        <p class="panel-subtitle">筛选、排序并跳转到对应聊天上下文。</p>
                     </div>
                     <span class="badge">生成耗时 ${escapeHtml(formatDurationMs(summary.genTime))}</span>
                 </div>
+                <div class="form-grid two-columns activity-controls">
+                    <label class="field-label">
+                        <span>筛选对象</span>
+                        <input class="text-input" type="search" data-activity-filter value="${escapeHtml(state.activityFilter)}" placeholder="角色、群组或统计 ID">
+                    </label>
+                    <label class="field-label">
+                        <span>排序</span>
+                        <select class="select-input" data-activity-sort>
+                            <option value="recent" ${state.activitySort === 'recent' ? 'selected' : ''}>最近聊天</option>
+                            <option value="messages" ${state.activitySort === 'messages' ? 'selected' : ''}>消息数量</option>
+                            <option value="words" ${state.activitySort === 'words' ? 'selected' : ''}>词数</option>
+                            <option value="size" ${state.activitySort === 'size' ? 'selected' : ''}>文件体积</option>
+                        </select>
+                    </label>
+                </div>
                 <div class="activity-list">
-                    ${entries.slice(0, 80).map(renderActivityEntryCard).join('')}
+                    ${visibleEntries.slice(0, 80).map(renderActivityEntryCard).join('') || renderEmptyState('fa-filter', '没有匹配活动', '调整筛选条件后再试。')}
                 </div>
             </section>
         ` : renderEmptyState('fa-chart-line', '暂无统计数据', '统计缓存为空或尚未生成。')}
@@ -120,8 +196,31 @@ export function createActivityRoute(ctx) {
         return false;
     }
 
+    function handleInput(event) {
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-activity-filter]')) {
+            state.activityFilter = event.target.value;
+            render();
+            return true;
+        }
+
+        return false;
+    }
+
+    function handleChange(event) {
+        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-activity-sort]')) {
+            state.activitySort = event.target.value;
+            localStorage.setItem('st-modern-activity-sort', state.activitySort);
+            render();
+            return true;
+        }
+
+        return false;
+    }
+
     return {
         render: renderActivity,
         handleClick,
+        handleInput,
+        handleChange,
     };
 }

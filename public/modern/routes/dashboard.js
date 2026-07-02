@@ -2,10 +2,10 @@ export function createDashboardRoute(ctx) {
     const {
         state,
         escapeHtml,
+        formatDate,
         formatNumber,
         metricCard,
         pageHead,
-        renderCharacterRow,
         renderInlineEmpty,
         renderKeyValue,
         getPresetCount,
@@ -38,7 +38,10 @@ export function createDashboardRoute(ctx) {
                         <h2 class="panel-title">当前连接</h2>
                         <p class="panel-subtitle">从现有设置读取，不展示任何密钥。</p>
                     </div>
-                    <span class="badge">${provider.extensionsEnabled ? '扩展开启' : '扩展关闭'}</span>
+                    <button class="secondary-button" type="button" data-route="api">
+                        <i class="fa-solid fa-plug-circle-check"></i>
+                        检查连接
+                    </button>
                 </div>
                 <div class="kv-list connection-summary-list">
                     ${renderKeyValue('主 API', provider.api)}
@@ -55,7 +58,7 @@ export function createDashboardRoute(ctx) {
                     </div>
                 </div>
                 <div class="resource-list">
-                    ${recentCharacters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无角色')}
+                    ${recentCharacters.map(character => renderRecentCharacterCard(character)).join('') || renderInlineEmpty('暂无角色')}
                 </div>
             </section>
         </div>
@@ -73,6 +76,7 @@ export function createDashboardRoute(ctx) {
                 ${renderActionCard('世界书', '查看知识库文件和条目', `${formatNumber(state.worldbooks.length || provider.worldCount)} 本`, 'fa-book-open', 'worldbooks')}
                 ${renderActionCard('预设', '浏览模型参数和提示模板', `${formatNumber(getPresetCount())} 个`, 'fa-sliders', 'presets')}
                 ${renderActionCard('API', '检查连接、模型和密钥状态', provider.api, 'fa-plug', 'api')}
+                ${renderActionCard('活动', '查看聊天统计和最近活动', '统计缓存', 'fa-chart-line', 'activity')}
                 ${renderActionCard('扩展', '查看已发现扩展', `${formatNumber(state.extensions.length)} 个`, 'fa-cubes', 'extensions')}
             </div>
         </section>
@@ -88,6 +92,26 @@ export function createDashboardRoute(ctx) {
                 <span>${escapeHtml(detail)}</span>
             </span>
             <span class="badge">${escapeHtml(meta)}</span>
+        </button>
+    `;
+    }
+
+    function renderRecentCharacterCard(character) {
+        const title = character.name || character.data?.name || character.avatar || '未命名角色';
+        const subtitle = [
+            character.date_last_chat ? `最近 ${formatDate(character.date_last_chat)}` : '',
+            character.data?.creator ? `作者 ${character.data.creator}` : '',
+            character.avatar || '',
+        ].filter(Boolean).join(' · ');
+
+        return `
+        <button class="resource-row" type="button" data-route="chat" data-open-character-chat="${escapeHtml(character.avatar)}">
+            <span class="avatar-fallback"><i class="fa-solid fa-comments"></i></span>
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(title)}</span>
+                <span class="row-subtitle">${escapeHtml(subtitle || '进入聊天工作区')}</span>
+            </span>
+            <span class="badge">聊天</span>
         </button>
     `;
     }

@@ -219,6 +219,8 @@ export function createModernState() {
         chatSidebarOpen: getInitialChatSidebarOpen(),
         inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
         settingsSection: localStorage.getItem('st-modern-settings-section') || 'preferences',
+        activityFilter: '',
+        activitySort: localStorage.getItem('st-modern-activity-sort') || 'recent',
         apiTest: {
             running: false,
             status: '未测试',

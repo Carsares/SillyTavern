@@ -1062,6 +1062,13 @@ async function handleClick(event) {
 
     const routeButton = event.target.closest('[data-route]');
     if (routeButton) {
+        if (routeButton.dataset.openCharacterChat) {
+            state.chatMode = 'character';
+            localStorage.setItem('st-modern-chat-mode', 'character');
+            state.selected.character = routeButton.dataset.openCharacterChat;
+            state.selected.chat = '';
+            clearChatSearch();
+        }
         if (routeButton.dataset.openGroupChat) {
             state.chatMode = 'group';
             localStorage.setItem('st-modern-chat-mode', 'group');
