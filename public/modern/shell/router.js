@@ -132,6 +132,10 @@ export function createRouter({
             const presetName = commandButton.dataset.commandPresetName;
             if (select && id) {
                 state.selected[select] = id;
+                if (select === 'extension') {
+                    state.extensionView = 'all';
+                    localStorage.setItem('st-modern-extension-view', 'all');
+                }
             }
             closePalette();
             await setRoute(commandButton.dataset.commandRoute);

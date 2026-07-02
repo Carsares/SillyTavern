@@ -19,7 +19,9 @@ export function createExtensionsComponents(ctx) {
         const globalCount = matchingExtensions.filter(extension => extension.type === 'global').length;
         const manageableCount = matchingExtensions.filter(canManageExtension).length;
         const activeView = getExtensionView();
-        const extensions = getVisibleExtensions(matchingExtensions, activeView);
+        const selectedExtensionId = state.selected.extension;
+        const extensions = getVisibleExtensions(matchingExtensions, activeView)
+            .sort((a, b) => Number(getExtensionId(b) === selectedExtensionId) - Number(getExtensionId(a) === selectedExtensionId));
 
         return `
         ${pageHead('扩展', '内置、本地和全局扩展。', `
@@ -91,15 +93,20 @@ export function createExtensionsComponents(ctx) {
         return 'fa-folder';
     }
 
+    function getExtensionId(extension) {
+        return `${extension.type || ''}:${getExtensionFolderName(extension)}`;
+    }
+
     function renderExtensionCard(extension) {
         const name = getExtensionFolderName(extension);
         const isManageable = canManageExtension(extension);
         const title = extension.name.replace('third-party/', '');
+        const selected = getExtensionId(extension) === state.selected.extension;
         const detailsOpen = state.extensionDetails.name === name && state.extensionDetails.type === extension.type;
         const operationOpen = state.extensionOperation.name === name && state.extensionOperation.type === extension.type;
 
         return `
-        <article class="resource-card extension-card">
+        <article class="resource-card extension-card ${selected ? 'selected' : ''}" data-extension-card="${escapeHtml(getExtensionId(extension))}">
             <div class="card-head">
                 <div class="extension-card-title">
                     <span class="avatar-fallback"><i class="fa-solid ${getExtensionTypeIcon(extension)}"></i></span>

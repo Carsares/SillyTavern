@@ -266,6 +266,7 @@ export function createModernState() {
             chat: '',
             worldbook: '',
             persona: '',
+            extension: '',
         },
         theme: localStorage.getItem('st-modern-theme') || 'light',
     };

@@ -282,6 +282,33 @@ test.describe('Modern workspace', () => {
         await expect(selectedPersona).toContainText('Beta description');
     });
 
+    test('opens a specific extension from the command palette', async ({ page }) => {
+        await page.route('**/api/extensions/discover', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                { name: 'assets', type: 'system' },
+                { name: 'third-party/local-ext', type: 'local' },
+                { name: 'third-party/global-ext', type: 'global' },
+            ]),
+        }));
+
+        await page.addInitScript('window.localStorage.setItem("st-modern-extension-view", "local");');
+        await page.goto('/modern/?view=dashboard');
+
+        await page.keyboard.press('Control+K');
+        await page.locator('#paletteSearch').fill('global-ext');
+        await expect(page.locator('[data-command-route="extensions"]', { hasText: 'global-ext' })).toBeVisible();
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('扩展');
+        await expect(page.locator('.extension-tabs button.active')).toContainText('全部');
+        const selectedExtension = page.locator('.extension-card.selected[data-extension-card="global:global-ext"]');
+        await expect(selectedExtension).toBeVisible();
+        await expect(selectedExtension).toContainText('global');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);

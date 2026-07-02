@@ -149,6 +149,8 @@ const extensionActions = createExtensionActions({
     showToast,
 });
 
+const { getExtensionFolderName } = extensionActions;
+
 const settingsActions = createSettingsActions({
     state,
     elements,
@@ -356,6 +358,7 @@ const { renderInspector, toggleInspector } = createInspector({
 const { closePalette, openPalette, renderPalette } = createPalette({
     state,
     elements,
+    getExtensionFolderName,
     getChatId,
     getChatMessageCount,
     getChatModeLabel,

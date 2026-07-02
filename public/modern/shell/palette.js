@@ -4,6 +4,7 @@ import { escapeHtml, formatNumber, normalizeText } from '../core/utils.js';
 export function createPalette({
     state,
     elements,
+    getExtensionFolderName,
     getChatId,
     getChatMessageCount,
     getChatModeLabel,
@@ -69,6 +70,17 @@ export function createPalette({
             select: 'persona',
             id: persona.avatarId,
         }));
+        const extensionCommands = state.extensions.slice(0, 80).map(extension => {
+            const name = getExtensionFolderName(extension);
+            return {
+                type: '扩展',
+                label: name || extension.name,
+                detail: extension.type || 'unknown',
+                route: 'extensions',
+                select: 'extension',
+                id: `${extension.type || ''}:${name}`,
+            };
+        });
         const actionCommands = [
             { type: '动作', label: '新建角色', detail: '打开角色创建表单', route: 'characters', action: 'create-character' },
             { type: '动作', label: '新建群组', detail: '打开群组创建表单', route: 'groups', action: 'create-group' },
@@ -76,7 +88,7 @@ export function createPalette({
             { type: '动作', label: 'API 连接检查', detail: '进入 API 管理页', route: 'api' },
             { type: '动作', label: '设置快照', detail: '进入设置中心', route: 'settings' },
         ];
-        const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands]
+        const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands, ...extensionCommands]
             .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))
             .slice(0, 40);
 

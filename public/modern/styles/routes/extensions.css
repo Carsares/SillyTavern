@@ -12,6 +12,11 @@
     align-content: start;
 }
 
+.extension-card.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+}
+
 .extension-card-title {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
