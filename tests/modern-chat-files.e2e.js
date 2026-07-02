@@ -51,6 +51,7 @@ function createChatFixture() {
             exports: [],
             backupDownloads: [],
             backupDeletes: [],
+            bridge: [],
         },
     };
 }
@@ -187,7 +188,88 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     return fixture;
 }
 
+async function mockLegacyGenerationBridge(page, fixture) {
+    await page.route(/.*\?modernBridge=1$/u, route => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `<!doctype html>
+            <html>
+                <body>
+                    <script>
+                        window.addEventListener('message', async event => {
+                            const message = event.data || {};
+                            if (message.source !== 'sillytavern-modern-bridge') return;
+                            try {
+                                const response = await fetch('/modern-test-bridge', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: message.action, payload: message.payload }),
+                                });
+                                const result = await response.json();
+                                parent.postMessage({ source: 'sillytavern-modern-bridge', id: message.id, result }, event.origin);
+                            } catch (error) {
+                                parent.postMessage({ source: 'sillytavern-modern-bridge', id: message.id, error: { message: error.message } }, event.origin);
+                            }
+                        });
+                    </script>
+                </body>
+            </html>`,
+    }));
+
+    await page.route('**/modern-test-bridge', route => {
+        const request = route.request().postDataJSON();
+        const payload = request.payload || {};
+        fixture.requests.bridge.push(request);
+
+        if (request.action === 'generate') {
+            const chatId = stripJsonlExtension(payload.chat);
+            const currentMessages = fixture.messagesByChat[chatId] || [];
+            const messages = [
+                ...currentMessages,
+                { name: 'Modern User', is_user: true, mes: payload.message || '', send_date: Date.now() - 1000 },
+                { name: fixture.character.name, is_user: false, mes: `generated reply to ${payload.message}`, send_date: Date.now() },
+            ];
+            upsertChat(fixture, chatId, messages);
+            return fulfillJson(route, { chat: chatFileName(chatId), messageCount: messages.length });
+        }
+
+        if (request.action === 'status') {
+            const chatId = stripJsonlExtension(payload.chat);
+            return fulfillJson(route, { chat: chatFileName(chatId), messageCount: (fixture.messagesByChat[chatId] || []).length });
+        }
+
+        return fulfillJson(route, { ok: true });
+    });
+}
+
 test.describe('Modern chat files', () => {
+    test('sends a message through the modern generation bridge', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await page.locator('[data-chat-input]').fill('hello bridge generation');
+        await page.locator('[data-send-message]').click();
+
+        await expect.poll(() => fixture.requests.bridge.map(request => request.action)).toContain('generate');
+        expect(fixture.requests.bridge.at(-1)).toMatchObject({
+            action: 'generate',
+            payload: {
+                avatar: 'mock.png',
+                chat: 'existing-chat',
+                type: 'normal',
+                message: 'hello bridge generation',
+            },
+        });
+        await expect(page.locator('.chat-thread')).toContainText('hello bridge generation');
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to hello bridge generation');
+        await expect(page.locator('[data-chat-input]')).toHaveValue('');
+        await expect(page.locator('[data-send-message]')).toBeDisabled();
+        await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+    });
+
     test('manages character chat files and backups inside the modern workspace', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
 
