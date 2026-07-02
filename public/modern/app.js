@@ -303,14 +303,7 @@ const chatMessageActions = createChatMessageActions({
     refreshSelectedChatList,
 });
 
-const {
-    checkLegacyGenerationEngine,
-    sendModernMessage,
-    stopModernGeneration,
-    regenerateModernReply,
-    continueModernReply,
-    swipeModernMessage,
-} = createChatGenerationActions({
+const chatGenerationActions = createChatGenerationActions({
     state,
     render,
     showToast,
@@ -472,14 +465,7 @@ const routeContext = createRouteContext({
         confirmModernChatDelete,
         importModernChatFiles,
     },
-    chatGeneration: {
-        sendModernMessage,
-        stopModernGeneration,
-        checkLegacyGenerationEngine,
-        regenerateModernReply,
-        continueModernReply,
-        swipeModernMessage,
-    },
+    chatGeneration: chatGenerationActions,
     chatMessages: chatMessageActions,
     extensions: extensionActions,
     groups: groupActions,

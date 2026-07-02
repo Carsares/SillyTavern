@@ -191,6 +191,14 @@ export function createRouteContext({
         saveModernMessageEdit,
     } = chatMessages;
     const {
+        checkLegacyGenerationEngine,
+        sendModernMessage,
+        stopModernGeneration,
+        regenerateModernReply,
+        continueModernReply,
+        swipeModernMessage,
+    } = chatGeneration;
+    const {
         loadWorldDetail,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
@@ -313,7 +321,12 @@ export function createRouteContext({
         importCharacterFile,
         ...chatContext,
         ...chatFiles,
-        ...chatGeneration,
+        checkLegacyGenerationEngine,
+        sendModernMessage,
+        stopModernGeneration,
+        regenerateModernReply,
+        continueModernReply,
+        swipeModernMessage,
         copyModernMessage,
         deleteModernMessage,
         beginModernMessageDelete,
