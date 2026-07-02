@@ -1073,6 +1073,28 @@ tr:last-child td {
     line-height: 1.55;
 }
 
+.world-entry-list {
+    display: grid;
+    gap: 12px;
+}
+
+.world-entry-card {
+    gap: 10px;
+}
+
+.world-entry-card.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+}
+
+.world-entry-preview {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    margin: 0;
+}
+
 .background-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

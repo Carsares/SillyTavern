@@ -218,15 +218,8 @@ export function createWorldbooksRoute(ctx) {
                 </div>
             </div>
             ${state.worldEntryBulkDeleteConfirm.worldbookId === worldbook.file_id ? renderWorldEntryBulkDeletePanel(selectedCount) : ''}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr><th>选择</th><th>键</th><th>注释</th><th>状态</th><th>操作</th></tr>
-                    </thead>
-                    <tbody>
-                        ${pageEntries.map(([entryKey, entry]) => renderWorldEntryRow(worldbook, entryKey, entry)).join('') || '<tr><td colspan="5">没有条目</td></tr>'}
-                    </tbody>
-                </table>
+            <div class="world-entry-list">
+                ${pageEntries.map(([entryKey, entry]) => renderWorldEntryCard(worldbook, entryKey, entry)).join('') || renderInlineEmpty('没有条目')}
             </div>
         ` : renderEmptyState('fa-database', '正在读取条目', '如果长时间没有变化，可以点击“读取条目”重试。')}
     `;
@@ -274,67 +267,81 @@ export function createWorldbooksRoute(ctx) {
     `;
     }
 
-    function renderWorldEntryRow(worldbook, entryKey, entry) {
+    function renderWorldEntryCard(worldbook, entryKey, entry) {
         const isEditing = state.worldEntryEditing.worldbookId === worldbook.file_id && state.worldEntryEditing.entryKey === entryKey;
         const isDeleting = state.worldEntryDeleteConfirm.worldbookId === worldbook.file_id && state.worldEntryDeleteConfirm.entryKey === entryKey;
         const isSelected = state.worldEntryList.selectedKeys.includes(String(entryKey));
+        const keywords = Array.isArray(entry.key) ? entry.key.filter(Boolean).join(', ') : entry.key || '无关键词';
+        const content = String(entry.content || '').replace(/\s+/g, ' ').trim();
+        const preview = content.length > 220 ? `${content.slice(0, 220)}...` : content;
 
         return `
-        <tr>
-            <td>
-                <input type="checkbox" data-world-entry-select="${escapeHtml(entryKey)}" ${isSelected ? 'checked' : ''}>
-            </td>
-            <td>${escapeHtml(Array.isArray(entry.key) ? entry.key.join(', ') : entry.key || '无关键词')}</td>
-            <td>${escapeHtml(entry.comment || entry.name || '未命名条目')}</td>
-            <td>${entry.disable ? '<span class="danger">禁用</span>' : '<span class="success">启用</span>'}</td>
-            <td>
-                <div class="row-actions">
-                    <button class="secondary-button" type="button" data-edit-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}" ${isEditing ? 'disabled' : ''}>
-                        <i class="fa-solid fa-pen"></i>
-                        编辑
-                    </button>
-                    <button class="secondary-button" type="button" data-toggle-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
-                        <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
-                        ${entry.disable ? '启用' : '禁用'}
-                    </button>
-                    <button class="secondary-button" type="button" data-copy-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
-                        <i class="fa-solid fa-copy"></i>
-                        复制
-                    </button>
-                    <button class="secondary-button danger-action" type="button" data-delete-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
-                        <i class="fa-solid fa-trash"></i>
-                        删除
-                    </button>
-                </div>
-            </td>
-        </tr>
-        ${isEditing ? renderWorldEntryForm(entryKey, entry) : ''}
-        ${isDeleting ? renderWorldEntryDeleteRow(entryKey, entry) : ''}
+        <article class="resource-card world-entry-card ${isSelected ? 'selected' : ''}">
+            <div class="card-head">
+                <label class="selection-row">
+                    <input type="checkbox" data-world-entry-select="${escapeHtml(entryKey)}" ${isSelected ? 'checked' : ''}>
+                    <span>${isSelected ? '已选择' : '选择'}</span>
+                </label>
+                <span class="${entry.disable ? 'danger' : 'success'}">
+                    <i class="fa-solid ${entry.disable ? 'fa-circle-pause' : 'fa-circle-check'}"></i>
+                    ${entry.disable ? '禁用' : '启用'}
+                </span>
+            </div>
+            <div>
+                <h3 class="card-title">${escapeHtml(getWorldEntryTitle(entry, entryKey))}</h3>
+                <p class="row-subtitle">${escapeHtml(keywords)}</p>
+            </div>
+            ${preview ? `<p class="detail-text world-entry-preview">${escapeHtml(preview)}</p>` : ''}
+            <div class="tag-row">
+                <span class="tag">#${escapeHtml(entryKey)}</span>
+                <span class="tag">顺序 ${escapeHtml(entry.order ?? 0)}</span>
+                <span class="tag">位置 ${escapeHtml(entry.position ?? '默认')}</span>
+                ${entry.probability !== undefined ? `<span class="tag">概率 ${escapeHtml(entry.probability)}</span>` : ''}
+                ${entry.constant ? '<span class="tag">常驻</span>' : ''}
+                ${entry.selective ? '<span class="tag">关键词触发</span>' : ''}
+            </div>
+            <div class="row-actions">
+                <button class="secondary-button" type="button" data-edit-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}" ${isEditing ? 'disabled' : ''}>
+                    <i class="fa-solid fa-pen"></i>
+                    编辑
+                </button>
+                <button class="secondary-button" type="button" data-toggle-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                    <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
+                    ${entry.disable ? '启用' : '禁用'}
+                </button>
+                <button class="secondary-button" type="button" data-copy-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                    <i class="fa-solid fa-copy"></i>
+                    复制
+                </button>
+                <button class="secondary-button" type="button" data-delete-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                    <i class="fa-solid fa-ellipsis"></i>
+                    管理
+                </button>
+            </div>
+            ${isEditing ? renderWorldEntryForm(entryKey, entry) : ''}
+            ${isDeleting ? renderWorldEntryDeletePanel(entryKey, entry) : ''}
+        </article>
     `;
     }
 
-    function renderWorldEntryDeleteRow(entryKey, entry) {
+    function renderWorldEntryDeletePanel(entryKey, entry) {
         return `
-        <tr>
-            <td colspan="5">
-                <div class="settings-form inline-form danger-panel">
-                    <div>
-                        <strong>删除条目</strong>
-                        <p class="panel-subtitle">将删除 ${escapeHtml(getWorldEntryTitle(entry, entryKey))}，操作不可撤销。</p>
-                    </div>
-                    <div class="message-edit-actions">
-                        <button class="secondary-button" type="button" data-cancel-world-entry-delete>
-                            <i class="fa-solid fa-xmark"></i>
-                            取消
-                        </button>
-                        <button class="secondary-button danger-action" type="button" data-confirm-world-entry-delete>
-                            <i class="fa-solid fa-trash"></i>
-                            确认删除
-                        </button>
-                    </div>
-                </div>
-            </td>
-        </tr>
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除条目</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(getWorldEntryTitle(entry, entryKey))}，操作不可撤销。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-world-entry-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-world-entry-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
     `;
     }
 
@@ -344,11 +351,7 @@ export function createWorldbooksRoute(ctx) {
         const isCreate = edit.mode === 'create';
         const formContent = renderWorldEntryFormContent(form, isCreate);
 
-        return `
-        <tr>
-            <td colspan="5">${formContent}</td>
-        </tr>
-    `;
+        return formContent;
     }
 
     function renderWorldEntryCreatePanel(entryKey) {
