@@ -134,6 +134,9 @@ function createRouteContext() {
         renderEmptyState,
         getActivityEntries,
         getActivitySummary,
+        render,
+        showToast,
+        recreateStats,
         chatCompletionSourceOptions,
         secretKeyByChatSource,
         maskEndpoint,
@@ -147,8 +150,6 @@ function createRouteContext() {
         getApiSourceUiState,
         getNumberSetting,
         getSecretStateForSource,
-        render,
-        showToast,
         testApiConnection,
         setApiModelSuggestion,
         saveApiConnectionFromForm,
@@ -237,6 +238,13 @@ function createRouteContext() {
         getPresetCount,
         getExtensionFolderName,
         canManageExtension,
+        toggleExtensionInstall,
+        installExtensionFromForm,
+        loadExtensionDetails,
+        switchExtensionBranch,
+        beginExtensionOperation,
+        cancelExtensionOperation,
+        confirmExtensionOperation,
         defaultGroupForm,
         groupToForm,
         beginGroupCreate,
@@ -269,6 +277,18 @@ function createRouteContext() {
         getSelectedPresetRecord,
         getPresetEditorText,
         getOaiSettings,
+        saveOpenAiPresetFromForm,
+        selectPreset,
+        savePresetJsonFromEditor,
+        useOpenAiPreset,
+        duplicatePreset,
+        exportPreset,
+        restorePreset,
+        beginPresetDelete,
+        cancelPresetDelete,
+        confirmPresetDelete,
+        updatePresetEditorText,
+        importPresetFile,
         getRequestCompressionSettings,
         loadSettingsSnapshots,
         createSettingsSnapshot,
@@ -4856,199 +4876,6 @@ async function handleClick(event) {
         return;
     }
 
-    if (event.target.closest('[data-toggle-extension-install]')) {
-        toggleExtensionInstall();
-        return;
-    }
-
-    if (event.target.closest('[data-install-extension]')) {
-        try {
-            await installExtensionFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'extension-install', message: error.message });
-            showToast('扩展安装失败', error.message);
-            state.extensionInstall.running = false;
-            render();
-        }
-        return;
-    }
-
-    const extensionDetailsButton = event.target.closest('[data-extension-details]');
-    if (extensionDetailsButton) {
-        try {
-            await loadExtensionDetails(extensionDetailsButton.dataset.extensionDetails, extensionDetailsButton.dataset.extensionType);
-        } catch (error) {
-            state.errors.push({ key: 'extension-details', message: error.message });
-            showToast('扩展状态读取失败', error.message);
-        }
-        return;
-    }
-
-    const refreshExtensionDetailsButton = event.target.closest('[data-refresh-extension-details]');
-    if (refreshExtensionDetailsButton) {
-        try {
-            await loadExtensionDetails(refreshExtensionDetailsButton.dataset.refreshExtensionDetails, refreshExtensionDetailsButton.dataset.extensionType);
-        } catch (error) {
-            state.errors.push({ key: 'extension-details-refresh', message: error.message });
-            showToast('扩展状态刷新失败', error.message);
-        }
-        return;
-    }
-
-    const loadExtensionBranchesButton = event.target.closest('[data-load-extension-branches]');
-    if (loadExtensionBranchesButton) {
-        try {
-            await loadExtensionDetails(loadExtensionBranchesButton.dataset.loadExtensionBranches, loadExtensionBranchesButton.dataset.extensionType, { branches: true });
-        } catch (error) {
-            state.errors.push({ key: 'extension-branches', message: error.message });
-            showToast('扩展分支读取失败', error.message);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-switch-extension-branch]')) {
-        try {
-            await switchExtensionBranch();
-        } catch (error) {
-            state.errors.push({ key: 'extension-switch', message: error.message });
-            showToast('扩展分支切换失败', error.message);
-            state.extensionDetails.loading = false;
-            render();
-        }
-        return;
-    }
-
-    const extensionActionButton = event.target.closest('[data-extension-action]');
-    if (extensionActionButton) {
-        beginExtensionOperation(extensionActionButton.dataset.extensionName, extensionActionButton.dataset.extensionType, extensionActionButton.dataset.extensionAction);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-extension-operation]')) {
-        cancelExtensionOperation();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-extension-operation]')) {
-        try {
-            await confirmExtensionOperation();
-        } catch (error) {
-            state.errors.push({ key: 'extension-operation', message: error.message });
-            showToast('扩展操作失败', error.message);
-            cancelExtensionOperation();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-recreate-stats]')) {
-        try {
-            await recreateStats();
-        } catch (error) {
-            state.errors.push({ key: 'stats-recreate', message: error.message });
-            showToast('统计重建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-save-openai-preset]')) {
-        try {
-            await saveOpenAiPresetFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'preset-save', message: error.message });
-            showToast('预设保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const selectPresetButton = event.target.closest('[data-select-preset]');
-    if (selectPresetButton) {
-        selectPreset(selectPresetButton.dataset.presetApi, selectPresetButton.dataset.selectPreset);
-        return;
-    }
-
-    if (event.target.closest('[data-save-preset-json]')) {
-        try {
-            await savePresetJsonFromEditor();
-        } catch (error) {
-            state.errors.push({ key: 'preset-json-save', message: error.message });
-            showToast('预设保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const presetButton = event.target.closest('[data-use-openai-preset]');
-    if (presetButton) {
-        try {
-            await useOpenAiPreset(presetButton.dataset.useOpenaiPreset);
-        } catch (error) {
-            state.errors.push({ key: 'preset', message: error.message });
-            showToast('预设切换失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const duplicatePresetButton = event.target.closest('[data-duplicate-preset]');
-    if (duplicatePresetButton) {
-        try {
-            await duplicatePreset(duplicatePresetButton.dataset.presetApi, duplicatePresetButton.dataset.duplicatePreset);
-        } catch (error) {
-            state.errors.push({ key: 'preset-duplicate', message: error.message });
-            showToast('预设复制失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const exportPresetButton = event.target.closest('[data-export-preset]');
-    if (exportPresetButton) {
-        try {
-            exportPreset(exportPresetButton.dataset.presetApi, exportPresetButton.dataset.exportPreset);
-        } catch (error) {
-            state.errors.push({ key: 'preset-export', message: error.message });
-            showToast('预设导出失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const restorePresetButton = event.target.closest('[data-restore-preset]');
-    if (restorePresetButton) {
-        try {
-            await restorePreset(restorePresetButton.dataset.presetApi, restorePresetButton.dataset.restorePreset);
-        } catch (error) {
-            state.errors.push({ key: 'preset-restore', message: error.message });
-            showToast('预设恢复失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deletePresetButton = event.target.closest('[data-delete-preset]');
-    if (deletePresetButton) {
-        beginPresetDelete(deletePresetButton.dataset.presetApi, deletePresetButton.dataset.deletePreset);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-preset-delete]')) {
-        cancelPresetDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-preset-delete]')) {
-        try {
-            await confirmPresetDelete();
-        } catch (error) {
-            state.errors.push({ key: 'preset-delete', message: error.message });
-            showToast('预设删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
     const worldbookButton = event.target.closest('[data-select-worldbook]');
     if (worldbookButton) {
         state.selected.worldbook = worldbookButton.dataset.selectWorldbook;
@@ -5296,21 +5123,6 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
         state.chatSearch.query = event.target.value;
     }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-openai-preset-name]')) {
-        state.openAiPresetDraft.name = event.target.value;
-    }
-    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-preset-json-input]')) {
-        updatePresetEditorText(event.target.value);
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-url]')) {
-        state.extensionInstall.url = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-branch]')) {
-        state.extensionInstall.branch = event.target.value;
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-extension-branch]')) {
-        state.extensionDetails.branch = event.target.value;
-    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
         state.worldbookCreating.name = event.target.value;
     }
@@ -5326,33 +5138,12 @@ elements.content.addEventListener('change', async event => {
     if (routeChangeHandler && await routeChangeHandler(event) !== false) {
         return;
     }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-global]')) {
-        state.extensionInstall.global = event.target.checked;
-        return;
-    }
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-extension-branch]')) {
-        state.extensionDetails.branch = event.target.value;
-        render();
-        return;
-    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-import-file]')) {
         try {
             await importModernChatFiles(event.target.files);
         } catch (error) {
             state.errors.push({ key: 'chat-import', message: error.message });
             showToast('聊天导入失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-preset-import-file]')) {
-        try {
-            await importPresetFile(event.target.files?.[0]);
-        } catch (error) {
-            state.errors.push({ key: 'preset-import', message: error.message });
-            showToast('预设导入失败', error.message);
             render();
         } finally {
             event.target.value = '';

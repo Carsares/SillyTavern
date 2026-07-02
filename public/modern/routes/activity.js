@@ -11,6 +11,9 @@ export function createActivityRoute(ctx) {
         renderEmptyState,
         getActivityEntries,
         getActivitySummary,
+        render,
+        showToast,
+        recreateStats,
     } = ctx;
 
     function renderActivityEntryRow(entry) {
@@ -100,7 +103,24 @@ export function createActivityRoute(ctx) {
     `;
     }
 
+    async function handleClick(event) {
+        if (event.target.closest('[data-recreate-stats]')) {
+            try {
+                await recreateStats();
+            } catch (error) {
+                state.errors.push({ key: 'stats-recreate', message: error.message });
+                showToast('统计重建失败', error.message);
+                render();
+            }
+            return;
+        }
+
+
+        return false;
+    }
+
     return {
         render: renderActivity,
+        handleClick,
     };
 }
