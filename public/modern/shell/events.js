@@ -45,10 +45,29 @@ export function bindShellEvents({
             closePalette();
         }
     });
+    function clickFirstPaletteCommand() {
+        const firstCommand = elements.paletteResults.querySelector('[data-command-route]');
+        if (firstCommand) {
+            firstCommand.click();
+        }
+    }
     document.addEventListener('click', event => {
         handleClick(event);
     });
     document.addEventListener('keydown', event => {
+        if (!elements.commandPalette.hidden) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                clickFirstPaletteCommand();
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closePalette();
+                return;
+            }
+        }
+
         const routeKeydownHandler = routeModules[state.route]?.handleKeydown;
         if (routeKeydownHandler && routeKeydownHandler(event) !== false) {
             return;

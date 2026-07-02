@@ -165,7 +165,7 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.toast', { hasText: '刷新完成' })).toHaveCount(0);
     });
 
-    test('opens command palette and navigates to a modern route', async ({ page }) => {
+    test('opens command palette and selects a modern route from the keyboard', async ({ page }) => {
         await page.goto('/modern/?view=dashboard');
 
         await page.keyboard.press('Control+K');
@@ -174,7 +174,7 @@ test.describe('Modern workspace', () => {
 
         await page.locator('#paletteSearch').fill('API');
         await expect(page.locator('[data-command-route="api"]').first()).toBeVisible();
-        await page.locator('[data-command-route="api"]').first().click();
+        await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
         await expect(page.locator('.page-title')).toHaveText('API 连接管理');
