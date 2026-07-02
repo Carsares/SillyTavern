@@ -1,0 +1,31 @@
+.background-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.background-card {
+    align-content: start;
+}
+
+.background-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.background-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.selection-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 760;
+}

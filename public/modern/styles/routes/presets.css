@@ -1,0 +1,69 @@
+.preset-workspace {
+    display: grid;
+    align-items: start;
+    grid-template-columns: minmax(300px, 0.38fr) minmax(0, 0.62fr);
+    gap: 14px;
+}
+
+.preset-browser,
+.preset-detail {
+    min-height: calc(100vh - 150px);
+}
+
+.preset-group-list {
+    display: grid;
+    gap: 10px;
+}
+
+.preset-group {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.preset-group summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
+.preset-group summary span:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.preset-group summary em {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.preset-list {
+    max-height: 360px;
+    padding: 0 8px 8px;
+}
+
+.preset-detail-hero {
+    flex-wrap: wrap;
+}
+
+.preset-json-editor {
+    width: 100%;
+    min-height: 380px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--mono) !important;
+    font-size: 12px !important;
+    line-height: 1.55;
+}
