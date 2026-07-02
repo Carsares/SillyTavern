@@ -235,6 +235,36 @@ function createRouteContext() {
         getChatCacheKey,
         getCurrentDraftKey,
         getCurrentDraft,
+        setCurrentDraft,
+        increaseCurrentMessageLimit,
+        searchSelectedChats,
+        toggleChatBackups,
+        loadChatBackups,
+        exportModernChat,
+        viewChatBackup,
+        restoreChatBackup,
+        beginChatBackupDelete,
+        cancelChatBackupDelete,
+        confirmChatBackupDelete,
+        sendModernMessage,
+        stopModernGeneration,
+        checkLegacyGenerationEngine,
+        regenerateModernReply,
+        continueModernReply,
+        swipeModernMessage,
+        copyModernMessage,
+        deleteModernMessage,
+        beginModernMessageEdit,
+        cancelModernMessageEdit,
+        saveModernMessageEdit,
+        startNewModernChat,
+        beginModernChatRename,
+        cancelModernChatRename,
+        saveModernChatRename,
+        beginModernChatDelete,
+        cancelModernChatDelete,
+        confirmModernChatDelete,
+        importModernChatFiles,
         getPresetCount,
         getExtensionFolderName,
         canManageExtension,
@@ -4577,23 +4607,6 @@ async function handleClick(event) {
         return;
     }
 
-    const chatModeButton = event.target.closest('[data-chat-mode]');
-    if (chatModeButton) {
-        const nextMode = chatModeButton.dataset.chatMode === 'group' ? 'group' : 'character';
-        if (state.chatMode !== nextMode) {
-            state.chatMode = nextMode;
-            localStorage.setItem('st-modern-chat-mode', nextMode);
-            state.selected.chat = '';
-            state.chatRenaming = { key: '', name: '' };
-            state.chatDeleteConfirm = { key: '', name: '' };
-            state.chatEditing = { key: '', index: -1, text: '' };
-            clearChatSearch();
-            await prepareChatForSelectedContext();
-        }
-        render();
-        return;
-    }
-
     const characterButton = event.target.closest('[data-select-character]');
     if (characterButton) {
         state.chatMode = 'character';
@@ -4619,282 +4632,6 @@ async function handleClick(event) {
             await prepareChatForSelectedContext();
         }
         render();
-        return;
-    }
-
-    const chatButton = event.target.closest('[data-select-chat]');
-    if (chatButton) {
-        state.selected.chat = chatButton.dataset.selectChat;
-        await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
-        render();
-        return;
-    }
-
-    if (event.target.closest('[data-chat-search-run]')) {
-        try {
-            if (!state.chatSearch.query.trim()) {
-                clearChatSearch();
-            } else {
-                await searchSelectedChats();
-            }
-            render();
-        } catch (error) {
-            state.errors.push({ key: 'chat-search', message: error.message });
-            showToast('聊天搜索失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-chat-search-clear]')) {
-        clearChatSearch();
-        render();
-        return;
-    }
-
-    if (event.target.closest('[data-load-earlier-messages]')) {
-        increaseCurrentMessageLimit();
-        return;
-    }
-
-    if (event.target.closest('[data-chat-backups-toggle]')) {
-        try {
-            await toggleChatBackups();
-        } catch (error) {
-            state.errors.push({ key: 'chat-backups', message: error.message });
-            showToast('备份读取失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-chat-backups-refresh]')) {
-        try {
-            await loadChatBackups({ force: true });
-            render();
-        } catch (error) {
-            state.errors.push({ key: 'chat-backups', message: error.message });
-            showToast('备份刷新失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const exportChatButton = event.target.closest('[data-export-chat]');
-    if (exportChatButton) {
-        try {
-            await exportModernChat(exportChatButton.dataset.exportChat);
-        } catch (error) {
-            state.errors.push({ key: 'chat-export', message: error.message });
-            showToast('聊天导出失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const viewChatBackupButton = event.target.closest('[data-view-chat-backup]');
-    if (viewChatBackupButton) {
-        try {
-            await viewChatBackup(viewChatBackupButton.dataset.viewChatBackup);
-        } catch (error) {
-            state.errors.push({ key: 'chat-backup-view', message: error.message });
-            showToast('备份预览失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const restoreChatBackupButton = event.target.closest('[data-restore-chat-backup]');
-    if (restoreChatBackupButton) {
-        try {
-            await restoreChatBackup(restoreChatBackupButton.dataset.restoreChatBackup);
-        } catch (error) {
-            state.errors.push({ key: 'chat-backup-restore', message: error.message });
-            showToast('备份恢复失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deleteChatBackupButton = event.target.closest('[data-delete-chat-backup]');
-    if (deleteChatBackupButton) {
-        beginChatBackupDelete(deleteChatBackupButton.dataset.deleteChatBackup);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-chat-backup-delete]')) {
-        cancelChatBackupDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-chat-backup-delete]')) {
-        try {
-            await confirmChatBackupDelete();
-        } catch (error) {
-            state.errors.push({ key: 'chat-backup-delete', message: error.message });
-            showToast('备份删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-send-message]')) {
-        try {
-            await sendModernMessage();
-        } catch (error) {
-            state.errors.push({ key: 'modern-send', message: error.message });
-            showToast('发送失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-stop-generation]')) {
-        await stopModernGeneration();
-        return;
-    }
-
-    if (event.target.closest('[data-check-generation-engine]')) {
-        try {
-            await checkLegacyGenerationEngine();
-        } catch (error) {
-            state.errors.push({ key: 'legacy-engine-check', message: error.message });
-            showToast('生成引擎检查失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-regenerate-message]')) {
-        try {
-            await regenerateModernReply();
-        } catch (error) {
-            state.errors.push({ key: 'regenerate', message: error.message });
-            showToast('重生成失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-continue-message]')) {
-        try {
-            await continueModernReply();
-        } catch (error) {
-            state.errors.push({ key: 'continue-message', message: error.message });
-            showToast('继续生成失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const swipeMessageButton = event.target.closest('[data-swipe-message]');
-    if (swipeMessageButton) {
-        try {
-            await swipeModernMessage(swipeMessageButton.dataset.swipeMessage, swipeMessageButton.dataset.swipeDirection);
-        } catch (error) {
-            state.errors.push({ key: 'swipe-message', message: error.message });
-            showToast('候选切换失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const copyMessageButton = event.target.closest('[data-copy-message]');
-    if (copyMessageButton) {
-        try {
-            await copyModernMessage(copyMessageButton.dataset.copyMessage);
-        } catch (error) {
-            state.errors.push({ key: 'copy-message', message: error.message });
-            showToast('复制消息失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deleteMessageButton = event.target.closest('[data-delete-message]');
-    if (deleteMessageButton) {
-        try {
-            await deleteModernMessage(deleteMessageButton.dataset.deleteMessage);
-        } catch (error) {
-            state.errors.push({ key: 'delete-message', message: error.message });
-            showToast('删除消息失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const editMessageButton = event.target.closest('[data-edit-message]');
-    if (editMessageButton) {
-        beginModernMessageEdit(editMessageButton.dataset.editMessage);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-edit-message]')) {
-        cancelModernMessageEdit();
-        return;
-    }
-
-    if (event.target.closest('[data-save-edit-message]')) {
-        try {
-            await saveModernMessageEdit();
-        } catch (error) {
-            state.errors.push({ key: 'edit-message', message: error.message });
-            showToast('保存消息失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-new-chat]')) {
-        try {
-            await startNewModernChat();
-        } catch (error) {
-            state.errors.push({ key: 'new-chat', message: error.message });
-            showToast('新聊天创建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-rename-chat]')) {
-        beginModernChatRename();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-chat-rename]')) {
-        cancelModernChatRename();
-        return;
-    }
-
-    if (event.target.closest('[data-save-chat-rename]')) {
-        try {
-            await saveModernChatRename();
-        } catch (error) {
-            state.errors.push({ key: 'rename-chat', message: error.message });
-            showToast('聊天重命名失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-delete-chat]')) {
-        beginModernChatDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-chat-delete]')) {
-        cancelModernChatDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-chat-delete]')) {
-        try {
-            await confirmModernChatDelete();
-        } catch (error) {
-            state.errors.push({ key: 'delete-chat', message: error.message });
-            showToast('聊天删除失败', error.message);
-            render();
-        }
         return;
     }
 
@@ -4939,34 +4676,10 @@ elements.content.addEventListener('input', event => {
     if (routeInputHandler && routeInputHandler(event) !== false) {
         return;
     }
-    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
-        setCurrentDraft(event.target.value);
-    }
-    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
-        state.chatEditing.text = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-rename-input]')) {
-        state.chatRenaming.name = event.target.value;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
-        state.chatSearch.query = event.target.value;
-    }
 });
 elements.content.addEventListener('change', async event => {
     const routeChangeHandler = routeModules[state.route]?.handleChange;
     if (routeChangeHandler && await routeChangeHandler(event) !== false) {
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-import-file]')) {
-        try {
-            await importModernChatFiles(event.target.files);
-        } catch (error) {
-            state.errors.push({ key: 'chat-import', message: error.message });
-            showToast('聊天导入失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
         return;
     }
 });
@@ -4983,28 +4696,8 @@ document.addEventListener('click', event => {
     handleClick(event);
 });
 document.addEventListener('keydown', event => {
-    if (event.target instanceof HTMLElement && event.target.matches('[data-chat-input]') && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        event.preventDefault();
-        sendModernMessage().catch(error => {
-            state.errors.push({ key: 'modern-send', message: error.message });
-            showToast('发送失败', error.message);
-            render();
-        });
-        return;
-    }
-
-    if (event.target instanceof HTMLElement && event.target.matches('[data-chat-search-input]') && event.key === 'Enter') {
-        event.preventDefault();
-        if (!state.chatSearch.query.trim()) {
-            clearChatSearch();
-            render();
-            return;
-        }
-        searchSelectedChats().then(() => render()).catch(error => {
-            state.errors.push({ key: 'chat-search', message: error.message });
-            showToast('聊天搜索失败', error.message);
-            render();
-        });
+    const routeKeydownHandler = routeModules[state.route]?.handleKeydown;
+    if (routeKeydownHandler && routeKeydownHandler(event) !== false) {
         return;
     }
 
