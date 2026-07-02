@@ -5713,6 +5713,10 @@ async function switchExtensionBranch() {
 
 function renderExtensions() {
     const extensions = state.extensions.filter(extension => matchesQuery(extension.name, extension.type));
+    const systemCount = extensions.filter(extension => extension.type === 'system').length;
+    const localCount = extensions.filter(extension => extension.type === 'local').length;
+    const globalCount = extensions.filter(extension => extension.type === 'global').length;
+    const manageableCount = extensions.filter(canManageExtension).length;
 
     return `
         ${pageHead('扩展', '内置、本地和全局扩展。', `
@@ -5723,6 +5727,12 @@ function renderExtensions() {
             ${legacyMenu('打开原版扩展')}
         `)}
         ${state.extensionInstall.active ? renderExtensionInstallPanel() : ''}
+        <div class="metrics-grid">
+            ${metricCard('全部扩展', formatNumber(extensions.length), '当前匹配项', 'fa-cubes')}
+            ${metricCard('内置保护', formatNumber(systemCount), '随应用提供，不做删除更新', 'fa-shield-halved')}
+            ${metricCard('本地 / 全局', `${formatNumber(localCount)} / ${formatNumber(globalCount)}`, '用户安装扩展', 'fa-folder-tree')}
+            ${metricCard('可管理', formatNumber(manageableCount), state.me?.admin ? '支持移动、更新、删除' : '支持详情、更新、删除', 'fa-screwdriver-wrench')}
+        </div>
         <div class="table-wrap">
             <table>
                 <thead>
@@ -5756,7 +5766,7 @@ function renderExtensions() {
                                             删除
                                         </button>
                                     </div>
-                                ` : '<span class="card-meta">内置只读</span>'}
+                                ` : '<span class="card-meta">内置保护</span>'}
                             </td>
                         </tr>
                         ${state.extensionDetails.name === getExtensionFolderName(extension) && state.extensionDetails.type === extension.type ? renderExtensionDetailsRow(extension) : ''}
