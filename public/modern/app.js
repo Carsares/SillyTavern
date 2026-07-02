@@ -205,6 +205,14 @@ const state = {
         avatarId: '',
         form: {},
     },
+    personaCreating: {
+        active: false,
+        form: { name: '', title: '', description: '' },
+        file: null,
+    },
+    personaDeleteConfirm: {
+        avatarId: '',
+    },
     backgroundSelection: {
         active: false,
         filenames: [],
@@ -248,6 +256,12 @@ const state = {
         running: false,
         status: '未测试',
         detail: '尚未从现代界面发起连接测试。',
+    },
+    extensionOperation: {
+        name: '',
+        type: '',
+        action: '',
+        running: false,
     },
     selected: {
         character: '',
@@ -1515,6 +1529,64 @@ function getPowerUserSettingsForWrite() {
     return source;
 }
 
+function defaultPersonaForm() {
+    return { name: '', title: '', description: '' };
+}
+
+function beginPersonaCreate() {
+    state.personaCreating = { active: true, form: defaultPersonaForm(), file: null };
+    state.personaEditing = { avatarId: '', form: {} };
+    state.personaDeleteConfirm = { avatarId: '' };
+    render();
+}
+
+function cancelPersonaCreate() {
+    state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
+    render();
+}
+
+async function uploadPersonaAvatarFile(file, overwriteName = '') {
+    if (!file) {
+        throw new Error('请选择头像图片。');
+    }
+
+    const formData = new FormData();
+    formData.append('avatar', file, file.name);
+    if (overwriteName) {
+        formData.append('overwrite_name', overwriteName);
+    }
+
+    const result = await apiFetch('/api/avatars/upload', { body: formData, omitContentType: true });
+    return result?.path || overwriteName;
+}
+
+async function savePersonaCreate() {
+    const { form, file } = state.personaCreating;
+    const name = form.name.trim();
+    if (!name) {
+        throw new Error('人设名称不能为空。');
+    }
+    if (!file) {
+        throw new Error('请先选择头像图片。');
+    }
+
+    const avatarId = await uploadPersonaAvatarFile(file);
+    const powerUser = getPowerUserSettingsForWrite();
+    powerUser.personas[avatarId] = name;
+    powerUser.persona_descriptions[avatarId] = {
+        title: form.title || '',
+        description: form.description || '',
+    };
+    if (!powerUser.default_persona) {
+        powerUser.default_persona = avatarId;
+    }
+    await apiFetch('/api/settings/save', { body: state.settings });
+    state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
+    await loadData({ silent: true });
+    showToast('用户人设已创建', name);
+    render();
+}
+
 function beginPersonaEdit(persona) {
     state.personaEditing = {
         avatarId: persona.avatarId,
@@ -1524,6 +1596,8 @@ function beginPersonaEdit(persona) {
             description: persona.description || '',
         },
     };
+    state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
+    state.personaDeleteConfirm = { avatarId: '' };
     render();
 }
 
@@ -1568,8 +1642,52 @@ async function setDefaultPersona(avatarId) {
     render();
 }
 
+function beginPersonaDelete(avatarId) {
+    state.personaDeleteConfirm = { avatarId };
+    state.personaEditing = { avatarId: '', form: {} };
+    render();
+}
+
+function cancelPersonaDelete() {
+    state.personaDeleteConfirm = { avatarId: '' };
+    render();
+}
+
+async function confirmPersonaDelete() {
+    const { avatarId } = state.personaDeleteConfirm;
+    if (!avatarId) {
+        throw new Error('请选择要删除的用户人设。');
+    }
+
+    const powerUser = getPowerUserSettingsForWrite();
+    const name = powerUser.personas[avatarId] || avatarId;
+    await apiFetch('/api/avatars/delete', { body: { avatar: avatarId } });
+    delete powerUser.personas[avatarId];
+    delete powerUser.persona_descriptions[avatarId];
+    if (powerUser.default_persona === avatarId) {
+        powerUser.default_persona = null;
+    }
+    await apiFetch('/api/settings/save', { body: state.settings });
+    state.personaDeleteConfirm = { avatarId: '' };
+    state.personaEditing = { avatarId: '', form: {} };
+    await loadData({ silent: true });
+    showToast('用户人设已删除', name);
+    render();
+}
+
+async function replacePersonaAvatar(avatarId, file) {
+    if (!avatarId) {
+        throw new Error('请选择要替换头像的用户人设。');
+    }
+    await uploadPersonaAvatarFile(file, avatarId);
+    await loadData({ silent: true });
+    showToast('头像已替换', avatarId);
+    render();
+}
+
 function updatePersonaFormField(element) {
-    state.personaEditing.form[element.dataset.personaField] = element.value;
+    const form = element.dataset.personaScope === 'create' ? state.personaCreating.form : state.personaEditing.form;
+    form[element.dataset.personaField] = element.value;
 }
 
 function getBackgroundUrl(filename) {
@@ -3865,11 +3983,16 @@ function renderPersonas() {
 
     return `
         ${pageHead('用户人设', '头像、标题和默认身份。', `
+            <button class="primary-button" type="button" data-create-persona>
+                <i class="fa-solid fa-plus"></i>
+                新建人设
+            </button>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-user-pen"></i>
                 打开管理
             </button>
         `)}
+        ${state.personaCreating.active ? renderPersonaCreatePanel() : ''}
         <div class="grid-list">
             ${personas.map(persona => `
                 <article class="resource-card">
@@ -3891,33 +4014,66 @@ function renderPersonas() {
                             <i class="fa-solid fa-user-check"></i>
                             设为默认
                         </button>
+                        <label class="secondary-button file-action">
+                            <i class="fa-solid fa-image"></i>
+                            替换头像
+                            <input class="visually-hidden" type="file" accept="image/*" data-persona-avatar-file="${escapeHtml(persona.avatarId)}">
+                        </label>
+                        <button class="secondary-button danger-action" type="button" data-delete-persona="${escapeHtml(persona.avatarId)}">
+                            <i class="fa-solid fa-trash"></i>
+                            删除
+                        </button>
                     </div>
                     ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel(persona) : ''}
+                    ${state.personaDeleteConfirm.avatarId === persona.avatarId ? renderPersonaDeletePanel(persona) : ''}
                 </article>
             `).join('') || renderEmptyState('fa-user-gear', '暂无用户人设', '当前目录没有用户人设。')}
         </div>
     `;
 }
 
+function renderPersonaCreatePanel() {
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">新建用户人设</h2>
+                    <p class="panel-subtitle">上传头像后写入 personas 设置。</p>
+                </div>
+            </div>
+            <div class="settings-form inline-form">
+                ${renderPersonaFormContent(state.personaCreating.form, 'create')}
+                <label class="field-label">
+                    <span>头像图片</span>
+                    <input class="text-input" type="file" accept="image/*" data-persona-create-file>
+                    ${state.personaCreating.file ? `<span class="card-meta">${escapeHtml(state.personaCreating.file.name)}</span>` : ''}
+                </label>
+                <div class="message-edit-actions">
+                    <button class="secondary-button" type="button" data-cancel-persona-create>
+                        <i class="fa-solid fa-xmark"></i>
+                        取消
+                    </button>
+                    <button class="primary-button" type="button" data-save-persona-create>
+                        <i class="fa-solid fa-check"></i>
+                        创建人设
+                    </button>
+                </div>
+            </div>
+        </section>
+    `;
+}
+
 function renderPersonaEditPanel(persona) {
     const form = state.personaEditing.form;
+    const formValue = {
+        name: form.name || persona.name,
+        title: form.title || '',
+        description: form.description || '',
+    };
 
     return `
         <div class="settings-form">
-            <div class="form-grid">
-                <label class="field-label">
-                    <span>名称</span>
-                    <input class="text-input" type="text" data-persona-field="name" value="${escapeHtml(form.name || persona.name)}">
-                </label>
-                <label class="field-label">
-                    <span>标题</span>
-                    <input class="text-input" type="text" data-persona-field="title" value="${escapeHtml(form.title || '')}">
-                </label>
-                <label class="field-label">
-                    <span>描述</span>
-                    <textarea data-persona-field="description">${escapeHtml(form.description || '')}</textarea>
-                </label>
-            </div>
+            ${renderPersonaFormContent(formValue, 'edit')}
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-cancel-persona-edit>
                     <i class="fa-solid fa-xmark"></i>
@@ -3926,6 +4082,46 @@ function renderPersonaEditPanel(persona) {
                 <button class="primary-button" type="button" data-save-persona-edit>
                     <i class="fa-solid fa-check"></i>
                     保存
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderPersonaFormContent(form, scope) {
+    return `
+        <div class="form-grid">
+            <label class="field-label">
+                <span>名称</span>
+                <input class="text-input" type="text" data-persona-field="name" data-persona-scope="${escapeHtml(scope)}" value="${escapeHtml(form.name || '')}">
+            </label>
+            <label class="field-label">
+                <span>标题</span>
+                <input class="text-input" type="text" data-persona-field="title" data-persona-scope="${escapeHtml(scope)}" value="${escapeHtml(form.title || '')}">
+            </label>
+            <label class="field-label">
+                <span>描述</span>
+                <textarea data-persona-field="description" data-persona-scope="${escapeHtml(scope)}">${escapeHtml(form.description || '')}</textarea>
+            </label>
+        </div>
+    `;
+}
+
+function renderPersonaDeletePanel(persona) {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除用户人设</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(persona.name || persona.avatarId)} 的设置和头像文件。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-persona-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-persona-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
                 </button>
             </div>
         </div>
@@ -4421,6 +4617,47 @@ function renderKeyValue(key, value) {
     `;
 }
 
+function getExtensionFolderName(extension) {
+    return String(extension?.name || '').replace(/^third-party\//, '');
+}
+
+function canManageExtension(extension) {
+    return extension?.type === 'local' || extension?.type === 'global';
+}
+
+function beginExtensionOperation(name, type, action) {
+    state.extensionOperation = { name, type, action, running: false };
+    render();
+}
+
+function cancelExtensionOperation() {
+    state.extensionOperation = { name: '', type: '', action: '', running: false };
+    render();
+}
+
+async function confirmExtensionOperation() {
+    const { name, type, action } = state.extensionOperation;
+    if (!name || !action) {
+        throw new Error('请选择扩展操作。');
+    }
+
+    state.extensionOperation.running = true;
+    render();
+    const body = { extensionName: name, global: type === 'global' };
+    if (action === 'update') {
+        const result = await apiFetch('/api/extensions/update', { body });
+        showToast(result?.isUpToDate ? '扩展已是最新' : '扩展已更新', result?.shortCommitHash || name);
+    } else if (action === 'delete') {
+        await apiFetch('/api/extensions/delete', { body });
+        showToast('扩展已删除', name);
+    } else {
+        throw new Error('未知扩展操作。');
+    }
+    state.extensionOperation = { name: '', type: '', action: '', running: false };
+    await loadData({ silent: true });
+    render();
+}
+
 function renderExtensions() {
     const extensions = state.extensions.filter(extension => matchesQuery(extension.name, extension.type));
 
@@ -4434,7 +4671,7 @@ function renderExtensions() {
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>扩展</th><th>类型</th><th>路径</th></tr>
+                    <tr><th>扩展</th><th>类型</th><th>路径</th><th>操作</th></tr>
                 </thead>
                 <tbody>
                     ${extensions.map(extension => `
@@ -4442,11 +4679,54 @@ function renderExtensions() {
                             <td>${escapeHtml(extension.name.replace('third-party/', ''))}</td>
                             <td><span class="tag">${escapeHtml(extension.type)}</span></td>
                             <td class="mono">${escapeHtml(extension.name)}</td>
+                            <td>
+                                ${canManageExtension(extension) ? `
+                                    <div class="row-actions">
+                                        <button class="secondary-button" type="button" data-extension-action="update" data-extension-name="${escapeHtml(getExtensionFolderName(extension))}" data-extension-type="${escapeHtml(extension.type)}">
+                                            <i class="fa-solid fa-download"></i>
+                                            更新
+                                        </button>
+                                        <button class="secondary-button danger-action" type="button" data-extension-action="delete" data-extension-name="${escapeHtml(getExtensionFolderName(extension))}" data-extension-type="${escapeHtml(extension.type)}">
+                                            <i class="fa-solid fa-trash"></i>
+                                            删除
+                                        </button>
+                                    </div>
+                                ` : '<span class="card-meta">内置只读</span>'}
+                            </td>
                         </tr>
-                    `).join('') || '<tr><td colspan="3">暂无扩展</td></tr>'}
+                        ${state.extensionOperation.name === getExtensionFolderName(extension) && state.extensionOperation.type === extension.type ? renderExtensionOperationRow(extension) : ''}
+                    `).join('') || '<tr><td colspan="4">暂无扩展</td></tr>'}
                 </tbody>
             </table>
         </div>
+    `;
+}
+
+function renderExtensionOperationRow(extension) {
+    const operation = state.extensionOperation;
+    const isDelete = operation.action === 'delete';
+
+    return `
+        <tr>
+            <td colspan="4">
+                <div class="settings-form inline-form ${isDelete ? 'danger-panel' : ''}">
+                    <div>
+                        <strong>${isDelete ? '删除扩展' : '更新扩展'}</strong>
+                        <p class="panel-subtitle">${escapeHtml(getExtensionFolderName(extension))} · ${escapeHtml(extension.type)}。${isDelete ? '删除会移除扩展目录。' : '更新会执行 git pull。'}</p>
+                    </div>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-extension-operation ${operation.running ? 'disabled' : ''}>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="secondary-button ${isDelete ? 'danger-action' : ''}" type="button" data-confirm-extension-operation ${operation.running ? 'disabled' : ''}>
+                            <i class="fa-solid ${operation.running ? 'fa-circle-notch fa-spin' : (isDelete ? 'fa-trash' : 'fa-download')}"></i>
+                            ${operation.running ? '处理中' : '确认'}
+                        </button>
+                    </div>
+                </div>
+            </td>
+        </tr>
     `;
 }
 
@@ -5030,6 +5310,27 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-create-persona]')) {
+        beginPersonaCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-persona-create]')) {
+        cancelPersonaCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-save-persona-create]')) {
+        try {
+            await savePersonaCreate();
+        } catch (error) {
+            state.errors.push({ key: 'persona-create', message: error.message });
+            showToast('用户人设创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const editPersonaButton = event.target.closest('[data-edit-persona]');
     if (editPersonaButton) {
         const persona = getPersonas().find(item => item.avatarId === editPersonaButton.dataset.editPersona);
@@ -5046,6 +5347,28 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'persona-default', message: error.message });
             showToast('默认人设保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deletePersonaButton = event.target.closest('[data-delete-persona]');
+    if (deletePersonaButton) {
+        beginPersonaDelete(deletePersonaButton.dataset.deletePersona);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-persona-delete]')) {
+        cancelPersonaDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-persona-delete]')) {
+        try {
+            await confirmPersonaDelete();
+        } catch (error) {
+            state.errors.push({ key: 'persona-delete', message: error.message });
+            showToast('用户人设删除失败', error.message);
             render();
         }
         return;
@@ -5093,6 +5416,28 @@ async function handleClick(event) {
             state.errors.push({ key: 'background-delete', message: error.message });
             showToast('背景删除失败', error.message);
             render();
+        }
+        return;
+    }
+
+    const extensionActionButton = event.target.closest('[data-extension-action]');
+    if (extensionActionButton) {
+        beginExtensionOperation(extensionActionButton.dataset.extensionName, extensionActionButton.dataset.extensionType, extensionActionButton.dataset.extensionAction);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-extension-operation]')) {
+        cancelExtensionOperation();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-extension-operation]')) {
+        try {
+            await confirmExtensionOperation();
+        } catch (error) {
+            state.errors.push({ key: 'extension-operation', message: error.message });
+            showToast('扩展操作失败', error.message);
+            cancelExtensionOperation();
         }
         return;
     }
@@ -5382,6 +5727,23 @@ elements.content.addEventListener('change', async event => {
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-select]')) {
         toggleBackgroundSelection(event.target.dataset.backgroundSelect, event.target.checked);
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-persona-create-file]')) {
+        state.personaCreating.file = event.target.files?.[0] || null;
+        render();
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-persona-avatar-file]')) {
+        try {
+            await replacePersonaAvatar(event.target.dataset.personaAvatarFile, event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'persona-avatar', message: error.message });
+            showToast('头像替换失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
         return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-import-file]')) {
