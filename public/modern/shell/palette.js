@@ -4,6 +4,9 @@ import { escapeHtml, formatNumber, normalizeText } from '../core/utils.js';
 export function createPalette({
     state,
     elements,
+    getAssetGroups,
+    getAssetEntries,
+    getBackgroundFilename,
     getExtensionFolderName,
     getChatId,
     getChatMessageCount,
@@ -81,6 +84,25 @@ export function createPalette({
                 id: `${extension.type || ''}:${name}`,
             };
         });
+        const backgroundCommands = (state.backgrounds?.images || []).slice(0, 80).map(background => {
+            const filename = getBackgroundFilename(background);
+            return {
+                type: '背景',
+                label: filename,
+                detail: typeof background === 'object' && background?.isAnimated ? '动画背景' : '静态背景',
+                route: 'assets',
+                select: 'background',
+                id: filename,
+            };
+        });
+        const assetCommands = getAssetGroups().flatMap(group => getAssetEntries(group, 20).map(entry => ({
+            type: '资产文件',
+            label: entry.label || entry.filename,
+            detail: entry.category,
+            route: 'assets',
+            select: 'asset',
+            id: `${entry.category}:${entry.path}`,
+        })));
         const actionCommands = [
             { type: '动作', label: '新建角色', detail: '打开角色创建表单', route: 'characters', action: 'create-character' },
             { type: '动作', label: '新建群组', detail: '打开群组创建表单', route: 'groups', action: 'create-group' },
@@ -88,7 +110,7 @@ export function createPalette({
             { type: '动作', label: 'API 连接检查', detail: '进入 API 管理页', route: 'api' },
             { type: '动作', label: '设置快照', detail: '进入设置中心', route: 'settings' },
         ];
-        const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands, ...extensionCommands]
+        const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands, ...extensionCommands, ...backgroundCommands, ...assetCommands]
             .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))
             .slice(0, 40);
 

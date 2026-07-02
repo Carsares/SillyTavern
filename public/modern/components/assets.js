@@ -21,8 +21,13 @@ export function createAssetsComponents(ctx) {
     } = ctx;
 
     function renderAssets() {
-        const groups = getAssetGroups().filter(group => matchesQuery(group.name));
+        const selectedAssetId = state.selected.asset;
+        const selectedAssetCategory = getSelectedAssetCategory(selectedAssetId);
+        const groups = getAssetGroups()
+            .filter(group => matchesQuery(group.name))
+            .sort((a, b) => Number(b.name === selectedAssetCategory) - Number(a.name === selectedAssetCategory));
         const allBackgrounds = state.backgrounds?.images || [];
+        const selectedBackground = state.selected.background;
         const backgroundFolders = getBackgroundFolderData().folders;
         const folderCounts = getBackgroundFolderCounts();
         if (state.backgroundFolderFilter && !getBackgroundFolderById(state.backgroundFolderFilter)) {
@@ -33,7 +38,8 @@ export function createAssetsComponents(ctx) {
         }
         const backgrounds = allBackgrounds
             .filter(background => matchesQuery(getBackgroundFilename(background)))
-            .filter(background => !state.backgroundFolderFilter || getBackgroundFolderIds(getBackgroundFilename(background)).includes(state.backgroundFolderFilter));
+            .filter(background => !state.backgroundFolderFilter || getBackgroundFolderIds(getBackgroundFilename(background)).includes(state.backgroundFolderFilter))
+            .sort((a, b) => Number(getBackgroundFilename(b) === selectedBackground) - Number(getBackgroundFilename(a) === selectedBackground));
         const visibleBackgrounds = backgrounds.slice(0, state.backgroundVisibleCount);
         const hasMoreBackgrounds = visibleBackgrounds.length < backgrounds.length;
         const selection = state.backgroundSelection;
@@ -139,7 +145,8 @@ export function createAssetsComponents(ctx) {
 
     function renderAssetGroupCard(group) {
         const expanded = state.assetExpandedGroups.includes(group.name);
-        const entries = getAssetEntries(group, expanded ? Infinity : 8);
+        const entries = getAssetEntries(group, expanded ? Infinity : 8)
+            .sort((a, b) => Number(getAssetId(b) === state.selected.asset) - Number(getAssetId(a) === state.selected.asset));
         const hiddenCount = Math.max(group.count - entries.length, 0);
 
         return `
@@ -357,6 +364,7 @@ export function createAssetsComponents(ctx) {
     function renderBackgroundCard(background) {
         const filename = getBackgroundFilename(background);
         const isSelected = state.backgroundSelection.filenames.includes(filename);
+        const isFocused = state.selected.background === filename;
         const isSelecting = state.backgroundSelection.active;
         const isAnimated = typeof background === 'object' && Boolean(background?.isAnimated);
         const isRenaming = state.backgroundRenaming.filename === filename;
@@ -364,7 +372,7 @@ export function createAssetsComponents(ctx) {
         const folderText = folders.length ? folders.map(folder => folder.name).join(', ') : '未归档';
 
         return `
-        <article class="resource-card background-card ${isSelected ? 'selected' : ''}">
+        <article class="resource-card background-card ${isSelected || isFocused ? 'selected' : ''}" data-background-card="${escapeHtml(filename)}">
             <img class="background-thumb" src="${getBackgroundUrl(filename)}" alt="" loading="lazy">
             <div class="card-head">
                 <div>
@@ -409,6 +417,8 @@ export function createAssetsComponents(ctx) {
     }
 
     function renderAssetEntryRow(entry) {
+        const assetId = getAssetId(entry);
+        const isSelected = state.selected.asset === assetId;
         const isDeleting = state.assetDeleteConfirm.category === entry.category && state.assetDeleteConfirm.filename === entry.filename;
         const isBusy = isDeleting && state.assetDeleteConfirm.running;
         const readOnlyReason = entry.filename?.includes('/')
@@ -416,7 +426,7 @@ export function createAssetsComponents(ctx) {
             : '当前分类不支持删除';
 
         return `
-        <div class="resource-row asset-row">
+        <div class="resource-row asset-row ${isSelected ? 'selected' : ''}" data-asset-row="${escapeHtml(assetId)}">
             <span class="avatar-fallback"><i class="fa-solid fa-file"></i></span>
             <span class="row-main">
                 <span class="row-title">${escapeHtml(entry.label || entry.filename)}</span>
@@ -442,6 +452,14 @@ export function createAssetsComponents(ctx) {
             ` : `<span class="card-meta asset-readonly">${escapeHtml(readOnlyReason)}</span>`}
         </div>
     `;
+    }
+
+    function getAssetId(entry) {
+        return `${entry.category}:${entry.path}`;
+    }
+
+    function getSelectedAssetCategory(assetId) {
+        return String(assetId || '').split(':')[0] || '';
     }
 
     return {

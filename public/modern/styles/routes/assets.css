@@ -17,6 +17,11 @@
     background: var(--accent-soft);
 }
 
+.asset-row.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+}
+
 .background-thumb {
     width: 100%;
     aspect-ratio: 16 / 9;

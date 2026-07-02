@@ -267,6 +267,8 @@ export function createModernState() {
             worldbook: '',
             persona: '',
             extension: '',
+            background: '',
+            asset: '',
         },
         theme: localStorage.getItem('st-modern-theme') || 'light',
     };

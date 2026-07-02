@@ -309,6 +309,55 @@ test.describe('Modern workspace', () => {
         await expect(selectedExtension).toContainText('global');
     });
 
+    test('opens specific assets from the command palette', async ({ page }) => {
+        await page.route('**/api/backgrounds/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                images: [
+                    { filename: 'castle.png', isAnimated: false },
+                    { filename: 'city.png', isAnimated: true },
+                    { filename: 'forest.webp', isAnimated: false },
+                ],
+            }),
+        }));
+        await page.route('**/api/assets/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                bgm: ['assets/bgm/theme.mp3'],
+                ambient: ['assets/ambient/rain.ogg'],
+            }),
+        }));
+        await page.addInitScript('window.localStorage.setItem("st-modern-asset-tab", "files");');
+
+        await page.goto('/modern/?view=dashboard');
+
+        await page.keyboard.press('Control+K');
+        await page.locator('#paletteSearch').fill('forest.webp');
+        await expect(page.locator('[data-command-route="assets"]', { hasText: 'forest.webp' })).toBeVisible();
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('素材库');
+        await expect(page.locator('.asset-tabs button.active')).toContainText('背景');
+        const selectedBackground = page.locator('.background-card.selected[data-background-card="forest.webp"]');
+        await expect(selectedBackground).toBeVisible();
+        await expect(selectedBackground).toContainText('forest.webp');
+
+        await page.keyboard.press('Control+K');
+        await page.locator('#paletteSearch').fill('theme.mp3');
+        await expect(page.locator('[data-command-route="assets"]', { hasText: 'theme.mp3' })).toBeVisible();
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('素材库');
+        await expect(page.locator('.asset-tabs button.active')).toContainText('文件资产');
+        const selectedAsset = page.locator('.asset-row.selected[data-asset-row="bgm:assets/bgm/theme.mp3"]');
+        await expect(selectedAsset).toBeVisible();
+        await expect(selectedAsset).toContainText('theme.mp3');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);

@@ -139,7 +139,12 @@ const assetActions = createAssetActions({
     formatNumber,
 });
 
-const { getAssetCount } = assetActions;
+const {
+    getAssetGroups,
+    getAssetCount,
+    getAssetEntries,
+    getBackgroundFilename,
+} = assetActions;
 
 const extensionActions = createExtensionActions({
     state,
@@ -358,6 +363,9 @@ const { renderInspector, toggleInspector } = createInspector({
 const { closePalette, openPalette, renderPalette } = createPalette({
     state,
     elements,
+    getAssetGroups,
+    getAssetEntries,
+    getBackgroundFilename,
     getExtensionFolderName,
     getChatId,
     getChatMessageCount,
@@ -443,6 +451,7 @@ const { handleClick } = createRouter({
     loadWorldDetail,
     prepareChatForSelectedContext,
     clearChatSearch,
+    getBackgroundFilename,
     beginCharacterCreate,
     beginGroupCreate,
     beginWorldbookCreate,

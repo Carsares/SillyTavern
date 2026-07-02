@@ -17,6 +17,7 @@ export function createRouter({
     toggleChatSidebar,
     closePalette,
     closeChatSidebarForMobileSelection,
+    getBackgroundFilename,
 }) {
     async function setRoute(routeId) {
         if (!routeLabels[routeId]) {
@@ -135,6 +136,27 @@ export function createRouter({
                 if (select === 'extension') {
                     state.extensionView = 'all';
                     localStorage.setItem('st-modern-extension-view', 'all');
+                }
+                if (select === 'background') {
+                    state.assetTab = 'backgrounds';
+                    state.backgroundFolderFilter = '';
+                    state.query = '';
+                    elements.search.value = '';
+                    localStorage.setItem('st-modern-asset-tab', 'backgrounds');
+                    const backgroundIndex = (state.backgrounds?.images || []).findIndex(background => getBackgroundFilename(background) === id);
+                    if (backgroundIndex >= 0) {
+                        state.backgroundVisibleCount = Math.max(state.backgroundVisibleCount, backgroundIndex + 1);
+                    }
+                }
+                if (select === 'asset') {
+                    state.assetTab = 'files';
+                    state.query = '';
+                    elements.search.value = '';
+                    localStorage.setItem('st-modern-asset-tab', 'files');
+                    const [category] = id.split(':');
+                    if (category && !state.assetExpandedGroups.includes(category)) {
+                        state.assetExpandedGroups = [...state.assetExpandedGroups, category];
+                    }
                 }
             }
             closePalette();
