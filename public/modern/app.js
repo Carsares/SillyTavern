@@ -669,6 +669,9 @@ async function loadData({ silent = false } = {}) {
     if (state.route === 'chat') {
         await prepareChatForSelectedContext();
     }
+    if (state.route === 'worldbooks') {
+        await loadWorldDetail(state.selected.worldbook);
+    }
 
     state.loaded = true;
     state.loading = false;
@@ -680,16 +683,18 @@ async function loadData({ silent = false } = {}) {
     }
 }
 
-async function loadWorldDetail(worldbookId) {
-    if (!worldbookId || state.worldDetails[worldbookId]) {
-        return;
+async function loadWorldDetail(worldbookId, { force = false } = {}) {
+    if (!worldbookId || (state.worldDetails[worldbookId] && !force)) {
+        return state.worldDetails[worldbookId] || null;
     }
 
     try {
         state.worldDetails[worldbookId] = await apiFetch('/api/worldinfo/get', { body: { name: worldbookId } });
+        return state.worldDetails[worldbookId];
     } catch (error) {
         state.errors.push({ key: 'worldbook', message: error.message });
         showToast('世界书读取失败', error.message);
+        return null;
     }
 }
 
@@ -3338,6 +3343,10 @@ async function setRoute(routeId) {
         await prepareChatForSelectedContext();
         render();
     }
+    if (routeId === 'worldbooks') {
+        await loadWorldDetail(state.selected.worldbook);
+        render();
+    }
 }
 
 function setTheme(theme) {
@@ -4437,8 +4446,8 @@ function renderWorldbookDetail(worldbook) {
                     ${globalEnabled ? '停用全局' : '启用全局'}
                 </button>
                 <button class="secondary-button" type="button" data-load-worldbook="${escapeHtml(worldbook.file_id)}">
-                    <i class="fa-solid fa-database"></i>
-                    读取条目
+                    <i class="fa-solid ${detail ? 'fa-rotate' : 'fa-database'}"></i>
+                    ${detail ? '刷新条目' : '读取条目'}
                 </button>
                 ${detail ? `
                     <button class="secondary-button" type="button" data-create-world-entry="${escapeHtml(worldbook.file_id)}">
@@ -4504,7 +4513,7 @@ function renderWorldbookDetail(worldbook) {
                     </tbody>
                 </table>
             </div>
-        ` : renderEmptyState('fa-database', '尚未读取条目', '点击“读取条目”查看这个世界书的 entries。')}
+        ` : renderEmptyState('fa-database', '正在读取条目', '如果长时间没有变化，可以点击“读取条目”重试。')}
     `;
 }
 
@@ -7259,6 +7268,7 @@ async function handleClick(event) {
     const worldbookButton = event.target.closest('[data-select-worldbook]');
     if (worldbookButton) {
         state.selected.worldbook = worldbookButton.dataset.selectWorldbook;
+        await loadWorldDetail(state.selected.worldbook);
         render();
         return;
     }
@@ -7286,7 +7296,7 @@ async function handleClick(event) {
 
     const loadWorldbookButton = event.target.closest('[data-load-worldbook]');
     if (loadWorldbookButton) {
-        await loadWorldDetail(loadWorldbookButton.dataset.loadWorldbook);
+        await loadWorldDetail(loadWorldbookButton.dataset.loadWorldbook, { force: true });
         render();
         return;
     }
