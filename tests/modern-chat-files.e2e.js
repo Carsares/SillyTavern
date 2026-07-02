@@ -243,6 +243,48 @@ async function mockLegacyGenerationBridge(page, fixture) {
 }
 
 test.describe('Modern chat files', () => {
+    test('edits and copies chat messages inside the modern workspace', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        const clipboardWrites = [];
+        await page.exposeFunction('recordModernClipboardWrite', value => {
+            clipboardWrites.push(value);
+        });
+        await page.addInitScript(`
+            Object.defineProperty(navigator, 'clipboard', {
+                configurable: true,
+                value: {
+                    writeText: async value => {
+                        window.recordModernClipboardWrite(value);
+                    },
+                },
+            });
+        `);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.chat-thread')).toContainText('hello');
+        await page.locator('[data-delete-message="0"]').click();
+        await expect(page.locator('.message-delete-panel')).toBeVisible();
+        await page.locator('[data-edit-message="0"]').click();
+        await expect(page.locator('[data-edit-message-input="0"]')).toHaveValue('hello');
+
+        await page.locator('[data-edit-message-input="0"]').fill('edited hello from modern');
+        await page.locator('[data-save-edit-message]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        const savedMessages = fixture.requests.saves[0].chat.filter(message => !message.chat_metadata);
+        expect(savedMessages).toEqual([
+            { name: 'Modern User', is_user: true, mes: 'edited hello from modern', send_date: expect.any(Number) },
+            { name: 'Mock Character', is_user: false, mes: 'reply', send_date: expect.any(Number) },
+        ]);
+        await expect(page.locator('[data-edit-message-input="0"]')).toHaveCount(0);
+        await expect(page.locator('.chat-thread')).toContainText('edited hello from modern');
+
+        await page.locator('[data-copy-message="0"]').click();
+        await expect.poll(() => clipboardWrites).toEqual(['edited hello from modern']);
+        await expect(page.locator('.toast-stack')).toContainText('消息已复制');
+    });
+
     test('sends a message through the modern generation bridge', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
         await mockLegacyGenerationBridge(page, fixture);
