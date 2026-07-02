@@ -195,6 +195,25 @@ function createRouteContext() {
         getCharacterAvatarUrl,
         getCharacterTags,
         characterToForm,
+        beginCharacterCreate,
+        cancelCharacterCreate,
+        saveCharacterCreate,
+        loadCharacterDetail,
+        beginCharacterEdit,
+        cancelCharacterEdit,
+        saveCharacterEdit,
+        duplicateCharacter,
+        getCharacterByAvatar,
+        beginCharacterRename,
+        cancelCharacterRename,
+        confirmCharacterRename,
+        exportCharacter,
+        beginCharacterDelete,
+        cancelCharacterDelete,
+        confirmCharacterDelete,
+        updateCharacterFormField,
+        replaceCharacterAvatar,
+        importCharacterFile,
         renderGroupRow,
         isGroupChatMode,
         getChatModeLabel,
@@ -218,11 +237,33 @@ function createRouteContext() {
         getPresetCount,
         getExtensionFolderName,
         canManageExtension,
-        getCharacterByAvatar,
         defaultGroupForm,
         groupToForm,
+        beginGroupCreate,
+        cancelGroupCreate,
+        saveGroupCreate,
+        beginGroupEdit,
+        cancelGroupEdit,
+        saveGroupEdit,
+        beginGroupDelete,
+        cancelGroupDelete,
+        confirmGroupDelete,
+        updateGroupFormField,
+        toggleGroupFormMember,
         getPersonaUrl,
         getPersonas,
+        beginPersonaCreate,
+        cancelPersonaCreate,
+        savePersonaCreate,
+        beginPersonaEdit,
+        setDefaultPersona,
+        beginPersonaDelete,
+        cancelPersonaDelete,
+        confirmPersonaDelete,
+        cancelPersonaEdit,
+        savePersonaEdit,
+        updatePersonaFormField,
+        replacePersonaAvatar,
         parsePreset,
         getVisiblePresetGroups,
         getSelectedPresetRecord,
@@ -4810,278 +4851,6 @@ async function handleClick(event) {
         return;
     }
 
-    if (event.target.closest('[data-create-character]')) {
-        beginCharacterCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-character-create]')) {
-        cancelCharacterCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-save-character-create]')) {
-        try {
-            await saveCharacterCreate();
-        } catch (error) {
-            state.errors.push({ key: 'character-create', message: error.message });
-            showToast('角色创建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const loadCharacterButton = event.target.closest('[data-load-character-detail]');
-    if (loadCharacterButton) {
-        await loadCharacterDetail(loadCharacterButton.dataset.loadCharacterDetail, { force: true });
-        render();
-        return;
-    }
-
-    const editCharacterButton = event.target.closest('[data-edit-character]');
-    if (editCharacterButton) {
-        await beginCharacterEdit(editCharacterButton.dataset.editCharacter);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-character-edit]')) {
-        cancelCharacterEdit();
-        return;
-    }
-
-    if (event.target.closest('[data-save-character-edit]')) {
-        try {
-            await saveCharacterEdit();
-        } catch (error) {
-            state.errors.push({ key: 'character-edit', message: error.message });
-            showToast('角色保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const duplicateCharacterButton = event.target.closest('[data-duplicate-character]');
-    if (duplicateCharacterButton) {
-        try {
-            await duplicateCharacter(duplicateCharacterButton.dataset.duplicateCharacter);
-        } catch (error) {
-            state.errors.push({ key: 'character-duplicate', message: error.message });
-            showToast('角色复制失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const renameCharacterButton = event.target.closest('[data-rename-character]');
-    if (renameCharacterButton) {
-        const character = getCharacterByAvatar(renameCharacterButton.dataset.renameCharacter);
-        if (character) {
-            beginCharacterRename(character);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-character-rename]')) {
-        cancelCharacterRename();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-character-rename]')) {
-        try {
-            await confirmCharacterRename();
-        } catch (error) {
-            state.errors.push({ key: 'character-rename', message: error.message });
-            showToast('角色重命名失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const exportCharacterButton = event.target.closest('[data-export-character]');
-    if (exportCharacterButton) {
-        try {
-            await exportCharacter(exportCharacterButton.dataset.exportCharacter, exportCharacterButton.dataset.characterExportFormat || 'png');
-        } catch (error) {
-            state.errors.push({ key: 'character-export', message: error.message });
-            showToast('角色导出失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deleteCharacterButton = event.target.closest('[data-delete-character]');
-    if (deleteCharacterButton) {
-        const character = getCharacterByAvatar(deleteCharacterButton.dataset.deleteCharacter);
-        if (character) {
-            beginCharacterDelete(character);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-character-delete]')) {
-        cancelCharacterDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-character-delete]')) {
-        try {
-            await confirmCharacterDelete();
-        } catch (error) {
-            state.errors.push({ key: 'character-delete', message: error.message });
-            showToast('角色删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-create-group]')) {
-        beginGroupCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-group-create]')) {
-        cancelGroupCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-save-group-create]')) {
-        try {
-            await saveGroupCreate();
-        } catch (error) {
-            state.errors.push({ key: 'group-create', message: error.message });
-            showToast('群组创建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const editGroupButton = event.target.closest('[data-edit-group]');
-    if (editGroupButton) {
-        beginGroupEdit(editGroupButton.dataset.editGroup);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-group-edit]')) {
-        cancelGroupEdit();
-        return;
-    }
-
-    if (event.target.closest('[data-save-group-edit]')) {
-        try {
-            await saveGroupEdit();
-        } catch (error) {
-            state.errors.push({ key: 'group-edit', message: error.message });
-            showToast('群组保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deleteGroupButton = event.target.closest('[data-delete-group]');
-    if (deleteGroupButton) {
-        const group = state.groups.find(item => item.id === deleteGroupButton.dataset.deleteGroup);
-        if (group) {
-            beginGroupDelete(group);
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-group-delete]')) {
-        cancelGroupDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-group-delete]')) {
-        try {
-            await confirmGroupDelete();
-        } catch (error) {
-            state.errors.push({ key: 'group-delete', message: error.message });
-            showToast('群组删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-create-persona]')) {
-        beginPersonaCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-persona-create]')) {
-        cancelPersonaCreate();
-        return;
-    }
-
-    if (event.target.closest('[data-save-persona-create]')) {
-        try {
-            await savePersonaCreate();
-        } catch (error) {
-            state.errors.push({ key: 'persona-create', message: error.message });
-            showToast('用户人设创建失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const editPersonaButton = event.target.closest('[data-edit-persona]');
-    if (editPersonaButton) {
-        const persona = getPersonas().find(item => item.avatarId === editPersonaButton.dataset.editPersona);
-        if (persona) {
-            beginPersonaEdit(persona);
-        }
-        return;
-    }
-
-    const defaultPersonaButton = event.target.closest('[data-set-default-persona]');
-    if (defaultPersonaButton) {
-        try {
-            await setDefaultPersona(defaultPersonaButton.dataset.setDefaultPersona);
-        } catch (error) {
-            state.errors.push({ key: 'persona-default', message: error.message });
-            showToast('默认人设保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    const deletePersonaButton = event.target.closest('[data-delete-persona]');
-    if (deletePersonaButton) {
-        beginPersonaDelete(deletePersonaButton.dataset.deletePersona);
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-persona-delete]')) {
-        cancelPersonaDelete();
-        return;
-    }
-
-    if (event.target.closest('[data-confirm-persona-delete]')) {
-        try {
-            await confirmPersonaDelete();
-        } catch (error) {
-            state.errors.push({ key: 'persona-delete', message: error.message });
-            showToast('用户人设删除失败', error.message);
-            render();
-        }
-        return;
-    }
-
-    if (event.target.closest('[data-cancel-persona-edit]')) {
-        cancelPersonaEdit();
-        return;
-    }
-
-    if (event.target.closest('[data-save-persona-edit]')) {
-        try {
-            await savePersonaEdit();
-        } catch (error) {
-            state.errors.push({ key: 'persona-edit', message: error.message });
-            showToast('用户人设保存失败', error.message);
-            render();
-        }
-        return;
-    }
-
     const routeClickHandler = routeModules[state.route]?.handleClick;
     if (routeClickHandler && await routeClickHandler(event) !== false) {
         return;
@@ -5527,9 +5296,6 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
         state.chatSearch.query = event.target.value;
     }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
-        state.characterRenaming.name = event.target.value;
-    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-openai-preset-name]')) {
         state.openAiPresetDraft.name = event.target.value;
     }
@@ -5544,15 +5310,6 @@ elements.content.addEventListener('input', event => {
     }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-extension-branch]')) {
         state.extensionDetails.branch = event.target.value;
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-persona-field]')) {
-        updatePersonaFormField(event.target);
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-character-field]')) {
-        updateCharacterFormField(event.target);
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-group-field]')) {
-        updateGroupFormField(event.target);
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
         state.worldbookCreating.name = event.target.value;
@@ -5576,47 +5333,6 @@ elements.content.addEventListener('change', async event => {
     if (event.target instanceof HTMLSelectElement && event.target.matches('[data-extension-branch]')) {
         state.extensionDetails.branch = event.target.value;
         render();
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-persona-create-file]')) {
-        state.personaCreating.file = event.target.files?.[0] || null;
-        render();
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-persona-avatar-file]')) {
-        try {
-            await replacePersonaAvatar(event.target.dataset.personaAvatarFile, event.target.files?.[0]);
-        } catch (error) {
-            state.errors.push({ key: 'persona-avatar', message: error.message });
-            showToast('头像替换失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-avatar-file]')) {
-        try {
-            await replaceCharacterAvatar(event.target.dataset.characterAvatarFile, event.target.files?.[0]);
-        } catch (error) {
-            state.errors.push({ key: 'character-avatar', message: error.message });
-            showToast('角色头像替换失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-import-file]')) {
-        try {
-            await importCharacterFile(event.target.files?.[0]);
-        } catch (error) {
-            state.errors.push({ key: 'character-import', message: error.message });
-            showToast('角色导入失败', error.message);
-            render();
-        } finally {
-            event.target.value = '';
-        }
         return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-import-file]')) {
@@ -5653,19 +5369,6 @@ elements.content.addEventListener('change', async event => {
         } finally {
             event.target.value = '';
         }
-        return;
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-delete-chats]')) {
-        state.characterDeleteConfirm.deleteChats = event.target.checked;
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-character-field]')) {
-        updateCharacterFormField(event.target);
-    }
-    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-group-field]')) {
-        updateGroupFormField(event.target);
-    }
-    if (event.target instanceof HTMLInputElement && event.target.matches('[data-group-member]')) {
-        toggleGroupFormMember(event.target.dataset.groupScope, event.target.dataset.groupMember, event.target.checked);
         return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-world-entry-select]')) {
