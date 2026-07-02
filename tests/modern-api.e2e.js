@@ -158,6 +158,128 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-textgen-model]')).toHaveValue('ooba/saved-model');
     });
 
+    test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
+        let savedSettings = null;
+        let writtenSecret = null;
+        let generateBody = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                oai_settings: {
+                    chat_completion_source: 'custom',
+                    custom_model: 'custom/saved-model',
+                    custom_url: 'https://saved.example/v1',
+                    reverse_proxy: 'https://proxy.saved/v1',
+                    preset_settings_openai: 'Chat Preset A',
+                    temp_openai: 0.7,
+                    openai_max_tokens: 300,
+                    top_p_openai: 0.9,
+                    freq_pen_openai: 0.1,
+                    pres_pen_openai: 0.2,
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: ['Chat Preset A', 'Chat Preset B'],
+            openai_settings: [
+                JSON.stringify({ name: 'Chat Preset A' }),
+                JSON.stringify({ name: 'Chat Preset B' }),
+            ],
+        };
+
+        await mockModernApiShell(page, settingsBundle, {
+            api_key_custom: [{ id: 'saved', value: '********tom', label: 'saved', active: true }],
+        });
+
+        await page.route('**/api/secrets/write', route => {
+            writtenSecret = route.request().postDataJSON();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.route('**/api/backends/chat-completions/generate', route => {
+            generateBody = route.request().postDataJSON();
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ choices: [{ message: { content: 'OK from custom' } }] }),
+            });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('[data-api-main]')).toHaveValue('openai');
+        await expect(page.locator('[data-api-source]')).toHaveValue('custom');
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/saved-model');
+        await expect(page.locator('[data-api-custom-url]')).toHaveValue('https://saved.example/v1');
+        await expect(page.locator('[data-api-reverse-proxy]')).toHaveValue('https://proxy.saved/v1');
+        await expect(page.locator('[data-api-secret-status]')).toHaveText('密钥已保存');
+        await expect(page.locator('body')).not.toContainText('sk-chat-secret');
+
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-api-custom-url]').fill('https://custom.example/v1');
+        await page.locator('[data-api-reverse-proxy]').fill('https://proxy.example/v1');
+        await page.locator('[data-api-preset]').selectOption('Chat Preset B');
+        await page.locator('[data-api-temperature]').fill('0.44');
+        await page.locator('[data-api-max-tokens]').fill('512');
+        await page.locator('[data-api-top-p]').fill('0.88');
+        await page.locator('[data-api-frequency-penalty]').fill('0.12');
+        await page.locator('[data-api-presence-penalty]').fill('0.34');
+        await page.locator('[data-api-key]').fill('sk-chat-secret');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => savedSettings?.oai_settings?.custom_model).toBe('custom/new-model');
+        expect(savedSettings.main_api).toBe('openai');
+        expect(savedSettings.chat_completion_source).toBe('custom');
+        expect(savedSettings.oai_settings).toMatchObject({
+            chat_completion_source: 'custom',
+            custom_model: 'custom/new-model',
+            custom_url: 'https://custom.example/v1',
+            reverse_proxy: 'https://proxy.example/v1',
+            preset_settings_openai: 'Chat Preset B',
+            temp_openai: 0.44,
+            openai_max_tokens: 512,
+            top_p_openai: 0.88,
+            freq_pen_openai: 0.12,
+            pres_pen_openai: 0.34,
+        });
+        expect(writtenSecret).toMatchObject({
+            key: 'api_key_custom',
+            value: 'sk-chat-secret',
+        });
+        await expect(page.locator('body')).not.toContainText('sk-chat-secret');
+
+        await page.locator('[data-test-api]').click();
+
+        await expect.poll(() => generateBody).toMatchObject({
+            chat_completion_source: 'custom',
+            model: 'custom/new-model',
+            custom_url: 'https://custom.example/v1',
+            reverse_proxy: 'https://proxy.example/v1',
+            temperature: 0.44,
+            max_tokens: 20,
+            top_p: 0.88,
+            frequency_penalty: 0.12,
+            presence_penalty: 0.34,
+            stream: false,
+        });
+        await expect(page.locator('.api-history-panel')).toContainText('custom/new-model');
+        await expect(page.locator('.api-history-panel')).toContainText('OK from custom');
+    });
+
     test('edits and tests text completion connection without exposing secrets', async ({ page }) => {
         let savedSettings = null;
         let writtenSecret = null;
