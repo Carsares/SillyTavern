@@ -64,3 +64,102 @@ export function normalizeText(value) {
 export function uniqueValues(values) {
     return [...new Set(values.filter(Boolean))];
 }
+
+export function downloadFile(content, fileName, contentType = 'application/octet-stream') {
+    const blob = content instanceof Blob ? content : new Blob([content], { type: contentType });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+}
+
+export function arrayToEntryInput(value) {
+    return Array.isArray(value) ? value.join(', ') : String(value || '');
+}
+
+export function entryInputToArray(value) {
+    return String(value || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+export function alternateGreetingsToInput(value) {
+    return Array.isArray(value) ? value.join('\n---\n') : '';
+}
+
+export function inputToAlternateGreetings(value) {
+    return String(value || '')
+        .split(/\n\s*---\s*\n/g)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+export function numberInput(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+export function setObjectPath(target, path, value) {
+    const parts = String(path || '').split('.').filter(Boolean);
+    if (!target || !parts.length) {
+        return;
+    }
+
+    let cursor = target;
+    for (const part of parts.slice(0, -1)) {
+        if (!cursor[part] || typeof cursor[part] !== 'object') {
+            cursor[part] = {};
+        }
+        cursor = cursor[part];
+    }
+    cursor[parts.at(-1)] = value;
+}
+
+export function parsePreset(rawPreset) {
+    if (!rawPreset) {
+        return null;
+    }
+    if (typeof rawPreset === 'string') {
+        try {
+            return JSON.parse(rawPreset);
+        } catch {
+            return null;
+        }
+    }
+    return structuredClone(rawPreset);
+}
+
+export function maskEndpoint(value) {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        const url = new URL(value);
+        return `${url.origin}${url.pathname.replace(/\/+$/, '') || '/'}`;
+    } catch {
+        return String(value).replace(/(key|token|secret)=([^&]+)/gi, '$1=***');
+    }
+}
+
+export function formatDurationMs(value) {
+    const ms = Number(value || 0);
+    if (!ms) {
+        return '0s';
+    }
+    if (ms < 1000) {
+        return `${formatNumber(ms)}ms`;
+    }
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 60) {
+        return `${formatNumber(seconds)}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return `${formatNumber(minutes)}m ${formatNumber(rest)}s`;
+}

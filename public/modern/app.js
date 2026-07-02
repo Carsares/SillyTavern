@@ -11,13 +11,23 @@ import {
 } from './core/constants.js';
 import { createApiClient } from './core/api-client.js';
 import {
+    alternateGreetingsToInput,
+    arrayToEntryInput,
+    downloadFile,
+    entryInputToArray,
     escapeHtml,
     formatBytes,
     formatDate,
+    formatDurationMs,
     formatNumber,
     getAvatarUrl,
     getPersonaUrl,
+    inputToAlternateGreetings,
+    maskEndpoint,
     normalizeText,
+    numberInput,
+    parsePreset,
+    setObjectPath,
     stripJsonlExtension,
     uniqueValues,
 } from './core/utils.js';
@@ -513,18 +523,6 @@ function getRouteCount(routeId) {
         default:
             return '';
     }
-}
-
-function downloadFile(content, fileName, contentType = 'application/octet-stream') {
-    const blob = content instanceof Blob ? content : new Blob([content], { type: contentType });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
 }
 
 async function loadData({ silent = false } = {}) {
@@ -2546,49 +2544,6 @@ function createWorldEntry(uid) {
     };
 }
 
-function arrayToEntryInput(value) {
-    return Array.isArray(value) ? value.join(', ') : String(value || '');
-}
-
-function entryInputToArray(value) {
-    return String(value || '')
-        .split(',')
-        .map(item => item.trim())
-        .filter(Boolean);
-}
-
-function alternateGreetingsToInput(value) {
-    return Array.isArray(value) ? value.join('\n---\n') : '';
-}
-
-function inputToAlternateGreetings(value) {
-    return String(value || '')
-        .split(/\n\s*---\s*\n/g)
-        .map(item => item.trim())
-        .filter(Boolean);
-}
-
-function numberInput(value, fallback) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
-}
-
-function setObjectPath(target, path, value) {
-    const parts = String(path || '').split('.').filter(Boolean);
-    if (!target || !parts.length) {
-        return;
-    }
-
-    let cursor = target;
-    for (const part of parts.slice(0, -1)) {
-        if (!cursor[part] || typeof cursor[part] !== 'object') {
-            cursor[part] = {};
-        }
-        cursor = cursor[part];
-    }
-    cursor[parts.at(-1)] = value;
-}
-
 function worldEntryToForm(entry) {
     return {
         key: arrayToEntryInput(entry?.key),
@@ -2916,20 +2871,6 @@ async function confirmWorldEntryDelete() {
     state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
     showToast('条目已删除', getWorldEntryTitle(entry, entryKey));
     render();
-}
-
-function parsePreset(rawPreset) {
-    if (!rawPreset) {
-        return null;
-    }
-    if (typeof rawPreset === 'string') {
-        try {
-            return JSON.parse(rawPreset);
-        } catch {
-            return null;
-        }
-    }
-    return structuredClone(rawPreset);
 }
 
 function applyOpenAiPresetFields(settings, preset) {
@@ -6072,19 +6013,6 @@ function getChatCompletionEndpoint(source, settings) {
     return settings.custom_url ? maskEndpoint(settings.custom_url) : '';
 }
 
-function maskEndpoint(value) {
-    if (!value) {
-        return '';
-    }
-
-    try {
-        const url = new URL(value);
-        return `${url.origin}${url.pathname.replace(/\/+$/, '') || '/'}`;
-    } catch {
-        return String(value).replace(/(key|token|secret)=([^&]+)/gi, '$1=***');
-    }
-}
-
 function getApiChecks(provider, profiles) {
     const secretKey = secretKeyByChatSource[provider.chatSource];
     const secretState = getSecretStateForSource(provider.chatSource);
@@ -6608,23 +6536,6 @@ function getActivitySummary(entries) {
         genTime: summary.genTime + entry.genTime,
         last: Math.max(summary.last, entry.last),
     }), { messages: 0, words: 0, size: 0, swipes: 0, genTime: 0, last: 0 });
-}
-
-function formatDurationMs(value) {
-    const ms = Number(value || 0);
-    if (!ms) {
-        return '0s';
-    }
-    if (ms < 1000) {
-        return `${formatNumber(ms)}ms`;
-    }
-    const seconds = Math.round(ms / 1000);
-    if (seconds < 60) {
-        return `${formatNumber(seconds)}s`;
-    }
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    return `${formatNumber(minutes)}m ${formatNumber(rest)}s`;
 }
 
 function renderActivityEntryRow(entry) {
