@@ -395,27 +395,15 @@ const groupActions = createGroupActions({
 
 const { beginGroupCreate } = groupActions;
 
-const {
-    getPersonas,
-    beginPersonaCreate,
-    cancelPersonaCreate,
-    savePersonaCreate,
-    beginPersonaEdit,
-    setDefaultPersona,
-    beginPersonaDelete,
-    cancelPersonaDelete,
-    confirmPersonaDelete,
-    cancelPersonaEdit,
-    savePersonaEdit,
-    updatePersonaFormField,
-    replacePersonaAvatar,
-} = createPersonaActions({
+const personaActions = createPersonaActions({
     state,
     apiFetch,
     loadData,
     render,
     showToast,
 });
+
+const { getPersonas } = personaActions;
 
 const commonComponents = createCommonComponents({
     state,
@@ -583,22 +571,7 @@ const routeContext = createRouteContext({
     },
     extensions: extensionActions,
     groups: groupActions,
-    personas: {
-        getPersonaUrl,
-        getPersonas,
-        beginPersonaCreate,
-        cancelPersonaCreate,
-        savePersonaCreate,
-        beginPersonaEdit,
-        setDefaultPersona,
-        beginPersonaDelete,
-        cancelPersonaDelete,
-        confirmPersonaDelete,
-        cancelPersonaEdit,
-        savePersonaEdit,
-        updatePersonaFormField,
-        replacePersonaAvatar,
-    },
+    personas: personaActions,
     presets: presetActions,
     settings: settingsActions,
     worldbooks: {
