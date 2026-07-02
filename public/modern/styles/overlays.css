@@ -68,14 +68,6 @@
     gap: 10px;
 }
 
-.character-meta-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 14px;
-}
-
-.character-meta-grid .kv-row,
 .connection-summary-list .kv-row {
     padding: 10px 12px;
     border: 1px solid var(--border);

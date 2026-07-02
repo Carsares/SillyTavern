@@ -361,15 +361,6 @@
     margin-left: auto;
 }
 
-.character-detail-hero {
-    flex-wrap: wrap;
-}
-
-.character-detail-hero .detail-actions {
-    justify-content: flex-end;
-    max-width: 100%;
-}
-
 .compact-hero {
     margin-bottom: 0;
 }
