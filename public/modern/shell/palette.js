@@ -58,6 +58,8 @@ export function createPalette({
             label: item.name,
             detail: group.label,
             route: 'presets',
+            presetApi: group.id,
+            presetName: item.name,
         })));
         const personaCommands = getPersonas().slice(0, 80).map(persona => ({
             type: '用户人设',
@@ -77,7 +79,7 @@ export function createPalette({
             .slice(0, 40);
 
         elements.paletteResults.innerHTML = commands.map(command => `
-            <button class="command-row" type="button" data-command-route="${escapeHtml(command.route)}" data-command-select="${escapeHtml(command.select || '')}" data-command-id="${escapeHtml(command.id || '')}" data-command-action="${escapeHtml(command.action || '')}">
+            <button class="command-row" type="button" data-command-route="${escapeHtml(command.route)}" data-command-select="${escapeHtml(command.select || '')}" data-command-id="${escapeHtml(command.id || '')}" data-command-action="${escapeHtml(command.action || '')}" data-command-preset-api="${escapeHtml(command.presetApi || '')}" data-command-preset-name="${escapeHtml(command.presetName || '')}">
                 <span class="avatar-fallback"><i class="fa-solid fa-arrow-right"></i></span>
                 <span class="row-main">
                     <span class="row-title">${escapeHtml(command.label)}</span>

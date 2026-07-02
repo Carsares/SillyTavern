@@ -12,6 +12,7 @@ export function createRouter({
     beginCharacterCreate,
     beginGroupCreate,
     beginWorldbookCreate,
+    selectPreset,
     toggleInspector,
     toggleChatSidebar,
     closePalette,
@@ -127,11 +128,16 @@ export function createRouter({
             const select = commandButton.dataset.commandSelect;
             const id = commandButton.dataset.commandId;
             const action = commandButton.dataset.commandAction;
+            const presetApi = commandButton.dataset.commandPresetApi;
+            const presetName = commandButton.dataset.commandPresetName;
             if (select && id) {
                 state.selected[select] = id;
             }
             closePalette();
             await setRoute(commandButton.dataset.commandRoute);
+            if (presetApi && presetName) {
+                selectPreset(presetApi, presetName);
+            }
             if (action) {
                 startCommandAction(action);
             }

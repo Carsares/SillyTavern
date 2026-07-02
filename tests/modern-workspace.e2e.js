@@ -209,6 +209,40 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.detail-title')).toHaveText('Atlas Fixture');
     });
 
+    test('opens a specific preset from the command palette', async ({ page }) => {
+        await page.route('**/api/settings/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                settings: JSON.stringify({
+                    main_api: 'openai',
+                    oai_settings: {
+                        preset_settings_openai: 'Atlas Preset',
+                    },
+                }),
+                openai_setting_names: ['Default', 'Atlas Preset'],
+                openai_settings: [
+                    JSON.stringify({ model: 'default-model' }),
+                    JSON.stringify({ model: 'atlas-model', temperature: 0.7 }),
+                ],
+                textgenerationwebui_preset_names: [],
+                textgenerationwebui_presets: [],
+            }),
+        }));
+
+        await page.goto('/modern/?view=dashboard');
+
+        await page.keyboard.press('Control+K');
+        await page.locator('#paletteSearch').fill('Atlas Preset');
+        await expect(page.locator('[data-command-preset-name="Atlas Preset"]')).toBeVisible();
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('预设管理');
+        await expect(page.locator('.detail-title')).toHaveText('Atlas Preset');
+        await expect(page.locator('[data-preset-json-input]')).toContainText('atlas-model');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);

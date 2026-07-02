@@ -126,6 +126,7 @@ const {
     getPresetGroups,
     getPresetCount,
     getPresetItems,
+    selectPreset,
 } = presetActions;
 
 const assetActions = createAssetActions({
@@ -442,6 +443,7 @@ const { handleClick } = createRouter({
     beginCharacterCreate,
     beginGroupCreate,
     beginWorldbookCreate,
+    selectPreset,
     toggleInspector,
     toggleChatSidebar,
     closePalette,
