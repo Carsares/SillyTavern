@@ -194,6 +194,13 @@ const state = {
         name: '',
         deleteChats: false,
     },
+    personaEditing: {
+        avatarId: '',
+        form: {},
+    },
+    backgroundDeleteConfirm: {
+        filename: '',
+    },
     openAiPresetDraft: {
         name: '',
     },
@@ -1408,6 +1415,117 @@ function updateCharacterFormField(element) {
         ? state.characterCreating.form
         : state.characterEditing.form;
     form[element.dataset.characterField] = element.value;
+}
+
+function getPowerUserSettingsForWrite() {
+    const source = state.settings.power_user || state.settings;
+    source.personas = source.personas || {};
+    source.persona_descriptions = source.persona_descriptions || {};
+    return source;
+}
+
+function beginPersonaEdit(persona) {
+    state.personaEditing = {
+        avatarId: persona.avatarId,
+        form: {
+            name: persona.name || '',
+            title: persona.title || '',
+            description: persona.description || '',
+        },
+    };
+    render();
+}
+
+function cancelPersonaEdit() {
+    state.personaEditing = { avatarId: '', form: {} };
+    render();
+}
+
+async function savePersonaEdit() {
+    const { avatarId, form } = state.personaEditing;
+    if (!avatarId) {
+        throw new Error('请选择要编辑的用户人设。');
+    }
+    if (!form.name?.trim()) {
+        throw new Error('人设名称不能为空。');
+    }
+
+    const powerUser = getPowerUserSettingsForWrite();
+    powerUser.personas[avatarId] = form.name.trim();
+    powerUser.persona_descriptions[avatarId] = {
+        ...(powerUser.persona_descriptions[avatarId] || {}),
+        title: form.title || '',
+        description: form.description || '',
+    };
+    await apiFetch('/api/settings/save', { body: state.settings });
+    state.personaEditing = { avatarId: '', form: {} };
+    await loadData({ silent: true });
+    showToast('用户人设已保存', form.name.trim());
+    render();
+}
+
+async function setDefaultPersona(avatarId) {
+    const powerUser = getPowerUserSettingsForWrite();
+    if (!powerUser.personas[avatarId]) {
+        throw new Error('用户人设不存在，请刷新后重试。');
+    }
+
+    powerUser.default_persona = avatarId;
+    await apiFetch('/api/settings/save', { body: state.settings });
+    await loadData({ silent: true });
+    showToast('默认人设已更新', powerUser.personas[avatarId]);
+    render();
+}
+
+function updatePersonaFormField(element) {
+    state.personaEditing.form[element.dataset.personaField] = element.value;
+}
+
+function getBackgroundUrl(filename) {
+    return `/backgrounds/${String(filename || '').split('/').map(part => encodeURIComponent(part)).join('/')}`;
+}
+
+async function uploadBackgroundFile(file) {
+    if (!file) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.set('avatar', file, file.name);
+    const filename = await apiFetch('/api/backgrounds/upload', { body: formData, omitContentType: true });
+    await loadData({ silent: true });
+    showToast('背景已上传', filename || file.name);
+    render();
+}
+
+function beginBackgroundDelete(filename) {
+    state.backgroundDeleteConfirm = { filename };
+    render();
+}
+
+function cancelBackgroundDelete() {
+    state.backgroundDeleteConfirm = { filename: '' };
+    render();
+}
+
+async function confirmBackgroundDelete() {
+    const { filename } = state.backgroundDeleteConfirm;
+    if (!filename) {
+        throw new Error('请选择要删除的背景。');
+    }
+
+    await apiFetch('/api/backgrounds/delete', { body: { bg: filename } });
+    state.backgroundDeleteConfirm = { filename: '' };
+    await loadData({ silent: true });
+    showToast('背景已删除', filename);
+    render();
+}
+
+async function recreateStats() {
+    await apiFetch('/api/stats/recreate');
+    await loadData({ silent: true });
+    showToast('统计已重建', '已重新扫描聊天文件。');
+    render();
 }
 
 function uniqueValues(values) {
@@ -3448,29 +3566,90 @@ function renderPersonas() {
                         </div>
                     </div>
                     <p class="detail-text">${escapeHtml(persona.description || '暂无描述')}</p>
+                    <div class="row-actions">
+                        <button class="secondary-button" type="button" data-edit-persona="${escapeHtml(persona.avatarId)}">
+                            <i class="fa-solid fa-pen"></i>
+                            编辑
+                        </button>
+                        <button class="secondary-button" type="button" data-set-default-persona="${escapeHtml(persona.avatarId)}" ${persona.default ? 'disabled' : ''}>
+                            <i class="fa-solid fa-user-check"></i>
+                            设为默认
+                        </button>
+                    </div>
+                    ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel(persona) : ''}
                 </article>
             `).join('') || renderEmptyState('fa-user-gear', '暂无用户人设', '当前目录没有用户人设。')}
         </div>
     `;
 }
 
+function renderPersonaEditPanel(persona) {
+    const form = state.personaEditing.form;
+
+    return `
+        <div class="settings-form">
+            <div class="form-grid">
+                <label class="field-label">
+                    <span>名称</span>
+                    <input class="text-input" type="text" data-persona-field="name" value="${escapeHtml(form.name || persona.name)}">
+                </label>
+                <label class="field-label">
+                    <span>标题</span>
+                    <input class="text-input" type="text" data-persona-field="title" value="${escapeHtml(form.title || '')}">
+                </label>
+                <label class="field-label">
+                    <span>描述</span>
+                    <textarea data-persona-field="description">${escapeHtml(form.description || '')}</textarea>
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-persona-edit>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" data-save-persona-edit>
+                    <i class="fa-solid fa-check"></i>
+                    保存
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 function renderAssets() {
     const groups = getAssetGroups().filter(group => matchesQuery(group.name));
-    const backgrounds = state.backgrounds?.images || [];
+    const allBackgrounds = state.backgrounds?.images || [];
+    const backgrounds = allBackgrounds.filter(background => matchesQuery(typeof background === 'string' ? background : background.filename));
 
     return `
         ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
+            <label class="secondary-button file-action">
+                <i class="fa-solid fa-upload"></i>
+                上传背景
+                <input class="visually-hidden" type="file" accept="image/*,.gif,.webp,.apng" data-background-upload-file>
+            </label>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-folder-open"></i>
                 打开素材
             </button>
         `)}
         <div class="metrics-grid">
-            ${metricCard('背景', formatNumber(backgrounds.length), '背景图片', 'fa-image')}
+            ${metricCard('背景', formatNumber(allBackgrounds.length), '背景图片', 'fa-image')}
             ${metricCard('资产文件', formatNumber(getAssetCount()), 'assets 目录', 'fa-folder-tree')}
             ${metricCard('素材分类', formatNumber(groups.length), '有效分类', 'fa-layer-group')}
-            ${metricCard('动画背景', formatNumber(backgrounds.filter(item => item.isAnimated).length), 'metadata 标记', 'fa-film')}
+            ${metricCard('动画背景', formatNumber(allBackgrounds.filter(item => item.isAnimated).length), 'metadata 标记', 'fa-film')}
         </div>
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">背景</h2>
+                    <p class="panel-subtitle">${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。</p>
+                </div>
+            </div>
+            <div class="background-grid">
+                ${backgrounds.slice(0, 24).map(background => renderBackgroundCard(background)).join('') || renderInlineEmpty('暂无背景')}
+            </div>
+        </section>
         <div class="grid-list">
             ${groups.map(group => `
                 <article class="resource-card">
@@ -3487,6 +3666,45 @@ function renderAssets() {
                 </article>
             `).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
         </div>
+    `;
+}
+
+function renderBackgroundCard(background) {
+    const filename = typeof background === 'string' ? background : background.filename;
+    const isDeleting = state.backgroundDeleteConfirm.filename === filename;
+
+    return `
+        <article class="resource-card background-card">
+            <img class="background-thumb" src="${getBackgroundUrl(filename)}" alt="" loading="lazy">
+            <div class="card-head">
+                <div>
+                    <h3 class="card-title">${escapeHtml(filename)}</h3>
+                    <div class="card-meta">${background.isAnimated ? '动画背景' : '静态背景'}</div>
+                </div>
+            </div>
+            <div class="row-actions">
+                <button class="secondary-button danger-action" type="button" data-delete-background="${escapeHtml(filename)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除
+                </button>
+            </div>
+            ${isDeleting ? `
+                <div class="settings-form danger-panel">
+                    <strong>删除背景</strong>
+                    <p class="panel-subtitle">${escapeHtml(filename)}</p>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-background-delete>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="secondary-button danger-action" type="button" data-confirm-background-delete>
+                            <i class="fa-solid fa-trash"></i>
+                            确认删除
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+        </article>
     `;
 }
 
@@ -3888,6 +4106,10 @@ function renderActivity() {
 
     return `
         ${pageHead('活动与统计', '统计缓存和使用记录。', `
+            <button class="secondary-button" type="button" data-recreate-stats>
+                <i class="fa-solid fa-chart-simple"></i>
+                重建统计
+            </button>
             <button class="secondary-button" type="button" data-refresh>
                 <i class="fa-solid fa-rotate"></i>
                 刷新
@@ -4431,6 +4653,76 @@ async function handleClick(event) {
         return;
     }
 
+    const editPersonaButton = event.target.closest('[data-edit-persona]');
+    if (editPersonaButton) {
+        const persona = getPersonas().find(item => item.avatarId === editPersonaButton.dataset.editPersona);
+        if (persona) {
+            beginPersonaEdit(persona);
+        }
+        return;
+    }
+
+    const defaultPersonaButton = event.target.closest('[data-set-default-persona]');
+    if (defaultPersonaButton) {
+        try {
+            await setDefaultPersona(defaultPersonaButton.dataset.setDefaultPersona);
+        } catch (error) {
+            state.errors.push({ key: 'persona-default', message: error.message });
+            showToast('默认人设保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-persona-edit]')) {
+        cancelPersonaEdit();
+        return;
+    }
+
+    if (event.target.closest('[data-save-persona-edit]')) {
+        try {
+            await savePersonaEdit();
+        } catch (error) {
+            state.errors.push({ key: 'persona-edit', message: error.message });
+            showToast('用户人设保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteBackgroundButton = event.target.closest('[data-delete-background]');
+    if (deleteBackgroundButton) {
+        beginBackgroundDelete(deleteBackgroundButton.dataset.deleteBackground);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-background-delete]')) {
+        cancelBackgroundDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-background-delete]')) {
+        try {
+            await confirmBackgroundDelete();
+        } catch (error) {
+            state.errors.push({ key: 'background-delete', message: error.message });
+            showToast('背景删除失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-recreate-stats]')) {
+        try {
+            await recreateStats();
+        } catch (error) {
+            state.errors.push({ key: 'stats-recreate', message: error.message });
+            showToast('统计重建失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-test-api]')) {
         try {
             await testApiConnection();
@@ -4664,6 +4956,9 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-openai-preset-name]')) {
         state.openAiPresetDraft.name = event.target.value;
     }
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-persona-field]')) {
+        updatePersonaFormField(event.target);
+    }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-character-field]')) {
         updateCharacterFormField(event.target);
     }
@@ -4681,6 +4976,18 @@ elements.content.addEventListener('change', async event => {
         } catch (error) {
             state.errors.push({ key: 'character-import', message: error.message });
             showToast('角色导入失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-upload-file]')) {
+        try {
+            await uploadBackgroundFile(event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'background-upload', message: error.message });
+            showToast('背景上传失败', error.message);
             render();
         } finally {
             event.target.value = '';

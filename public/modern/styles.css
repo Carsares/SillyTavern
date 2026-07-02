@@ -566,6 +566,7 @@ kbd {
 }
 
 .character-form textarea,
+.settings-form textarea,
 .world-entry-form textarea {
     min-height: 140px;
     resize: vertical;
@@ -794,6 +795,24 @@ tr:last-child td {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
     gap: 12px;
+}
+
+.background-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.background-card {
+    align-content: start;
+}
+
+.background-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius);
+    background: var(--surface-muted);
 }
 
 .action-grid {
