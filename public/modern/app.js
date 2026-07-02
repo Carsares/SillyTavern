@@ -181,6 +181,7 @@ const state = {
         filename: '',
         running: false,
     },
+    assetExpandedGroups: [],
     assetDeleteConfirm: {
         category: '',
         filename: '',
@@ -480,7 +481,7 @@ function canDeleteAsset(category, assetPath) {
     return ['bgm', 'ambient', 'blip'].includes(category) && relativeName && !relativeName.includes('/');
 }
 
-function getAssetEntries(group, limit = 8) {
+function getAssetEntries(group, limit = Infinity) {
     const entries = [];
     if (Array.isArray(group.detail)) {
         group.detail.forEach(assetPath => {
@@ -509,7 +510,7 @@ function getAssetEntries(group, limit = 8) {
         });
     }
 
-    return entries.slice(0, limit);
+    return Number.isFinite(limit) ? entries.slice(0, limit) : entries;
 }
 
 function getProviderInfo() {
@@ -2511,6 +2512,17 @@ function toggleAssetDownload(active = !state.assetDownload.active) {
         filename: active ? state.assetDownload.filename : '',
         running: false,
     };
+    render();
+}
+
+function toggleAssetGroup(name) {
+    const groups = new Set(state.assetExpandedGroups);
+    if (groups.has(name)) {
+        groups.delete(name);
+    } else {
+        groups.add(name);
+    }
+    state.assetExpandedGroups = [...groups];
     render();
 }
 
@@ -5919,22 +5931,35 @@ function renderAssets() {
             ` : ''}
         </section>
         <div class="grid-list">
-            ${groups.map(group => `
-                <article class="resource-card">
-                    <div class="card-head">
-                        <div>
-                            <h2 class="card-title">${escapeHtml(group.name)}</h2>
-                            <div class="card-meta">${formatNumber(group.count)} 个文件</div>
-                        </div>
-                        <span class="badge">${formatNumber(group.count)}</span>
-                    </div>
-                    <div class="resource-list compact-list">
-                        ${getAssetEntries(group).map(entry => renderAssetEntryRow(entry)).join('') || renderInlineEmpty('空分类')}
-                    </div>
-                    ${group.count > 8 ? '<p class="panel-subtitle">仅显示前 8 个文件，可用搜索缩小范围。</p>' : ''}
-                </article>
-            `).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
+            ${groups.map(group => renderAssetGroupCard(group)).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
         </div>
+    `;
+}
+
+function renderAssetGroupCard(group) {
+    const expanded = state.assetExpandedGroups.includes(group.name);
+    const entries = getAssetEntries(group, expanded ? Infinity : 8);
+    const hiddenCount = Math.max(group.count - entries.length, 0);
+
+    return `
+        <article class="resource-card">
+            <div class="card-head">
+                <div>
+                    <h2 class="card-title">${escapeHtml(group.name)}</h2>
+                    <div class="card-meta">${formatNumber(group.count)} 个文件</div>
+                </div>
+                <span class="badge">${formatNumber(group.count)}</span>
+            </div>
+            <div class="resource-list compact-list">
+                ${entries.map(entry => renderAssetEntryRow(entry)).join('') || renderInlineEmpty('空分类')}
+            </div>
+            ${group.count > 8 ? `
+                <button class="secondary-button load-more-button" type="button" data-toggle-asset-group="${escapeHtml(group.name)}">
+                    <i class="fa-solid ${expanded ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
+                    ${expanded ? '收起资产' : `展开全部 ${formatNumber(hiddenCount)}`}
+                </button>
+            ` : ''}
+        </article>
     `;
 }
 
@@ -8381,6 +8406,12 @@ async function handleClick(event) {
             state.assetDownload.running = false;
             render();
         }
+        return;
+    }
+
+    const toggleAssetGroupButton = event.target.closest('[data-toggle-asset-group]');
+    if (toggleAssetGroupButton) {
+        toggleAssetGroup(toggleAssetGroupButton.dataset.toggleAssetGroup);
         return;
     }
 

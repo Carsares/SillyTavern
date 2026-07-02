@@ -103,4 +103,24 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.background-card')).toHaveCount(30);
         await expect(page.locator('[data-load-more-backgrounds]')).toHaveCount(0);
     });
+
+    test('expands asset groups beyond the default preview size', async ({ page }) => {
+        const tracks = Array.from({ length: 12 }, (_, index) => `assets/bgm/mock-track-${index + 1}.mp3`);
+        await page.route('**/api/assets/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ bgm: tracks }),
+        }));
+
+        await page.goto('/modern/?view=assets');
+
+        await expect(page.locator('.page-title')).toHaveText('素材库');
+        await expect(page.locator('.asset-row')).toHaveCount(8);
+        await expect(page.locator('[data-toggle-asset-group="bgm"]')).toBeVisible();
+
+        await page.locator('[data-toggle-asset-group="bgm"]').click();
+
+        await expect(page.locator('.asset-row')).toHaveCount(12);
+        await expect(page.locator('[data-toggle-asset-group="bgm"]')).toContainText('收起资产');
+    });
 });
