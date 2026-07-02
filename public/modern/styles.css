@@ -357,6 +357,21 @@ kbd {
     color: var(--danger);
 }
 
+.file-action {
+    position: relative;
+    overflow: hidden;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
 .mobile-menu {
     display: none;
 }
@@ -545,6 +560,12 @@ kbd {
     background: var(--surface-muted);
 }
 
+.character-form {
+    display: grid;
+    gap: 12px;
+}
+
+.character-form textarea,
 .world-entry-form textarea {
     min-height: 140px;
     resize: vertical;
@@ -554,6 +575,10 @@ kbd {
     background: var(--surface);
     color: var(--text);
     font: inherit;
+}
+
+.compact-checkbox {
+    width: fit-content;
 }
 
 .checkbox-grid {
@@ -684,6 +709,15 @@ kbd {
 
 .detail-actions {
     margin-left: auto;
+}
+
+.character-detail-hero {
+    flex-wrap: wrap;
+}
+
+.character-detail-hero .detail-actions {
+    justify-content: flex-end;
+    max-width: 100%;
 }
 
 .compact-hero {

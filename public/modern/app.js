@@ -42,6 +42,21 @@ const chatCompletionModelFields = {
     workers_ai: 'workers_ai_model',
     minimax: 'minimax_model',
 };
+const characterFormDefaults = {
+    name: '',
+    description: '',
+    personality: '',
+    scenario: '',
+    first_mes: '',
+    mes_example: '',
+    creator_notes: '',
+    system_prompt: '',
+    post_history_instructions: '',
+    creator: '',
+    character_version: '',
+    tags: '',
+    world: '',
+};
 const worldEntryDefaults = {
     key: [],
     keysecondary: [],
@@ -88,6 +103,7 @@ const state = {
     characters: [],
     groups: [],
     worldbooks: [],
+    characterDetails: {},
     worldDetails: {},
     backgrounds: [],
     assets: {},
@@ -111,6 +127,23 @@ const state = {
     chatDeleteConfirm: {
         key: '',
         name: '',
+    },
+    characterCreating: {
+        active: false,
+        form: { ...characterFormDefaults },
+    },
+    characterEditing: {
+        avatar: '',
+        form: {},
+    },
+    characterRenaming: {
+        avatar: '',
+        name: '',
+    },
+    characterDeleteConfirm: {
+        avatar: '',
+        name: '',
+        deleteChats: false,
     },
     worldbookCreating: {
         active: false,
@@ -420,6 +453,44 @@ async function apiFetch(path, options = {}, retry = true) {
     }
 }
 
+async function apiFetchResponse(path, options = {}, retry = true) {
+    const method = options.method || 'POST';
+    const token = await ensureCsrfToken();
+    const headers = {
+        'X-CSRF-Token': token,
+    };
+
+    if (options.body !== undefined && !options.omitContentType) {
+        headers['Content-Type'] = 'application/json';
+    }
+
+    const request = {
+        method,
+        headers,
+        credentials: 'same-origin',
+        signal: options.signal,
+    };
+
+    if (options.body !== undefined) {
+        request.body = options.omitContentType ? options.body : JSON.stringify(options.body);
+    }
+
+    const response = await fetch(path, request);
+    if (response.status === 403 && retry) {
+        state.csrfToken = '';
+        state.csrfTokenRequest = null;
+        return apiFetchResponse(path, options, false);
+    }
+    if (response.status === 403) {
+        throw new Error('当前会话没有访问权限，请先登录。');
+    }
+    if (!response.ok) {
+        throw new Error(`${path} failed: ${response.status}`);
+    }
+
+    return response;
+}
+
 async function loadData({ silent = false } = {}) {
     state.loading = true;
     state.errors = [];
@@ -497,8 +568,27 @@ async function loadWorldDetail(worldbookId) {
     }
 }
 
+async function loadCharacterDetail(avatar, { force = false } = {}) {
+    if (!avatar || (state.characterDetails[avatar] && !force)) {
+        return state.characterDetails[avatar] || null;
+    }
+
+    try {
+        state.characterDetails[avatar] = await apiFetch('/api/characters/get', { body: { avatar_url: avatar } });
+        return state.characterDetails[avatar];
+    } catch (error) {
+        state.errors.push({ key: 'character', message: error.message });
+        showToast('角色卡读取失败', error.message);
+        return null;
+    }
+}
+
 function getSelectedCharacter() {
     return state.characters.find(character => character.avatar === state.selected.character) || state.characters[0] || null;
+}
+
+function getCharacterByAvatar(avatar) {
+    return state.characters.find(character => character.avatar === avatar) || state.characterDetails[avatar] || null;
 }
 
 function getSelectedChatList() {
@@ -870,6 +960,318 @@ async function saveApiConnectionFromForm() {
     await apiFetch('/api/settings/save', { body: state.settings });
     await loadData({ silent: true });
     showToast('连接配置已保存', `${source} / ${model}`);
+}
+
+function defaultCharacterForm() {
+    return { ...characterFormDefaults };
+}
+
+function getCharacterData(character) {
+    return character?.data || {};
+}
+
+function getCharacterTags(character) {
+    const dataTags = getCharacterData(character).tags;
+    return Array.isArray(dataTags) ? dataTags : Array.isArray(character?.tags) ? character.tags : [];
+}
+
+function characterToForm(character) {
+    const data = getCharacterData(character);
+    const extensions = data.extensions || {};
+
+    return {
+        ...defaultCharacterForm(),
+        name: data.name || character?.name || '',
+        description: data.description || character?.description || '',
+        personality: data.personality || character?.personality || '',
+        scenario: data.scenario || character?.scenario || '',
+        first_mes: data.first_mes || character?.first_mes || '',
+        mes_example: data.mes_example || character?.mes_example || '',
+        creator_notes: data.creator_notes || character?.creatorcomment || '',
+        system_prompt: data.system_prompt || '',
+        post_history_instructions: data.post_history_instructions || '',
+        creator: data.creator || '',
+        character_version: data.character_version || '',
+        tags: arrayToEntryInput(getCharacterTags(character)),
+        world: extensions.world || '',
+    };
+}
+
+function characterCreatePayload(form) {
+    return {
+        ch_name: form.name.trim(),
+        description: form.description,
+        personality: form.personality,
+        scenario: form.scenario,
+        first_mes: form.first_mes,
+        mes_example: form.mes_example,
+        creator_notes: form.creator_notes,
+        system_prompt: form.system_prompt,
+        post_history_instructions: form.post_history_instructions,
+        tags: entryInputToArray(form.tags),
+        creator: form.creator,
+        character_version: form.character_version,
+        world: form.world,
+    };
+}
+
+function characterMergePayload(avatar, form) {
+    const tags = entryInputToArray(form.tags);
+
+    return {
+        avatar,
+        name: form.name.trim(),
+        description: form.description,
+        personality: form.personality,
+        scenario: form.scenario,
+        first_mes: form.first_mes,
+        mes_example: form.mes_example,
+        creatorcomment: form.creator_notes,
+        tags,
+        data: {
+            name: form.name.trim(),
+            description: form.description,
+            personality: form.personality,
+            scenario: form.scenario,
+            first_mes: form.first_mes,
+            mes_example: form.mes_example,
+            creator_notes: form.creator_notes,
+            system_prompt: form.system_prompt,
+            post_history_instructions: form.post_history_instructions,
+            tags,
+            creator: form.creator,
+            character_version: form.character_version,
+            extensions: {
+                world: form.world,
+            },
+        },
+    };
+}
+
+function clearCharacterCache(avatar) {
+    if (!avatar) {
+        return;
+    }
+
+    delete state.characterDetails[avatar];
+    delete state.chatLists[avatar];
+    Object.keys(state.chatMessages).forEach(key => {
+        if (key.startsWith(`${avatar}::`)) {
+            delete state.chatMessages[key];
+        }
+    });
+    Object.keys(state.chatMetadata).forEach(key => {
+        if (key.startsWith(`${avatar}::`)) {
+            delete state.chatMetadata[key];
+        }
+    });
+}
+
+function beginCharacterCreate() {
+    state.characterCreating = { active: true, form: defaultCharacterForm() };
+    state.characterEditing = { avatar: '', form: {} };
+    render();
+}
+
+function cancelCharacterCreate() {
+    state.characterCreating = { active: false, form: defaultCharacterForm() };
+    render();
+}
+
+async function saveCharacterCreate() {
+    const form = state.characterCreating.form;
+    const payload = characterCreatePayload(form);
+    if (!payload.ch_name) {
+        throw new Error('角色名称不能为空。');
+    }
+
+    const avatar = await apiFetch('/api/characters/create', { body: payload });
+    state.characterCreating = { active: false, form: defaultCharacterForm() };
+    state.selected.character = avatar;
+    state.selected.chat = '';
+    await loadData({ silent: true });
+    await loadCharacterDetail(avatar, { force: true });
+    showToast('角色已创建', avatar);
+    render();
+}
+
+async function beginCharacterEdit(avatar) {
+    const character = await loadCharacterDetail(avatar);
+    if (!character) {
+        return;
+    }
+
+    state.characterEditing = { avatar, form: characterToForm(character) };
+    state.characterCreating = { active: false, form: defaultCharacterForm() };
+    state.characterRenaming = { avatar: '', name: '' };
+    state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
+    render();
+}
+
+function cancelCharacterEdit() {
+    state.characterEditing = { avatar: '', form: {} };
+    render();
+}
+
+async function saveCharacterEdit() {
+    const { avatar, form } = state.characterEditing;
+    if (!avatar || state.selected.character !== avatar) {
+        throw new Error('编辑目标已变化，请重新选择角色。');
+    }
+    if (!form.name?.trim()) {
+        throw new Error('角色名称不能为空。');
+    }
+
+    await apiFetch('/api/characters/merge-attributes', { body: characterMergePayload(avatar, form) });
+    state.characterEditing = { avatar: '', form: {} };
+    clearCharacterCache(avatar);
+    await loadData({ silent: true });
+    await loadCharacterDetail(avatar, { force: true });
+    showToast('角色卡已保存', form.name.trim());
+    render();
+}
+
+function beginCharacterRename(character) {
+    state.characterRenaming = {
+        avatar: character.avatar,
+        name: character.name || character.data?.name || '',
+    };
+    state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
+    render();
+}
+
+function cancelCharacterRename() {
+    state.characterRenaming = { avatar: '', name: '' };
+    render();
+}
+
+async function confirmCharacterRename() {
+    const { avatar, name } = state.characterRenaming;
+    const nextName = name.trim();
+    if (!avatar || state.selected.character !== avatar) {
+        throw new Error('重命名目标已变化，请重新选择角色。');
+    }
+    if (!nextName) {
+        throw new Error('新名称不能为空。');
+    }
+
+    const result = await apiFetch('/api/characters/rename', { body: { avatar_url: avatar, new_name: nextName } });
+    const nextAvatar = result?.avatar || avatar;
+    clearCharacterCache(avatar);
+    state.characterRenaming = { avatar: '', name: '' };
+    state.characterEditing = { avatar: '', form: {} };
+    state.selected.character = nextAvatar;
+    state.selected.chat = '';
+    await loadData({ silent: true });
+    await loadCharacterDetail(nextAvatar, { force: true });
+    showToast('角色已重命名', nextAvatar);
+    render();
+}
+
+async function duplicateCharacter(avatar) {
+    if (!avatar) {
+        return;
+    }
+
+    const result = await apiFetch('/api/characters/duplicate', { body: { avatar_url: avatar } });
+    const nextAvatar = result?.path || result?.avatar || '';
+    if (nextAvatar) {
+        state.selected.character = nextAvatar;
+        state.selected.chat = '';
+    }
+    await loadData({ silent: true });
+    if (nextAvatar) {
+        await loadCharacterDetail(nextAvatar, { force: true });
+    }
+    showToast('角色已复制', nextAvatar || avatar);
+    render();
+}
+
+function beginCharacterDelete(character) {
+    state.characterDeleteConfirm = {
+        avatar: character.avatar,
+        name: character.name || character.data?.name || character.avatar,
+        deleteChats: false,
+    };
+    state.characterRenaming = { avatar: '', name: '' };
+    render();
+}
+
+function cancelCharacterDelete() {
+    state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
+    render();
+}
+
+async function confirmCharacterDelete() {
+    const { avatar, deleteChats } = state.characterDeleteConfirm;
+    if (!avatar || state.selected.character !== avatar) {
+        throw new Error('删除目标已变化，请重新选择角色。');
+    }
+
+    await apiFetch('/api/characters/delete', { body: { avatar_url: avatar, delete_chats: deleteChats } });
+    clearCharacterCache(avatar);
+    state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
+    state.characterEditing = { avatar: '', form: {} };
+    state.selected.character = '';
+    state.selected.chat = '';
+    await loadData({ silent: true });
+    showToast('角色已删除', avatar);
+    render();
+}
+
+async function exportCharacter(avatar, format) {
+    const response = await apiFetchResponse('/api/characters/export', { body: { avatar_url: avatar, format } });
+    const blob = await response.blob();
+    const link = document.createElement('a');
+    const objectUrl = URL.createObjectURL(blob);
+    const baseName = String(avatar || 'character').replace(/\.png$/i, '');
+    link.href = objectUrl;
+    link.download = `${baseName}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    showToast('导出已开始', link.download);
+}
+
+async function importCharacterFile(file) {
+    if (!file) {
+        return;
+    }
+
+    const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    const supportedFormats = ['png', 'json', 'yaml', 'yml', 'charx', 'byaf'];
+    if (!supportedFormats.includes(extension)) {
+        throw new Error('仅支持 png/json/yaml/yml/charx/byaf 角色卡文件。');
+    }
+
+    const formData = new FormData();
+    formData.set('avatar', file, file.name);
+    formData.set('file_type', extension);
+    formData.set('preserved_name', file.name);
+    const result = await apiFetch('/api/characters/import', { body: formData, omitContentType: true });
+    if (result?.error) {
+        throw new Error('角色卡导入失败。');
+    }
+
+    const avatar = result?.file_name || '';
+    if (avatar) {
+        state.selected.character = avatar;
+        state.selected.chat = '';
+    }
+    await loadData({ silent: true });
+    if (avatar) {
+        await loadCharacterDetail(avatar, { force: true });
+    }
+    showToast('角色已导入', avatar || file.name);
+    render();
+}
+
+function updateCharacterFormField(element) {
+    const form = element.dataset.characterScope === 'create'
+        ? state.characterCreating.form
+        : state.characterEditing.form;
+    form[element.dataset.characterField] = element.value;
 }
 
 function uniqueValues(values) {
@@ -2250,9 +2652,18 @@ function renderCharacters() {
 
     return `
         ${pageHead('角色库', '角色卡、来源、世界书和聊天占用。', `
-            <button class="secondary-button" type="button" data-open-legacy>
+            <button class="primary-button" type="button" data-create-character>
+                <i class="fa-solid fa-plus"></i>
+                新建角色
+            </button>
+            <label class="secondary-button file-action">
                 <i class="fa-solid fa-upload"></i>
-                导入/编辑
+                导入文件
+                <input class="visually-hidden" type="file" accept=".png,.json,.yaml,.yml,.charx,.byaf" data-character-import-file>
+            </label>
+            <button class="secondary-button" type="button" data-open-legacy>
+                <i class="fa-solid fa-pen-to-square"></i>
+                打开原版编辑
             </button>
         `)}
         <div class="split-grid">
@@ -2263,6 +2674,7 @@ function renderCharacters() {
                         <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
                     </div>
                 </div>
+                ${state.characterCreating.active ? renderCharacterCreatePanel() : ''}
                 <div class="resource-list">
                     ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
                 </div>
@@ -2275,34 +2687,208 @@ function renderCharacters() {
 }
 
 function renderCharacterDetail(character) {
-    const avatar = getAvatarUrl(character);
-    const name = character.name || character.data?.name || '未命名角色';
-    const tags = character.tags || character.data?.tags || [];
+    const detail = state.characterDetails[character.avatar] || character;
+    const avatar = getAvatarUrl(detail);
+    const name = detail.name || detail.data?.name || '未命名角色';
+    const tags = getCharacterTags(detail);
+    const isEditing = state.characterEditing.avatar === character.avatar;
+    const isRenaming = state.characterRenaming.avatar === character.avatar;
+    const isDeleting = state.characterDeleteConfirm.avatar === character.avatar;
 
     return `
-        <div class="detail-hero">
+        <div class="detail-hero character-detail-hero">
             ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : '<span class="avatar-fallback large">C</span>'}
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
-                <p class="panel-subtitle">${escapeHtml(character.avatar || '角色卡')}</p>
+                <p class="panel-subtitle">${escapeHtml(detail.avatar || character.avatar || '角色卡')}</p>
                 <div class="tag-row detail-tags">
                     ${tags.slice(0, 8).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('') || '<span class="tag">未打标签</span>'}
                 </div>
             </div>
+            <div class="detail-actions page-actions">
+                <button class="secondary-button" type="button" data-load-character-detail="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-database"></i>
+                    读取完整卡
+                </button>
+                <button class="secondary-button" type="button" data-edit-character="${escapeHtml(character.avatar)}" ${isEditing ? 'disabled' : ''}>
+                    <i class="fa-solid fa-pen"></i>
+                    编辑
+                </button>
+                <button class="secondary-button" type="button" data-duplicate-character="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-copy"></i>
+                    复制
+                </button>
+                <button class="secondary-button" type="button" data-rename-character="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-i-cursor"></i>
+                    重命名
+                </button>
+                <button class="secondary-button" type="button" data-export-character="${escapeHtml(character.avatar)}" data-character-export-format="png">
+                    <i class="fa-solid fa-image"></i>
+                    PNG
+                </button>
+                <button class="secondary-button" type="button" data-export-character="${escapeHtml(character.avatar)}" data-character-export-format="json">
+                    <i class="fa-solid fa-file-code"></i>
+                    JSON
+                </button>
+                <button class="secondary-button danger-action" type="button" data-delete-character="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除
+                </button>
+            </div>
         </div>
+        ${isRenaming ? renderCharacterRenamePanel(detail) : ''}
+        ${isDeleting ? renderCharacterDeletePanel(detail) : ''}
+        ${isEditing ? renderCharacterEditPanel(detail) : ''}
         <div class="table-wrap">
             <table>
                 <tbody>
-                    <tr><th>创建时间</th><td>${escapeHtml(formatDate(character.create_date || character.date_added))}</td></tr>
-                    <tr><th>最近聊天</th><td>${escapeHtml(formatDate(character.date_last_chat))}</td></tr>
-                    <tr><th>聊天占用</th><td>${escapeHtml(formatBytes(character.chat_size))}</td></tr>
-                    <tr><th>卡片大小</th><td>${escapeHtml(formatBytes(character.data_size))}</td></tr>
-                    <tr><th>作者</th><td>${escapeHtml(character.data?.creator || '未知')}</td></tr>
-                    <tr><th>关联世界书</th><td>${escapeHtml(character.data?.extensions?.world || '未关联')}</td></tr>
+                    <tr><th>创建时间</th><td>${escapeHtml(formatDate(detail.create_date || detail.date_added))}</td></tr>
+                    <tr><th>最近聊天</th><td>${escapeHtml(formatDate(detail.date_last_chat))}</td></tr>
+                    <tr><th>聊天占用</th><td>${escapeHtml(formatBytes(detail.chat_size))}</td></tr>
+                    <tr><th>卡片大小</th><td>${escapeHtml(formatBytes(detail.data_size))}</td></tr>
+                    <tr><th>作者</th><td>${escapeHtml(detail.data?.creator || '未知')}</td></tr>
+                    <tr><th>关联世界书</th><td>${escapeHtml(detail.data?.extensions?.world || '未关联')}</td></tr>
                 </tbody>
             </table>
         </div>
-        <p class="detail-text">${escapeHtml(character.description || character.data?.creator_notes || '当前列表接口未返回完整角色描述。')}</p>
+        <p class="detail-text">${escapeHtml(detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。')}</p>
+    `;
+}
+
+function renderCharacterCreatePanel() {
+    return `
+        <div class="settings-form inline-form">
+            <strong>新建角色</strong>
+            ${renderCharacterFormContent(state.characterCreating.form, 'create', true)}
+        </div>
+    `;
+}
+
+function renderCharacterEditPanel(character) {
+    return `
+        <div class="settings-form inline-form">
+            <strong>编辑角色卡</strong>
+            ${renderCharacterFormContent(state.characterEditing.form || characterToForm(character), 'edit', false)}
+        </div>
+    `;
+}
+
+function renderCharacterRenamePanel(character) {
+    return `
+        <div class="settings-form inline-form">
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>新名称</span>
+                    <input class="text-input" type="text" data-character-rename-input value="${escapeHtml(state.characterRenaming.name)}">
+                </label>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-character-rename>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" data-confirm-character-rename>
+                    <i class="fa-solid fa-check"></i>
+                    保存重命名
+                </button>
+            </div>
+            <p class="panel-subtitle">将同步更新卡片名称、PNG 文件名和对应聊天目录：${escapeHtml(character.avatar || '')}</p>
+        </div>
+    `;
+}
+
+function renderCharacterDeletePanel(character) {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除角色</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(state.characterDeleteConfirm.name || character.avatar)} 的角色卡文件。</p>
+            </div>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-character-delete-chats ${state.characterDeleteConfirm.deleteChats ? 'checked' : ''}>
+                <span>同时删除聊天记录目录</span>
+            </label>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-character-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-character-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderCharacterFormContent(form, scope, isCreate) {
+    const scopeAttribute = escapeHtml(scope);
+
+    return `
+        <div class="character-form">
+            <div class="form-grid two-columns">
+                ${renderCharacterInput('name', '名称', form.name, scopeAttribute)}
+                ${renderCharacterInput('creator', '作者', form.creator, scopeAttribute)}
+                ${renderCharacterInput('character_version', '版本', form.character_version, scopeAttribute)}
+                ${renderCharacterInput('tags', '标签', form.tags, scopeAttribute, '用逗号分隔')}
+                ${renderCharacterWorldSelect(form, scopeAttribute)}
+            </div>
+            ${renderCharacterTextarea('description', '描述', form.description, scopeAttribute)}
+            ${renderCharacterTextarea('personality', '性格', form.personality, scopeAttribute)}
+            ${renderCharacterTextarea('scenario', '场景', form.scenario, scopeAttribute)}
+            ${renderCharacterTextarea('first_mes', '首条消息', form.first_mes, scopeAttribute)}
+            ${renderCharacterTextarea('mes_example', '示例消息', form.mes_example, scopeAttribute)}
+            ${renderCharacterTextarea('creator_notes', '作者备注', form.creator_notes, scopeAttribute)}
+            ${renderCharacterTextarea('system_prompt', '系统提示词', form.system_prompt, scopeAttribute)}
+            ${renderCharacterTextarea('post_history_instructions', '历史后置提示', form.post_history_instructions, scopeAttribute)}
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" ${isCreate ? 'data-cancel-character-create' : 'data-cancel-character-edit'}>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" ${isCreate ? 'data-save-character-create' : 'data-save-character-edit'}>
+                    <i class="fa-solid fa-check"></i>
+                    ${isCreate ? '创建角色' : '保存角色'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderCharacterInput(field, label, value, scope, placeholder = '') {
+    return `
+        <label class="field-label">
+            <span>${escapeHtml(label)}</span>
+            <input class="text-input" type="text" data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
+        </label>
+    `;
+}
+
+function renderCharacterTextarea(field, label, value, scope) {
+    return `
+        <label class="field-label">
+            <span>${escapeHtml(label)}</span>
+            <textarea data-character-field="${escapeHtml(field)}" data-character-scope="${scope}">${escapeHtml(value)}</textarea>
+        </label>
+    `;
+}
+
+function renderCharacterWorldSelect(form, scope) {
+    const worldNames = uniqueValues([
+        form.world,
+        ...(state.worldbooks || []).map(worldbook => worldbook.file_id || worldbook.name),
+        ...(state.settingsBundle.world_names || []),
+    ]);
+
+    return `
+        <label class="field-label">
+            <span>关联世界书</span>
+            <select class="select-input" data-character-field="world" data-character-scope="${scope}">
+                <option value="">不关联</option>
+                ${worldNames.map(name => `<option value="${escapeHtml(name)}" ${form.world === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+            </select>
+        </label>
     `;
 }
 
@@ -3489,6 +4075,130 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-create-character]')) {
+        beginCharacterCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-character-create]')) {
+        cancelCharacterCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-save-character-create]')) {
+        try {
+            await saveCharacterCreate();
+        } catch (error) {
+            state.errors.push({ key: 'character-create', message: error.message });
+            showToast('角色创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const loadCharacterButton = event.target.closest('[data-load-character-detail]');
+    if (loadCharacterButton) {
+        await loadCharacterDetail(loadCharacterButton.dataset.loadCharacterDetail, { force: true });
+        render();
+        return;
+    }
+
+    const editCharacterButton = event.target.closest('[data-edit-character]');
+    if (editCharacterButton) {
+        await beginCharacterEdit(editCharacterButton.dataset.editCharacter);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-character-edit]')) {
+        cancelCharacterEdit();
+        return;
+    }
+
+    if (event.target.closest('[data-save-character-edit]')) {
+        try {
+            await saveCharacterEdit();
+        } catch (error) {
+            state.errors.push({ key: 'character-edit', message: error.message });
+            showToast('角色保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const duplicateCharacterButton = event.target.closest('[data-duplicate-character]');
+    if (duplicateCharacterButton) {
+        try {
+            await duplicateCharacter(duplicateCharacterButton.dataset.duplicateCharacter);
+        } catch (error) {
+            state.errors.push({ key: 'character-duplicate', message: error.message });
+            showToast('角色复制失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const renameCharacterButton = event.target.closest('[data-rename-character]');
+    if (renameCharacterButton) {
+        const character = getCharacterByAvatar(renameCharacterButton.dataset.renameCharacter);
+        if (character) {
+            beginCharacterRename(character);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-character-rename]')) {
+        cancelCharacterRename();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-character-rename]')) {
+        try {
+            await confirmCharacterRename();
+        } catch (error) {
+            state.errors.push({ key: 'character-rename', message: error.message });
+            showToast('角色重命名失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const exportCharacterButton = event.target.closest('[data-export-character]');
+    if (exportCharacterButton) {
+        try {
+            await exportCharacter(exportCharacterButton.dataset.exportCharacter, exportCharacterButton.dataset.characterExportFormat || 'png');
+        } catch (error) {
+            state.errors.push({ key: 'character-export', message: error.message });
+            showToast('角色导出失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteCharacterButton = event.target.closest('[data-delete-character]');
+    if (deleteCharacterButton) {
+        const character = getCharacterByAvatar(deleteCharacterButton.dataset.deleteCharacter);
+        if (character) {
+            beginCharacterDelete(character);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-character-delete]')) {
+        cancelCharacterDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-character-delete]')) {
+        try {
+            await confirmCharacterDelete();
+        } catch (error) {
+            state.errors.push({ key: 'character-delete', message: error.message });
+            showToast('角色删除失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-test-api]')) {
         try {
             await testApiConnection();
@@ -3705,6 +4415,12 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-rename-input]')) {
         state.chatRenaming.name = event.target.value;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
+        state.characterRenaming.name = event.target.value;
+    }
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-character-field]')) {
+        updateCharacterFormField(event.target);
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
         state.worldbookCreating.name = event.target.value;
     }
@@ -3712,7 +4428,25 @@ elements.content.addEventListener('input', event => {
         updateWorldEntryFormField(event.target);
     }
 });
-elements.content.addEventListener('change', event => {
+elements.content.addEventListener('change', async event => {
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-import-file]')) {
+        try {
+            await importCharacterFile(event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'character-import', message: error.message });
+            showToast('角色导入失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-delete-chats]')) {
+        state.characterDeleteConfirm.deleteChats = event.target.checked;
+    }
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-character-field]')) {
+        updateCharacterFormField(event.target);
+    }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-world-entry-field]')) {
         updateWorldEntryFormField(event.target);
     }
