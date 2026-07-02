@@ -29,13 +29,17 @@ test.describe('Modern group resources', () => {
         await page.locator('[data-group-field="name"][data-group-scope="edit"]').fill('Edited Modern Group');
         await page.locator('[data-group-field="allow_self_responses"][data-group-scope="edit"]').check();
         await page.locator('[data-group-field="generation_mode"][data-group-scope="edit"]').selectOption('1');
+        await page.locator('[data-group-member="bruno.png"][data-group-scope="edit"]').uncheck();
         await page.locator('[data-save-group-edit]').click();
 
         await expect(page.locator('.detail-title')).toHaveText('Edited Modern Group');
         await expect(page.locator('.detail-tags')).toContainText('允许自回复');
+        await expect(page.locator('.panel-subtitle').filter({ hasText: 'modern-test-group' })).toContainText('1 个成员');
+        await expect(page.locator('.resource-row', { hasText: 'Bruno Fixture' })).toHaveCount(0);
         expect(fixture.requests.groupEdit[0]).toMatchObject({
             id: 'modern-test-group',
             name: 'Edited Modern Group',
+            members: ['alice.png'],
             allow_self_responses: true,
             generation_mode: 1,
         });
