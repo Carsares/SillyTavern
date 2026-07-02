@@ -671,6 +671,39 @@ kbd {
     overflow: auto;
 }
 
+.segmented-control {
+    display: grid;
+    grid-auto-flow: column;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.segmented-control button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    border: 0;
+    border-radius: calc(var(--radius) - 3px);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.segmented-control button.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(29, 33, 37, 0.08);
+}
+
+.chat-mode-switch {
+    margin-bottom: 10px;
+}
+
 .resource-row {
     padding: 9px;
 }

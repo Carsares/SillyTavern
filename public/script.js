@@ -65,6 +65,8 @@ import {
     getGroupChat,
     renameGroupMember,
     createNewGroupChat,
+    openGroupById,
+    openGroupChat,
     getGroupAvatar,
     deleteGroupChat,
     renameGroupChat,
@@ -5571,7 +5573,31 @@ function getModernBridgeCharacterId(avatar) {
 }
 
 async function useModernBridgeChatContext(payload = {}) {
-    const { avatar, chat: chatName } = payload || {};
+    const { avatar, groupId, chat: chatName } = payload || {};
+    if (groupId) {
+        const group = groups.find(x => x.id === groupId);
+        if (!group) {
+            throw new Error('原版生成引擎找不到当前选择的群聊。');
+        }
+
+        if (selected_group !== groupId) {
+            const opened = await openGroupById(groupId);
+            if (!opened && selected_group !== groupId) {
+                throw new Error('原版生成引擎无法切换到当前群聊。');
+            }
+        }
+
+        const nextChatName = formatModernBridgeChatName(chatName);
+        if (nextChatName && group.chat_id !== nextChatName) {
+            await openGroupChat(groupId, nextChatName);
+        }
+        const currentGroup = groups.find(x => x.id === groupId);
+        if (nextChatName && currentGroup?.chat_id !== nextChatName) {
+            throw new Error('原版生成引擎无法切换到当前群聊文件。');
+        }
+        return { group: currentGroup || group };
+    }
+
     const characterId = getModernBridgeCharacterId(avatar);
     if (characterId < 0) {
         throw new Error('原版生成引擎找不到当前选择的角色。');
@@ -5586,12 +5612,13 @@ async function useModernBridgeChatContext(payload = {}) {
     if (nextChatName && characters[this_chid]?.chat !== nextChatName) {
         await openCharacterChat(nextChatName);
     }
+    return { character: characters[this_chid] };
 }
 
 async function handleModernBridgeGenerate(payload = {}) {
     const params = payload || {};
     const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
-    await useModernBridgeChatContext(params);
+    const context = await useModernBridgeChatContext(params);
 
     if (type === 'normal') {
         const textarea = $('#send_textarea');
@@ -5599,10 +5626,14 @@ async function handleModernBridgeGenerate(payload = {}) {
         textarea[0]?.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    const result = await Generate(type);
+    const result = context.group
+        ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type))
+        : await Generate(type);
+    const group = context.group ? groups.find(x => x.id === context.group.id) : null;
     return {
-        avatar: characters[this_chid]?.avatar || '',
-        chat: characters[this_chid]?.chat || '',
+        avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
+        groupId: group?.id || '',
+        chat: group?.chat_id || characters[this_chid]?.chat || '',
         message: String(result || ''),
         messageCount: chat.length,
         type,
@@ -5611,7 +5642,7 @@ async function handleModernBridgeGenerate(payload = {}) {
 
 async function handleModernBridgeSwipe(payload = {}) {
     const params = payload || {};
-    await useModernBridgeChatContext(params);
+    const context = await useModernBridgeChatContext(params);
 
     const messageId = Number(params.messageIndex ?? chat.length - 1);
     if (!Number.isInteger(messageId) || !chat[messageId]) {
@@ -5621,9 +5652,11 @@ async function handleModernBridgeSwipe(payload = {}) {
     const direction = params.direction === 'left' ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
     await swipe(null, direction, { source: SWIPE_SOURCE.SWIPE_PICKER, repeated: false, forceMesId: messageId });
     const message = chat[messageId] || {};
+    const group = context.group ? groups.find(x => x.id === context.group.id) : null;
     return {
-        avatar: characters[this_chid]?.avatar || '',
-        chat: characters[this_chid]?.chat || '',
+        avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
+        groupId: group?.id || '',
+        chat: group?.chat_id || characters[this_chid]?.chat || '',
         messageCount: chat.length,
         messageIndex: messageId,
         swipeId: message.swipe_id ?? 0,
@@ -5664,9 +5697,11 @@ window.addEventListener('message', async (event) => {
             return;
         }
         if (action === 'status') {
+            const group = selected_group ? groups.find(x => x.id === selected_group) : null;
             postModernBridgeResult(event, id, {
-                avatar: characters[this_chid]?.avatar || '',
-                chat: characters[this_chid]?.chat || '',
+                avatar: selected_group ? '' : (characters[this_chid]?.avatar || ''),
+                groupId: group?.id || '',
+                chat: group?.chat_id || characters[this_chid]?.chat || '',
                 messageCount: chat.length,
             });
             return;

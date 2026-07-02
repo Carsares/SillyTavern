@@ -53,6 +53,7 @@ const state = {
     chatDrafts: {},
     chatSearch: {
         avatar: '',
+        contextKey: '',
         query: '',
         searchedQuery: '',
         loading: false,
@@ -165,6 +166,7 @@ const state = {
         status: '就绪',
         error: '',
     },
+    chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
     chatSidebarOpen: localStorage.getItem('st-modern-chat-sidebar-open') !== 'false',
     inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
     apiTest: {
@@ -205,6 +207,7 @@ const state = {
     },
     selected: {
         character: '',
+        group: '',
         chat: '',
         worldbook: '',
     },
@@ -657,11 +660,14 @@ async function loadData({ silent = false } = {}) {
     if (!state.selected.character && state.characters[0]) {
         state.selected.character = state.characters[0].avatar;
     }
+    if (!state.selected.group && state.groups[0]) {
+        state.selected.group = state.groups[0].id;
+    }
     if (!state.selected.worldbook && state.worldbooks[0]) {
         state.selected.worldbook = state.worldbooks[0].file_id;
     }
     if (state.route === 'chat') {
-        await prepareChatForSelectedCharacter();
+        await prepareChatForSelectedContext();
     }
 
     state.loaded = true;
@@ -706,12 +712,65 @@ function getSelectedCharacter() {
     return state.characters.find(character => character.avatar === state.selected.character) || state.characters[0] || null;
 }
 
+function getSelectedGroup() {
+    return state.groups.find(group => group.id === state.selected.group) || state.groups[0] || null;
+}
+
+function isGroupChatMode() {
+    return state.chatMode === 'group';
+}
+
+function getChatModeLabel() {
+    return isGroupChatMode() ? '群聊' : '角色';
+}
+
+function getSelectedChatEntity() {
+    return isGroupChatMode() ? getSelectedGroup() : getSelectedCharacter();
+}
+
+function getChatContextKey(entity = getSelectedChatEntity()) {
+    if (isGroupChatMode()) {
+        return entity?.id ? `group:${entity.id}` : 'group:';
+    }
+    return entity?.avatar || '';
+}
+
+function getChatEntityName(entity = getSelectedChatEntity()) {
+    if (isGroupChatMode()) {
+        return entity?.name || '未命名群聊';
+    }
+    return entity?.name || entity?.data?.name || '未命名角色';
+}
+
+function getChatEntityAvatarUrl(entity = getSelectedChatEntity()) {
+    if (isGroupChatMode()) {
+        return entity?.avatar_url || '';
+    }
+    return getAvatarUrl(entity);
+}
+
+function getChatEntityFallbackIcon() {
+    return isGroupChatMode() ? 'fa-users' : 'fa-user';
+}
+
+function getChatEntityEmptyTitle() {
+    return isGroupChatMode() ? '没有可用群聊' : '没有可用角色';
+}
+
+function getChatEntityEmptyDescription() {
+    return isGroupChatMode() ? '当前目录没有可用群聊。' : '当前目录没有可用角色卡。';
+}
+
+function getChatEntityListEmptyText() {
+    return isGroupChatMode() ? '暂无匹配群聊' : '暂无匹配角色';
+}
+
 function getCharacterByAvatar(avatar) {
     return state.characters.find(character => character.avatar === avatar) || state.characterDetails[avatar] || null;
 }
 
 function getSelectedChatList() {
-    return state.chatLists[state.selected.character] || [];
+    return state.chatLists[getChatContextKey()] || [];
 }
 
 function getChatId(chat) {
@@ -722,10 +781,10 @@ function getChatMessageCount(chat) {
     return Number(chat?.chat_items ?? chat?.message_count ?? 0);
 }
 
-function getVisibleChatList(character = getSelectedCharacter()) {
+function getVisibleChatList(entity = getSelectedChatEntity()) {
     const search = state.chatSearch;
-    const avatar = character?.avatar || '';
-    if (search.avatar === avatar && search.searchedQuery) {
+    const contextKey = getChatContextKey(entity);
+    if (search.contextKey === contextKey && search.searchedQuery) {
         return search.results;
     }
 
@@ -733,7 +792,7 @@ function getVisibleChatList(character = getSelectedCharacter()) {
 }
 
 function getSelectedChatMessages() {
-    const cacheKey = getChatCacheKey(state.selected.character, state.selected.chat);
+    const cacheKey = getChatCacheKey(getChatContextKey(), state.selected.chat);
     return state.chatMessages[cacheKey] || [];
 }
 
@@ -777,9 +836,42 @@ async function loadCharacterChats(character) {
     }
 }
 
+async function loadGroupChats(group) {
+    if (!group?.id) {
+        return [];
+    }
+
+    const contextKey = `group:${group.id}`;
+    if (state.chatLists[contextKey]) {
+        return state.chatLists[contextKey];
+    }
+
+    state.loadingChats[contextKey] = true;
+    try {
+        const result = await apiFetch('/api/chats/search', {
+            body: {
+                query: '',
+                avatar_url: null,
+                group_id: group.id,
+            },
+        });
+        const chats = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
+        state.chatLists[contextKey] = chats;
+        return chats;
+    } catch (error) {
+        state.errors.push({ key: 'group-chats', message: error.message });
+        showToast('群聊列表读取失败', error.message);
+        return [];
+    } finally {
+        state.loadingChats[contextKey] = false;
+    }
+}
+
 function clearChatSearch() {
+    const contextKey = getChatContextKey();
     state.chatSearch = {
         avatar: state.selected.character || '',
+        contextKey,
         query: '',
         searchedQuery: '',
         loading: false,
@@ -787,10 +879,11 @@ function clearChatSearch() {
     };
 }
 
-async function searchSelectedCharacterChats() {
-    const character = getSelectedCharacter();
-    if (!character?.avatar) {
-        throw new Error('请先选择一个角色。');
+async function searchSelectedChats() {
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    if (!entity || !contextKey) {
+        throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
     }
 
     const query = state.chatSearch.query.trim();
@@ -801,7 +894,8 @@ async function searchSelectedCharacterChats() {
 
     state.chatSearch = {
         ...state.chatSearch,
-        avatar: character.avatar,
+        avatar: isGroupChatMode() ? '' : entity.avatar,
+        contextKey,
         loading: true,
     };
     render();
@@ -810,13 +904,14 @@ async function searchSelectedCharacterChats() {
         const result = await apiFetch('/api/chats/search', {
             body: {
                 query,
-                avatar_url: character.avatar,
-                group_id: null,
+                avatar_url: isGroupChatMode() ? null : entity.avatar,
+                group_id: isGroupChatMode() ? entity.id : null,
             },
         });
         const results = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
         state.chatSearch = {
-            avatar: character.avatar,
+            avatar: isGroupChatMode() ? '' : entity.avatar,
+            contextKey,
             query,
             searchedQuery: query,
             loading: false,
@@ -828,24 +923,27 @@ async function searchSelectedCharacterChats() {
     }
 }
 
-async function loadChatMessages(character, chatId, { force = false } = {}) {
-    if (!character?.avatar || !chatId) {
+async function loadChatMessages(entity, chatId, { force = false } = {}) {
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !chatId) {
         return [];
     }
 
-    const cacheKey = getChatCacheKey(character.avatar, chatId);
+    const cacheKey = getChatCacheKey(contextKey, chatId);
     if (!force && state.chatMessages[cacheKey]) {
         return state.chatMessages[cacheKey];
     }
 
     try {
-        const result = await apiFetch('/api/chats/get', {
-            body: {
-                ch_name: character.name || character.data?.name || '',
-                file_name: chatId,
-                avatar_url: character.avatar,
-            },
-        });
+        const result = isGroupChatMode()
+            ? await apiFetch('/api/chats/group/get', { body: { id: chatId } })
+            : await apiFetch('/api/chats/get', {
+                body: {
+                    ch_name: entity.name || entity.data?.name || '',
+                    file_name: chatId,
+                    avatar_url: entity.avatar,
+                },
+            });
         const header = Array.isArray(result) ? result.find(message => message && message.chat_metadata) : null;
         const messages = Array.isArray(result) ? result.filter(message => message && !message.chat_metadata) : [];
         state.chatMetadata[cacheKey] = header?.chat_metadata || {};
@@ -858,19 +956,19 @@ async function loadChatMessages(character, chatId, { force = false } = {}) {
     }
 }
 
-async function prepareChatForSelectedCharacter() {
-    const character = getSelectedCharacter();
-    const chats = await loadCharacterChats(character);
+async function prepareChatForSelectedContext() {
+    const entity = getSelectedChatEntity();
+    const chats = isGroupChatMode() ? await loadGroupChats(entity) : await loadCharacterChats(entity);
 
     if (!state.selected.chat && chats[0]?.file_id) {
         state.selected.chat = chats[0].file_id;
     }
 
-    await loadChatMessages(character, state.selected.chat);
+    await loadChatMessages(entity, state.selected.chat);
 }
 
 function getCurrentDraftKey() {
-    return getChatCacheKey(state.selected.character, state.selected.chat);
+    return getChatCacheKey(getChatContextKey(), state.selected.chat);
 }
 
 function getCurrentDraft() {
@@ -921,45 +1019,57 @@ function getCharacterGreeting(character) {
     return formatTemplate(character?.data?.first_mes || character?.first_mes || '', character);
 }
 
-function getSelectedChatMetadata(character, chatId) {
-    return state.chatMetadata[getChatCacheKey(character?.avatar, chatId)] || {};
+function getSelectedChatMetadata(entity, chatId) {
+    return state.chatMetadata[getChatCacheKey(getChatContextKey(entity), chatId)] || {};
 }
 
-async function saveModernChat(character, chatId, messages) {
-    if (!character?.avatar || !chatId) {
-        throw new Error('缺少角色或聊天文件');
+async function saveGroupMetadata(group) {
+    if (!group?.id) {
+        throw new Error('缺少群聊。');
+    }
+    await apiFetch('/api/groups/edit', { body: group });
+}
+
+async function saveModernChat(entity, chatId, messages) {
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !chatId) {
+        throw new Error(isGroupChatMode() ? '缺少群聊或聊天文件' : '缺少角色或聊天文件');
     }
 
-    const metadata = getSelectedChatMetadata(character, chatId);
-    const result = await apiFetch('/api/chats/save', {
-        body: {
-            ch_name: getCharacterName(character),
-            file_name: chatId,
-            avatar_url: character.avatar,
-            chat: [
-                { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
-                ...messages,
-            ],
-        },
-    });
+    const metadata = getSelectedChatMetadata(entity, chatId);
+    const chat = [
+        { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
+        ...messages,
+    ];
+    const result = isGroupChatMode()
+        ? await apiFetch('/api/chats/group/save', { body: { id: chatId, chat } })
+        : await apiFetch('/api/chats/save', {
+            body: {
+                ch_name: getCharacterName(entity),
+                file_name: chatId,
+                avatar_url: entity.avatar,
+                chat,
+            },
+        });
 
     if (result?.error) {
         throw new Error(result.error === 'integrity' ? '聊天文件已被其他会话修改，请刷新后重试。' : String(result.error));
     }
 
-    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
+    state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
 }
 
 function beginModernChatRename() {
-    const character = getSelectedCharacter();
-    if (!character?.avatar || !state.selected.chat) {
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !state.selected.chat) {
         showToast('重命名失败', '请先选择一个聊天文件。');
         return;
     }
 
     const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
     state.chatRenaming = {
-        key: getChatCacheKey(character.avatar, state.selected.chat),
+        key: getChatCacheKey(contextKey, state.selected.chat),
         name: stripJsonlExtension(selectedChat?.file_name || state.selected.chat),
     };
     state.chatDeleteConfirm = { key: '', name: '' };
@@ -972,11 +1082,12 @@ function cancelModernChatRename() {
 }
 
 async function saveModernChatRename() {
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
     const oldChatId = stripJsonlExtension(state.selected.chat);
     const newChatId = stripJsonlExtension(state.chatRenaming.name.trim());
-    const renameKey = getChatCacheKey(character?.avatar, state.selected.chat);
-    if (!character?.avatar || !oldChatId || !newChatId || state.chatRenaming.key !== renameKey) {
+    const renameKey = getChatCacheKey(contextKey, state.selected.chat);
+    if (!contextKey || !oldChatId || !newChatId || state.chatRenaming.key !== renameKey) {
         throw new Error('重命名目标已变化，请重新选择聊天。');
     }
     if (oldChatId === newChatId) {
@@ -986,10 +1097,10 @@ async function saveModernChatRename() {
 
     const result = await apiFetch('/api/chats/rename', {
         body: {
-            avatar_url: character.avatar,
+            avatar_url: isGroupChatMode() ? null : entity.avatar,
             original_file: `${oldChatId}.jsonl`,
             renamed_file: `${newChatId}.jsonl`,
-            is_group: false,
+            is_group: isGroupChatMode(),
         },
     });
     if (result?.error) {
@@ -997,8 +1108,19 @@ async function saveModernChatRename() {
     }
 
     const renamedChatId = stripJsonlExtension(result?.sanitizedFileName || newChatId);
-    const oldKey = getChatCacheKey(character.avatar, oldChatId);
-    const newKey = getChatCacheKey(character.avatar, renamedChatId);
+    if (isGroupChatMode()) {
+        const index = entity.chats?.indexOf(oldChatId) ?? -1;
+        if (index >= 0) {
+            entity.chats.splice(index, 1, renamedChatId);
+        }
+        if (entity.chat_id === oldChatId) {
+            entity.chat_id = renamedChatId;
+        }
+        await saveGroupMetadata(entity);
+    }
+
+    const oldKey = getChatCacheKey(contextKey, oldChatId);
+    const newKey = getChatCacheKey(contextKey, renamedChatId);
     state.selected.chat = renamedChatId;
     if (state.chatMessages[oldKey]) {
         state.chatMessages[newKey] = state.chatMessages[oldKey];
@@ -1009,8 +1131,8 @@ async function saveModernChatRename() {
         delete state.chatMetadata[oldKey];
     }
     state.chatRenaming = { key: '', name: '' };
-    await refreshSelectedChatList(character);
-    await loadChatMessages(character, renamedChatId);
+    await refreshSelectedChatList(entity);
+    await loadChatMessages(entity, renamedChatId);
     showToast('聊天已重命名', `${oldChatId} → ${renamedChatId}`);
     render();
 }
@@ -1021,15 +1143,16 @@ function beginModernChatDelete() {
         return;
     }
 
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
     const chatId = stripJsonlExtension(state.selected.chat);
-    if (!character?.avatar || !chatId) {
+    if (!contextKey || !chatId) {
         showToast('删除失败', '请先选择一个聊天文件。');
         return;
     }
 
     state.chatDeleteConfirm = {
-        key: getChatCacheKey(character.avatar, state.selected.chat),
+        key: getChatCacheKey(contextKey, state.selected.chat),
         name: chatId,
     };
     state.chatRenaming = { key: '', name: '' };
@@ -1042,35 +1165,46 @@ function cancelModernChatDelete() {
 }
 
 async function confirmModernChatDelete() {
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
     const chatId = stripJsonlExtension(state.chatDeleteConfirm.name);
-    const deleteKey = getChatCacheKey(character?.avatar, state.selected.chat);
-    if (!character?.avatar || !chatId || state.chatDeleteConfirm.key !== deleteKey) {
+    const deleteKey = getChatCacheKey(contextKey, state.selected.chat);
+    if (!contextKey || !chatId || state.chatDeleteConfirm.key !== deleteKey) {
         throw new Error('删除目标已变化，请重新选择聊天。');
     }
 
-    const result = await apiFetch('/api/chats/delete', {
-        body: {
-            avatar_url: character.avatar,
-            chatfile: `${chatId}.jsonl`,
-        },
-    });
+    const result = isGroupChatMode()
+        ? await apiFetch('/api/chats/group/delete', { body: { id: chatId } })
+        : await apiFetch('/api/chats/delete', {
+            body: {
+                avatar_url: entity.avatar,
+                chatfile: `${chatId}.jsonl`,
+            },
+        });
     if (result?.error) {
         throw new Error('聊天文件删除失败。');
     }
 
-    const cacheKey = getChatCacheKey(character.avatar, chatId);
+    if (isGroupChatMode()) {
+        entity.chats = (entity.chats || []).filter(item => item !== chatId);
+        if (entity.chat_id === chatId) {
+            entity.chat_id = entity.chats[0] || '';
+        }
+        await saveGroupMetadata(entity);
+    }
+
+    const cacheKey = getChatCacheKey(contextKey, chatId);
     delete state.chatMessages[cacheKey];
     delete state.chatMetadata[cacheKey];
     delete state.chatDrafts[cacheKey];
     state.chatRenaming = { key: '', name: '' };
     state.chatDeleteConfirm = { key: '', name: '' };
     state.selected.chat = '';
-    await refreshSelectedChatList(character);
+    await refreshSelectedChatList(entity);
     const chats = getSelectedChatList();
     state.selected.chat = chats[0]?.file_id || '';
     if (state.selected.chat) {
-        await loadChatMessages(character, state.selected.chat);
+        await loadChatMessages(entity, state.selected.chat);
     }
     showToast('聊天已删除', `${chatId}.jsonl`);
     render();
@@ -2652,42 +2786,57 @@ function createChatCompletionRequestBody(settings, messages) {
     };
 }
 
-async function refreshSelectedChatList(character) {
-    delete state.chatLists[character.avatar];
-    await loadCharacterChats(character);
+async function refreshSelectedChatList(entity) {
+    const contextKey = getChatContextKey(entity);
+    delete state.chatLists[contextKey];
+    if (isGroupChatMode()) {
+        await loadGroupChats(entity);
+    } else {
+        await loadCharacterChats(entity);
+    }
 }
 
-async function createModernChatFile(character) {
-    if (!character?.avatar) {
-        throw new Error('请先选择角色');
+async function createModernChatFile(entity) {
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey) {
+        throw new Error(isGroupChatMode() ? '请先选择群聊' : '请先选择角色');
     }
 
     const chatId = createModernChatId();
-    const greeting = getCharacterGreeting(character);
-    const messages = greeting ? [createAssistantMessage(greeting, character)] : [];
+    const greeting = isGroupChatMode() ? '' : getCharacterGreeting(entity);
+    const messages = greeting ? [createAssistantMessage(greeting, entity)] : [];
     state.selected.chat = chatId;
-    state.chatMetadata[getChatCacheKey(character.avatar, chatId)] = {};
-    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
-    await saveModernChat(character, chatId, messages);
-    await refreshSelectedChatList(character);
+    state.chatMetadata[getChatCacheKey(contextKey, chatId)] = {};
+    state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
+    if (isGroupChatMode()) {
+        entity.chats = Array.isArray(entity.chats) ? entity.chats : [];
+        if (!entity.chats.includes(chatId)) {
+            entity.chats.push(chatId);
+        }
+        entity.chat_id = chatId;
+        await saveGroupMetadata(entity);
+    }
+    await saveModernChat(entity, chatId, messages);
+    await refreshSelectedChatList(entity);
     return chatId;
 }
 
 async function startNewModernChat() {
-    const character = getSelectedCharacter();
-    const chatId = await createModernChatFile(character);
-    showToast('新聊天已创建', `${getCharacterName(character)} 的新会话已选中。`);
+    const entity = getSelectedChatEntity();
+    const chatId = await createModernChatFile(entity);
+    showToast('新聊天已创建', `${getChatEntityName(entity)} 的新会话已选中。`);
     render();
     return chatId;
 }
 
-async function runLegacyChatGeneration(type, { character, chatId, message = '', toastTitle, toastMessage }) {
+async function runLegacyChatGeneration(type, { entity, chatId, message = '', toastTitle, toastMessage }) {
     if (state.engine.generating) {
         return;
     }
 
-    if (!character?.avatar || !chatId) {
-        throw new Error('请先选择角色和聊天文件');
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !chatId) {
+        throw new Error(isGroupChatMode() ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
     }
 
     state.engine.generating = true;
@@ -2697,17 +2846,18 @@ async function runLegacyChatGeneration(type, { character, chatId, message = '', 
 
     try {
         const result = await callLegacyBridge('generate', {
-            avatar: character.avatar,
+            avatar: isGroupChatMode() ? null : entity.avatar,
+            groupId: isGroupChatMode() ? entity.id : null,
             chat: chatId,
             type,
             message,
         });
         const nextChatId = stripJsonlExtension(result?.chat || chatId);
         state.selected.chat = nextChatId;
-        delete state.chatMessages[getChatCacheKey(character.avatar, nextChatId)];
-        delete state.chatMetadata[getChatCacheKey(character.avatar, nextChatId)];
-        await refreshSelectedChatList(character);
-        await loadChatMessages(character, nextChatId, { force: true });
+        delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
+        delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
+        await refreshSelectedChatList(entity);
+        await loadChatMessages(entity, nextChatId, { force: true });
         state.engine.status = '就绪';
         showToast(toastTitle, toastMessage);
     } catch (error) {
@@ -2725,8 +2875,9 @@ async function swipeModernMessage(messageIndex, direction) {
         return;
     }
 
-    const character = getSelectedCharacter();
-    if (!character?.avatar || !state.selected.chat) {
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey || !state.selected.chat) {
         throw new Error('请先选择一个聊天文件');
     }
 
@@ -2743,17 +2894,18 @@ async function swipeModernMessage(messageIndex, direction) {
 
     try {
         const result = await callLegacyBridge('swipe', {
-            avatar: character.avatar,
+            avatar: isGroupChatMode() ? null : entity.avatar,
+            groupId: isGroupChatMode() ? entity.id : null,
             chat: state.selected.chat,
             messageIndex: index,
             direction,
         });
         const nextChatId = stripJsonlExtension(result?.chat || state.selected.chat);
         state.selected.chat = nextChatId;
-        delete state.chatMessages[getChatCacheKey(character.avatar, nextChatId)];
-        delete state.chatMetadata[getChatCacheKey(character.avatar, nextChatId)];
-        await refreshSelectedChatList(character);
-        await loadChatMessages(character, nextChatId, { force: true });
+        delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
+        delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
+        await refreshSelectedChatList(entity);
+        await loadChatMessages(entity, nextChatId, { force: true });
         state.engine.status = '就绪';
         showToast('候选已切换', `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`);
     } catch (error) {
@@ -2773,16 +2925,16 @@ async function sendModernMessage() {
         return;
     }
 
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
     let chatId = state.selected.chat;
     if (!chatId) {
-        chatId = await createModernChatFile(character);
+        chatId = await createModernChatFile(entity);
     }
 
     state.chatDrafts[draftKey] = '';
-    state.chatDrafts[getChatCacheKey(character.avatar, chatId)] = '';
+    state.chatDrafts[getChatCacheKey(getChatContextKey(entity), chatId)] = '';
     await runLegacyChatGeneration('normal', {
-        character,
+        entity,
         chatId,
         message: draft,
         toastTitle: '消息已生成',
@@ -2795,8 +2947,8 @@ async function regenerateModernReply() {
         return;
     }
 
-    const character = getSelectedCharacter();
-    if (!character?.avatar || !state.selected.chat) {
+    const entity = getSelectedChatEntity();
+    if (!getChatContextKey(entity) || !state.selected.chat) {
         throw new Error('请先选择一个聊天文件');
     }
 
@@ -2805,7 +2957,7 @@ async function regenerateModernReply() {
     }
 
     await runLegacyChatGeneration('regenerate', {
-        character,
+        entity,
         chatId: state.selected.chat,
         toastTitle: '回复已重生成',
         toastMessage: '原版生成引擎已更新最后一条回复。',
@@ -2817,8 +2969,8 @@ async function continueModernReply() {
         return;
     }
 
-    const character = getSelectedCharacter();
-    if (!character?.avatar || !state.selected.chat) {
+    const entity = getSelectedChatEntity();
+    if (!getChatContextKey(entity) || !state.selected.chat) {
         throw new Error('请先选择一个聊天文件');
     }
 
@@ -2827,7 +2979,7 @@ async function continueModernReply() {
     }
 
     await runLegacyChatGeneration('continue', {
-        character,
+        entity,
         chatId: state.selected.chat,
         toastTitle: '已继续生成',
         toastMessage: '原版生成引擎已追加到当前回复。',
@@ -2867,8 +3019,8 @@ async function deleteModernMessage(messageIndex) {
         throw new Error('生成中不能删除消息。');
     }
 
-    const character = getSelectedCharacter();
-    if (!character?.avatar || !state.selected.chat) {
+    const entity = getSelectedChatEntity();
+    if (!getChatContextKey(entity) || !state.selected.chat) {
         throw new Error('请先选择一个聊天文件');
     }
 
@@ -2879,16 +3031,17 @@ async function deleteModernMessage(messageIndex) {
     }
 
     const [deletedMessage] = messages.splice(index, 1);
-    await saveModernChat(character, state.selected.chat, messages);
-    await refreshSelectedChatList(character);
+    await saveModernChat(entity, state.selected.chat, messages);
+    await refreshSelectedChatList(entity);
     showToast('消息已删除', deletedMessage?.name || '当前聊天');
     render();
 }
 
 async function importModernChatFiles(files) {
-    const character = getSelectedCharacter();
-    if (!character?.avatar) {
-        throw new Error('请先选择一个角色。');
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    if (!contextKey) {
+        throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
     }
 
     const importedFileNames = [];
@@ -2897,44 +3050,56 @@ async function importModernChatFiles(files) {
         if (!['json', 'jsonl'].includes(format)) {
             throw new Error('聊天导入仅支持 JSON 或 JSONL 文件。');
         }
+        if (isGroupChatMode() && format !== 'jsonl') {
+            throw new Error('群聊导入仅支持 SillyTavern JSONL 文件。');
+        }
 
         const formData = new FormData();
         formData.set('file_type', format);
         formData.set('avatar', file, file.name);
-        formData.set('avatar_url', character.avatar);
+        formData.set('avatar_url', isGroupChatMode() ? '' : entity.avatar);
         formData.set('user_name', getUserName());
-        formData.set('character_name', getCharacterName(character));
-        const result = await apiFetch('/api/chats/import', { body: formData, omitContentType: true });
+        formData.set('character_name', getChatEntityName(entity));
+        const result = await apiFetch(isGroupChatMode() ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
         if (result?.error) {
             throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
         }
-        importedFileNames.push(...(result?.fileNames || []));
+        if (isGroupChatMode()) {
+            importedFileNames.push(result.res);
+        } else {
+            importedFileNames.push(...(result?.fileNames || []));
+        }
     }
 
     if (!importedFileNames.length) {
         throw new Error('没有导入任何聊天文件。');
     }
 
+    if (isGroupChatMode()) {
+        entity.chats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
+        entity.chat_id = stripJsonlExtension(importedFileNames[0]);
+        await saveGroupMetadata(entity);
+    }
     clearChatSearch();
-    await refreshSelectedChatList(character);
+    await refreshSelectedChatList(entity);
     state.selected.chat = getChatId({ file_name: importedFileNames[0] });
-    await loadChatMessages(character, state.selected.chat, { force: true });
+    await loadChatMessages(entity, state.selected.chat, { force: true });
     showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);
     render();
 }
 
 async function exportModernChat(format) {
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
     const chatId = stripJsonlExtension(state.selected.chat);
-    if (!character?.avatar || !chatId) {
+    if (!getChatContextKey(entity) || !chatId) {
         throw new Error('请先选择一个聊天文件。');
     }
 
     const safeFormat = format === 'jsonl' ? 'jsonl' : 'txt';
     const result = await apiFetch('/api/chats/export', {
         body: {
-            is_group: false,
-            avatar_url: character.avatar,
+            is_group: isGroupChatMode(),
+            avatar_url: isGroupChatMode() ? null : entity.avatar,
             file: `${chatId}.jsonl`,
             exportfilename: `${chatId}.${safeFormat}`,
             format: safeFormat,
@@ -3003,9 +3168,9 @@ async function viewChatBackup(name) {
 }
 
 async function restoreChatBackup(name) {
-    const character = getSelectedCharacter();
-    if (!character?.avatar) {
-        throw new Error('请先选择要恢复到的角色。');
+    const entity = getSelectedChatEntity();
+    if (!getChatContextKey(entity)) {
+        throw new Error(isGroupChatMode() ? '请先选择要恢复到的群聊。' : '请先选择要恢复到的角色。');
     }
 
     state.chatBackups.restoring = name;
@@ -3016,7 +3181,7 @@ async function restoreChatBackup(name) {
         const file = new File([blob], name, { type: 'application/octet-stream' });
         await importModernChatFiles([file]);
         state.chatBackups.restoring = '';
-        showToast('备份已恢复', `${name} 已导入到 ${getCharacterName(character)}`);
+        showToast('备份已恢复', `${name} 已导入到 ${getChatEntityName(entity)}`);
         render();
     } catch (error) {
         state.chatBackups.restoring = '';
@@ -3063,17 +3228,18 @@ function beginModernMessageEdit(messageIndex) {
         return;
     }
 
-    const character = getSelectedCharacter();
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
     const index = Number(messageIndex);
     const messages = getSelectedChatMessages();
-    if (!character?.avatar || !state.selected.chat || !Number.isInteger(index) || index < 0 || index >= messages.length) {
+    if (!contextKey || !state.selected.chat || !Number.isInteger(index) || index < 0 || index >= messages.length) {
         showToast('编辑失败', '消息位置无效，请刷新后重试。');
         return;
     }
 
     const message = messages[index];
     state.chatEditing = {
-        key: getChatCacheKey(character.avatar, state.selected.chat),
+        key: getChatCacheKey(contextKey, state.selected.chat),
         index,
         text: message.extra?.display_text || message.mes || '',
     };
@@ -3122,12 +3288,13 @@ async function saveModernMessageEdit() {
         throw new Error('生成中不能保存编辑。');
     }
 
-    const character = getSelectedCharacter();
-    const editKey = getChatCacheKey(character?.avatar, state.selected.chat);
+    const entity = getSelectedChatEntity();
+    const contextKey = getChatContextKey(entity);
+    const editKey = getChatCacheKey(contextKey, state.selected.chat);
     const edit = state.chatEditing;
     const text = edit.text.trim();
     const messages = [...getSelectedChatMessages()];
-    if (!character?.avatar || !state.selected.chat || edit.key !== editKey || edit.index < 0 || edit.index >= messages.length) {
+    if (!contextKey || !state.selected.chat || edit.key !== editKey || edit.index < 0 || edit.index >= messages.length) {
         throw new Error('编辑目标已变化，请重新选择消息。');
     }
     if (!text) {
@@ -3137,8 +3304,8 @@ async function saveModernMessageEdit() {
     const nextMessage = formatEditedModernMessage(messages[edit.index], text);
     messages[edit.index] = nextMessage;
 
-    await saveModernChat(character, state.selected.chat, messages);
-    await refreshSelectedChatList(character);
+    await saveModernChat(entity, state.selected.chat, messages);
+    await refreshSelectedChatList(entity);
     state.chatEditing = { key: '', index: -1, text: '' };
     showToast('消息已保存', nextMessage.name || '当前聊天');
     render();
@@ -3168,7 +3335,7 @@ async function setRoute(routeId) {
     render();
 
     if (routeId === 'chat') {
-        await prepareChatForSelectedCharacter();
+        await prepareChatForSelectedContext();
         render();
     }
 }
@@ -3342,27 +3509,58 @@ function renderCharacterRow(character) {
     `;
 }
 
+function renderGroupRow(group) {
+    const avatar = getChatEntityAvatarUrl(group);
+    const memberCount = Array.isArray(group.members) ? group.members.length : 0;
+    const chatCount = Array.isArray(group.chats) ? group.chats.length : 0;
+    const subtitle = [
+        `${formatNumber(memberCount)} 个成员`,
+        `${formatNumber(chatCount)} 个会话`,
+        group.date_last_chat ? `最近 ${formatDate(group.date_last_chat)}` : '',
+    ].filter(Boolean).join(' · ') || group.id || '群聊';
+
+    return `
+        <button class="resource-row ${state.selected.group === group.id ? 'active' : ''}" type="button" data-select-group="${escapeHtml(group.id)}">
+            ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : '<span class="avatar-fallback"><i class="fa-solid fa-users"></i></span>'}
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(group.name || group.id || '未命名群聊')}</span>
+                <span class="row-subtitle">${escapeHtml(subtitle)}</span>
+            </span>
+        </button>
+    `;
+}
+
 function renderChat() {
     const characters = state.characters.filter(character => matchesQuery(character.name, character.avatar, character.data?.creator));
-    const selected = getSelectedCharacter() || characters[0];
-    if (selected && state.selected.character !== selected.avatar) {
+    const groups = state.groups.filter(group => matchesQuery(group.name, group.id, ...(Array.isArray(group.members) ? group.members : [])));
+    const selected = getSelectedChatEntity() || (isGroupChatMode() ? groups[0] : characters[0]);
+    if (!isGroupChatMode() && selected?.avatar && state.selected.character !== selected.avatar) {
         state.selected.character = selected.avatar;
     }
+    if (isGroupChatMode() && selected?.id && state.selected.group !== selected.id) {
+        state.selected.group = selected.id;
+    }
+    const contextKey = getChatContextKey(selected);
+    const resourceCount = isGroupChatMode() ? groups.length : characters.length;
     const allChats = getSelectedChatList();
     const chats = getVisibleChatList(selected);
-    const isLoadingChats = !!state.loadingChats[state.selected.character];
+    const isLoadingChats = !!state.loadingChats[contextKey];
     const isSearching = state.chatSearch.loading;
-    const searchActive = state.chatSearch.avatar === selected?.avatar && !!state.chatSearch.searchedQuery;
+    const searchActive = state.chatSearch.contextKey === contextKey && !!state.chatSearch.searchedQuery;
     const searchSummary = searchActive
         ? `${formatNumber(chats.length)} 个搜索结果 / ${formatNumber(allChats.length)} 个会话`
         : (isLoadingChats ? '读取中' : `${formatNumber(allChats.length)} 个会话`);
+    const chatImportAccept = isGroupChatMode() ? '.jsonl' : '.json,.jsonl';
+    const resourceRows = isGroupChatMode()
+        ? (groups.map(group => renderGroupRow(group)).join('') || renderInlineEmpty(getChatEntityListEmptyText()))
+        : (characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty(getChatEntityListEmptyText()));
 
     return `
         ${pageHead('聊天工作区', '角色、会话文件和消息预览。', `
             <label class="secondary-button file-action">
                 <i class="fa-solid fa-file-import"></i>
                 导入聊天
-                <input class="visually-hidden" type="file" accept=".json,.jsonl" multiple data-chat-import-file>
+                <input class="visually-hidden" type="file" accept="${chatImportAccept}" multiple data-chat-import-file>
             </label>
             <button class="secondary-button" type="button" data-chat-backups-toggle>
                 <i class="fa-solid fa-clock-rotate-left"></i>
@@ -3383,12 +3581,22 @@ function renderChat() {
                 <section class="panel chat-browser-panel">
                     <div class="panel-header">
                         <div>
-                            <h2 class="panel-title">角色</h2>
-                            <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
+                            <h2 class="panel-title">${getChatModeLabel()}</h2>
+                            <p class="panel-subtitle">${formatNumber(resourceCount)} 个匹配项</p>
                         </div>
                     </div>
+                    <div class="segmented-control chat-mode-switch" role="tablist" aria-label="聊天类型">
+                        <button class="${state.chatMode === 'character' ? 'active' : ''}" type="button" data-chat-mode="character" aria-selected="${state.chatMode === 'character'}">
+                            <i class="fa-solid fa-user"></i>
+                            角色
+                        </button>
+                        <button class="${state.chatMode === 'group' ? 'active' : ''}" type="button" data-chat-mode="group" aria-selected="${state.chatMode === 'group'}">
+                            <i class="fa-solid fa-users"></i>
+                            群聊
+                        </button>
+                    </div>
                     <div class="resource-list">
-                        ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
+                        ${resourceRows}
                     </div>
                 </section>
                 <section class="panel chat-browser-panel">
@@ -3411,13 +3619,13 @@ function renderChat() {
 	                        </button>
 	                    </div>
 	                    <div class="resource-list">
-	                        ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
+	                        ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? `这个${getChatModeLabel()}暂无聊天文件` : `先选择一个${getChatModeLabel()}`)}
 	                    </div>
 	                </section>
 	            </aside>
             ` : ''}
 	            <section class="panel chat-thread">
-	                ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
+	                ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState(isGroupChatMode() ? 'fa-users' : 'fa-address-card', getChatEntityEmptyTitle(), getChatEntityEmptyDescription())}
 	            </section>
 	        </div>
 	        ${state.chatBackups.open ? renderChatBackupsPanel() : ''}
@@ -3446,40 +3654,46 @@ function renderChatFileRow(chat) {
     `;
 }
 
-function renderChatThread(character, options = {}) {
-    const avatar = getAvatarUrl(character);
-    const name = character.name || character.data?.name || '未命名角色';
+function renderChatThread(entity, options = {}) {
+    const avatar = getChatEntityAvatarUrl(entity);
+    const name = getChatEntityName(entity);
+    const contextKey = getChatContextKey(entity);
     const chats = getSelectedChatList();
-    const visibleChats = getVisibleChatList(character);
+    const visibleChats = getVisibleChatList(entity);
     const selectedChat = visibleChats.find(chat => getChatId(chat) === state.selected.chat)
         || chats.find(chat => getChatId(chat) === state.selected.chat);
     const messages = getSelectedChatMessages();
-    const isRenaming = state.chatRenaming.key === getChatCacheKey(character.avatar, state.selected.chat);
-    const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(character.avatar, state.selected.chat);
+    const isRenaming = state.chatRenaming.key === getChatCacheKey(contextKey, state.selected.chat);
+    const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(contextKey, state.selected.chat);
+    const memberCount = isGroupChatMode() && Array.isArray(entity?.members) ? entity.members.length : 0;
+    const subtitle = isGroupChatMode()
+        ? `${formatNumber(memberCount)} 个成员`
+        : (entity.data?.creator || entity.avatar || '角色卡');
 
     return `
         ${options.compactContext ? `
             <div class="chat-context-strip">
-                <span class="avatar-fallback"><i class="fa-solid fa-comments"></i></span>
+                ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : `<span class="avatar-fallback"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
                 <span class="row-main">
                     <strong>${escapeHtml(name)}</strong>
                     <span class="row-subtitle">${escapeHtml(selectedChat?.file_name || '未选择聊天文件')} · ${formatNumber(options.chatCount || chats.length)} 个会话</span>
                 </span>
                 <button class="secondary-button" type="button" data-toggle-chat-sidebar>
                     <i class="fa-solid fa-list"></i>
-                    选择角色/会话
+                    选择${getChatModeLabel()}/会话
                 </button>
             </div>
         ` : ''}
         <div class="detail-hero">
-            ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : '<span class="avatar-fallback large">C</span>'}
+            ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : `<span class="avatar-fallback large"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
-                <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || character.data?.creator || character.avatar || '角色卡')}</p>
+                <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || subtitle)}</p>
                 <div class="tag-row detail-tags">
                     <span class="tag">${formatNumber(messages.length)} 条消息</span>
                     <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
                     <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
+                    ${isGroupChatMode() ? `<span class="tag">${formatNumber(memberCount)} 个成员</span>` : ''}
                     <span class="tag">${escapeHtml(state.engine.status)}</span>
                 </div>
             </div>
@@ -3578,13 +3792,14 @@ function renderChatRenamePanel() {
 function renderChatBackupsPanel() {
     const backups = state.chatBackups.items;
     const isLoading = state.chatBackups.loading;
+    const targetLabel = `当前选中${getChatModeLabel()}`;
 
     return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">聊天备份</h2>
-                    <p class="panel-subtitle">自动保存的聊天备份；恢复会导入到当前选中角色，不覆盖原文件。</p>
+                    <p class="panel-subtitle">自动保存的聊天备份；恢复会导入到${targetLabel}，不覆盖原文件。</p>
                 </div>
                 <button class="secondary-button" type="button" data-chat-backups-refresh ${isLoading ? 'disabled' : ''}>
                     <i class="fa-solid ${isLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
@@ -3604,7 +3819,7 @@ function renderChatBackupsPanel() {
                             </div>
                         </div>
                         <textarea readonly>${escapeHtml(state.chatBackups.previewText)}</textarea>
-                    ` : renderEmptyState('fa-eye', '未选择备份', '点击“预览”查看备份内容，或点击“恢复”导入到当前角色。')}
+                    ` : renderEmptyState('fa-eye', '未选择备份', `点击“预览”查看备份内容，或点击“恢复”导入到${targetLabel}。`)}
                 </div>
             </div>
         </section>
@@ -5964,8 +6179,14 @@ function renderContent() {
 function renderInspector() {
     const provider = getProviderInfo();
     const selectedCharacter = state.characters.find(character => character.avatar === state.selected.character);
+    const selectedGroup = state.groups.find(group => group.id === state.selected.group);
+    const selectedEntity = getSelectedChatEntity();
     const selectedWorldbook = state.worldbooks.find(worldbook => worldbook.file_id === state.selected.worldbook);
     const selectedChat = getSelectedChatList().find(chat => chat.file_id === state.selected.chat);
+    const selectedGroupMembers = selectedGroup?.members?.length ?? 0;
+    const currentContextDetail = isGroupChatMode()
+        ? renderKeyValue('群聊成员', selectedGroup ? `${formatNumber(selectedGroupMembers)} 个` : '未选中')
+        : renderKeyValue('角色文件', selectedCharacter?.avatar || '未选中');
 
     elements.inspector.classList.toggle('open', state.inspectorOpen);
     elements.inspector.setAttribute('aria-hidden', state.inspectorOpen ? 'false' : 'true');
@@ -6003,8 +6224,9 @@ function renderInspector() {
         <section class="inspector-section">
             <h2 class="inspector-title">当前上下文</h2>
             <div class="kv-list">
-                ${renderKeyValue('角色', selectedCharacter?.name || selectedCharacter?.data?.name || '未选中')}
-                ${renderKeyValue('角色文件', selectedCharacter?.avatar || '未选中')}
+                ${renderKeyValue('聊天类型', getChatModeLabel())}
+                ${renderKeyValue('当前对象', getChatEntityName(selectedEntity))}
+                ${currentContextDetail}
                 ${renderKeyValue('聊天文件', selectedChat?.file_name || state.selected.chat || '未选中')}
                 ${renderKeyValue('世界书', selectedWorldbook?.name || selectedWorldbook?.file_id || '未选中')}
             </div>
@@ -6114,13 +6336,46 @@ async function handleClick(event) {
         return;
     }
 
+    const chatModeButton = event.target.closest('[data-chat-mode]');
+    if (chatModeButton) {
+        const nextMode = chatModeButton.dataset.chatMode === 'group' ? 'group' : 'character';
+        if (state.chatMode !== nextMode) {
+            state.chatMode = nextMode;
+            localStorage.setItem('st-modern-chat-mode', nextMode);
+            state.selected.chat = '';
+            state.chatRenaming = { key: '', name: '' };
+            state.chatDeleteConfirm = { key: '', name: '' };
+            state.chatEditing = { key: '', index: -1, text: '' };
+            clearChatSearch();
+            await prepareChatForSelectedContext();
+        }
+        render();
+        return;
+    }
+
     const characterButton = event.target.closest('[data-select-character]');
     if (characterButton) {
+        state.chatMode = 'character';
+        localStorage.setItem('st-modern-chat-mode', 'character');
         state.selected.character = characterButton.dataset.selectCharacter;
         state.selected.chat = '';
         clearChatSearch();
         if (state.route === 'chat') {
-            await prepareChatForSelectedCharacter();
+            await prepareChatForSelectedContext();
+        }
+        render();
+        return;
+    }
+
+    const groupButton = event.target.closest('[data-select-group]');
+    if (groupButton) {
+        state.chatMode = 'group';
+        localStorage.setItem('st-modern-chat-mode', 'group');
+        state.selected.group = groupButton.dataset.selectGroup;
+        state.selected.chat = '';
+        clearChatSearch();
+        if (state.route === 'chat') {
+            await prepareChatForSelectedContext();
         }
         render();
         return;
@@ -6129,7 +6384,7 @@ async function handleClick(event) {
     const chatButton = event.target.closest('[data-select-chat]');
     if (chatButton) {
         state.selected.chat = chatButton.dataset.selectChat;
-        await loadChatMessages(getSelectedCharacter(), state.selected.chat);
+        await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
         render();
         return;
     }
@@ -6139,7 +6394,7 @@ async function handleClick(event) {
             if (!state.chatSearch.query.trim()) {
                 clearChatSearch();
             } else {
-                await searchSelectedCharacterChats();
+                await searchSelectedChats();
             }
             render();
         } catch (error) {
@@ -7246,7 +7501,7 @@ document.addEventListener('keydown', event => {
             render();
             return;
         }
-        searchSelectedCharacterChats().then(() => render()).catch(error => {
+        searchSelectedChats().then(() => render()).catch(error => {
             state.errors.push({ key: 'chat-search', message: error.message });
             showToast('聊天搜索失败', error.message);
             render();
