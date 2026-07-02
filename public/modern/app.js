@@ -8,6 +8,8 @@ import {
     worldEntryDefaults,
     worldEntryPageSize,
     worldEntryPositions,
+    worldEntryRoleOptions,
+    worldEntrySelectiveLogicOptions,
 } from './core/constants.js';
 import { createApiClient } from './core/api-client.js';
 import {
@@ -2813,16 +2815,39 @@ function worldEntryToForm(entry) {
         order: String(entry?.order ?? worldEntryDefaults.order),
         position: String(entry?.position ?? worldEntryDefaults.position),
         depth: String(entry?.depth ?? worldEntryDefaults.depth),
+        role: entry?.role == null ? '' : String(entry.role),
         probability: String(entry?.probability ?? worldEntryDefaults.probability),
+        selectiveLogic: String(entry?.selectiveLogic ?? worldEntryDefaults.selectiveLogic),
+        scanDepth: entry?.scanDepth == null ? '' : String(entry.scanDepth),
+        caseSensitive: entry?.caseSensitive == null ? '' : String(Boolean(entry.caseSensitive)),
+        matchWholeWords: entry?.matchWholeWords == null ? '' : String(Boolean(entry.matchWholeWords)),
+        useGroupScoring: entry?.useGroupScoring == null ? '' : String(Boolean(entry.useGroupScoring)),
         constant: !!entry?.constant,
         vectorized: !!entry?.vectorized,
         selective: entry?.selective !== false,
+        addMemo: !!entry?.addMemo,
         useProbability: entry?.useProbability !== false,
         disable: !!entry?.disable,
         ignoreBudget: !!entry?.ignoreBudget,
         excludeRecursion: !!entry?.excludeRecursion,
         preventRecursion: !!entry?.preventRecursion,
     };
+}
+
+function nullableBooleanInput(value) {
+    if (value === '' || value == null) {
+        return null;
+    }
+
+    return value === true || value === 'true';
+}
+
+function nullableNumberInput(value) {
+    if (value === '' || value == null) {
+        return null;
+    }
+
+    return numberInput(value, null);
 }
 
 function formToWorldEntry(form, uid, previous = {}) {
@@ -2836,10 +2861,17 @@ function formToWorldEntry(form, uid, previous = {}) {
         order: numberInput(form.order, worldEntryDefaults.order),
         position: numberInput(form.position, worldEntryDefaults.position),
         depth: numberInput(form.depth, worldEntryDefaults.depth),
+        role: form.role === '' ? null : numberInput(form.role, worldEntryDefaults.role),
         probability: Math.max(0, Math.min(100, numberInput(form.probability, worldEntryDefaults.probability))),
+        selectiveLogic: numberInput(form.selectiveLogic, worldEntryDefaults.selectiveLogic),
+        scanDepth: nullableNumberInput(form.scanDepth),
+        caseSensitive: nullableBooleanInput(form.caseSensitive),
+        matchWholeWords: nullableBooleanInput(form.matchWholeWords),
+        useGroupScoring: nullableBooleanInput(form.useGroupScoring),
         constant: !!form.constant,
         vectorized: !!form.vectorized,
         selective: !!form.selective,
+        addMemo: !!form.addMemo,
         useProbability: !!form.useProbability,
         disable: !!form.disable,
         ignoreBudget: !!form.ignoreBudget,
@@ -2866,10 +2898,17 @@ function syncWorldEntryOriginalData(detail, uid, entry) {
         depth: ['extensions.depth', entry.depth],
         probability: ['extensions.probability', entry.probability],
         position: ['extensions.position', entry.position],
+        role: ['extensions.role', entry.role],
         key: ['keys', entry.key],
         keysecondary: ['secondary_keys', entry.keysecondary],
         selective: ['selective', entry.selective],
+        selectiveLogic: ['selectiveLogic', entry.selectiveLogic],
+        addMemo: ['addMemo', entry.addMemo],
         vectorized: ['extensions.vectorized', entry.vectorized],
+        scanDepth: ['extensions.scan_depth', entry.scanDepth],
+        caseSensitive: ['extensions.case_sensitive', entry.caseSensitive],
+        matchWholeWords: ['extensions.match_whole_words', entry.matchWholeWords],
+        useGroupScoring: ['extensions.use_group_scoring', entry.useGroupScoring],
         ignoreBudget: ['extensions.ignore_budget', entry.ignoreBudget],
         excludeRecursion: ['extensions.exclude_recursion', entry.excludeRecursion],
         preventRecursion: ['extensions.prevent_recursion', entry.preventRecursion],
@@ -5524,6 +5563,8 @@ function renderWorldEntryFormContent(form, isCreate) {
                         ${worldEntryPositions.map(position => `<option value="${position.value}" ${Number(form.position) === position.value ? 'selected' : ''}>${escapeHtml(position.label)}</option>`).join('')}
                     </select>
                 </label>
+                ${renderWorldEntryOptionSelect('selectiveLogic', '触发逻辑', form.selectiveLogic, worldEntrySelectiveLogicOptions)}
+                ${renderWorldEntryOptionSelect('role', '按深度插入角色', form.role, worldEntryRoleOptions)}
                 <label class="field-label">
                     <span>顺序</span>
                     <input class="text-input" type="number" data-world-entry-field="order" value="${escapeHtml(form.order)}">
@@ -5531,6 +5572,10 @@ function renderWorldEntryFormContent(form, isCreate) {
                 <label class="field-label">
                     <span>深度</span>
                     <input class="text-input" type="number" data-world-entry-field="depth" value="${escapeHtml(form.depth)}">
+                </label>
+                <label class="field-label">
+                    <span>扫描深度</span>
+                    <input class="text-input" type="number" data-world-entry-field="scanDepth" value="${escapeHtml(form.scanDepth)}" placeholder="留空继承全局">
                 </label>
                 <label class="field-label">
                     <span>概率</span>
@@ -5545,11 +5590,17 @@ function renderWorldEntryFormContent(form, isCreate) {
                 ${renderWorldEntryCheckbox('constant', '常驻', form.constant)}
                 ${renderWorldEntryCheckbox('vectorized', '向量化', form.vectorized)}
                 ${renderWorldEntryCheckbox('selective', '使用关键词触发', form.selective)}
+                ${renderWorldEntryCheckbox('addMemo', '显示备注字段', form.addMemo)}
                 ${renderWorldEntryCheckbox('useProbability', '使用概率', form.useProbability)}
                 ${renderWorldEntryCheckbox('disable', '禁用', form.disable)}
                 ${renderWorldEntryCheckbox('ignoreBudget', '忽略预算', form.ignoreBudget)}
                 ${renderWorldEntryCheckbox('excludeRecursion', '不递归扫描', form.excludeRecursion)}
                 ${renderWorldEntryCheckbox('preventRecursion', '阻止递归', form.preventRecursion)}
+            </div>
+            <div class="form-grid two-columns">
+                ${renderWorldEntryNullableBooleanSelect('caseSensitive', '大小写敏感', form.caseSensitive)}
+                ${renderWorldEntryNullableBooleanSelect('matchWholeWords', '整词匹配', form.matchWholeWords)}
+                ${renderWorldEntryNullableBooleanSelect('useGroupScoring', '使用分组评分', form.useGroupScoring)}
             </div>
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-cancel-world-entry-edit>
@@ -5563,6 +5614,31 @@ function renderWorldEntryFormContent(form, isCreate) {
             </div>
         </div>
     `;
+}
+
+function renderWorldEntryOptionSelect(field, label, value, options) {
+    const selected = String(value ?? '');
+    const optionHtml = options.map(option => {
+        const optionValue = String(option.value);
+        return `<option value="${escapeHtml(optionValue)}" ${selected === optionValue ? 'selected' : ''}>${escapeHtml(option.label)}</option>`;
+    }).join('');
+
+    return `
+        <label class="field-label">
+            <span>${escapeHtml(label)}</span>
+            <select class="select-input" data-world-entry-field="${escapeHtml(field)}">
+                ${optionHtml}
+            </select>
+        </label>
+    `;
+}
+
+function renderWorldEntryNullableBooleanSelect(field, label, value) {
+    return renderWorldEntryOptionSelect(field, label, value, [
+        { value: '', label: '继承全局' },
+        { value: 'true', label: '是' },
+        { value: 'false', label: '否' },
+    ]);
 }
 
 function renderWorldEntryCheckbox(field, label, checked) {

@@ -148,4 +148,18 @@ export const worldEntryPositions = [
     { value: 6, label: '示例消息底部' },
 ];
 
+export const worldEntrySelectiveLogicOptions = [
+    { value: 0, label: '主关键词命中 + 次关键词任一' },
+    { value: 1, label: '主关键词命中 + 次关键词不全中' },
+    { value: 2, label: '主关键词命中 + 次关键词全不命中' },
+    { value: 3, label: '主关键词命中 + 次关键词全命中' },
+];
+
+export const worldEntryRoleOptions = [
+    { value: '', label: '默认' },
+    { value: 0, label: 'System' },
+    { value: 1, label: 'User' },
+    { value: 2, label: 'Assistant' },
+];
+
 export const worldEntryPageSize = 20;
