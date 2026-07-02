@@ -3389,6 +3389,23 @@ function pageHead(title, description, actions = '') {
     `;
 }
 
+function legacyMenu(label) {
+    return `
+        <details class="legacy-menu">
+            <summary class="secondary-button">
+                <i class="fa-solid fa-ellipsis"></i>
+                更多
+            </summary>
+            <div class="legacy-menu-panel">
+                <button class="secondary-button ghost-action" type="button" data-open-legacy>
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    ${escapeHtml(label)}
+                </button>
+            </div>
+        </details>
+    `;
+}
+
 function metricCard(label, value, detail, icon) {
     return `
         <section class="metric-card">
@@ -3407,10 +3424,7 @@ function renderDashboard() {
 
     return `
         ${pageHead('工作台', '资源、连接和最近会话。', `
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                打开原版
-            </button>
+            ${legacyMenu('打开原版')}
             <button class="primary-button" type="button" data-route="chat">
                 <i class="fa-solid fa-comments"></i>
                 进入聊天
@@ -3570,10 +3584,7 @@ function renderChat() {
                 <i class="fa-solid ${state.chatSidebarOpen ? 'fa-table-columns' : 'fa-list'}"></i>
                 ${state.chatSidebarOpen ? '收起列表' : '展开列表'}
             </button>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                打开原版聊天
-            </button>
+            ${legacyMenu('打开原版聊天')}
         `)}
         <div class="chat-layout ${state.chatSidebarOpen ? '' : 'chat-sidebar-collapsed'}">
             ${state.chatSidebarOpen ? `
@@ -4063,10 +4074,7 @@ function renderCharacters() {
                 导入文件
                 <input class="visually-hidden" type="file" accept=".png,.json,.yaml,.yml,.charx,.byaf" data-character-import-file>
             </label>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-pen-to-square"></i>
-                打开原版编辑
-            </button>
+            ${legacyMenu('打开原版编辑')}
         `)}
         <div class="split-grid">
             <section class="panel">
@@ -4345,10 +4353,7 @@ function renderWorldbooks() {
                 <i class="fa-solid fa-plus"></i>
                 新建世界书
             </button>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-pen-to-square"></i>
-                打开编辑器
-            </button>
+            ${legacyMenu('打开原版编辑器')}
         `)}
         <div class="split-grid">
             <section class="panel">
@@ -4690,10 +4695,7 @@ function renderPresets() {
 
     return `
         ${pageHead('预设管理', '模型参数、指令模板和上下文模板。', `
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-pen-to-square"></i>
-                打开编辑器
-            </button>
+            ${legacyMenu('打开原版编辑器')}
         `)}
         ${renderOpenAiPresetTools()}
         <div class="grid-list">
@@ -4781,10 +4783,7 @@ function renderPersonas() {
                 <i class="fa-solid fa-plus"></i>
                 新建人设
             </button>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-user-pen"></i>
-                打开管理
-            </button>
+            ${legacyMenu('打开原版管理')}
         `)}
         ${state.personaCreating.active ? renderPersonaCreatePanel() : ''}
         <div class="grid-list">
@@ -4950,10 +4949,7 @@ function renderAssets() {
                     删除所选 ${formatNumber(selectedCount)}
                 </button>
             ` : ''}
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-folder-open"></i>
-                打开素材
-            </button>
+            ${legacyMenu('打开原版素材')}
         `)}
         ${state.assetDownload.active ? renderAssetDownloadPanel() : ''}
         <div class="metrics-grid">
@@ -5149,10 +5145,6 @@ function renderApi() {
 
     return `
         ${pageHead('API 连接管理', '连接、模型、预设和请求状态。', `
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-key"></i>
-                打开连接配置
-            </button>
             <button class="primary-button" type="button" data-test-api ${state.apiTest.running ? 'disabled' : ''}>
                 <i class="fa-solid ${state.apiTest.running ? 'fa-circle-notch fa-spin' : 'fa-plug-circle-check'}"></i>
                 ${state.apiTest.running ? '测试中' : '测试连接'}
@@ -5161,6 +5153,7 @@ function renderApi() {
                 <i class="fa-solid fa-rotate"></i>
                 刷新
             </button>
+            ${legacyMenu('打开原版连接配置')}
         `)}
         <div class="dashboard-grid">
             <section class="panel">
@@ -5686,10 +5679,7 @@ function renderExtensions() {
                 <i class="fa-solid ${state.extensionInstall.active ? 'fa-xmark' : 'fa-plus'}"></i>
                 ${state.extensionInstall.active ? '取消安装' : '安装扩展'}
             </button>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-puzzle-piece"></i>
-                打开扩展
-            </button>
+            ${legacyMenu('打开原版扩展')}
         `)}
         ${state.extensionInstall.active ? renderExtensionInstallPanel() : ''}
         <div class="table-wrap">
@@ -5993,10 +5983,7 @@ function renderSettings() {
                 <i class="fa-solid ${state.settingsSnapshots.loading ? 'fa-circle-notch fa-spin' : 'fa-clock-rotate-left'}"></i>
                 设置快照
             </button>
-            <button class="secondary-button" type="button" data-open-legacy>
-                <i class="fa-solid fa-gear"></i>
-                打开设置
-            </button>
+            ${legacyMenu('打开原版设置')}
         `)}
         <div class="grid-list">
             <article class="resource-card">

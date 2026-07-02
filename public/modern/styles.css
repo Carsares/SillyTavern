@@ -363,6 +363,36 @@ kbd {
     color: var(--danger);
 }
 
+.legacy-menu {
+    position: relative;
+}
+
+.legacy-menu summary {
+    list-style: none;
+}
+
+.legacy-menu summary::-webkit-details-marker {
+    display: none;
+}
+
+.legacy-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 6;
+    min-width: 190px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.legacy-menu-panel .secondary-button {
+    width: 100%;
+    justify-content: flex-start;
+}
+
 .file-action {
     position: relative;
     overflow: hidden;
