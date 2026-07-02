@@ -25,6 +25,10 @@
     min-height: 0;
 }
 
+.chat-mode-switch {
+    margin-bottom: 10px;
+}
+
 .chat-browser-panel {
     min-height: 0;
     overflow: hidden;
