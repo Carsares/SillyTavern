@@ -109,26 +109,7 @@ const {
     getChatCompletionModel,
 } = apiConnectionActions;
 
-const {
-    getPresetGroups,
-    getPresetCount,
-    getPresetItems,
-    getVisiblePresetGroups,
-    getSelectedPresetRecord,
-    selectPreset,
-    getPresetEditorText,
-    updatePresetEditorText,
-    saveOpenAiPresetFromForm,
-    savePresetJsonFromEditor,
-    useOpenAiPreset,
-    duplicatePreset,
-    exportPreset,
-    restorePreset,
-    beginPresetDelete,
-    cancelPresetDelete,
-    confirmPresetDelete,
-    importPresetFile,
-} = createPresetActions({
+const presetActions = createPresetActions({
     state,
     apiFetch,
     loadData,
@@ -140,6 +121,12 @@ const {
     downloadFile,
     matchesQuery,
 });
+
+const {
+    getPresetGroups,
+    getPresetCount,
+    getPresetItems,
+} = presetActions;
 
 const {
     getAssetGroups,
@@ -748,27 +735,7 @@ const routeContext = createRouteContext({
         updatePersonaFormField,
         replacePersonaAvatar,
     },
-    presets: {
-        getPresetCount,
-        getPresetGroups,
-        parsePreset,
-        getVisiblePresetGroups,
-        getSelectedPresetRecord,
-        getPresetEditorText,
-        getOaiSettings,
-        saveOpenAiPresetFromForm,
-        selectPreset,
-        savePresetJsonFromEditor,
-        useOpenAiPreset,
-        duplicatePreset,
-        exportPreset,
-        restorePreset,
-        beginPresetDelete,
-        cancelPresetDelete,
-        confirmPresetDelete,
-        updatePresetEditorText,
-        importPresetFile,
-    },
+    presets: presetActions,
     settings: {
         getRequestCompressionSettings,
         loadSettingsSnapshots,
