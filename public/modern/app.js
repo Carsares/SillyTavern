@@ -51,6 +51,23 @@ const state = {
     chatMetadata: {},
     loadingChats: {},
     chatDrafts: {},
+    chatSearch: {
+        avatar: '',
+        query: '',
+        searchedQuery: '',
+        loading: false,
+        results: [],
+    },
+    chatBackups: {
+        open: false,
+        loading: false,
+        items: [],
+        previewName: '',
+        previewText: '',
+        deleteConfirm: '',
+        deleting: false,
+        restoring: '',
+    },
     chatEditing: {
         key: '',
         index: -1,
@@ -490,6 +507,18 @@ async function apiFetchResponse(path, options = {}, retry = true) {
     return response;
 }
 
+function downloadFile(content, fileName, contentType = 'application/octet-stream') {
+    const blob = content instanceof Blob ? content : new Blob([content], { type: contentType });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+}
+
 async function loadData({ silent = false } = {}) {
     state.loading = true;
     state.errors = [];
@@ -595,6 +624,24 @@ function getSelectedChatList() {
     return state.chatLists[state.selected.character] || [];
 }
 
+function getChatId(chat) {
+    return stripJsonlExtension(chat?.file_id || chat?.file_name || '');
+}
+
+function getChatMessageCount(chat) {
+    return Number(chat?.chat_items ?? chat?.message_count ?? 0);
+}
+
+function getVisibleChatList(character = getSelectedCharacter()) {
+    const search = state.chatSearch;
+    const avatar = character?.avatar || '';
+    if (search.avatar === avatar && search.searchedQuery) {
+        return search.results;
+    }
+
+    return getSelectedChatList();
+}
+
 function getSelectedChatMessages() {
     const cacheKey = getChatCacheKey(state.selected.character, state.selected.chat);
     return state.chatMessages[cacheKey] || [];
@@ -637,6 +684,57 @@ async function loadCharacterChats(character) {
         return [];
     } finally {
         state.loadingChats[character.avatar] = false;
+    }
+}
+
+function clearChatSearch() {
+    state.chatSearch = {
+        avatar: state.selected.character || '',
+        query: '',
+        searchedQuery: '',
+        loading: false,
+        results: [],
+    };
+}
+
+async function searchSelectedCharacterChats() {
+    const character = getSelectedCharacter();
+    if (!character?.avatar) {
+        throw new Error('请先选择一个角色。');
+    }
+
+    const query = state.chatSearch.query.trim();
+    if (!query) {
+        clearChatSearch();
+        return;
+    }
+
+    state.chatSearch = {
+        ...state.chatSearch,
+        avatar: character.avatar,
+        loading: true,
+    };
+    render();
+
+    try {
+        const result = await apiFetch('/api/chats/search', {
+            body: {
+                query,
+                avatar_url: character.avatar,
+                group_id: null,
+            },
+        });
+        const results = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
+        state.chatSearch = {
+            avatar: character.avatar,
+            query,
+            searchedQuery: query,
+            loading: false,
+            results,
+        };
+    } catch (error) {
+        state.chatSearch.loading = false;
+        throw error;
     }
 }
 
@@ -1367,16 +1465,10 @@ async function confirmCharacterDelete() {
 async function exportCharacter(avatar, format) {
     const response = await apiFetchResponse('/api/characters/export', { body: { avatar_url: avatar, format } });
     const blob = await response.blob();
-    const link = document.createElement('a');
-    const objectUrl = URL.createObjectURL(blob);
     const baseName = String(avatar || 'character').replace(/\.png$/i, '');
-    link.href = objectUrl;
-    link.download = `${baseName}.${format}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    showToast('导出已开始', link.download);
+    const fileName = `${baseName}.${format}`;
+    downloadFile(blob, fileName);
+    showToast('导出已开始', fileName);
 }
 
 async function importCharacterFile(file) {
@@ -2602,6 +2694,178 @@ async function deleteModernMessage(messageIndex) {
     render();
 }
 
+async function importModernChatFiles(files) {
+    const character = getSelectedCharacter();
+    if (!character?.avatar) {
+        throw new Error('请先选择一个角色。');
+    }
+
+    const importedFileNames = [];
+    for (const file of Array.from(files || [])) {
+        const format = file.name.split('.').pop()?.toLowerCase() || '';
+        if (!['json', 'jsonl'].includes(format)) {
+            throw new Error('聊天导入仅支持 JSON 或 JSONL 文件。');
+        }
+
+        const formData = new FormData();
+        formData.set('file_type', format);
+        formData.set('avatar', file, file.name);
+        formData.set('avatar_url', character.avatar);
+        formData.set('user_name', getUserName());
+        formData.set('character_name', getCharacterName(character));
+        const result = await apiFetch('/api/chats/import', { body: formData, omitContentType: true });
+        if (result?.error) {
+            throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
+        }
+        importedFileNames.push(...(result?.fileNames || []));
+    }
+
+    if (!importedFileNames.length) {
+        throw new Error('没有导入任何聊天文件。');
+    }
+
+    clearChatSearch();
+    await refreshSelectedChatList(character);
+    state.selected.chat = getChatId({ file_name: importedFileNames[0] });
+    await loadChatMessages(character, state.selected.chat, { force: true });
+    showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);
+    render();
+}
+
+async function exportModernChat(format) {
+    const character = getSelectedCharacter();
+    const chatId = stripJsonlExtension(state.selected.chat);
+    if (!character?.avatar || !chatId) {
+        throw new Error('请先选择一个聊天文件。');
+    }
+
+    const safeFormat = format === 'jsonl' ? 'jsonl' : 'txt';
+    const result = await apiFetch('/api/chats/export', {
+        body: {
+            is_group: false,
+            avatar_url: character.avatar,
+            file: `${chatId}.jsonl`,
+            exportfilename: `${chatId}.${safeFormat}`,
+            format: safeFormat,
+        },
+    });
+    if (!result?.result) {
+        throw new Error('聊天导出结果为空。');
+    }
+
+    downloadFile(result.result, `${chatId}.${safeFormat}`, safeFormat === 'txt' ? 'text/plain' : 'application/jsonl');
+    showToast('导出已开始', `${chatId}.${safeFormat}`);
+}
+
+async function loadChatBackups({ force = false } = {}) {
+    if (state.chatBackups.items.length && !force) {
+        return state.chatBackups.items;
+    }
+
+    state.chatBackups.loading = true;
+    render();
+    try {
+        const result = await apiFetch('/api/backups/chat/get');
+        const backups = Array.isArray(result) ? sortChats(result.filter(item => item.file_name)) : [];
+        state.chatBackups.items = backups;
+        return backups;
+    } finally {
+        state.chatBackups.loading = false;
+    }
+}
+
+async function toggleChatBackups() {
+    state.chatBackups.open = !state.chatBackups.open;
+    if (state.chatBackups.open) {
+        await loadChatBackups();
+    }
+    render();
+}
+
+function formatBackupPreview(rawText) {
+    const lines = String(rawText || '').split('\n').filter(Boolean);
+    const messages = [];
+    for (const line of lines) {
+        try {
+            const item = JSON.parse(line);
+            if (item?.mes) {
+                messages.push(`${item.name || 'Unknown'} · ${formatDate(item.send_date)}\n${item.extra?.display_text || item.mes}`);
+            }
+        } catch {
+            // Ignore broken lines in a backup preview; restore still uses the original file.
+        }
+    }
+
+    return messages.slice(-40).join('\n\n') || '这个备份没有可预览的消息。';
+}
+
+async function downloadChatBackup(name) {
+    return apiFetchResponse('/api/backups/chat/download', { body: { name } });
+}
+
+async function viewChatBackup(name) {
+    const response = await downloadChatBackup(name);
+    const rawText = await response.text();
+    state.chatBackups.previewName = name;
+    state.chatBackups.previewText = formatBackupPreview(rawText);
+    render();
+}
+
+async function restoreChatBackup(name) {
+    const character = getSelectedCharacter();
+    if (!character?.avatar) {
+        throw new Error('请先选择要恢复到的角色。');
+    }
+
+    state.chatBackups.restoring = name;
+    render();
+    try {
+        const response = await downloadChatBackup(name);
+        const blob = await response.blob();
+        const file = new File([blob], name, { type: 'application/octet-stream' });
+        await importModernChatFiles([file]);
+        state.chatBackups.restoring = '';
+        showToast('备份已恢复', `${name} 已导入到 ${getCharacterName(character)}`);
+        render();
+    } catch (error) {
+        state.chatBackups.restoring = '';
+        throw error;
+    }
+}
+
+function beginChatBackupDelete(name) {
+    state.chatBackups.deleteConfirm = name;
+    render();
+}
+
+function cancelChatBackupDelete() {
+    state.chatBackups.deleteConfirm = '';
+    render();
+}
+
+async function confirmChatBackupDelete() {
+    const name = state.chatBackups.deleteConfirm;
+    if (!name) {
+        throw new Error('请先选择一个备份。');
+    }
+
+    state.chatBackups.deleting = true;
+    render();
+    try {
+        await apiFetch('/api/backups/chat/delete', { body: { name } });
+        state.chatBackups.items = state.chatBackups.items.filter(item => item.file_name !== name);
+        if (state.chatBackups.previewName === name) {
+            state.chatBackups.previewName = '';
+            state.chatBackups.previewText = '';
+        }
+        state.chatBackups.deleteConfirm = '';
+        showToast('备份已删除', name);
+    } finally {
+        state.chatBackups.deleting = false;
+        render();
+    }
+}
+
 function beginModernMessageEdit(messageIndex) {
     if (state.engine.generating) {
         showToast('暂不能编辑', '生成中不能编辑消息。');
@@ -2887,11 +3151,26 @@ function renderChat() {
     if (selected && state.selected.character !== selected.avatar) {
         state.selected.character = selected.avatar;
     }
-    const chats = getSelectedChatList();
+    const allChats = getSelectedChatList();
+    const chats = getVisibleChatList(selected);
     const isLoadingChats = !!state.loadingChats[state.selected.character];
+    const isSearching = state.chatSearch.loading;
+    const searchActive = state.chatSearch.avatar === selected?.avatar && !!state.chatSearch.searchedQuery;
+    const searchSummary = searchActive
+        ? `${formatNumber(chats.length)} 个搜索结果 / ${formatNumber(allChats.length)} 个会话`
+        : (isLoadingChats ? '读取中' : `${formatNumber(allChats.length)} 个会话`);
 
     return `
         ${pageHead('聊天工作区', '角色、会话文件和消息预览。', `
+            <label class="secondary-button file-action">
+                <i class="fa-solid fa-file-import"></i>
+                导入聊天
+                <input class="visually-hidden" type="file" accept=".json,.jsonl" multiple data-chat-import-file>
+            </label>
+            <button class="secondary-button" type="button" data-chat-backups-toggle>
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                ${state.chatBackups.open ? '收起备份' : '聊天备份'}
+            </button>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 打开原版聊天
@@ -2911,35 +3190,46 @@ function renderChat() {
                     </div>
                 </section>
                 <section class="panel chat-browser-panel">
-                    <div class="panel-header">
-                        <div>
-                            <h2 class="panel-title">聊天文件</h2>
-                            <p class="panel-subtitle">${isLoadingChats ? '读取中' : `${formatNumber(chats.length)} 个会话`}</p>
-                        </div>
-                        <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
-                            <i class="fa-solid fa-plus"></i>
-                        </button>
-                    </div>
-                    <div class="resource-list">
-                        ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
-                    </div>
-                </section>
-            </aside>
-            <section class="panel chat-thread">
-                ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
-            </section>
-        </div>
-    `;
+	                    <div class="panel-header">
+	                        <div>
+	                            <h2 class="panel-title">聊天文件</h2>
+	                            <p class="panel-subtitle">${escapeHtml(searchSummary)}</p>
+	                        </div>
+	                        <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
+	                            <i class="fa-solid fa-plus"></i>
+	                        </button>
+	                    </div>
+	                    <div class="chat-search-row">
+	                        <input class="text-input" type="search" data-chat-search-input value="${escapeHtml(state.chatSearch.query)}" placeholder="搜索文件名和消息内容">
+	                        <button class="icon-button" type="button" data-chat-search-run title="搜索聊天" ${selected && !isSearching ? '' : 'disabled'}>
+	                            <i class="fa-solid ${isSearching ? 'fa-circle-notch fa-spin' : 'fa-magnifying-glass'}"></i>
+	                        </button>
+	                        <button class="icon-button" type="button" data-chat-search-clear title="清空搜索" ${state.chatSearch.query || state.chatSearch.searchedQuery ? '' : 'disabled'}>
+	                            <i class="fa-solid fa-xmark"></i>
+	                        </button>
+	                    </div>
+	                    <div class="resource-list">
+	                        ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? '这个角色暂无聊天文件' : '先选择一个角色')}
+	                    </div>
+	                </section>
+	            </aside>
+	            <section class="panel chat-thread">
+	                ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
+	            </section>
+	        </div>
+	        ${state.chatBackups.open ? renderChatBackupsPanel() : ''}
+	    `;
 }
 
 function renderChatFileRow(chat) {
-    const chatId = chat.file_id || String(chat.file_name || '').replace('.jsonl', '');
-    const messageCount = Number(chat.chat_items || 0);
+    const chatId = getChatId(chat);
+    const messageCount = getChatMessageCount(chat);
     const subtitle = [
         `${formatNumber(messageCount)} 条消息`,
         chat.file_size || '',
         formatDate(chat.last_mes),
     ].filter(Boolean).join(' · ');
+    const preview = chat.preview_message || '';
 
     return `
         <button class="resource-row ${state.selected.chat === chatId ? 'active' : ''}" type="button" data-select-chat="${escapeHtml(chatId)}">
@@ -2947,6 +3237,7 @@ function renderChatFileRow(chat) {
             <span class="row-main">
                 <span class="row-title">${escapeHtml(chat.file_name || chatId)}</span>
                 <span class="row-subtitle">${escapeHtml(subtitle)}</span>
+                ${preview ? `<span class="row-subtitle chat-preview">${escapeHtml(preview)}</span>` : ''}
             </span>
         </button>
     `;
@@ -2956,7 +3247,9 @@ function renderChatThread(character) {
     const avatar = getAvatarUrl(character);
     const name = character.name || character.data?.name || '未命名角色';
     const chats = getSelectedChatList();
-    const selectedChat = chats.find(chat => chat.file_id === state.selected.chat);
+    const visibleChats = getVisibleChatList(character);
+    const selectedChat = visibleChats.find(chat => getChatId(chat) === state.selected.chat)
+        || chats.find(chat => getChatId(chat) === state.selected.chat);
     const messages = getSelectedChatMessages();
     const isRenaming = state.chatRenaming.key === getChatCacheKey(character.avatar, state.selected.chat);
     const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(character.avatar, state.selected.chat);
@@ -2976,6 +3269,14 @@ function renderChatThread(character) {
             </div>
             ${selectedChat ? `
                 <div class="page-actions detail-actions">
+                    <button class="secondary-button" type="button" data-export-chat="txt">
+                        <i class="fa-solid fa-file-lines"></i>
+                        导出 TXT
+                    </button>
+                    <button class="secondary-button" type="button" data-export-chat="jsonl">
+                        <i class="fa-solid fa-file-code"></i>
+                        导出 JSONL
+                    </button>
                     <button class="secondary-button" type="button" data-rename-chat ${isRenaming ? 'disabled' : ''}>
                         <i class="fa-solid fa-pen-to-square"></i>
                         重命名
@@ -3055,6 +3356,86 @@ function renderChatRenamePanel() {
                 </button>
             </div>
         </div>
+    `;
+}
+
+function renderChatBackupsPanel() {
+    const backups = state.chatBackups.items;
+    const isLoading = state.chatBackups.loading;
+
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">聊天备份</h2>
+                    <p class="panel-subtitle">自动保存的聊天备份；恢复会导入到当前选中角色，不覆盖原文件。</p>
+                </div>
+                <button class="secondary-button" type="button" data-chat-backups-refresh ${isLoading ? 'disabled' : ''}>
+                    <i class="fa-solid ${isLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
+                    刷新备份
+                </button>
+            </div>
+            <div class="backup-layout">
+                <div class="resource-list backup-list">
+                    ${backups.map(backup => renderChatBackupRow(backup)).join('') || renderInlineEmpty(isLoading ? '正在读取备份' : '暂无聊天备份')}
+                </div>
+                <div class="backup-preview">
+                    ${state.chatBackups.previewName ? `
+                        <div class="panel-header compact-header">
+                            <div>
+                                <h3 class="panel-title">${escapeHtml(state.chatBackups.previewName)}</h3>
+                                <p class="panel-subtitle">预览最近 40 条可读消息。</p>
+                            </div>
+                        </div>
+                        <textarea readonly>${escapeHtml(state.chatBackups.previewText)}</textarea>
+                    ` : renderEmptyState('fa-eye', '未选择备份', '点击“预览”查看备份内容，或点击“恢复”导入到当前角色。')}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function renderChatBackupRow(backup) {
+    const name = backup.file_name || backup.file_id || '';
+    const isDeleting = state.chatBackups.deleteConfirm === name;
+    const isBusy = state.chatBackups.restoring === name || (isDeleting && state.chatBackups.deleting);
+    const meta = [
+        `${formatNumber(getChatMessageCount(backup))} 条消息`,
+        backup.file_size || '',
+        formatDate(backup.last_mes),
+    ].filter(Boolean).join(' · ');
+
+    return `
+        <article class="backup-row ${state.chatBackups.previewName === name ? 'active' : ''}">
+            <div class="row-main">
+                <strong class="row-title">${escapeHtml(name)}</strong>
+                <span class="row-subtitle">${escapeHtml(meta)}</span>
+            </div>
+            <div class="row-actions">
+                <button class="secondary-button" type="button" data-view-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                    <i class="fa-solid fa-eye"></i>
+                    预览
+                </button>
+                <button class="secondary-button" type="button" data-restore-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                    <i class="fa-solid ${state.chatBackups.restoring === name ? 'fa-circle-notch fa-spin' : 'fa-file-import'}"></i>
+                    恢复
+                </button>
+                ${isDeleting ? `
+                    <button class="secondary-button" type="button" data-cancel-chat-backup-delete ${state.chatBackups.deleting ? 'disabled' : ''}>
+                        取消
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-confirm-chat-backup-delete ${state.chatBackups.deleting ? 'disabled' : ''}>
+                        <i class="fa-solid ${state.chatBackups.deleting ? 'fa-circle-notch fa-spin' : 'fa-trash'}"></i>
+                        确认删除
+                    </button>
+                ` : `
+                    <button class="secondary-button danger-action" type="button" data-delete-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                        <i class="fa-solid fa-trash"></i>
+                        删除
+                    </button>
+                `}
+            </div>
+        </article>
     `;
 }
 
@@ -5016,6 +5397,7 @@ async function handleClick(event) {
     if (characterButton) {
         state.selected.character = characterButton.dataset.selectCharacter;
         state.selected.chat = '';
+        clearChatSearch();
         if (state.route === 'chat') {
             await prepareChatForSelectedCharacter();
         }
@@ -5028,6 +5410,109 @@ async function handleClick(event) {
         state.selected.chat = chatButton.dataset.selectChat;
         await loadChatMessages(getSelectedCharacter(), state.selected.chat);
         render();
+        return;
+    }
+
+    if (event.target.closest('[data-chat-search-run]')) {
+        try {
+            if (!state.chatSearch.query.trim()) {
+                clearChatSearch();
+            } else {
+                await searchSelectedCharacterChats();
+            }
+            render();
+        } catch (error) {
+            state.errors.push({ key: 'chat-search', message: error.message });
+            showToast('聊天搜索失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-chat-search-clear]')) {
+        clearChatSearch();
+        render();
+        return;
+    }
+
+    if (event.target.closest('[data-chat-backups-toggle]')) {
+        try {
+            await toggleChatBackups();
+        } catch (error) {
+            state.errors.push({ key: 'chat-backups', message: error.message });
+            showToast('备份读取失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-chat-backups-refresh]')) {
+        try {
+            await loadChatBackups({ force: true });
+            render();
+        } catch (error) {
+            state.errors.push({ key: 'chat-backups', message: error.message });
+            showToast('备份刷新失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const exportChatButton = event.target.closest('[data-export-chat]');
+    if (exportChatButton) {
+        try {
+            await exportModernChat(exportChatButton.dataset.exportChat);
+        } catch (error) {
+            state.errors.push({ key: 'chat-export', message: error.message });
+            showToast('聊天导出失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const viewChatBackupButton = event.target.closest('[data-view-chat-backup]');
+    if (viewChatBackupButton) {
+        try {
+            await viewChatBackup(viewChatBackupButton.dataset.viewChatBackup);
+        } catch (error) {
+            state.errors.push({ key: 'chat-backup-view', message: error.message });
+            showToast('备份预览失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const restoreChatBackupButton = event.target.closest('[data-restore-chat-backup]');
+    if (restoreChatBackupButton) {
+        try {
+            await restoreChatBackup(restoreChatBackupButton.dataset.restoreChatBackup);
+        } catch (error) {
+            state.errors.push({ key: 'chat-backup-restore', message: error.message });
+            showToast('备份恢复失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteChatBackupButton = event.target.closest('[data-delete-chat-backup]');
+    if (deleteChatBackupButton) {
+        beginChatBackupDelete(deleteChatBackupButton.dataset.deleteChatBackup);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-chat-backup-delete]')) {
+        cancelChatBackupDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-chat-backup-delete]')) {
+        try {
+            await confirmChatBackupDelete();
+        } catch (error) {
+            state.errors.push({ key: 'chat-backup-delete', message: error.message });
+            showToast('备份删除失败', error.message);
+            render();
+        }
         return;
     }
 
@@ -5692,6 +6177,9 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-rename-input]')) {
         state.chatRenaming.name = event.target.value;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
+        state.chatSearch.query = event.target.value;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
         state.characterRenaming.name = event.target.value;
     }
@@ -5752,6 +6240,18 @@ elements.content.addEventListener('change', async event => {
         }
         return;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-import-file]')) {
+        try {
+            await importModernChatFiles(event.target.files);
+        } catch (error) {
+            state.errors.push({ key: 'chat-import', message: error.message });
+            showToast('聊天导入失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-upload-file]')) {
         try {
             await uploadBackgroundFile(event.target.files?.[0]);
@@ -5800,6 +6300,21 @@ document.addEventListener('keydown', event => {
         sendModernMessage().catch(error => {
             state.errors.push({ key: 'modern-send', message: error.message });
             showToast('发送失败', error.message);
+            render();
+        });
+        return;
+    }
+
+    if (event.target instanceof HTMLElement && event.target.matches('[data-chat-search-input]') && event.key === 'Enter') {
+        event.preventDefault();
+        if (!state.chatSearch.query.trim()) {
+            clearChatSearch();
+            render();
+            return;
+        }
+        searchSelectedCharacterChats().then(() => render()).catch(error => {
+            state.errors.push({ key: 'chat-search', message: error.message });
+            showToast('聊天搜索失败', error.message);
             render();
         });
         return;
