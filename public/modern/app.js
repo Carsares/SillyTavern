@@ -14,6 +14,7 @@ import { createApiClient } from './core/api-client.js';
 import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
 import { createCommonComponents } from './components/common.js';
+import { createActivityActions } from './actions/activity.js';
 import { createApiConnectionActions } from './actions/api-connection.js';
 import { createAssetActions } from './actions/assets.js';
 import { createChatContextActions } from './actions/chat-context.js';
@@ -235,6 +236,18 @@ const {
     getChatModeLabel: () => getChatModeLabel(),
     numberInput,
     formatBytes,
+});
+
+const {
+    getActivityEntries,
+    getActivitySummary,
+    recreateStats,
+} = createActivityActions({
+    state,
+    apiFetch,
+    loadData,
+    render,
+    showToast,
 });
 
 const {
@@ -937,13 +950,6 @@ async function loadData({ silent = false, notify = !silent } = {}) {
     }
 }
 
-async function recreateStats() {
-    await apiFetch('/api/stats/recreate');
-    await loadData({ silent: true });
-    showToast('统计已重建', '已重新扫描聊天文件。');
-    render();
-}
-
 async function setRoute(routeId) {
     if (!routeLabels[routeId]) {
         return;
@@ -970,33 +976,6 @@ function setTheme(theme) {
     state.theme = theme;
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('st-modern-theme', theme);
-}
-
-function getActivityEntries() {
-    return Object.entries(state.stats || {})
-        .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
-        .map(([id, stats]) => ({
-            id,
-            messages: Number(stats.user_msg_count || 0) + Number(stats.non_user_msg_count || 0),
-            words: Number(stats.user_word_count || 0) + Number(stats.non_user_word_count || 0),
-            size: Number(stats.chat_size || 0),
-            swipes: Number(stats.total_swipe_count || 0),
-            genTime: Number(stats.total_gen_time || 0),
-            first: Number(stats.date_first_chat || 0),
-            last: Number(stats.date_last_chat || 0),
-        }))
-        .sort((a, b) => b.last - a.last);
-}
-
-function getActivitySummary(entries) {
-    return entries.reduce((summary, entry) => ({
-        messages: summary.messages + entry.messages,
-        words: summary.words + entry.words,
-        size: summary.size + entry.size,
-        swipes: summary.swipes + entry.swipes,
-        genTime: summary.genTime + entry.genTime,
-        last: Math.max(summary.last, entry.last),
-    }), { messages: 0, words: 0, size: 0, swipes: 0, genTime: 0, last: 0 });
 }
 
 function renderContent() {
