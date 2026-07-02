@@ -67,9 +67,11 @@ export function createActivityComponents(ctx) {
         const routeAttrs = target.type === 'group'
             ? `data-route="chat" data-open-group-chat="${escapeHtml(target.id)}"`
             : (target.type === 'character' ? `data-route="chat" data-open-character-chat="${escapeHtml(target.id)}"` : '');
+        const detailRoute = target.type === 'group' ? 'groups' : (target.type === 'character' ? 'characters' : '');
+        const detailLabel = target.type === 'group' ? '查看群组' : (target.type === 'character' ? '查看角色' : '');
 
         return `
-        <article class="resource-card activity-card">
+        <article class="resource-card activity-card" data-activity-target="${escapeHtml(target.type ? `${target.type}:${target.id}` : entry.id)}">
             <div class="card-head">
                 <div class="row-main">
                     <h3 class="card-title mono">${escapeHtml(target.name || entry.id)}</h3>
@@ -83,11 +85,17 @@ export function createActivityComponents(ctx) {
                 <span><strong>${formatNumber(entry.swipes)}</strong><em>候选</em></span>
                 <span><strong>${escapeHtml(formatDurationMs(entry.genTime))}</strong><em>生成耗时</em></span>
             </div>
-            ${routeAttrs ? `
-                <button class="secondary-button" type="button" ${routeAttrs}>
-                    <i class="fa-solid fa-comments"></i>
-                    打开聊天
-                </button>
+            ${target.type ? `
+                <div class="row-actions activity-card-actions">
+                    <button class="secondary-button" type="button" data-command-route="${detailRoute}" data-command-select="${target.type}" data-command-id="${escapeHtml(target.id)}">
+                        <i class="fa-solid ${target.type === 'group' ? 'fa-users' : 'fa-address-card'}"></i>
+                        ${detailLabel}
+                    </button>
+                    <button class="secondary-button" type="button" ${routeAttrs}>
+                        <i class="fa-solid fa-comments"></i>
+                        打开聊天
+                    </button>
+                </div>
             ` : ''}
         </article>
     `;

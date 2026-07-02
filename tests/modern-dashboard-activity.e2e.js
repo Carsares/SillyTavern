@@ -42,6 +42,15 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
             },
         },
     ];
+    const groups = [{
+        id: 'group-alpha',
+        name: 'Alpha Group',
+        avatar_url: '',
+        members: ['alice.png', 'bruno.png'],
+        chats: ['group-alpha-chat.jsonl'],
+        chat_size: 3072,
+        date_last_chat: now - 500,
+    }];
     const stats = {
         timestamp: now,
         'alice.png': {
@@ -64,6 +73,16 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
             total_gen_time: 600,
             date_last_chat: now - 1000,
         },
+        'group-alpha': {
+            user_msg_count: 3,
+            non_user_msg_count: 5,
+            user_word_count: 180,
+            non_user_word_count: 260,
+            chat_size: 3072,
+            total_swipe_count: 2,
+            total_gen_time: 900,
+            date_last_chat: now - 500,
+        },
     };
 
     await page.route('**/csrf-token', route => fulfillJson(route, { token: 'modern-dashboard-activity-token' }));
@@ -76,7 +95,7 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
         textgenerationwebui_presets: [],
     }));
     await page.route('**/api/characters/all', route => fulfillJson(route, characters));
-    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/groups/all', route => fulfillJson(route, groups));
     await page.route('**/api/worldinfo/list', route => fulfillJson(route, []));
     await page.route('**/api/backgrounds/all', route => fulfillJson(route, { images: [] }));
     await page.route('**/api/backgrounds/folders', route => fulfillJson(route, { folders: [], imageFolderMap: {} }));
@@ -133,11 +152,34 @@ test.describe('Modern dashboard and activity', () => {
 
         await page.locator('[data-activity-sort]').selectOption('messages');
         await expect(page.locator('[data-activity-sort]')).toHaveValue('messages');
+        await page.locator('.activity-card [data-command-route="characters"][data-command-id="bruno.png"]').click();
+
+        await expect(page).toHaveURL(/\/modern\/\?view=characters/);
+        await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
+        await expect(page.locator('[data-select-character="bruno.png"]')).toHaveClass(/active/);
+
+        await page.goto('/modern/?view=activity');
+        await page.locator('[data-activity-filter]').fill('bruno');
         await page.locator('.activity-card [data-open-character-chat="bruno.png"]').click();
 
         await expect(page).toHaveURL(/\/modern\/\?view=chat/);
         await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
         await expect(page.locator('[data-select-chat="bruno.png-chat"]')).toBeVisible();
+    });
+
+    test('opens resource detail pages from activity cards', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page);
+
+        await page.goto('/modern/?view=activity');
+
+        await page.locator('[data-activity-filter]').fill('alpha');
+        await expect(page.locator('.activity-card')).toHaveCount(1);
+        await expect(page.locator('.activity-card')).toContainText('Alpha Group');
+        await page.locator('.activity-card [data-command-route="groups"][data-command-id="group-alpha"]').click();
+
+        await expect(page).toHaveURL(/\/modern\/\?view=groups/);
+        await expect(page.locator('.detail-title')).toHaveText('Alpha Group');
+        await expect(page.locator('[data-select-group="group-alpha"]')).toHaveClass(/active/);
     });
 
     test('surfaces incomplete API connection from dashboard', async ({ page }) => {

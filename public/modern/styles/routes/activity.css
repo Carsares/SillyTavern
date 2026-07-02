@@ -62,7 +62,7 @@
     align-content: start;
 }
 
-.activity-card > .secondary-button {
+.activity-card-actions {
     justify-self: start;
 }
 
