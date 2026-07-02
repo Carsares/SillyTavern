@@ -2682,7 +2682,7 @@ function renderChat() {
         ${pageHead('聊天工作区', '角色、会话文件和消息预览。', `
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                打开聊天
+                打开原版聊天
             </button>
         `)}
         <div class="chat-layout">
