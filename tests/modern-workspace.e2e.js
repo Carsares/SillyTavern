@@ -80,4 +80,27 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.chat-browser')).toHaveCount(0);
         await expect(page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' })).toBeVisible();
     });
+
+    test('loads more backgrounds instead of hard truncating asset grid', async ({ page }) => {
+        const images = Array.from({ length: 30 }, (_, index) => ({
+            filename: `mock-background-${index + 1}.jpg`,
+            isAnimated: false,
+        }));
+        await page.route('**/api/backgrounds/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ images }),
+        }));
+
+        await page.goto('/modern/?view=assets');
+
+        await expect(page.locator('.page-title')).toHaveText('素材库');
+        await expect(page.locator('.background-card')).toHaveCount(24);
+        await expect(page.locator('[data-load-more-backgrounds]')).toBeVisible();
+
+        await page.locator('[data-load-more-backgrounds]').click();
+
+        await expect(page.locator('.background-card')).toHaveCount(30);
+        await expect(page.locator('[data-load-more-backgrounds]')).toHaveCount(0);
+    });
 });

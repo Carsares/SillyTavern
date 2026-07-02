@@ -1149,6 +1149,11 @@ tr:last-child td {
     justify-self: center;
 }
 
+.load-more-button {
+    width: fit-content;
+    margin: 14px auto 0;
+}
+
 .message {
     max-width: min(78%, 760px);
     padding: 10px 12px;

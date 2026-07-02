@@ -34,6 +34,7 @@ import {
 
 const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
 const chatSidebarPreference = localStorage.getItem('st-modern-chat-sidebar-open');
+const backgroundPageSize = 24;
 
 function getInitialChatSidebarOpen() {
     if (chatSidebarPreference !== null) {
@@ -158,6 +159,7 @@ const state = {
     },
     backgroundFolderFilter: '',
     backgroundFolderAssignment: '',
+    backgroundVisibleCount: backgroundPageSize,
     backgroundFolderCreating: {
         active: false,
         name: '',
@@ -2273,6 +2275,12 @@ async function uploadBackgroundFile(file) {
 
 function setBackgroundFolderFilter(folderId) {
     state.backgroundFolderFilter = folderId && getBackgroundFolderById(folderId) ? folderId : '';
+    state.backgroundVisibleCount = backgroundPageSize;
+    render();
+}
+
+function showMoreBackgrounds() {
+    state.backgroundVisibleCount += backgroundPageSize;
     render();
 }
 
@@ -5840,6 +5848,8 @@ function renderAssets() {
     const backgrounds = allBackgrounds
         .filter(background => matchesQuery(getBackgroundFilename(background)))
         .filter(background => !state.backgroundFolderFilter || getBackgroundFolderIds(getBackgroundFilename(background)).includes(state.backgroundFolderFilter));
+    const visibleBackgrounds = backgrounds.slice(0, state.backgroundVisibleCount);
+    const hasMoreBackgrounds = visibleBackgrounds.length < backgrounds.length;
     const selection = state.backgroundSelection;
     const selectedCount = selection.filenames.length;
     const folderFilterName = getBackgroundFolderById(state.backgroundFolderFilter)?.name || '全部背景';
@@ -5879,7 +5889,7 @@ function renderAssets() {
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景</h2>
-                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · ${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
+                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(backgrounds.length)} 个匹配项。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
                 </div>
             </div>
             ${selection.deleteConfirm ? `
@@ -5899,8 +5909,14 @@ function renderAssets() {
                 </div>
             ` : ''}
             <div class="background-grid">
-                ${backgrounds.slice(0, 24).map(background => renderBackgroundCard(background)).join('') || renderInlineEmpty('暂无背景')}
+                ${visibleBackgrounds.map(background => renderBackgroundCard(background)).join('') || renderInlineEmpty('暂无背景')}
             </div>
+            ${hasMoreBackgrounds ? `
+                <button class="secondary-button load-more-button" type="button" data-load-more-backgrounds>
+                    <i class="fa-solid fa-chevron-down"></i>
+                    加载更多背景 ${formatNumber(backgrounds.length - visibleBackgrounds.length)}
+                </button>
+            ` : ''}
         </section>
         <div class="grid-list">
             ${groups.map(group => `
@@ -8307,6 +8323,11 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-load-more-backgrounds]')) {
+        showMoreBackgrounds();
+        return;
+    }
+
     if (event.target.closest('[data-cancel-background-delete]')) {
         cancelBackgroundDelete();
         return;
@@ -8871,6 +8892,9 @@ elements.themeButton.addEventListener('click', () => setTheme(state.theme === 'd
 elements.mobileMenuButton.addEventListener('click', () => elements.app.querySelector('.sidebar')?.classList.toggle('open'));
 elements.search.addEventListener('input', event => {
     state.query = normalizeText(event.target.value.trim());
+    if (state.route === 'assets') {
+        state.backgroundVisibleCount = backgroundPageSize;
+    }
     render();
 });
 elements.content.addEventListener('input', event => {
