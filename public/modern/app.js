@@ -168,7 +168,14 @@ const elements = {
 };
 
 document.documentElement.dataset.theme = state.theme;
-let generationAbortController = null;
+
+const legacyBridgeSource = 'sillytavern-modern-bridge';
+const legacyBridge = {
+    frame: null,
+    loadPromise: null,
+    pending: new Map(),
+    nextId: 1,
+};
 
 function matchesQuery(...values) {
     if (!state.query) {
@@ -176,6 +183,90 @@ function matchesQuery(...values) {
     }
 
     return values.some(value => normalizeText(value).includes(state.query));
+}
+
+function handleLegacyBridgeMessage(event) {
+    if (event.origin !== window.location.origin || event.data?.source !== legacyBridgeSource) {
+        return;
+    }
+
+    const request = legacyBridge.pending.get(event.data.id);
+    if (!request) {
+        return;
+    }
+
+    window.clearTimeout(request.timer);
+    legacyBridge.pending.delete(event.data.id);
+    if (event.data.error) {
+        request.reject(new Error(event.data.error.message || '原版生成引擎执行失败。'));
+        return;
+    }
+    request.resolve(event.data.result);
+}
+
+window.addEventListener('message', handleLegacyBridgeMessage);
+
+async function ensureLegacyBridgeFrame() {
+    if (legacyBridge.frame?.contentWindow) {
+        return legacyBridge.frame;
+    }
+    if (legacyBridge.loadPromise) {
+        return legacyBridge.loadPromise;
+    }
+
+    legacyBridge.loadPromise = new Promise((resolve, reject) => {
+        const frame = document.createElement('iframe');
+        const timer = window.setTimeout(() => {
+            reject(new Error('原版生成引擎加载超时。'));
+        }, 30000);
+
+        frame.hidden = true;
+        frame.title = 'SillyTavern legacy generation engine';
+        frame.src = '/?modernBridge=1';
+        frame.style.display = 'none';
+        frame.addEventListener('load', () => {
+            window.clearTimeout(timer);
+            resolve(frame);
+        }, { once: true });
+        frame.addEventListener('error', () => {
+            window.clearTimeout(timer);
+            reject(new Error('原版生成引擎加载失败。'));
+        }, { once: true });
+
+        legacyBridge.frame = frame;
+        document.body.append(frame);
+    });
+
+    try {
+        return await legacyBridge.loadPromise;
+    } catch (error) {
+        legacyBridge.frame?.remove();
+        legacyBridge.frame = null;
+        legacyBridge.loadPromise = null;
+        throw error;
+    }
+}
+
+async function callLegacyBridge(action, payload = {}, timeoutMs = 180000) {
+    const frame = await ensureLegacyBridgeFrame();
+    const id = String(legacyBridge.nextId++);
+
+    const responsePromise = new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+            legacyBridge.pending.delete(id);
+            reject(new Error('原版生成引擎响应超时。'));
+        }, timeoutMs);
+        legacyBridge.pending.set(id, { resolve, reject, timer });
+    });
+
+    frame.contentWindow.postMessage({
+        source: legacyBridgeSource,
+        id,
+        action,
+        payload,
+    }, window.location.origin);
+
+    return responsePromise;
 }
 
 function getPresetGroups() {
@@ -549,13 +640,13 @@ async function loadCharacterChats(character) {
     }
 }
 
-async function loadChatMessages(character, chatId) {
+async function loadChatMessages(character, chatId, { force = false } = {}) {
     if (!character?.avatar || !chatId) {
         return [];
     }
 
     const cacheKey = getChatCacheKey(character.avatar, chatId);
-    if (state.chatMessages[cacheKey]) {
+    if (!force && state.chatMessages[cacheKey]) {
         return state.chatMessages[cacheKey];
     }
 
@@ -625,17 +716,6 @@ function getMessageTimestamp() {
 
 function createModernChatId() {
     return `Modern ${new Date().toISOString().replace(/[:.]/g, '-')}`;
-}
-
-function createUserMessage(text) {
-    return {
-        name: getUserName(),
-        is_user: true,
-        is_system: false,
-        send_date: getMessageTimestamp(),
-        mes: text,
-        extra: { api: 'modern' },
-    };
 }
 
 function createAssistantMessage(text, character, model = '') {
@@ -2089,79 +2169,6 @@ async function confirmWorldEntryDelete() {
     render();
 }
 
-function getActiveWorldNames(character, chatId) {
-    const globalWorlds = getGlobalWorldNames();
-    const characterWorld = character?.data?.extensions?.world || '';
-    const chatWorld = getSelectedChatMetadata(character, chatId)?.world_info || '';
-    return uniqueValues([...globalWorlds, characterWorld, chatWorld]);
-}
-
-function getWorldEntries(worldName, detail) {
-    const entries = detail?.entries || {};
-    return Object.values(entries).map(entry => ({
-        ...entry,
-        world: worldName,
-    }));
-}
-
-function entryKeywordMatches(entry, text) {
-    if (entry.constant) {
-        return true;
-    }
-    if (!Array.isArray(entry.key) || entry.key.length === 0) {
-        return false;
-    }
-
-    const caseSensitive = entry.caseSensitive ?? state.settings.world_info_settings?.world_info_case_sensitive;
-    const sourceText = caseSensitive ? text : text.toLowerCase();
-    return entry.key.some(keyword => {
-        const value = String(keyword || '').trim();
-        if (!value) {
-            return false;
-        }
-        const needle = caseSensitive ? value : value.toLowerCase();
-        return sourceText.includes(needle);
-    });
-}
-
-function getWorldSearchText(character, messages) {
-    return [
-        getCharacterName(character),
-        character?.data?.scenario || '',
-        ...messages.slice(-8).map(message => message?.mes || ''),
-    ].join('\n');
-}
-
-async function getModernWorldContext(character, messages) {
-    const worldNames = getActiveWorldNames(character, state.selected.chat);
-    if (!worldNames.length) {
-        return '';
-    }
-
-    const searchText = getWorldSearchText(character, messages);
-    const allEntries = [];
-    for (const worldName of worldNames) {
-        await loadWorldDetail(worldName);
-        allEntries.push(...getWorldEntries(worldName, state.worldDetails[worldName]));
-    }
-
-    const matchedEntries = allEntries
-        .filter(entry => !entry.disable && entry.content && entryKeywordMatches(entry, searchText))
-        .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
-        .slice(0, 8);
-
-    return matchedEntries.map(entry => {
-        const label = entry.comment || entry.key?.join(', ') || entry.world;
-        return `[${entry.world}${label ? ` / ${label}` : ''}]\n${formatTemplate(entry.content, character)}`;
-    }).join('\n\n');
-}
-
-function getPresetSystemPrompt(character) {
-    const prompts = getOaiSettings().prompts || [];
-    const mainPrompt = prompts.find(prompt => prompt.identifier === 'main' && prompt.content)?.content;
-    return formatTemplate(mainPrompt || state.settings.power_user?.sysprompt?.content || `Write ${getCharacterName(character)}'s next reply in a fictional chat between ${getCharacterName(character)} and ${getUserName()}.`, character);
-}
-
 function parsePreset(rawPreset) {
     if (!rawPreset) {
         return null;
@@ -2274,37 +2281,6 @@ async function useOpenAiPreset(presetName) {
     showToast('预设已切换', `当前聊天补全预设：${presetName}`);
 }
 
-function buildModernSystemPrompt(character, worldContext = '') {
-    const lines = [
-        getPresetSystemPrompt(character),
-        character?.data?.description ? `角色描述：${formatTemplate(character.data.description, character)}` : '',
-        character?.data?.personality ? `性格：${formatTemplate(character.data.personality, character)}` : '',
-        character?.data?.scenario ? `场景：${formatTemplate(character.data.scenario, character)}` : '',
-        character?.data?.creator_notes ? `创作者备注：${formatTemplate(character.data.creator_notes, character)}` : '',
-        worldContext ? `世界书：\n${worldContext}` : '',
-    ];
-    return lines.filter(Boolean).join('\n\n');
-}
-
-async function buildModernPromptMessages(character, messages) {
-    const worldContext = await getModernWorldContext(character, messages);
-    const promptMessages = [
-        { role: 'system', content: buildModernSystemPrompt(character, worldContext) },
-    ];
-
-    messages
-        .filter(message => message?.mes)
-        .slice(-40)
-        .forEach(message => {
-            promptMessages.push({
-                role: message.is_system ? 'system' : (message.is_user ? 'user' : 'assistant'),
-                content: formatTemplate(message.mes, character),
-            });
-        });
-
-    return promptMessages.filter(message => message.content);
-}
-
 function responseContentToText(content) {
     if (typeof content === 'string') {
         return content;
@@ -2332,19 +2308,6 @@ function extractAssistantText(response) {
     }
 
     return text.trim();
-}
-
-async function generateModernReply(character, messages, signal) {
-    const settings = getChatCompletionSettings();
-    const promptMessages = await buildModernPromptMessages(character, messages);
-    const response = await apiFetch('/api/backends/chat-completions/generate', {
-        body: createChatCompletionRequestBody(settings, promptMessages),
-        signal,
-    });
-    return {
-        text: extractAssistantText(response),
-        model: settings.model,
-    };
 }
 
 async function testApiConnection() {
@@ -2411,8 +2374,7 @@ async function refreshSelectedChatList(character) {
     await loadCharacterChats(character);
 }
 
-async function startNewModernChat() {
-    const character = getSelectedCharacter();
+async function createModernChatFile(character) {
     if (!character?.avatar) {
         throw new Error('请先选择角色');
     }
@@ -2425,8 +2387,54 @@ async function startNewModernChat() {
     state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
     await saveModernChat(character, chatId, messages);
     await refreshSelectedChatList(character);
+    return chatId;
+}
+
+async function startNewModernChat() {
+    const character = getSelectedCharacter();
+    const chatId = await createModernChatFile(character);
     showToast('新聊天已创建', `${getCharacterName(character)} 的新会话已选中。`);
     render();
+    return chatId;
+}
+
+async function runLegacyChatGeneration(type, { character, chatId, message = '', toastTitle, toastMessage }) {
+    if (state.engine.generating) {
+        return;
+    }
+
+    if (!character?.avatar || !chatId) {
+        throw new Error('请先选择角色和聊天文件');
+    }
+
+    state.engine.generating = true;
+    state.engine.status = '原版生成中';
+    state.engine.error = '';
+    render();
+
+    try {
+        const result = await callLegacyBridge('generate', {
+            avatar: character.avatar,
+            chat: chatId,
+            type,
+            message,
+        });
+        const nextChatId = stripJsonlExtension(result?.chat || chatId);
+        state.selected.chat = nextChatId;
+        delete state.chatMessages[getChatCacheKey(character.avatar, nextChatId)];
+        delete state.chatMetadata[getChatCacheKey(character.avatar, nextChatId)];
+        await refreshSelectedChatList(character);
+        await loadChatMessages(character, nextChatId, { force: true });
+        state.engine.status = '就绪';
+        showToast(toastTitle, toastMessage);
+    } catch (error) {
+        state.engine.error = error.message;
+        state.engine.status = error.message.includes('停止') ? '已停止' : '生成失败';
+        throw error;
+    } finally {
+        state.engine.generating = false;
+        render();
+    }
 }
 
 async function sendModernMessage() {
@@ -2437,61 +2445,20 @@ async function sendModernMessage() {
     }
 
     const character = getSelectedCharacter();
-    if (!character?.avatar) {
-        throw new Error('请先选择角色');
-    }
-
     let chatId = state.selected.chat;
-    let messages = chatId ? [...getSelectedChatMessages()] : [];
     if (!chatId) {
-        chatId = createModernChatId();
-        state.selected.chat = chatId;
-        state.chatMetadata[getChatCacheKey(character.avatar, chatId)] = {};
-        const greeting = getCharacterGreeting(character);
-        messages = greeting ? [createAssistantMessage(greeting, character)] : [];
+        chatId = await createModernChatFile(character);
     }
 
-    messages.push(createUserMessage(draft));
-    state.chatMessages[getChatCacheKey(character.avatar, chatId)] = messages;
     state.chatDrafts[draftKey] = '';
-
-    await saveModernChat(character, chatId, messages);
-    await generateAndSaveModernReply(character, chatId, messages, '消息已生成', '回复已保存到当前聊天文件。');
-}
-
-async function generateAndSaveModernReply(character, chatId, messages, toastTitle, toastMessage) {
-    if (state.engine.generating) {
-        return;
-    }
-
-    state.engine.generating = true;
-    state.engine.status = '生成中';
-    state.engine.error = '';
-    render();
-
-    generationAbortController = new AbortController();
-
-    try {
-        const reply = await generateModernReply(character, messages, generationAbortController.signal);
-        const savedMessages = [...messages, createAssistantMessage(reply.text, character, reply.model)];
-        await saveModernChat(character, chatId, savedMessages);
-        await refreshSelectedChatList(character);
-        state.engine.status = '就绪';
-        showToast(toastTitle, toastMessage);
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            state.engine.status = '已停止';
-            showToast('已停止生成', '聊天文件未追加模型回复。');
-        } else {
-            state.engine.error = error.message;
-            state.engine.status = '生成失败';
-            throw error;
-        }
-    } finally {
-        generationAbortController = null;
-        state.engine.generating = false;
-        render();
-    }
+    state.chatDrafts[getChatCacheKey(character.avatar, chatId)] = '';
+    await runLegacyChatGeneration('normal', {
+        character,
+        chatId,
+        message: draft,
+        toastTitle: '消息已生成',
+        toastMessage: '原版生成引擎已完成回复并保存聊天文件。',
+    });
 }
 
 async function regenerateModernReply() {
@@ -2504,16 +2471,16 @@ async function regenerateModernReply() {
         throw new Error('请先选择一个聊天文件');
     }
 
-    const messages = getSelectedChatMessages();
-    if (!messages.length) {
+    if (!getSelectedChatMessages().length) {
         throw new Error('当前聊天没有可重生成的上下文');
     }
 
-    const lastMessage = messages[messages.length - 1];
-    const replacesAssistant = lastMessage && !lastMessage.is_user && !lastMessage.is_system;
-    const promptMessages = replacesAssistant ? messages.slice(0, -1) : [...messages];
-    const toastMessage = replacesAssistant ? '最后一条助手回复已替换。' : '已为最后一条用户消息追加新回复。';
-    await generateAndSaveModernReply(character, state.selected.chat, promptMessages, '回复已重生成', toastMessage);
+    await runLegacyChatGeneration('regenerate', {
+        character,
+        chatId: state.selected.chat,
+        toastTitle: '回复已重生成',
+        toastMessage: '原版生成引擎已更新最后一条回复。',
+    });
 }
 
 async function continueModernReply() {
@@ -2526,12 +2493,16 @@ async function continueModernReply() {
         throw new Error('请先选择一个聊天文件');
     }
 
-    const messages = getSelectedChatMessages();
-    if (!messages.length) {
+    if (!getSelectedChatMessages().length) {
         throw new Error('当前聊天没有可继续生成的上下文');
     }
 
-    await generateAndSaveModernReply(character, state.selected.chat, [...messages], '已继续生成', '新回复已追加到当前聊天。');
+    await runLegacyChatGeneration('continue', {
+        character,
+        chatId: state.selected.chat,
+        toastTitle: '已继续生成',
+        toastMessage: '原版生成引擎已追加到当前回复。',
+    });
 }
 
 async function copyModernMessage(messageIndex) {
@@ -2646,8 +2617,12 @@ async function saveModernMessageEdit() {
     render();
 }
 
-function stopModernGeneration() {
-    generationAbortController?.abort();
+async function stopModernGeneration() {
+    try {
+        await callLegacyBridge('stop', {}, 15000);
+    } catch (error) {
+        state.errors.push({ key: 'legacy-stop', message: error.message });
+    }
     state.engine.generating = false;
     state.engine.status = '已停止';
     render();

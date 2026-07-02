@@ -5560,6 +5560,98 @@ export function stopGeneration() {
     return stopped;
 }
 
+const modernBridgeSource = 'sillytavern-modern-bridge';
+
+function formatModernBridgeChatName(chatName) {
+    return String(chatName || '').replace(/\.jsonl$/i, '');
+}
+
+function getModernBridgeCharacterId(avatar) {
+    return characters.findIndex(character => character?.avatar === avatar);
+}
+
+async function useModernBridgeChatContext(payload = {}) {
+    const { avatar, chat: chatName } = payload || {};
+    const characterId = getModernBridgeCharacterId(avatar);
+    if (characterId < 0) {
+        throw new Error('原版生成引擎找不到当前选择的角色。');
+    }
+
+    await selectCharacterById(characterId, { switchMenu: false });
+    if (this_chid === undefined || String(this_chid) !== String(characterId)) {
+        throw new Error('原版生成引擎无法切换到当前角色。');
+    }
+
+    const nextChatName = formatModernBridgeChatName(chatName);
+    if (nextChatName && characters[this_chid]?.chat !== nextChatName) {
+        await openCharacterChat(nextChatName);
+    }
+}
+
+async function handleModernBridgeGenerate(payload = {}) {
+    const params = payload || {};
+    const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
+    await useModernBridgeChatContext(params);
+
+    if (type === 'normal') {
+        const textarea = $('#send_textarea');
+        textarea.val(String(params.message || ''));
+        textarea[0]?.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    const result = await Generate(type);
+    return {
+        avatar: characters[this_chid]?.avatar || '',
+        chat: characters[this_chid]?.chat || '',
+        message: String(result || ''),
+        messageCount: chat.length,
+        type,
+    };
+}
+
+function postModernBridgeResult(event, id, result, error = null) {
+    event.source?.postMessage({
+        source: modernBridgeSource,
+        id,
+        result,
+        error: error ? { message: error.message || String(error) } : null,
+    }, event.origin);
+}
+
+window.addEventListener('message', async (event) => {
+    if (event.origin !== location.origin || !event.data || event.data.source !== modernBridgeSource) {
+        return;
+    }
+
+    const { id, action, payload } = event.data;
+    if (!id || !action) {
+        return;
+    }
+
+    try {
+        if (action === 'generate') {
+            postModernBridgeResult(event, id, await handleModernBridgeGenerate(payload));
+            return;
+        }
+        if (action === 'stop') {
+            postModernBridgeResult(event, id, { stopped: stopGeneration() });
+            return;
+        }
+        if (action === 'status') {
+            postModernBridgeResult(event, id, {
+                avatar: characters[this_chid]?.avatar || '',
+                chat: characters[this_chid]?.chat || '',
+                messageCount: chat.length,
+            });
+            return;
+        }
+
+        throw new Error(`现代页不支持的原版生成引擎动作：${action}`);
+    } catch (error) {
+        postModernBridgeResult(event, id, null, error);
+    }
+});
+
 /**
  * Injects extension prompts into chat messages.
  * @param {object[]} messages Array of chat messages
