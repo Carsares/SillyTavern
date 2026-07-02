@@ -248,25 +248,7 @@ const {
     getCharacterAvatarUrl,
 });
 
-const {
-    startNewModernChat,
-    beginModernChatRename,
-    cancelModernChatRename,
-    saveModernChatRename,
-    beginModernChatDelete,
-    cancelModernChatDelete,
-    confirmModernChatDelete,
-    importModernChatFiles,
-    exportModernChat,
-    loadChatBackups,
-    toggleChatBackups,
-    closeChatBackups,
-    viewChatBackup,
-    restoreChatBackup,
-    beginChatBackupDelete,
-    cancelChatBackupDelete,
-    confirmChatBackupDelete,
-} = createChatFileActions({
+const chatFileActions = createChatFileActions({
     state,
     apiFetch,
     apiFetchResponse,
@@ -289,6 +271,8 @@ const {
     createModernChatFile,
     saveGroupMetadata,
 });
+
+const { closeChatBackups } = chatFileActions;
 
 const chatMessageActions = createChatMessageActions({
     state,
@@ -447,24 +431,7 @@ const routeContext = createRouteContext({
         loadChatMessages,
         closeChatSidebarForMobileSelection,
     },
-    chatFiles: {
-        toggleChatBackups,
-        loadChatBackups,
-        exportModernChat,
-        viewChatBackup,
-        restoreChatBackup,
-        beginChatBackupDelete,
-        cancelChatBackupDelete,
-        confirmChatBackupDelete,
-        startNewModernChat,
-        beginModernChatRename,
-        cancelModernChatRename,
-        saveModernChatRename,
-        beginModernChatDelete,
-        cancelModernChatDelete,
-        confirmModernChatDelete,
-        importModernChatFiles,
-    },
+    chatFiles: chatFileActions,
     chatGeneration: chatGenerationActions,
     chatMessages: chatMessageActions,
     extensions: extensionActions,
