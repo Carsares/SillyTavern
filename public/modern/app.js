@@ -198,8 +198,11 @@ const state = {
         avatarId: '',
         form: {},
     },
-    backgroundDeleteConfirm: {
-        filename: '',
+    backgroundSelection: {
+        active: false,
+        filenames: [],
+        deleteConfirm: false,
+        deleting: false,
     },
     openAiPresetDraft: {
         name: '',
@@ -1533,6 +1536,10 @@ function getBackgroundUrl(filename) {
     return `/backgrounds/${String(filename || '').split('/').map(part => encodeURIComponent(part)).join('/')}`;
 }
 
+function getBackgroundFilename(background) {
+    return typeof background === 'string' ? background : background?.filename || '';
+}
+
 async function uploadBackgroundFile(file) {
     if (!file) {
         return;
@@ -1546,26 +1553,55 @@ async function uploadBackgroundFile(file) {
     render();
 }
 
-function beginBackgroundDelete(filename) {
-    state.backgroundDeleteConfirm = { filename };
+function setBackgroundSelectionMode(active) {
+    state.backgroundSelection = {
+        active,
+        filenames: active ? state.backgroundSelection.filenames : [],
+        deleteConfirm: false,
+        deleting: false,
+    };
+    render();
+}
+
+function toggleBackgroundSelection(filename, checked) {
+    const names = new Set(state.backgroundSelection.filenames);
+    if (checked) {
+        names.add(filename);
+    } else {
+        names.delete(filename);
+    }
+    state.backgroundSelection.filenames = [...names];
+    state.backgroundSelection.deleteConfirm = false;
+    render();
+}
+
+function beginBackgroundBatchDelete() {
+    if (!state.backgroundSelection.filenames.length) {
+        throw new Error('请选择要删除的背景。');
+    }
+    state.backgroundSelection.deleteConfirm = true;
     render();
 }
 
 function cancelBackgroundDelete() {
-    state.backgroundDeleteConfirm = { filename: '' };
+    state.backgroundSelection.deleteConfirm = false;
     render();
 }
 
 async function confirmBackgroundDelete() {
-    const { filename } = state.backgroundDeleteConfirm;
-    if (!filename) {
+    const filenames = [...state.backgroundSelection.filenames];
+    if (!filenames.length) {
         throw new Error('请选择要删除的背景。');
     }
 
-    await apiFetch('/api/backgrounds/delete', { body: { bg: filename } });
-    state.backgroundDeleteConfirm = { filename: '' };
+    state.backgroundSelection.deleting = true;
+    render();
+    for (const filename of filenames) {
+        await apiFetch('/api/backgrounds/delete', { body: { bg: filename } });
+    }
+    state.backgroundSelection = { active: false, filenames: [], deleteConfirm: false, deleting: false };
     await loadData({ silent: true });
-    showToast('背景已删除', filename);
+    showToast('背景已删除', `${formatNumber(filenames.length)} 个文件`);
     render();
 }
 
@@ -3669,7 +3705,9 @@ function renderPersonaEditPanel(persona) {
 function renderAssets() {
     const groups = getAssetGroups().filter(group => matchesQuery(group.name));
     const allBackgrounds = state.backgrounds?.images || [];
-    const backgrounds = allBackgrounds.filter(background => matchesQuery(typeof background === 'string' ? background : background.filename));
+    const backgrounds = allBackgrounds.filter(background => matchesQuery(getBackgroundFilename(background)));
+    const selection = state.backgroundSelection;
+    const selectedCount = selection.filenames.length;
 
     return `
         ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
@@ -3678,6 +3716,16 @@ function renderAssets() {
                 上传背景
                 <input class="visually-hidden" type="file" accept="image/*,.gif,.webp,.apng" data-background-upload-file>
             </label>
+            <button class="secondary-button" type="button" data-toggle-background-selection>
+                <i class="fa-solid ${selection.active ? 'fa-xmark' : 'fa-check-square'}"></i>
+                ${selection.active ? '退出选择' : '选择背景'}
+            </button>
+            ${selection.active ? `
+                <button class="secondary-button danger-action" type="button" data-delete-selected-backgrounds ${selectedCount ? '' : 'disabled'}>
+                    <i class="fa-solid fa-trash"></i>
+                    删除所选 ${formatNumber(selectedCount)}
+                </button>
+            ` : ''}
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-folder-open"></i>
                 打开素材
@@ -3693,9 +3741,25 @@ function renderAssets() {
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景</h2>
-                    <p class="panel-subtitle">${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。</p>
+                    <p class="panel-subtitle">${formatNumber(backgrounds.length)} 个匹配项，显示前 24 个。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
                 </div>
             </div>
+            ${selection.deleteConfirm ? `
+                <div class="settings-form inline-form danger-panel">
+                    <strong>删除所选背景</strong>
+                    <p class="panel-subtitle">将删除 ${formatNumber(selectedCount)} 个背景文件，此操作会调用原版背景删除接口。</p>
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-background-delete ${selection.deleting ? 'disabled' : ''}>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="secondary-button danger-action" type="button" data-confirm-background-delete ${selection.deleting ? 'disabled' : ''}>
+                            <i class="fa-solid ${selection.deleting ? 'fa-circle-notch fa-spin' : 'fa-trash'}"></i>
+                            ${selection.deleting ? '删除中' : '确认删除'}
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
             <div class="background-grid">
                 ${backgrounds.slice(0, 24).map(background => renderBackgroundCard(background)).join('') || renderInlineEmpty('暂无背景')}
             </div>
@@ -3720,39 +3784,25 @@ function renderAssets() {
 }
 
 function renderBackgroundCard(background) {
-    const filename = typeof background === 'string' ? background : background.filename;
-    const isDeleting = state.backgroundDeleteConfirm.filename === filename;
+    const filename = getBackgroundFilename(background);
+    const isSelected = state.backgroundSelection.filenames.includes(filename);
+    const isSelecting = state.backgroundSelection.active;
+    const isAnimated = typeof background === 'object' && Boolean(background?.isAnimated);
 
     return `
-        <article class="resource-card background-card">
+        <article class="resource-card background-card ${isSelected ? 'selected' : ''}">
             <img class="background-thumb" src="${getBackgroundUrl(filename)}" alt="" loading="lazy">
             <div class="card-head">
                 <div>
                     <h3 class="card-title">${escapeHtml(filename)}</h3>
-                    <div class="card-meta">${background.isAnimated ? '动画背景' : '静态背景'}</div>
+                    <div class="card-meta">${isAnimated ? '动画背景' : '静态背景'}</div>
                 </div>
             </div>
-            <div class="row-actions">
-                <button class="secondary-button danger-action" type="button" data-delete-background="${escapeHtml(filename)}">
-                    <i class="fa-solid fa-trash"></i>
-                    删除
-                </button>
-            </div>
-            ${isDeleting ? `
-                <div class="settings-form danger-panel">
-                    <strong>删除背景</strong>
-                    <p class="panel-subtitle">${escapeHtml(filename)}</p>
-                    <div class="message-edit-actions">
-                        <button class="secondary-button" type="button" data-cancel-background-delete>
-                            <i class="fa-solid fa-xmark"></i>
-                            取消
-                        </button>
-                        <button class="secondary-button danger-action" type="button" data-confirm-background-delete>
-                            <i class="fa-solid fa-trash"></i>
-                            确认删除
-                        </button>
-                    </div>
-                </div>
+            ${isSelecting ? `
+                <label class="selection-row">
+                    <input type="checkbox" data-background-select="${escapeHtml(filename)}" ${isSelected ? 'checked' : ''}>
+                    <span>${isSelected ? '已选择' : '选择'}</span>
+                </label>
             ` : ''}
         </article>
     `;
@@ -4787,9 +4837,17 @@ async function handleClick(event) {
         return;
     }
 
-    const deleteBackgroundButton = event.target.closest('[data-delete-background]');
-    if (deleteBackgroundButton) {
-        beginBackgroundDelete(deleteBackgroundButton.dataset.deleteBackground);
+    if (event.target.closest('[data-toggle-background-selection]')) {
+        setBackgroundSelectionMode(!state.backgroundSelection.active);
+        return;
+    }
+
+    if (event.target.closest('[data-delete-selected-backgrounds]')) {
+        try {
+            beginBackgroundBatchDelete();
+        } catch (error) {
+            showToast('请选择背景', error.message);
+        }
         return;
     }
 
@@ -5069,6 +5127,10 @@ elements.content.addEventListener('input', event => {
 elements.content.addEventListener('change', async event => {
     if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
         updateApiSourceFields(event.target.value);
+        return;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-select]')) {
+        toggleBackgroundSelection(event.target.dataset.backgroundSelect, event.target.checked);
         return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-import-file]')) {
