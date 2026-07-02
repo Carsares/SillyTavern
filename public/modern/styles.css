@@ -949,6 +949,21 @@ tr:last-child td {
     gap: 8px;
 }
 
+.list-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px);
+    gap: 10px;
+    align-items: end;
+    margin: 12px 0;
+}
+
+.toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    grid-column: 1 / -1;
+}
+
 .chat-layout {
     display: grid;
     grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
@@ -1313,6 +1328,10 @@ tr:last-child td {
     .chat-browser {
         grid-template-columns: 1fr;
         grid-template-rows: auto;
+    }
+
+    .list-toolbar {
+        grid-template-columns: 1fr;
     }
 }
 

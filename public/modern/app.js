@@ -104,6 +104,12 @@ const characterFormDefaults = {
     character_version: '',
     tags: '',
     world: '',
+    alternate_greetings: '',
+    depth_prompt_prompt: '',
+    depth_prompt_depth: '4',
+    depth_prompt_role: 'system',
+    talkativeness: '0.5',
+    favorite: false,
 };
 const worldEntryDefaults = {
     key: [],
@@ -135,6 +141,7 @@ const worldEntryPositions = [
     { value: 5, label: '示例消息顶部' },
     { value: 6, label: '示例消息底部' },
 ];
+const worldEntryPageSize = 20;
 
 const state = {
     route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -213,6 +220,13 @@ const state = {
     },
     worldbookDeleteConfirm: {
         worldbookId: '',
+    },
+    worldEntryList: {
+        worldbookId: '',
+        query: '',
+        sort: 'order',
+        page: 1,
+        selectedKeys: [],
     },
     worldEntryEditing: {
         worldbookId: '',
@@ -1172,6 +1186,7 @@ function getCharacterTags(character) {
 function characterToForm(character) {
     const data = getCharacterData(character);
     const extensions = data.extensions || {};
+    const depthPrompt = extensions.depth_prompt || {};
 
     return {
         ...defaultCharacterForm(),
@@ -1188,6 +1203,12 @@ function characterToForm(character) {
         character_version: data.character_version || '',
         tags: arrayToEntryInput(getCharacterTags(character)),
         world: extensions.world || '',
+        alternate_greetings: alternateGreetingsToInput(data.alternate_greetings),
+        depth_prompt_prompt: depthPrompt.prompt || '',
+        depth_prompt_depth: String(depthPrompt.depth ?? 4),
+        depth_prompt_role: depthPrompt.role || 'system',
+        talkativeness: String(extensions.talkativeness ?? character?.talkativeness ?? 0.5),
+        favorite: Boolean(extensions.fav ?? character?.fav),
     };
 }
 
@@ -1206,11 +1227,24 @@ function characterCreatePayload(form) {
         creator: form.creator,
         character_version: form.character_version,
         world: form.world,
+        alternate_greetings: inputToAlternateGreetings(form.alternate_greetings),
+        depth_prompt_prompt: form.depth_prompt_prompt,
+        depth_prompt_depth: numberInput(form.depth_prompt_depth, 4),
+        depth_prompt_role: form.depth_prompt_role || 'system',
+        talkativeness: numberInput(form.talkativeness, 0.5),
+        fav: form.favorite ? 'true' : 'false',
     };
 }
 
 function characterMergePayload(avatar, form) {
     const tags = entryInputToArray(form.tags);
+    const talkativeness = numberInput(form.talkativeness, 0.5);
+    const favorite = !!form.favorite;
+    const depthPrompt = {
+        prompt: form.depth_prompt_prompt || '',
+        depth: numberInput(form.depth_prompt_depth, 4),
+        role: form.depth_prompt_role || 'system',
+    };
 
     return {
         avatar,
@@ -1221,6 +1255,8 @@ function characterMergePayload(avatar, form) {
         first_mes: form.first_mes,
         mes_example: form.mes_example,
         creatorcomment: form.creator_notes,
+        talkativeness,
+        fav: favorite,
         tags,
         data: {
             name: form.name.trim(),
@@ -1232,11 +1268,15 @@ function characterMergePayload(avatar, form) {
             creator_notes: form.creator_notes,
             system_prompt: form.system_prompt,
             post_history_instructions: form.post_history_instructions,
+            alternate_greetings: inputToAlternateGreetings(form.alternate_greetings),
             tags,
             creator: form.creator,
             character_version: form.character_version,
             extensions: {
                 world: form.world,
+                talkativeness,
+                fav: favorite,
+                depth_prompt: depthPrompt,
             },
         },
     };
@@ -1465,7 +1505,7 @@ function updateCharacterFormField(element) {
     const form = element.dataset.characterScope === 'create'
         ? state.characterCreating.form
         : state.characterEditing.form;
-    form[element.dataset.characterField] = element.value;
+    form[element.dataset.characterField] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
 }
 
 function getPowerUserSettingsForWrite() {
@@ -1662,6 +1702,105 @@ async function toggleWorldEntry(worldbookId, entryKey) {
     render();
 }
 
+function getWorldEntryListState(worldbookId) {
+    if (state.worldEntryList.worldbookId !== worldbookId) {
+        state.worldEntryList = { worldbookId, query: '', sort: 'order', page: 1, selectedKeys: [] };
+    }
+    return state.worldEntryList;
+}
+
+function updateWorldEntryListField(field, value) {
+    state.worldEntryList[field] = value;
+    if (field === 'query' || field === 'sort') {
+        state.worldEntryList.page = 1;
+    }
+    render();
+}
+
+function setWorldEntryPage(page) {
+    state.worldEntryList.page = Math.max(1, Number(page) || 1);
+    render();
+}
+
+function toggleWorldEntrySelection(entryKey, checked) {
+    const keys = new Set(state.worldEntryList.selectedKeys);
+    if (checked) {
+        keys.add(String(entryKey));
+    } else {
+        keys.delete(String(entryKey));
+    }
+    state.worldEntryList.selectedKeys = [...keys];
+    render();
+}
+
+function getWorldEntrySearchText(entryKey, entry) {
+    return normalizeText([
+        entryKey,
+        entry?.comment,
+        entry?.name,
+        Array.isArray(entry?.key) ? entry.key.join(', ') : entry?.key,
+        Array.isArray(entry?.keysecondary) ? entry.keysecondary.join(', ') : entry?.keysecondary,
+        entry?.content,
+    ].filter(Boolean).join(' '));
+}
+
+function sortWorldEntries(entries, sort) {
+    const sortedEntries = [...entries];
+    sortedEntries.sort(([leftKey, leftEntry], [rightKey, rightEntry]) => {
+        if (sort === 'comment') {
+            return getWorldEntryTitle(leftEntry, leftKey).localeCompare(getWorldEntryTitle(rightEntry, rightKey), 'zh-Hans-CN');
+        }
+        if (sort === 'status') {
+            return Number(!!leftEntry.disable) - Number(!!rightEntry.disable) || Number(leftKey) - Number(rightKey);
+        }
+        if (sort === 'key') {
+            const leftValue = Array.isArray(leftEntry.key) ? leftEntry.key.join(', ') : String(leftEntry.key || '');
+            const rightValue = Array.isArray(rightEntry.key) ? rightEntry.key.join(', ') : String(rightEntry.key || '');
+            return leftValue.localeCompare(rightValue, 'zh-Hans-CN') || Number(leftKey) - Number(rightKey);
+        }
+        return Number(leftEntry.order ?? 0) - Number(rightEntry.order ?? 0) || Number(leftKey) - Number(rightKey);
+    });
+    return sortedEntries;
+}
+
+function getVisibleWorldEntries(entries, listState) {
+    const query = normalizeText(listState.query);
+    const filteredEntries = query
+        ? entries.filter(([entryKey, entry]) => getWorldEntrySearchText(entryKey, entry).includes(query))
+        : entries;
+    return sortWorldEntries(filteredEntries, listState.sort);
+}
+
+async function setSelectedWorldEntriesDisabled(worldbookId, disabled) {
+    const selectedKeys = [...state.worldEntryList.selectedKeys];
+    if (!selectedKeys.length) {
+        throw new Error('请先选择世界书条目。');
+    }
+
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    const nextDetail = structuredClone(detail);
+    let changedCount = 0;
+    for (const entryKey of selectedKeys) {
+        const entry = nextDetail?.entries?.[entryKey];
+        if (!entry || entry.disable === disabled) {
+            continue;
+        }
+        entry.disable = disabled;
+        syncWorldEntryOriginalData(nextDetail, Number(entryKey), entry);
+        changedCount++;
+    }
+    if (!changedCount) {
+        showToast('条目未变更', disabled ? '所选条目已经禁用。' : '所选条目已经启用。');
+        return;
+    }
+
+    await saveWorldbookDetail(worldbookId, nextDetail);
+    state.worldEntryList.selectedKeys = [];
+    showToast(disabled ? '条目已批量禁用' : '条目已批量启用', `${formatNumber(changedCount)} 个条目`);
+    render();
+}
+
 function getWorldEntryTitle(entry, entryKey) {
     return entry?.comment || entry?.name || (Array.isArray(entry?.key) ? entry.key.join(', ') : '') || `条目 ${entryKey}`;
 }
@@ -1694,6 +1833,17 @@ function arrayToEntryInput(value) {
 function entryInputToArray(value) {
     return String(value || '')
         .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function alternateGreetingsToInput(value) {
+    return Array.isArray(value) ? value.join('\n---\n') : '';
+}
+
+function inputToAlternateGreetings(value) {
+    return String(value || '')
+        .split(/\n\s*---\s*\n/g)
         .map(item => item.trim())
         .filter(Boolean);
 }
@@ -3173,14 +3323,20 @@ function renderCharacterFormContent(form, scope, isCreate) {
                 ${renderCharacterInput('character_version', '版本', form.character_version, scopeAttribute)}
                 ${renderCharacterInput('tags', '标签', form.tags, scopeAttribute, '用逗号分隔')}
                 ${renderCharacterWorldSelect(form, scopeAttribute)}
+                ${renderCharacterNumberInput('talkativeness', '发言概率', form.talkativeness, scopeAttribute, '0', '1', '0.05')}
+                ${renderCharacterNumberInput('depth_prompt_depth', 'Depth 深度', form.depth_prompt_depth, scopeAttribute, '0', '9999', '1')}
+                ${renderCharacterDepthRoleSelect(form, scopeAttribute)}
+                ${renderCharacterCheckbox('favorite', '收藏角色', form.favorite, scopeAttribute)}
             </div>
             ${renderCharacterTextarea('description', '描述', form.description, scopeAttribute)}
             ${renderCharacterTextarea('personality', '性格', form.personality, scopeAttribute)}
             ${renderCharacterTextarea('scenario', '场景', form.scenario, scopeAttribute)}
             ${renderCharacterTextarea('first_mes', '首条消息', form.first_mes, scopeAttribute)}
+            ${renderCharacterTextarea('alternate_greetings', '备用开场白', form.alternate_greetings, scopeAttribute, '多条开场白用单独一行 --- 分隔')}
             ${renderCharacterTextarea('mes_example', '示例消息', form.mes_example, scopeAttribute)}
             ${renderCharacterTextarea('creator_notes', '作者备注', form.creator_notes, scopeAttribute)}
             ${renderCharacterTextarea('system_prompt', '系统提示词', form.system_prompt, scopeAttribute)}
+            ${renderCharacterTextarea('depth_prompt_prompt', 'Depth Prompt', form.depth_prompt_prompt, scopeAttribute)}
             ${renderCharacterTextarea('post_history_instructions', '历史后置提示', form.post_history_instructions, scopeAttribute)}
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" ${isCreate ? 'data-cancel-character-create' : 'data-cancel-character-edit'}>
@@ -3205,11 +3361,41 @@ function renderCharacterInput(field, label, value, scope, placeholder = '') {
     `;
 }
 
-function renderCharacterTextarea(field, label, value, scope) {
+function renderCharacterNumberInput(field, label, value, scope, min, max, step) {
     return `
         <label class="field-label">
             <span>${escapeHtml(label)}</span>
-            <textarea data-character-field="${escapeHtml(field)}" data-character-scope="${scope}">${escapeHtml(value)}</textarea>
+            <input class="text-input" type="number" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" value="${escapeHtml(value)}">
+        </label>
+    `;
+}
+
+function renderCharacterTextarea(field, label, value, scope, placeholder = '') {
+    return `
+        <label class="field-label">
+            <span>${escapeHtml(label)}</span>
+            <textarea data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" placeholder="${escapeHtml(placeholder)}">${escapeHtml(value)}</textarea>
+        </label>
+    `;
+}
+
+function renderCharacterCheckbox(field, label, checked, scope) {
+    return `
+        <label class="checkbox-card compact-checkbox">
+            <input type="checkbox" data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" ${checked ? 'checked' : ''}>
+            <span>${escapeHtml(label)}</span>
+        </label>
+    `;
+}
+
+function renderCharacterDepthRoleSelect(form, scope) {
+    const roles = ['system', 'user', 'assistant'];
+    return `
+        <label class="field-label">
+            <span>Depth Prompt 角色</span>
+            <select class="select-input" data-character-field="depth_prompt_role" data-character-scope="${scope}">
+                ${roles.map(role => `<option value="${role}" ${form.depth_prompt_role === role ? 'selected' : ''}>${role}</option>`).join('')}
+            </select>
         </label>
     `;
 }
@@ -3311,6 +3497,12 @@ function renderWorldbookRow(worldbook) {
 function renderWorldbookDetail(worldbook) {
     const detail = state.worldDetails[worldbook.file_id];
     const entries = detail?.entries ? Object.entries(detail.entries) : [];
+    const listState = getWorldEntryListState(worldbook.file_id);
+    const visibleEntries = getVisibleWorldEntries(entries, listState);
+    const totalPages = Math.max(1, Math.ceil(visibleEntries.length / worldEntryPageSize));
+    listState.page = Math.min(Math.max(1, listState.page), totalPages);
+    const pageEntries = visibleEntries.slice((listState.page - 1) * worldEntryPageSize, listState.page * worldEntryPageSize);
+    const selectedCount = listState.selectedKeys.length;
     const enabledEntries = entries.filter(([, entry]) => !entry.disable);
     const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
     const isDeleting = state.worldbookDeleteConfirm.worldbookId === worldbook.file_id;
@@ -3351,13 +3543,47 @@ function renderWorldbookDetail(worldbook) {
                 ${metricCard('扩展字段', formatNumber(Object.keys(detail.extensions || {}).length), 'metadata', 'fa-code-branch')}
             </div>
             ${isCreatingEntry ? renderWorldEntryCreatePanel(state.worldEntryEditing.entryKey) : ''}
+            <div class="list-toolbar">
+                <label class="field-label">
+                    <span>搜索条目</span>
+                    <input class="text-input" type="search" data-world-entry-search value="${escapeHtml(listState.query)}" placeholder="关键词、注释或内容">
+                </label>
+                <label class="field-label">
+                    <span>排序</span>
+                    <select class="select-input" data-world-entry-sort>
+                        <option value="order" ${listState.sort === 'order' ? 'selected' : ''}>按插入顺序</option>
+                        <option value="comment" ${listState.sort === 'comment' ? 'selected' : ''}>按注释</option>
+                        <option value="key" ${listState.sort === 'key' ? 'selected' : ''}>按关键词</option>
+                        <option value="status" ${listState.sort === 'status' ? 'selected' : ''}>按启用状态</option>
+                    </select>
+                </label>
+                <div class="toolbar-actions">
+                    <button class="secondary-button" type="button" data-world-entry-page="${listState.page - 1}" ${listState.page <= 1 ? 'disabled' : ''}>
+                        <i class="fa-solid fa-chevron-left"></i>
+                        上一页
+                    </button>
+                    <span class="badge">${formatNumber(listState.page)} / ${formatNumber(totalPages)}</span>
+                    <button class="secondary-button" type="button" data-world-entry-page="${listState.page + 1}" ${listState.page >= totalPages ? 'disabled' : ''}>
+                        下一页
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <button class="secondary-button" type="button" data-bulk-world-entries="enable" ${selectedCount ? '' : 'disabled'}>
+                        <i class="fa-solid fa-toggle-on"></i>
+                        启用所选 ${formatNumber(selectedCount)}
+                    </button>
+                    <button class="secondary-button" type="button" data-bulk-world-entries="disable" ${selectedCount ? '' : 'disabled'}>
+                        <i class="fa-solid fa-toggle-off"></i>
+                        禁用所选 ${formatNumber(selectedCount)}
+                    </button>
+                </div>
+            </div>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>键</th><th>注释</th><th>状态</th><th>操作</th></tr>
+                        <tr><th>选择</th><th>键</th><th>注释</th><th>状态</th><th>操作</th></tr>
                     </thead>
                     <tbody>
-                        ${entries.slice(0, 30).map(([entryKey, entry]) => renderWorldEntryRow(worldbook, entryKey, entry)).join('') || '<tr><td colspan="4">没有条目</td></tr>'}
+                        ${pageEntries.map(([entryKey, entry]) => renderWorldEntryRow(worldbook, entryKey, entry)).join('') || '<tr><td colspan="5">没有条目</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -3389,9 +3615,13 @@ function renderWorldbookDeletePanel(worldbook) {
 function renderWorldEntryRow(worldbook, entryKey, entry) {
     const isEditing = state.worldEntryEditing.worldbookId === worldbook.file_id && state.worldEntryEditing.entryKey === entryKey;
     const isDeleting = state.worldEntryDeleteConfirm.worldbookId === worldbook.file_id && state.worldEntryDeleteConfirm.entryKey === entryKey;
+    const isSelected = state.worldEntryList.selectedKeys.includes(String(entryKey));
 
     return `
         <tr>
+            <td>
+                <input type="checkbox" data-world-entry-select="${escapeHtml(entryKey)}" ${isSelected ? 'checked' : ''}>
+            </td>
             <td>${escapeHtml(Array.isArray(entry.key) ? entry.key.join(', ') : entry.key || '无关键词')}</td>
             <td>${escapeHtml(entry.comment || entry.name || '未命名条目')}</td>
             <td>${entry.disable ? '<span class="danger">禁用</span>' : '<span class="success">启用</span>'}</td>
@@ -3424,7 +3654,7 @@ function renderWorldEntryRow(worldbook, entryKey, entry) {
 function renderWorldEntryDeleteRow(entryKey, entry) {
     return `
         <tr>
-            <td colspan="4">
+            <td colspan="5">
                 <div class="settings-form inline-form danger-panel">
                     <div>
                         <strong>删除条目</strong>
@@ -3454,7 +3684,7 @@ function renderWorldEntryForm(entryKey, entry) {
 
     return `
         <tr>
-            <td colspan="4">${formContent}</td>
+            <td colspan="5">${formContent}</td>
         </tr>
     `;
 }
@@ -5010,6 +5240,24 @@ async function handleClick(event) {
         return;
     }
 
+    const worldEntryPageButton = event.target.closest('[data-world-entry-page]');
+    if (worldEntryPageButton) {
+        setWorldEntryPage(worldEntryPageButton.dataset.worldEntryPage);
+        return;
+    }
+
+    const bulkWorldEntryButton = event.target.closest('[data-bulk-world-entries]');
+    if (bulkWorldEntryButton) {
+        try {
+            await setSelectedWorldEntriesDisabled(state.selected.worldbook, bulkWorldEntryButton.dataset.bulkWorldEntries === 'disable');
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry-bulk', message: error.message });
+            showToast('批量操作失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const copyWorldEntryButton = event.target.closest('[data-copy-world-entry]');
     if (copyWorldEntryButton) {
         try {
@@ -5120,6 +5368,9 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
         state.worldbookCreating.name = event.target.value;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-world-entry-search]')) {
+        updateWorldEntryListField('query', event.target.value);
+    }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-world-entry-field]')) {
         updateWorldEntryFormField(event.target);
     }
@@ -5160,8 +5411,16 @@ elements.content.addEventListener('change', async event => {
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-delete-chats]')) {
         state.characterDeleteConfirm.deleteChats = event.target.checked;
     }
-    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-character-field]')) {
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-character-field]')) {
         updateCharacterFormField(event.target);
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-world-entry-select]')) {
+        toggleWorldEntrySelection(event.target.dataset.worldEntrySelect, event.target.checked);
+        return;
+    }
+    if (event.target instanceof HTMLSelectElement && event.target.matches('[data-world-entry-sort]')) {
+        updateWorldEntryListField('sort', event.target.value);
+        return;
     }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-world-entry-field]')) {
         updateWorldEntryFormField(event.target);
