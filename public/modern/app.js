@@ -42,6 +42,54 @@ const chatCompletionModelFields = {
     workers_ai: 'workers_ai_model',
     minimax: 'minimax_model',
 };
+const chatCompletionSourceOptions = [
+    { id: 'openai', label: 'OpenAI' },
+    { id: 'siliconflow', label: 'SiliconFlow' },
+    { id: 'deepseek', label: 'DeepSeek' },
+    { id: 'openrouter', label: 'OpenRouter' },
+    { id: 'custom', label: 'Custom OpenAI-compatible' },
+    { id: 'claude', label: 'Claude' },
+    { id: 'mistralai', label: 'MistralAI' },
+    { id: 'cohere', label: 'Cohere' },
+    { id: 'perplexity', label: 'Perplexity' },
+    { id: 'groq', label: 'Groq' },
+    { id: 'chutes', label: 'Chutes' },
+    { id: 'nanogpt', label: 'NanoGPT' },
+    { id: 'moonshot', label: 'Moonshot' },
+    { id: 'fireworks', label: 'Fireworks' },
+    { id: 'cometapi', label: 'CometAPI' },
+    { id: 'zai', label: 'Z.AI' },
+    { id: 'workers_ai', label: 'Workers AI' },
+    { id: 'minimax', label: 'MiniMax' },
+];
+const secretKeyByChatSource = {
+    openai: 'api_key_openai',
+    claude: 'api_key_claude',
+    openrouter: 'api_key_openrouter',
+    ai21: 'api_key_ai21',
+    makersuite: 'api_key_makersuite',
+    vertexai: 'api_key_vertexai',
+    mistralai: 'api_key_mistralai',
+    custom: 'api_key_custom',
+    cohere: 'api_key_cohere',
+    perplexity: 'api_key_perplexity',
+    groq: 'api_key_groq',
+    chutes: 'api_key_chutes',
+    electronhub: 'api_key_electronhub',
+    nanogpt: 'api_key_nanogpt',
+    deepseek: 'api_key_deepseek',
+    aimlapi: 'api_key_aimlapi',
+    xai: 'api_key_xai',
+    pollinations: 'api_key_pollinations',
+    moonshot: 'api_key_moonshot',
+    fireworks: 'api_key_fireworks',
+    cometapi: 'api_key_cometapi',
+    azure_openai: 'api_key_azure_openai',
+    zai: 'api_key_zai',
+    siliconflow: 'api_key_siliconflow',
+    workers_ai: 'api_key_workers_ai',
+    minimax: 'api_key_minimax',
+};
 const characterFormDefaults = {
     name: '',
     description: '',
@@ -109,6 +157,7 @@ const state = {
     assets: {},
     extensions: [],
     secrets: {},
+    secretState: {},
     stats: {},
     chatLists: {},
     chatMessages: {},
@@ -144,6 +193,9 @@ const state = {
         avatar: '',
         name: '',
         deleteChats: false,
+    },
+    openAiPresetDraft: {
+        name: '',
     },
     worldbookCreating: {
         active: false,
@@ -508,6 +560,7 @@ async function loadData({ silent = false } = {}) {
         assets: apiFetch('/api/assets/get'),
         extensions: apiFetch('/api/extensions/discover', { method: 'GET' }),
         secrets: apiFetch('/api/secrets/settings'),
+        secretState: apiFetch('/api/secrets/read'),
         stats: apiFetch('/api/stats/get'),
     };
 
@@ -940,26 +993,109 @@ function getChatCompletionSettings() {
 
 async function saveApiConnectionFromForm() {
     const oaiSettings = state.settings.oai_settings || {};
-    const source = oaiSettings.chat_completion_source || state.settings.chat_completion_source || '';
+    const mainApi = elements.content.querySelector('[data-api-main]')?.value || 'openai';
+    const source = elements.content.querySelector('[data-api-source]')?.value || oaiSettings.chat_completion_source || state.settings.chat_completion_source || '';
     const modelField = chatCompletionModelFields[source];
     const modelInput = elements.content.querySelector('[data-api-model]');
+    const presetInput = elements.content.querySelector('[data-api-preset]');
     const endpointInput = elements.content.querySelector('[data-api-endpoint]');
+    const customUrlInput = elements.content.querySelector('[data-api-custom-url]');
+    const reverseProxyInput = elements.content.querySelector('[data-api-reverse-proxy]');
+    const keyInput = elements.content.querySelector('[data-api-key]');
     const model = modelInput?.value.trim() || '';
-    const endpoint = endpointInput?.value || '';
 
     if (!modelField || !model) {
         throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
     }
 
     state.settings.oai_settings = oaiSettings;
+    state.settings.main_api = mainApi;
+    state.settings.chat_completion_source = source;
+    oaiSettings.chat_completion_source = source;
     oaiSettings[modelField] = model;
+    oaiSettings.preset_settings_openai = presetInput?.value || oaiSettings.preset_settings_openai || '';
+    oaiSettings.temp_openai = numberInput(elements.content.querySelector('[data-api-temperature]')?.value, getNumberSetting(oaiSettings, 'temp_openai', 1));
+    oaiSettings.openai_max_tokens = numberInput(elements.content.querySelector('[data-api-max-tokens]')?.value, getNumberSetting(oaiSettings, 'openai_max_tokens', 300));
+    oaiSettings.top_p_openai = numberInput(elements.content.querySelector('[data-api-top-p]')?.value, getNumberSetting(oaiSettings, 'top_p_openai', 1));
+    oaiSettings.freq_pen_openai = numberInput(elements.content.querySelector('[data-api-frequency-penalty]')?.value, getNumberSetting(oaiSettings, 'freq_pen_openai', 0));
+    oaiSettings.pres_pen_openai = numberInput(elements.content.querySelector('[data-api-presence-penalty]')?.value, getNumberSetting(oaiSettings, 'pres_pen_openai', 0));
     if (source === 'siliconflow') {
+        const endpoint = endpointInput?.value || 'cn';
         oaiSettings.siliconflow_endpoint = endpoint === 'global' ? 'global' : 'cn';
+    }
+    if (source === 'custom') {
+        oaiSettings.custom_url = customUrlInput?.value.trim() || oaiSettings.custom_url || '';
+    }
+    oaiSettings.reverse_proxy = reverseProxyInput?.value.trim() || '';
+
+    const apiKey = keyInput?.value.trim() || '';
+    if (apiKey) {
+        const secretKey = secretKeyByChatSource[source];
+        if (!secretKey) {
+            throw new Error('当前来源没有可写入的密钥映射。');
+        }
+        await apiFetch('/api/secrets/write', { body: { key: secretKey, value: apiKey, label: `${source} modern` } });
     }
 
     await apiFetch('/api/settings/save', { body: state.settings });
     await loadData({ silent: true });
     showToast('连接配置已保存', `${source} / ${model}`);
+}
+
+function getSecretStateForSource(source) {
+    const secretKey = secretKeyByChatSource[source];
+    const value = secretKey ? state.secretState?.[secretKey] : null;
+    return Array.isArray(value) ? value : [];
+}
+
+function getOpenAiPresetByName(presetName) {
+    const group = getPresetGroups().find(item => item.id === 'openai');
+    const presetIndex = group?.names.indexOf(presetName) ?? -1;
+    return parsePreset(presetIndex >= 0 ? group.contents[presetIndex] : null);
+}
+
+function buildOpenAiPresetFromCurrentSettings() {
+    const settings = getOaiSettings();
+    const preset = getOpenAiPresetByName(settings.preset_settings_openai) || {};
+    const source = settings.chat_completion_source || 'openai';
+    const modelField = chatCompletionModelFields[source];
+
+    preset.temperature = settings.temp_openai;
+    preset.openai_max_tokens = settings.openai_max_tokens;
+    preset.top_p = settings.top_p_openai;
+    preset.frequency_penalty = settings.freq_pen_openai;
+    preset.presence_penalty = settings.pres_pen_openai;
+    preset.chat_completion_source = source;
+    if (modelField) {
+        preset[modelField] = settings[modelField];
+    }
+    if (source === 'siliconflow') {
+        preset.siliconflow_endpoint = settings.siliconflow_endpoint || 'cn';
+    }
+    if (source === 'custom') {
+        preset.custom_url = settings.custom_url || '';
+    }
+    if (settings.reverse_proxy) {
+        preset.reverse_proxy = settings.reverse_proxy;
+    }
+
+    return preset;
+}
+
+async function saveOpenAiPresetFromForm() {
+    const name = (state.openAiPresetDraft.name || getOaiSettings().preset_settings_openai || '').trim();
+    if (!name) {
+        throw new Error('预设名称不能为空。');
+    }
+
+    const preset = buildOpenAiPresetFromCurrentSettings();
+    state.settings.oai_settings = state.settings.oai_settings || {};
+    state.settings.oai_settings.preset_settings_openai = name;
+    await apiFetch('/api/presets/save', { body: { apiId: 'openai', name, preset } });
+    await apiFetch('/api/settings/save', { body: state.settings });
+    state.openAiPresetDraft = { name: '' };
+    await loadData({ silent: true });
+    showToast('预设已保存', name);
 }
 
 function defaultCharacterForm() {
@@ -3213,6 +3349,7 @@ function renderPresets() {
                 打开编辑器
             </button>
         `)}
+        ${renderOpenAiPresetTools()}
         <div class="grid-list">
             ${groups.map(group => `
                 <article class="resource-card">
@@ -3238,6 +3375,37 @@ function renderPresets() {
                 </article>
             `).join('') || renderEmptyState('fa-sliders', '暂无匹配预设', '尝试清空搜索关键词。')}
         </div>
+    `;
+}
+
+function renderOpenAiPresetTools() {
+    const currentPreset = getOaiSettings().preset_settings_openai || '';
+    const draftName = state.openAiPresetDraft.name || currentPreset;
+
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">聊天补全预设</h2>
+                    <p class="panel-subtitle">保存现代 API 页可编辑的模型、端点和采样参数；高级字段保留在原预设中。</p>
+                </div>
+                <span class="badge">${escapeHtml(currentPreset || '未选择')}</span>
+            </div>
+            <div class="settings-form">
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>预设名称</span>
+                        <input class="text-input" type="text" data-openai-preset-name value="${escapeHtml(draftName)}" placeholder="输入新名称或覆盖当前预设">
+                    </label>
+                </div>
+                <div class="message-edit-actions">
+                    <button class="secondary-button" type="button" data-save-openai-preset>
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        保存当前配置为预设
+                    </button>
+                </div>
+            </div>
+        </section>
     `;
 }
 
@@ -3463,34 +3631,90 @@ function renderApi() {
 }
 
 function renderApiConnectionEditor(provider) {
-    if (provider.api !== 'openai' || provider.chatSource !== 'siliconflow') {
-        return `
-            <div class="settings-form">
-                <div class="muted">当前连接暂不在现代页编辑，仍可使用原版连接配置。</div>
-            </div>
-        `;
-    }
-
     const settings = state.settings.oai_settings || {};
+    const source = provider.chatSource || settings.chat_completion_source || 'openai';
+    const model = getChatCompletionModel(settings, source);
     const endpoint = settings.siliconflow_endpoint === 'global' ? 'global' : 'cn';
+    const secretState = getSecretStateForSource(source);
+    const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
 
     return `
         <div class="settings-form">
-            <label class="field-label">
-                <span>SiliconFlow 模型</span>
-                <input class="text-input" type="text" data-api-model value="${escapeHtml(provider.model)}" autocomplete="off">
-            </label>
-            <label class="field-label">
-                <span>端点</span>
-                <select class="select-input" data-api-endpoint>
-                    <option value="cn" ${endpoint === 'cn' ? 'selected' : ''}>China (api.siliconflow.cn)</option>
-                    <option value="global" ${endpoint === 'global' ? 'selected' : ''}>Global (api.siliconflow.com)</option>
-                </select>
-            </label>
-            <button class="secondary-button" type="button" data-save-api-connection>
-                <i class="fa-solid fa-floppy-disk"></i>
-                保存连接字段
-            </button>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>主 API</span>
+                    <select class="select-input" data-api-main>
+                        <option value="openai" ${(state.settings.main_api || 'openai') === 'openai' ? 'selected' : ''}>聊天补全</option>
+                        <option value="textgenerationwebui" ${state.settings.main_api === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>聊天补全来源</span>
+                    <select class="select-input" data-api-source>
+                        ${chatCompletionSourceOptions.map(option => `<option value="${escapeHtml(option.id)}" ${source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>模型</span>
+                    <input class="text-input" type="text" data-api-model value="${escapeHtml(model)}" autocomplete="off" placeholder="例如 deepseek-ai/DeepSeek-V4-Pro">
+                </label>
+                <label class="field-label">
+                    <span>聊天补全预设</span>
+                    <select class="select-input" data-api-preset>
+                        <option value="">未选择</option>
+                        ${openAiPresetNames.map(name => `<option value="${escapeHtml(name)}" ${settings.preset_settings_openai === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>SiliconFlow 端点</span>
+                    <select class="select-input" data-api-endpoint>
+                        <option value="cn" ${endpoint === 'cn' ? 'selected' : ''}>China (api.siliconflow.cn)</option>
+                        <option value="global" ${endpoint === 'global' ? 'selected' : ''}>Global (api.siliconflow.com)</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>Custom URL</span>
+                    <input class="text-input" type="url" data-api-custom-url value="${escapeHtml(settings.custom_url || '')}" autocomplete="off" placeholder="OpenAI-compatible base URL">
+                </label>
+                <label class="field-label">
+                    <span>Reverse Proxy</span>
+                    <input class="text-input" type="url" data-api-reverse-proxy value="${escapeHtml(settings.reverse_proxy || '')}" autocomplete="off" placeholder="可选">
+                </label>
+                <label class="field-label">
+                    <span>API Key</span>
+                    <input class="text-input" type="password" data-api-key value="" autocomplete="new-password" placeholder="${secretState.length ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
+                </label>
+                <label class="field-label">
+                    <span>Temperature</span>
+                    <input class="text-input" type="number" step="0.01" data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
+                </label>
+                <label class="field-label">
+                    <span>Max Tokens</span>
+                    <input class="text-input" type="number" step="1" min="1" data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
+                </label>
+                <label class="field-label">
+                    <span>Top P</span>
+                    <input class="text-input" type="number" step="0.01" data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">
+                </label>
+                <label class="field-label">
+                    <span>Frequency Penalty</span>
+                    <input class="text-input" type="number" step="0.01" data-api-frequency-penalty value="${escapeHtml(getNumberSetting(settings, 'freq_pen_openai', 0))}">
+                </label>
+                <label class="field-label">
+                    <span>Presence Penalty</span>
+                    <input class="text-input" type="number" step="0.01" data-api-presence-penalty value="${escapeHtml(getNumberSetting(settings, 'pres_pen_openai', 0))}">
+                </label>
+            </div>
+            <div class="connection-test">
+                <span class="badge">${secretState.length ? '密钥已保存' : '未保存密钥'}</span>
+                <span>${escapeHtml(secretKeyByChatSource[source] || '当前来源没有密钥映射')}</span>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-api-connection>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存连接字段
+                </button>
+            </div>
         </div>
     `;
 }
@@ -3570,6 +3794,9 @@ function maskEndpoint(value) {
 }
 
 function getApiChecks(provider, profiles) {
+    const secretKey = secretKeyByChatSource[provider.chatSource];
+    const secretState = getSecretStateForSource(provider.chatSource);
+
     return [
         {
             label: '主 API',
@@ -3590,6 +3817,11 @@ function getApiChecks(provider, profiles) {
             label: '密钥显示',
             state: state.secrets?.allowKeysExposure ? 'warn' : 'ok',
             detail: state.secrets?.allowKeysExposure ? '当前允许查看密钥。' : '当前不会暴露密钥明文。',
+        },
+        {
+            label: '当前来源密钥',
+            state: !secretKey || secretState.length ? 'ok' : 'warn',
+            detail: secretKey ? (secretState.length ? `${secretKey} 已保存` : `${secretKey} 未保存`) : '当前来源无需或暂未映射密钥。',
         },
         {
             label: 'CSRF',
@@ -4221,6 +4453,17 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-save-openai-preset]')) {
+        try {
+            await saveOpenAiPresetFromForm();
+        } catch (error) {
+            state.errors.push({ key: 'preset-save', message: error.message });
+            showToast('预设保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const presetButton = event.target.closest('[data-use-openai-preset]');
     if (presetButton) {
         try {
@@ -4417,6 +4660,9 @@ elements.content.addEventListener('input', event => {
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
         state.characterRenaming.name = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-openai-preset-name]')) {
+        state.openAiPresetDraft.name = event.target.value;
     }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-character-field]')) {
         updateCharacterFormField(event.target);
