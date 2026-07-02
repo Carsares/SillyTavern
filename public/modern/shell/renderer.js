@@ -1,0 +1,31 @@
+export function createRenderer({
+    state,
+    elements,
+    routeRenderers,
+    renderLoading,
+    renderNav,
+    renderStatus,
+    renderInspector,
+}) {
+    function renderContent() {
+        if (state.loading && !state.loaded) {
+            elements.content.innerHTML = renderLoading();
+            return;
+        }
+
+        const renderRoute = routeRenderers[state.route] || routeRenderers.dashboard;
+        elements.content.innerHTML = renderRoute();
+    }
+
+    function render() {
+        renderNav();
+        renderStatus();
+        renderContent();
+        renderInspector();
+    }
+
+    return {
+        render,
+        renderContent,
+    };
+}

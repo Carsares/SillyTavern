@@ -31,6 +31,7 @@ import { createInspector } from './shell/inspector.js';
 import { createQueryMatcher, createShellMetadata } from './shell/metadata.js';
 import { createNav } from './shell/nav.js';
 import { createPalette } from './shell/palette.js';
+import { createRenderer } from './shell/renderer.js';
 import { createRouter } from './shell/router.js';
 import { createTheme } from './shell/theme.js';
 import { createToast } from './shell/toast.js';
@@ -93,6 +94,8 @@ const elements = {
 };
 
 document.documentElement.dataset.theme = state.theme;
+
+let shellRenderer;
 
 const { matchesQuery } = createQueryMatcher({
     state,
@@ -845,6 +848,15 @@ const routeModules = {
     settings: createSettingsRoute(routeContext),
 };
 const routeRenderers = Object.fromEntries(Object.entries(routeModules).map(([route, module]) => [route, module.render]));
+shellRenderer = createRenderer({
+    state,
+    elements,
+    routeRenderers,
+    renderLoading,
+    renderNav,
+    renderStatus,
+    renderInspector,
+});
 const { handleClick } = createRouter({
     state,
     elements,
@@ -936,21 +948,8 @@ async function loadData({ silent = false, notify = !silent } = {}) {
     }
 }
 
-function renderContent() {
-    if (state.loading && !state.loaded) {
-        elements.content.innerHTML = renderLoading();
-        return;
-    }
-
-    const renderRoute = routeRenderers[state.route] || routeRenderers.dashboard;
-    elements.content.innerHTML = renderRoute();
-}
-
 function render() {
-    renderNav();
-    renderStatus();
-    renderContent();
-    renderInspector();
+    shellRenderer.render();
 }
 
 elements.refreshButton.addEventListener('click', () => loadData());
