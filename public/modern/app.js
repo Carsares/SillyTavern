@@ -99,6 +99,18 @@ const state = {
         name: '',
         deleteChats: false,
     },
+    groupCreating: {
+        active: false,
+        form: {},
+    },
+    groupEditing: {
+        id: '',
+        form: {},
+    },
+    groupDeleteConfirm: {
+        id: '',
+        name: '',
+    },
     personaEditing: {
         avatarId: '',
         form: {},
@@ -137,11 +149,18 @@ const state = {
     openAiPresetDraft: {
         name: '',
     },
+    presetDeleteConfirm: {
+        apiId: '',
+        name: '',
+    },
     worldbookCreating: {
         active: false,
         name: '',
     },
     worldbookDeleteConfirm: {
+        worldbookId: '',
+    },
+    worldEntryBulkDeleteConfirm: {
         worldbookId: '',
     },
     worldEntryList: {
@@ -478,6 +497,8 @@ function getRouteCount(routeId) {
         case 'characters':
         case 'chat':
             return state.characters.length;
+        case 'groups':
+            return state.groups.length;
         case 'worldbooks':
             return state.worldbooks.length || (state.settingsBundle.world_names || []).length;
         case 'presets':
@@ -1330,6 +1351,91 @@ async function saveOpenAiPresetFromForm() {
     showToast('预设已保存', name);
 }
 
+function getPresetGroup(apiId) {
+    return getPresetGroups().find(group => group.id === apiId);
+}
+
+function getPresetContent(apiId, name) {
+    const group = getPresetGroup(apiId);
+    const index = group?.names.indexOf(name) ?? -1;
+    return index >= 0 ? group.contents[index] : null;
+}
+
+function getUniquePresetName(apiId, baseName) {
+    const names = new Set(getPresetGroup(apiId)?.names || []);
+    let nextName = `${baseName} copy`;
+    let index = 2;
+    while (names.has(nextName)) {
+        nextName = `${baseName} copy ${index}`;
+        index++;
+    }
+    return nextName;
+}
+
+async function duplicatePreset(apiId, name) {
+    const preset = parsePreset(getPresetContent(apiId, name));
+    if (!preset) {
+        throw new Error('预设内容读取失败。');
+    }
+
+    const nextName = getUniquePresetName(apiId, name);
+    await apiFetch('/api/presets/save', { body: { apiId, name: nextName, preset } });
+    await loadData({ silent: true });
+    showToast('预设已复制', `${name} → ${nextName}`);
+    render();
+}
+
+function exportPreset(apiId, name) {
+    const preset = parsePreset(getPresetContent(apiId, name));
+    if (!preset) {
+        throw new Error('预设内容读取失败。');
+    }
+
+    downloadFile(JSON.stringify(preset, null, 2), `${apiId}-${name}.json`, 'application/json');
+    showToast('预设导出已开始', name);
+}
+
+async function restorePreset(apiId, name) {
+    const result = await apiFetch('/api/presets/restore', { body: { apiId, name } });
+    if (!result?.isDefault || !result?.preset) {
+        throw new Error('这个预设没有可恢复的内置默认版本。');
+    }
+
+    await apiFetch('/api/presets/save', { body: { apiId, name, preset: result.preset } });
+    await loadData({ silent: true });
+    showToast('预设已恢复默认', name);
+    render();
+}
+
+function beginPresetDelete(apiId, name) {
+    state.presetDeleteConfirm = { apiId, name };
+    render();
+}
+
+function cancelPresetDelete() {
+    state.presetDeleteConfirm = { apiId: '', name: '' };
+    render();
+}
+
+async function confirmPresetDelete() {
+    const { apiId, name } = state.presetDeleteConfirm;
+    if (!apiId || !name) {
+        throw new Error('请先选择预设。');
+    }
+
+    await apiFetch('/api/presets/delete', { body: { apiId, name } });
+    if (apiId === 'openai' && getOaiSettings().preset_settings_openai === name) {
+        const nextName = (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
+        state.settings.oai_settings = state.settings.oai_settings || {};
+        state.settings.oai_settings.preset_settings_openai = nextName;
+        await apiFetch('/api/settings/save', { body: state.settings });
+    }
+    state.presetDeleteConfirm = { apiId: '', name: '' };
+    await loadData({ silent: true });
+    showToast('预设已删除', name);
+    render();
+}
+
 function defaultCharacterForm() {
     return { ...characterFormDefaults };
 }
@@ -1660,6 +1766,189 @@ function updateCharacterFormField(element) {
         ? state.characterCreating.form
         : state.characterEditing.form;
     form[element.dataset.characterField] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+}
+
+function defaultGroupForm() {
+    return {
+        name: '',
+        avatar_url: '',
+        members: [],
+        allow_self_responses: false,
+        activation_strategy: '0',
+        generation_mode: '0',
+        auto_mode_delay: '5',
+        fav: false,
+    };
+}
+
+function groupToForm(group) {
+    return {
+        ...defaultGroupForm(),
+        name: group?.name || '',
+        avatar_url: group?.avatar_url || '',
+        members: Array.isArray(group?.members) ? [...group.members] : [],
+        allow_self_responses: !!group?.allow_self_responses,
+        activation_strategy: String(group?.activation_strategy ?? 0),
+        generation_mode: String(group?.generation_mode ?? 0),
+        auto_mode_delay: String(group?.auto_mode_delay ?? 5),
+        fav: !!group?.fav,
+    };
+}
+
+function groupFormToPayload(form, previous = {}) {
+    const members = Array.isArray(form.members) ? form.members : [];
+    return {
+        ...previous,
+        name: form.name.trim() || `群组 ${formatNumber(state.groups.length + 1)}`,
+        avatar_url: form.avatar_url.trim() || previous.avatar_url || '',
+        members,
+        allow_self_responses: !!form.allow_self_responses,
+        activation_strategy: numberInput(form.activation_strategy, 0),
+        generation_mode: numberInput(form.generation_mode, 0),
+        disabled_members: Array.isArray(previous.disabled_members) ? previous.disabled_members.filter(member => members.includes(member)) : [],
+        fav: !!form.fav,
+        auto_mode_delay: numberInput(form.auto_mode_delay, 5),
+    };
+}
+
+function clearGroupCache(groupId) {
+    if (!groupId) {
+        return;
+    }
+
+    const contextKey = `group:${groupId}`;
+    delete state.chatLists[contextKey];
+    Object.keys(state.chatMessages).forEach(key => {
+        if (key.startsWith(`${contextKey}::`)) {
+            delete state.chatMessages[key];
+        }
+    });
+    Object.keys(state.chatMetadata).forEach(key => {
+        if (key.startsWith(`${contextKey}::`)) {
+            delete state.chatMetadata[key];
+        }
+    });
+    Object.keys(state.chatDrafts).forEach(key => {
+        if (key.startsWith(`${contextKey}::`)) {
+            delete state.chatDrafts[key];
+        }
+    });
+}
+
+function beginGroupCreate() {
+    state.groupCreating = { active: true, form: defaultGroupForm() };
+    state.groupEditing = { id: '', form: {} };
+    state.groupDeleteConfirm = { id: '', name: '' };
+    render();
+}
+
+function cancelGroupCreate() {
+    state.groupCreating = { active: false, form: {} };
+    render();
+}
+
+async function saveGroupCreate() {
+    const payload = groupFormToPayload(state.groupCreating.form || defaultGroupForm());
+    if (!payload.members.length) {
+        throw new Error('群组至少需要一个角色成员。');
+    }
+
+    const group = await apiFetch('/api/groups/create', { body: payload });
+    state.groupCreating = { active: false, form: {} };
+    state.selected.group = group?.id || '';
+    state.chatMode = 'group';
+    localStorage.setItem('st-modern-chat-mode', 'group');
+    state.selected.chat = '';
+    await loadData({ silent: true });
+    showToast('群组已创建', group?.name || payload.name);
+    render();
+}
+
+function beginGroupEdit(groupId) {
+    const group = state.groups.find(item => item.id === groupId);
+    if (!group) {
+        return;
+    }
+
+    state.groupEditing = { id: groupId, form: groupToForm(group) };
+    state.groupCreating = { active: false, form: {} };
+    state.groupDeleteConfirm = { id: '', name: '' };
+    render();
+}
+
+function cancelGroupEdit() {
+    state.groupEditing = { id: '', form: {} };
+    render();
+}
+
+async function saveGroupEdit() {
+    const { id, form } = state.groupEditing;
+    const group = state.groups.find(item => item.id === id);
+    if (!id || !group || state.selected.group !== id) {
+        throw new Error('编辑目标已变化，请重新选择群组。');
+    }
+    if (!Array.isArray(form.members) || !form.members.length) {
+        throw new Error('群组至少需要一个角色成员。');
+    }
+
+    const payload = groupFormToPayload(form, group);
+    await apiFetch('/api/groups/edit', { body: payload });
+    clearGroupCache(id);
+    state.groupEditing = { id: '', form: {} };
+    await loadData({ silent: true });
+    showToast('群组已保存', payload.name);
+    render();
+}
+
+function beginGroupDelete(group) {
+    state.groupDeleteConfirm = {
+        id: group.id,
+        name: group.name || group.id,
+    };
+    state.groupEditing = { id: '', form: {} };
+    render();
+}
+
+function cancelGroupDelete() {
+    state.groupDeleteConfirm = { id: '', name: '' };
+    render();
+}
+
+async function confirmGroupDelete() {
+    const { id } = state.groupDeleteConfirm;
+    if (!id || state.selected.group !== id) {
+        throw new Error('删除目标已变化，请重新选择群组。');
+    }
+
+    await apiFetch('/api/groups/delete', { body: { id } });
+    clearGroupCache(id);
+    state.groupDeleteConfirm = { id: '', name: '' };
+    state.groupEditing = { id: '', form: {} };
+    state.selected.group = '';
+    state.selected.chat = '';
+    await loadData({ silent: true });
+    ensureAvailableChatMode();
+    showToast('群组已删除', id);
+    render();
+}
+
+function updateGroupFormField(element) {
+    const form = element.dataset.groupScope === 'create'
+        ? state.groupCreating.form
+        : state.groupEditing.form;
+    form[element.dataset.groupField] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+}
+
+function toggleGroupFormMember(scope, avatar, checked) {
+    const form = scope === 'create' ? state.groupCreating.form : state.groupEditing.form;
+    const members = new Set(Array.isArray(form.members) ? form.members : []);
+    if (checked) {
+        members.add(avatar);
+    } else {
+        members.delete(avatar);
+    }
+    form.members = [...members];
+    render();
 }
 
 function getPowerUserSettingsForWrite() {
@@ -2156,6 +2445,52 @@ async function setSelectedWorldEntriesDisabled(worldbookId, disabled) {
     render();
 }
 
+function beginWorldEntryBulkDelete(worldbookId) {
+    if (!state.worldEntryList.selectedKeys.length) {
+        throw new Error('请先选择世界书条目。');
+    }
+
+    state.worldEntryBulkDeleteConfirm = { worldbookId };
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+    render();
+}
+
+function cancelWorldEntryBulkDelete() {
+    state.worldEntryBulkDeleteConfirm = { worldbookId: '' };
+    render();
+}
+
+async function confirmWorldEntryBulkDelete() {
+    const worldbookId = state.worldEntryBulkDeleteConfirm.worldbookId;
+    const selectedKeys = [...state.worldEntryList.selectedKeys];
+    if (!worldbookId || !selectedKeys.length) {
+        throw new Error('请先选择世界书条目。');
+    }
+
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    const nextDetail = structuredClone(detail);
+    let deletedCount = 0;
+    for (const entryKey of selectedKeys) {
+        if (!nextDetail?.entries?.[entryKey]) {
+            continue;
+        }
+        delete nextDetail.entries[entryKey];
+        deleteWorldEntryOriginalData(nextDetail, entryKey);
+        deletedCount++;
+    }
+    if (!deletedCount) {
+        throw new Error('所选条目已经不存在，请刷新后重试。');
+    }
+
+    await saveWorldbookDetail(worldbookId, nextDetail);
+    state.worldEntryList.selectedKeys = [];
+    state.worldEntryBulkDeleteConfirm = { worldbookId: '' };
+    showToast('条目已批量删除', `${formatNumber(deletedCount)} 个条目`);
+    render();
+}
+
 function getWorldEntryTitle(entry, entryKey) {
     return entry?.comment || entry?.name || (Array.isArray(entry?.key) ? entry.key.join(', ') : '') || `条目 ${entryKey}`;
 }
@@ -2346,6 +2681,46 @@ async function saveWorldbookCreate() {
     await loadWorldDetail(name);
     showToast('世界书已创建', `${name}.json`);
     render();
+}
+
+async function importWorldbookFile(file) {
+    if (!file) {
+        return;
+    }
+    if (!file.name.toLowerCase().endsWith('.json')) {
+        throw new Error('现代页暂只支持导入标准 JSON 世界书。');
+    }
+
+    const worldName = file.name.replace(/\.json$/i, '');
+    if (state.worldbooks.some(worldbook => worldbook.file_id === worldName)) {
+        throw new Error('同名世界书已存在，请先重命名文件或删除旧世界书。');
+    }
+
+    const formData = new FormData();
+    formData.append('avatar', file);
+    const result = await apiFetch('/api/worldinfo/import', { body: formData, omitContentType: true });
+    const importedName = result?.name || worldName;
+    state.selected.worldbook = importedName;
+    delete state.worldDetails[importedName];
+    await loadData({ silent: true });
+    await loadWorldDetail(importedName);
+    showToast('世界书已导入', `${importedName}.json`);
+    render();
+}
+
+async function exportWorldbook(worldbookId) {
+    if (!worldbookId) {
+        throw new Error('请先选择世界书。');
+    }
+
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    if (!detail) {
+        throw new Error('世界书内容读取失败。');
+    }
+
+    downloadFile(JSON.stringify(detail, null, 2), `${worldbookId}.json`, 'application/json');
+    showToast('世界书导出已开始', `${worldbookId}.json`);
 }
 
 function beginWorldbookDelete(worldbookId) {
@@ -3363,9 +3738,9 @@ function renderDashboard() {
         `)}
         <div class="metrics-grid">
             ${metricCard('角色', formatNumber(state.characters.length), '可用于聊天和人设转换', 'fa-address-card')}
+            ${metricCard('群组', formatNumber(state.groups.length), '多人会话和发言策略', 'fa-users')}
             ${metricCard('世界书', formatNumber(state.worldbooks.length || provider.worldCount), '上下文知识库', 'fa-book-open')}
             ${metricCard('预设', formatNumber(getPresetCount()), '模型、指令、上下文模板', 'fa-sliders')}
-            ${metricCard('素材', formatNumber(getAssetCount()), '背景、音频、Live2D、VRM', 'fa-folder-tree')}
         </div>
         <div class="dashboard-grid">
             <section class="panel">
@@ -3409,6 +3784,7 @@ function renderDashboard() {
             <div class="action-grid">
                 ${renderActionCard('聊天', '查看角色会话和历史消息', `${formatNumber(state.characters.length)} 个角色`, 'fa-comments', 'chat')}
                 ${renderActionCard('角色', '检查角色卡和关联世界书', `${formatNumber(state.characters.length)} 张卡`, 'fa-address-card', 'characters')}
+                ${renderActionCard('群组', '维护成员和群聊策略', `${formatNumber(state.groups.length)} 个群组`, 'fa-users', 'groups')}
                 ${renderActionCard('世界书', '查看知识库文件和条目', `${formatNumber(state.worldbooks.length || provider.worldCount)} 本`, 'fa-book-open', 'worldbooks')}
                 ${renderActionCard('预设', '浏览模型参数和提示模板', `${formatNumber(getPresetCount())} 个`, 'fa-sliders', 'presets')}
                 ${renderActionCard('API', '检查连接、模型和密钥状态', provider.api, 'fa-plug', 'api')}
@@ -4269,6 +4645,223 @@ function renderCharacterWorldSelect(form, scope) {
     `;
 }
 
+function renderGroups() {
+    const groups = state.groups.filter(group => matchesQuery(group.name, group.id, ...(Array.isArray(group.members) ? group.members : [])));
+    const selected = state.groups.find(group => group.id === state.selected.group) || groups[0];
+    if (selected && state.selected.group !== selected.id) {
+        state.selected.group = selected.id;
+    }
+
+    return `
+        ${pageHead('群组管理', '群聊成员、生成策略和聊天文件归属。', `
+            <button class="primary-button" type="button" data-create-group>
+                <i class="fa-solid fa-plus"></i>
+                新建群组
+            </button>
+            ${legacyMenu('打开原版群组')}
+        `)}
+        <div class="split-grid">
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">群组列表</h2>
+                        <p class="panel-subtitle">${formatNumber(groups.length)} 个匹配项</p>
+                    </div>
+                </div>
+                ${state.groupCreating.active ? renderGroupCreatePanel() : ''}
+                <div class="resource-list">
+                    ${groups.map(group => renderGroupRow(group)).join('') || renderInlineEmpty('暂无匹配群组')}
+                </div>
+            </section>
+            <section class="panel">
+                ${selected ? renderGroupDetail(selected) : renderEmptyState('fa-users', '暂无群组', '当前用户目录里没有群组。')}
+            </section>
+        </div>
+    `;
+}
+
+function renderGroupDetail(group) {
+    const avatar = getChatEntityAvatarUrl(group);
+    const memberAvatars = Array.isArray(group.members) ? group.members : [];
+    const members = memberAvatars.map(avatarId => getCharacterByAvatar(avatarId)).filter(Boolean);
+    const missingMembers = memberAvatars.filter(avatarId => !getCharacterByAvatar(avatarId));
+    const isEditing = state.groupEditing.id === group.id;
+    const isDeleting = state.groupDeleteConfirm.id === group.id;
+
+    return `
+        <div class="detail-hero">
+            ${avatar ? `<img class="avatar large" src="${escapeHtml(avatar)}" alt="">` : '<span class="avatar-fallback large"><i class="fa-solid fa-users"></i></span>'}
+            <div>
+                <h2 class="detail-title">${escapeHtml(group.name || group.id || '未命名群组')}</h2>
+                <p class="panel-subtitle">${escapeHtml(group.id)} · ${formatNumber(memberAvatars.length)} 个成员 · ${formatNumber((group.chats || []).length)} 个会话</p>
+                <div class="tag-row detail-tags">
+                    <span class="tag">${group.allow_self_responses ? '允许自回复' : '禁止自回复'}</span>
+                    <span class="tag">策略 ${formatNumber(group.activation_strategy ?? 0)}</span>
+                    <span class="tag">模式 ${formatNumber(group.generation_mode ?? 0)}</span>
+                    ${group.fav ? '<span class="tag">收藏</span>' : ''}
+                </div>
+            </div>
+            <div class="detail-actions page-actions">
+                <button class="secondary-button" type="button" data-route="chat" data-open-group-chat="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-comments"></i>
+                    打开聊天
+                </button>
+                <button class="secondary-button" type="button" data-edit-group="${escapeHtml(group.id)}" ${isEditing ? 'disabled' : ''}>
+                    <i class="fa-solid fa-pen"></i>
+                    编辑
+                </button>
+                <button class="secondary-button danger-action" type="button" data-delete-group="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除
+                </button>
+            </div>
+        </div>
+        ${isDeleting ? renderGroupDeletePanel(group) : ''}
+        ${isEditing ? renderGroupEditPanel(group) : ''}
+        <div class="metrics-grid compact-metrics">
+            ${metricCard('成员', formatNumber(memberAvatars.length), `${formatNumber(missingMembers.length)} 个缺失`, 'fa-users')}
+            ${metricCard('聊天文件', formatNumber((group.chats || []).length), formatBytes(group.chat_size), 'fa-message')}
+            ${metricCard('最近聊天', group.date_last_chat ? formatDate(group.date_last_chat) : '暂无', '群组聊天记录', 'fa-clock')}
+        </div>
+        <section class="panel section-panel">
+            <div class="panel-header compact-header">
+                <div>
+                    <h3 class="panel-title">成员</h3>
+                    <p class="panel-subtitle">按群组成员顺序展示角色卡。</p>
+                </div>
+            </div>
+            <div class="resource-list">
+                ${members.map(character => renderCharacterRow(character)).join('')}
+                ${missingMembers.map(avatarId => `
+                    <div class="resource-row">
+                        <span class="avatar-fallback"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                        <span class="row-main">
+                            <span class="row-title">${escapeHtml(avatarId)}</span>
+                            <span class="row-subtitle">角色卡缺失或未读取</span>
+                        </span>
+                    </div>
+                `).join('')}
+                ${memberAvatars.length ? '' : renderInlineEmpty('这个群组还没有成员')}
+            </div>
+        </section>
+    `;
+}
+
+function renderGroupCreatePanel() {
+    return `
+        <div class="settings-form inline-form">
+            <strong>新建群组</strong>
+            ${renderGroupFormContent(state.groupCreating.form || defaultGroupForm(), 'create', true)}
+        </div>
+    `;
+}
+
+function renderGroupEditPanel(group) {
+    return `
+        <div class="settings-form inline-form">
+            <strong>编辑群组</strong>
+            ${renderGroupFormContent(state.groupEditing.form || groupToForm(group), 'edit', false)}
+        </div>
+    `;
+}
+
+function renderGroupDeletePanel(group) {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除群组</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(state.groupDeleteConfirm.name || group.name || group.id)}，并删除这个群组下的聊天文件。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-group-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-group-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderGroupFormContent(form, scope, isCreate) {
+    const scopeAttribute = escapeHtml(scope);
+    const selectedMembers = new Set(Array.isArray(form.members) ? form.members : []);
+    const memberOptions = state.characters.map(character => {
+        const avatar = character.avatar || '';
+        const title = character.name || character.data?.name || avatar;
+        return `
+            <label class="checkbox-card">
+                <input type="checkbox" data-group-member="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${selectedMembers.has(avatar) ? 'checked' : ''}>
+                <span>${escapeHtml(title)}</span>
+            </label>
+        `;
+    }).join('') || renderInlineEmpty('暂无角色，先导入或创建角色卡。');
+
+    return `
+        <div class="character-form">
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>名称</span>
+                    <input class="text-input" type="text" data-group-field="name" data-group-scope="${scopeAttribute}" value="${escapeHtml(form.name || '')}" placeholder="留空时使用默认群组名">
+                </label>
+                <label class="field-label">
+                    <span>头像 URL</span>
+                    <input class="text-input" type="url" data-group-field="avatar_url" data-group-scope="${scopeAttribute}" value="${escapeHtml(form.avatar_url || '')}" placeholder="可选">
+                </label>
+                <label class="field-label">
+                    <span>激活策略</span>
+                    <select class="select-input" data-group-field="activation_strategy" data-group-scope="${scopeAttribute}">
+                        <option value="0" ${String(form.activation_strategy) === '0' ? 'selected' : ''}>自然发言</option>
+                        <option value="1" ${String(form.activation_strategy) === '1' ? 'selected' : ''}>列表顺序</option>
+                        <option value="2" ${String(form.activation_strategy) === '2' ? 'selected' : ''}>随机</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>生成模式</span>
+                    <select class="select-input" data-group-field="generation_mode" data-group-scope="${scopeAttribute}">
+                        <option value="0" ${String(form.generation_mode) === '0' ? 'selected' : ''}>交换</option>
+                        <option value="1" ${String(form.generation_mode) === '1' ? 'selected' : ''}>加入前缀</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>自动模式延迟</span>
+                    <input class="text-input" type="number" min="0" step="1" data-group-field="auto_mode_delay" data-group-scope="${scopeAttribute}" value="${escapeHtml(form.auto_mode_delay || '5')}">
+                </label>
+                <label class="checkbox-card compact-checkbox">
+                    <input type="checkbox" data-group-field="allow_self_responses" data-group-scope="${scopeAttribute}" ${form.allow_self_responses ? 'checked' : ''}>
+                    <span>允许角色连续回复</span>
+                </label>
+                <label class="checkbox-card compact-checkbox">
+                    <input type="checkbox" data-group-field="fav" data-group-scope="${scopeAttribute}" ${form.fav ? 'checked' : ''}>
+                    <span>收藏群组</span>
+                </label>
+            </div>
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">成员</h3>
+                    <p class="panel-subtitle">已选择 ${formatNumber(selectedMembers.size)} 个角色。</p>
+                </div>
+                <div class="checkbox-grid">
+                    ${memberOptions}
+                </div>
+            </section>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" ${isCreate ? 'data-cancel-group-create' : 'data-cancel-group-edit'}>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" ${isCreate ? 'data-save-group-create' : 'data-save-group-edit'}>
+                    <i class="fa-solid fa-check"></i>
+                    ${isCreate ? '创建群组' : '保存群组'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 function renderWorldbooks() {
     const namesFromSettings = (state.settingsBundle.world_names || []).map(name => ({ file_id: name, name }));
     const worldbooks = (state.worldbooks.length ? state.worldbooks : namesFromSettings)
@@ -4284,6 +4877,11 @@ function renderWorldbooks() {
                 <i class="fa-solid fa-plus"></i>
                 新建世界书
             </button>
+            <label class="secondary-button file-action">
+                <i class="fa-solid fa-file-import"></i>
+                导入 JSON
+                <input class="visually-hidden" type="file" accept=".json,application/json" data-worldbook-import-file>
+            </label>
             ${legacyMenu('打开原版编辑器')}
         `)}
         <div class="split-grid">
@@ -4372,6 +4970,10 @@ function renderWorldbookDetail(worldbook) {
                     ${detail ? '刷新条目' : '读取条目'}
                 </button>
                 ${detail ? `
+                    <button class="secondary-button" type="button" data-export-worldbook="${escapeHtml(worldbook.file_id)}">
+                        <i class="fa-solid fa-file-export"></i>
+                        导出 JSON
+                    </button>
                     <button class="secondary-button" type="button" data-create-world-entry="${escapeHtml(worldbook.file_id)}">
                         <i class="fa-solid fa-plus"></i>
                         新条目
@@ -4423,8 +5025,13 @@ function renderWorldbookDetail(worldbook) {
                         <i class="fa-solid fa-toggle-off"></i>
                         禁用所选 ${formatNumber(selectedCount)}
                     </button>
+                    <button class="secondary-button danger-action" type="button" data-delete-selected-world-entries ${selectedCount ? '' : 'disabled'}>
+                        <i class="fa-solid fa-trash"></i>
+                        删除所选 ${formatNumber(selectedCount)}
+                    </button>
                 </div>
             </div>
+            ${state.worldEntryBulkDeleteConfirm.worldbookId === worldbook.file_id ? renderWorldEntryBulkDeletePanel(selectedCount) : ''}
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -4452,6 +5059,27 @@ function renderWorldbookDeletePanel(worldbook) {
                     取消
                 </button>
                 <button class="secondary-button danger-action" type="button" data-confirm-worldbook-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderWorldEntryBulkDeletePanel(selectedCount) {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>批量删除条目</strong>
+                <p class="panel-subtitle">将删除当前选中的 ${formatNumber(selectedCount)} 个世界书条目，此操作不可撤销。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-world-entry-bulk-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-world-entry-bulk-delete>
                     <i class="fa-solid fa-trash"></i>
                     确认删除
                 </button>
@@ -4640,19 +5268,58 @@ function renderPresets() {
                         <span class="badge">${formatNumber(group.items.length)}</span>
                     </div>
                     <div class="resource-list scroll-list">
-                        ${group.items.map(item => `
-                            <${item.actionable ? 'button' : 'div'} class="resource-row ${item.active ? 'active' : ''}" ${item.actionable ? `type="button" data-use-openai-preset="${escapeHtml(item.name)}"` : ''}>
-                                <span class="avatar-fallback"><i class="fa-solid fa-file-lines"></i></span>
-                                <span class="row-main">
-                                    <span class="row-title">${escapeHtml(item.name)}</span>
-                                    <span class="row-subtitle">${escapeHtml(getPresetSummary(item.content))}</span>
-                                </span>
-                                ${item.actionable ? `<span class="badge">${item.active ? '当前' : '使用'}</span>` : ''}
-                            </${item.actionable ? 'button' : 'div'}>
-                        `).join('')}
+                        ${group.items.map(item => renderPresetRow(group, item)).join('')}
                     </div>
                 </article>
             `).join('') || renderEmptyState('fa-sliders', '暂无匹配预设', '尝试清空搜索关键词。')}
+        </div>
+    `;
+}
+
+function renderPresetRow(group, item) {
+    const isDeleting = state.presetDeleteConfirm.apiId === group.id && state.presetDeleteConfirm.name === item.name;
+
+    return `
+        <div class="resource-row ${item.active ? 'active' : ''}">
+            <span class="avatar-fallback"><i class="fa-solid fa-file-lines"></i></span>
+            <span class="row-main">
+                <span class="row-title">${escapeHtml(item.name)}</span>
+                <span class="row-subtitle">${escapeHtml(getPresetSummary(item.content))}</span>
+            </span>
+            <span class="row-actions">
+                ${item.actionable ? `
+                    <button class="secondary-button" type="button" data-use-openai-preset="${escapeHtml(item.name)}" ${item.active ? 'disabled' : ''}>
+                        <i class="fa-solid fa-check"></i>
+                        ${item.active ? '当前' : '使用'}
+                    </button>
+                ` : ''}
+                <button class="secondary-button" type="button" data-duplicate-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-copy"></i>
+                    复制
+                </button>
+                <button class="secondary-button" type="button" data-export-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-file-export"></i>
+                    导出
+                </button>
+                <button class="secondary-button" type="button" data-restore-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    恢复默认
+                </button>
+                ${isDeleting ? `
+                    <button class="secondary-button" type="button" data-cancel-preset-delete>
+                        取消
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-confirm-preset-delete>
+                        <i class="fa-solid fa-trash"></i>
+                        确认删除
+                    </button>
+                ` : `
+                    <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                        <i class="fa-solid fa-trash"></i>
+                        删除
+                    </button>
+                `}
+            </span>
         </div>
     `;
 }
@@ -6209,6 +6876,9 @@ function renderContent() {
         case 'characters':
             elements.content.innerHTML = renderCharacters();
             break;
+        case 'groups':
+            elements.content.innerHTML = renderGroups();
+            break;
         case 'worldbooks':
             elements.content.innerHTML = renderWorldbooks();
             break;
@@ -6320,6 +6990,14 @@ function renderPalette() {
         select: 'character',
         id: character.avatar,
     }));
+    const groupCommands = state.groups.slice(0, 80).map(group => ({
+        type: '群组',
+        label: group.name || group.id,
+        detail: `${formatNumber(Array.isArray(group.members) ? group.members.length : 0)} 个成员`,
+        route: 'groups',
+        select: 'group',
+        id: group.id,
+    }));
     const worldCommands = state.worldbooks.slice(0, 80).map(worldbook => ({
         type: '世界书',
         label: worldbook.name || worldbook.file_id,
@@ -6328,7 +7006,7 @@ function renderPalette() {
         select: 'worldbook',
         id: worldbook.file_id,
     }));
-    const commands = [...routeCommands, ...characterCommands, ...worldCommands]
+    const commands = [...routeCommands, ...characterCommands, ...groupCommands, ...worldCommands]
         .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))
         .slice(0, 40);
 
@@ -6393,6 +7071,13 @@ async function handleClick(event) {
 
     const routeButton = event.target.closest('[data-route]');
     if (routeButton) {
+        if (routeButton.dataset.openGroupChat) {
+            state.chatMode = 'group';
+            localStorage.setItem('st-modern-chat-mode', 'group');
+            state.selected.group = routeButton.dataset.openGroupChat;
+            state.selected.chat = '';
+            clearChatSearch();
+        }
         await setRoute(routeButton.dataset.route);
         elements.app.querySelector('.sidebar')?.classList.remove('open');
         return;
@@ -6827,6 +7512,74 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-create-group]')) {
+        beginGroupCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-group-create]')) {
+        cancelGroupCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-save-group-create]')) {
+        try {
+            await saveGroupCreate();
+        } catch (error) {
+            state.errors.push({ key: 'group-create', message: error.message });
+            showToast('群组创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const editGroupButton = event.target.closest('[data-edit-group]');
+    if (editGroupButton) {
+        beginGroupEdit(editGroupButton.dataset.editGroup);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-group-edit]')) {
+        cancelGroupEdit();
+        return;
+    }
+
+    if (event.target.closest('[data-save-group-edit]')) {
+        try {
+            await saveGroupEdit();
+        } catch (error) {
+            state.errors.push({ key: 'group-edit', message: error.message });
+            showToast('群组保存失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteGroupButton = event.target.closest('[data-delete-group]');
+    if (deleteGroupButton) {
+        const group = state.groups.find(item => item.id === deleteGroupButton.dataset.deleteGroup);
+        if (group) {
+            beginGroupDelete(group);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-group-delete]')) {
+        cancelGroupDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-group-delete]')) {
+        try {
+            await confirmGroupDelete();
+        } catch (error) {
+            state.errors.push({ key: 'group-delete', message: error.message });
+            showToast('群组删除失败', error.message);
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-create-persona]')) {
         beginPersonaCreate();
         return;
@@ -7197,6 +7950,64 @@ async function handleClick(event) {
         return;
     }
 
+    const duplicatePresetButton = event.target.closest('[data-duplicate-preset]');
+    if (duplicatePresetButton) {
+        try {
+            await duplicatePreset(duplicatePresetButton.dataset.presetApi, duplicatePresetButton.dataset.duplicatePreset);
+        } catch (error) {
+            state.errors.push({ key: 'preset-duplicate', message: error.message });
+            showToast('预设复制失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const exportPresetButton = event.target.closest('[data-export-preset]');
+    if (exportPresetButton) {
+        try {
+            exportPreset(exportPresetButton.dataset.presetApi, exportPresetButton.dataset.exportPreset);
+        } catch (error) {
+            state.errors.push({ key: 'preset-export', message: error.message });
+            showToast('预设导出失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const restorePresetButton = event.target.closest('[data-restore-preset]');
+    if (restorePresetButton) {
+        try {
+            await restorePreset(restorePresetButton.dataset.presetApi, restorePresetButton.dataset.restorePreset);
+        } catch (error) {
+            state.errors.push({ key: 'preset-restore', message: error.message });
+            showToast('预设恢复失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deletePresetButton = event.target.closest('[data-delete-preset]');
+    if (deletePresetButton) {
+        beginPresetDelete(deletePresetButton.dataset.presetApi, deletePresetButton.dataset.deletePreset);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-preset-delete]')) {
+        cancelPresetDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-preset-delete]')) {
+        try {
+            await confirmPresetDelete();
+        } catch (error) {
+            state.errors.push({ key: 'preset-delete', message: error.message });
+            showToast('预设删除失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const worldbookButton = event.target.closest('[data-select-worldbook]');
     if (worldbookButton) {
         state.selected.worldbook = worldbookButton.dataset.selectWorldbook;
@@ -7230,6 +8041,18 @@ async function handleClick(event) {
     if (loadWorldbookButton) {
         await loadWorldDetail(loadWorldbookButton.dataset.loadWorldbook, { force: true });
         render();
+        return;
+    }
+
+    const exportWorldbookButton = event.target.closest('[data-export-worldbook]');
+    if (exportWorldbookButton) {
+        try {
+            await exportWorldbook(exportWorldbookButton.dataset.exportWorldbook);
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-export', message: error.message });
+            showToast('世界书导出失败', error.message);
+            render();
+        }
         return;
     }
 
@@ -7298,6 +8121,31 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'worldbook-entry-bulk', message: error.message });
             showToast('批量操作失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-delete-selected-world-entries]')) {
+        try {
+            beginWorldEntryBulkDelete(state.selected.worldbook);
+        } catch (error) {
+            showToast('请选择条目', error.message);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-world-entry-bulk-delete]')) {
+        cancelWorldEntryBulkDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-world-entry-bulk-delete]')) {
+        try {
+            await confirmWorldEntryBulkDelete();
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry-bulk-delete', message: error.message });
+            showToast('批量删除失败', error.message);
             render();
         }
         return;
@@ -7431,6 +8279,9 @@ elements.content.addEventListener('input', event => {
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && event.target.matches('[data-character-field]')) {
         updateCharacterFormField(event.target);
     }
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-group-field]')) {
+        updateGroupFormField(event.target);
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
         state.worldbookCreating.name = event.target.value;
     }
@@ -7504,6 +8355,18 @@ elements.content.addEventListener('change', async event => {
         }
         return;
     }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-import-file]')) {
+        try {
+            await importWorldbookFile(event.target.files?.[0]);
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-import', message: error.message });
+            showToast('世界书导入失败', error.message);
+            render();
+        } finally {
+            event.target.value = '';
+        }
+        return;
+    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-upload-file]')) {
         try {
             await uploadBackgroundFile(event.target.files?.[0]);
@@ -7521,6 +8384,13 @@ elements.content.addEventListener('change', async event => {
     }
     if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-character-field]')) {
         updateCharacterFormField(event.target);
+    }
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-group-field]')) {
+        updateGroupFormField(event.target);
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-group-member]')) {
+        toggleGroupFormMember(event.target.dataset.groupScope, event.target.dataset.groupMember, event.target.checked);
+        return;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-world-entry-select]')) {
         toggleWorldEntrySelection(event.target.dataset.worldEntrySelect, event.target.checked);

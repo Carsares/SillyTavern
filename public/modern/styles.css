@@ -1613,6 +1613,10 @@ tr:last-child td {
         grid-template-rows: auto;
     }
 
+    .checkbox-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .chat-context-strip {
         grid-template-columns: auto minmax(0, 1fr);
     }
@@ -1645,6 +1649,10 @@ tr:last-child td {
     }
 
     .composer {
+        grid-template-columns: 1fr;
+    }
+
+    .checkbox-grid {
         grid-template-columns: 1fr;
     }
 }
