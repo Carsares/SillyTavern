@@ -10,7 +10,10 @@ export function createPersonasComponents(ctx) {
     } = ctx;
 
     function renderPersonas() {
-        const personas = getPersonas().filter(persona => matchesQuery(persona.name, persona.title, persona.description, persona.avatarId));
+        const selectedPersonaId = state.selected.persona;
+        const personas = getPersonas()
+            .filter(persona => matchesQuery(persona.name, persona.title, persona.description, persona.avatarId))
+            .sort((a, b) => Number(b.avatarId === selectedPersonaId) - Number(a.avatarId === selectedPersonaId));
 
         return `
         ${pageHead('用户人设', '头像、标题和默认身份。', `
@@ -22,7 +25,7 @@ export function createPersonasComponents(ctx) {
         ${state.personaCreating.active ? renderPersonaCreatePanel() : ''}
         <div class="grid-list">
             ${personas.map(persona => `
-                <article class="resource-card">
+                <article class="resource-card persona-card ${persona.avatarId === selectedPersonaId ? 'selected' : ''}" data-persona-card="${escapeHtml(persona.avatarId)}">
                     <div class="detail-hero compact-hero">
                         <img class="avatar large" src="${getPersonaUrl(persona.avatarId)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
                         <div>

@@ -66,6 +66,8 @@ export function createPalette({
             label: persona.name || persona.avatarId,
             detail: persona.title || persona.avatarId,
             route: 'personas',
+            select: 'persona',
+            id: persona.avatarId,
         }));
         const actionCommands = [
             { type: '动作', label: '新建角色', detail: '打开角色创建表单', route: 'characters', action: 'create-character' },

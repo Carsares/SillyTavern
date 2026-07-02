@@ -243,6 +243,45 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-preset-json-input]')).toContainText('atlas-model');
     });
 
+    test('opens a specific persona from the command palette', async ({ page }) => {
+        await page.route('**/api/settings/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                settings: JSON.stringify({
+                    power_user: {
+                        personas: {
+                            'persona-alpha.png': 'Alpha Persona',
+                            'persona-beta.png': 'Beta Persona',
+                        },
+                        persona_descriptions: {
+                            'persona-alpha.png': { title: 'Alpha title', description: 'Alpha description' },
+                            'persona-beta.png': { title: 'Beta title', description: 'Beta description' },
+                        },
+                        default_persona: 'persona-alpha.png',
+                    },
+                }),
+                openai_setting_names: [],
+                openai_settings: [],
+                textgenerationwebui_preset_names: [],
+                textgenerationwebui_presets: [],
+            }),
+        }));
+
+        await page.goto('/modern/?view=dashboard');
+
+        await page.keyboard.press('Control+K');
+        await page.locator('#paletteSearch').fill('Beta Persona');
+        await expect(page.locator('[data-command-route="personas"]', { hasText: 'Beta Persona' })).toBeVisible();
+        await page.keyboard.press('Enter');
+
+        await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('.page-title')).toHaveText('用户人设');
+        const selectedPersona = page.locator('.persona-card.selected[data-persona-card="persona-beta.png"]');
+        await expect(selectedPersona).toBeVisible();
+        await expect(selectedPersona).toContainText('Beta description');
+    });
+
     test('does not expose legacy navigation from modern routes', async ({ page }) => {
         for (const [route] of modernRoutes) {
             await page.goto(`/modern/?view=${route}`);
