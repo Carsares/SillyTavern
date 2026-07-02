@@ -152,23 +152,13 @@
     font-size: 13px;
 }
 
-.world-entry-form {
-    display: grid;
-    gap: 12px;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
-}
-
 .character-form {
     display: grid;
     gap: 12px;
 }
 
 .character-form textarea,
-.settings-form textarea,
-.world-entry-form textarea {
+.settings-form textarea {
     min-height: 140px;
     resize: vertical;
     padding: 10px;

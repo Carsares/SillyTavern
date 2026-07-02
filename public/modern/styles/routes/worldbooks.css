@@ -1,3 +1,23 @@
+.world-entry-form {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
+.world-entry-form textarea {
+    min-height: 140px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
 .world-entry-list {
     display: grid;
     gap: 12px;
