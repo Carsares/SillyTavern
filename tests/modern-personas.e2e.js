@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
@@ -59,5 +60,29 @@ test.describe('Modern persona resources', () => {
         await expect(page.locator('.resource-card', { hasText: 'Beta Persona' })).toHaveCount(0);
         expect(fixture.requests.avatarDelete[0]).toMatchObject({ avatar: 'persona-beta.png' });
         expect(fixture.requests.settingsSave.at(-1).power_user.personas['persona-beta.png']).toBeUndefined();
+    });
+
+    test('replaces a persona avatar through the avatar upload endpoint', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'personas', '用户人设');
+
+        await page.locator('[data-persona-avatar-file="persona-beta.png"]').setInputFiles({
+            name: 'beta-new-avatar.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('modern persona avatar'),
+        });
+
+        await expect(page.locator('.toast', { hasText: '头像已替换' })).toBeVisible();
+        expect(fixture.requests.avatarUpload).toHaveLength(1);
+        expect(fixture.requests.avatarUpload[0]).toMatchObject({
+            fileName: 'beta-new-avatar.png',
+            overwriteName: 'persona-beta.png',
+            path: 'persona-beta.png',
+        });
+        expect(fixture.requests.avatarUpload[0].contentType).toContain('multipart/form-data');
+        expect(fixture.requests.avatarUpload[0].bodyText).toContain('name="avatar"; filename="beta-new-avatar.png"');
+        expect(fixture.requests.avatarUpload[0].bodyText).toContain('name="overwrite_name"');
     });
 });

@@ -104,4 +104,27 @@ test.describe('Modern character resources', () => {
         expect(fixture.requests.characterImport[0].bodyText).toContain('name="file_type"');
         expect(fixture.requests.characterImport[0].bodyText).toContain('name="preserved_name"');
     });
+
+    test('replaces a character avatar through the avatar edit endpoint', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+
+        await page.locator('[data-character-avatar-file="alice.png"]').setInputFiles({
+            name: 'alice-new-avatar.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('modern character avatar'),
+        });
+
+        await expect(page.locator('.toast', { hasText: '角色头像已替换' })).toBeVisible();
+        expect(fixture.requests.characterAvatarEdit).toHaveLength(1);
+        expect(fixture.requests.characterAvatarEdit[0]).toMatchObject({
+            avatar: 'alice.png',
+            fileName: 'alice-new-avatar.png',
+        });
+        expect(fixture.requests.characterAvatarEdit[0].contentType).toContain('multipart/form-data');
+        expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar"; filename="alice-new-avatar.png"');
+        expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar_url"');
+    });
 });

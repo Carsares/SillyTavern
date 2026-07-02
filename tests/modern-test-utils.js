@@ -112,10 +112,12 @@ function createRequestsLog() {
         characterMerge: [],
         characterDelete: [],
         characterImport: [],
+        characterAvatarEdit: [],
         groupCreate: [],
         groupEdit: [],
         groupDelete: [],
         settingsSave: [],
+        avatarUpload: [],
         avatarDelete: [],
     };
 }
@@ -308,6 +310,16 @@ export async function mockModernWorkspace(page, fixture = createModernResourceFi
         });
         return fulfillJson(route, { file_name: avatar });
     });
+    await page.route('**/api/characters/edit-avatar', route => {
+        const bodyText = route.request().postData() || '';
+        fixture.requests.characterAvatarEdit.push({
+            bodyText,
+            contentType: route.request().headers()['content-type'] || '',
+            avatar: multipartFieldValue(bodyText, 'avatar_url'),
+            fileName: multipartFileName(bodyText, 'avatar'),
+        });
+        return fulfillJson(route, { ok: true });
+    });
     await page.route('**/api/characters/merge-attributes', route => {
         const payload = postJson(route);
         fixture.requests.characterMerge.push(clone(payload));
@@ -360,6 +372,20 @@ export async function mockModernWorkspace(page, fixture = createModernResourceFi
         const payload = postJson(route);
         fixture.requests.avatarDelete.push(clone(payload));
         return fulfillJson(route, { ok: true });
+    });
+    await page.route('**/api/avatars/upload', route => {
+        const bodyText = route.request().postData() || '';
+        const overwriteName = multipartFieldValue(bodyText, 'overwrite_name');
+        const fileName = multipartFileName(bodyText, 'avatar');
+        const path = overwriteName || `${modernSlug(stripFileExtension(fileName), `persona-${fixture.requests.avatarUpload.length + 1}`)}.png`;
+        fixture.requests.avatarUpload.push({
+            bodyText,
+            contentType: route.request().headers()['content-type'] || '',
+            fileName,
+            overwriteName,
+            path,
+        });
+        return fulfillJson(route, { path });
     });
     await page.route('**/api/worldinfo/list', route => fulfillJson(route, fixture.worldbooks));
     await page.route('**/api/backgrounds/all', route => fulfillJson(route, fixture.backgrounds));
