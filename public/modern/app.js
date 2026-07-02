@@ -1,147 +1,27 @@
-const routes = [
-    { id: 'dashboard', label: '总览', icon: 'fa-gauge-high' },
-    { id: 'chat', label: '聊天', icon: 'fa-comments' },
-    { id: 'characters', label: '角色', icon: 'fa-address-card' },
-    { id: 'worldbooks', label: '世界书', icon: 'fa-book-open' },
-    { id: 'presets', label: '预设', icon: 'fa-sliders' },
-    { id: 'personas', label: '用户人设', icon: 'fa-user-gear' },
-    { id: 'assets', label: '素材', icon: 'fa-folder-tree' },
-    { id: 'api', label: 'API', icon: 'fa-plug' },
-    { id: 'extensions', label: '扩展', icon: 'fa-cubes' },
-    { id: 'activity', label: '活动', icon: 'fa-chart-line' },
-    { id: 'settings', label: '设置', icon: 'fa-gear' },
-];
+import {
+    characterFormDefaults,
+    chatCompletionModelFields,
+    chatCompletionSourceOptions,
+    routeLabels,
+    routes,
+    secretKeyByChatSource,
+    worldEntryDefaults,
+    worldEntryPageSize,
+    worldEntryPositions,
+} from './core/constants.js';
+import {
+    escapeHtml,
+    formatBytes,
+    formatDate,
+    formatNumber,
+    getAvatarUrl,
+    getPersonaUrl,
+    normalizeText,
+    stripJsonlExtension,
+    uniqueValues,
+} from './core/utils.js';
 
-const routeLabels = Object.fromEntries(routes.map(route => [route.id, route.label]));
 const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
-const chatCompletionModelFields = {
-    openai: 'openai_model',
-    claude: 'claude_model',
-    openrouter: 'openrouter_model',
-    ai21: 'ai21_model',
-    makersuite: 'google_model',
-    vertexai: 'vertexai_model',
-    mistralai: 'mistralai_model',
-    custom: 'custom_model',
-    cohere: 'cohere_model',
-    perplexity: 'perplexity_model',
-    groq: 'groq_model',
-    chutes: 'chutes_model',
-    electronhub: 'electronhub_model',
-    nanogpt: 'nanogpt_model',
-    deepseek: 'deepseek_model',
-    aimlapi: 'aimlapi_model',
-    xai: 'xai_model',
-    pollinations: 'pollinations_model',
-    moonshot: 'moonshot_model',
-    fireworks: 'fireworks_model',
-    cometapi: 'cometapi_model',
-    azure_openai: 'azure_openai_model',
-    zai: 'zai_model',
-    siliconflow: 'siliconflow_model',
-    workers_ai: 'workers_ai_model',
-    minimax: 'minimax_model',
-};
-const chatCompletionSourceOptions = [
-    { id: 'openai', label: 'OpenAI' },
-    { id: 'siliconflow', label: 'SiliconFlow' },
-    { id: 'deepseek', label: 'DeepSeek' },
-    { id: 'openrouter', label: 'OpenRouter' },
-    { id: 'custom', label: 'Custom OpenAI-compatible' },
-    { id: 'claude', label: 'Claude' },
-    { id: 'mistralai', label: 'MistralAI' },
-    { id: 'cohere', label: 'Cohere' },
-    { id: 'perplexity', label: 'Perplexity' },
-    { id: 'groq', label: 'Groq' },
-    { id: 'chutes', label: 'Chutes' },
-    { id: 'nanogpt', label: 'NanoGPT' },
-    { id: 'moonshot', label: 'Moonshot' },
-    { id: 'fireworks', label: 'Fireworks' },
-    { id: 'cometapi', label: 'CometAPI' },
-    { id: 'zai', label: 'Z.AI' },
-    { id: 'workers_ai', label: 'Workers AI' },
-    { id: 'minimax', label: 'MiniMax' },
-];
-const secretKeyByChatSource = {
-    openai: 'api_key_openai',
-    claude: 'api_key_claude',
-    openrouter: 'api_key_openrouter',
-    ai21: 'api_key_ai21',
-    makersuite: 'api_key_makersuite',
-    vertexai: 'api_key_vertexai',
-    mistralai: 'api_key_mistralai',
-    custom: 'api_key_custom',
-    cohere: 'api_key_cohere',
-    perplexity: 'api_key_perplexity',
-    groq: 'api_key_groq',
-    chutes: 'api_key_chutes',
-    electronhub: 'api_key_electronhub',
-    nanogpt: 'api_key_nanogpt',
-    deepseek: 'api_key_deepseek',
-    aimlapi: 'api_key_aimlapi',
-    xai: 'api_key_xai',
-    pollinations: 'api_key_pollinations',
-    moonshot: 'api_key_moonshot',
-    fireworks: 'api_key_fireworks',
-    cometapi: 'api_key_cometapi',
-    azure_openai: 'api_key_azure_openai',
-    zai: 'api_key_zai',
-    siliconflow: 'api_key_siliconflow',
-    workers_ai: 'api_key_workers_ai',
-    minimax: 'api_key_minimax',
-};
-const characterFormDefaults = {
-    name: '',
-    description: '',
-    personality: '',
-    scenario: '',
-    first_mes: '',
-    mes_example: '',
-    creator_notes: '',
-    system_prompt: '',
-    post_history_instructions: '',
-    creator: '',
-    character_version: '',
-    tags: '',
-    world: '',
-    alternate_greetings: '',
-    depth_prompt_prompt: '',
-    depth_prompt_depth: '4',
-    depth_prompt_role: 'system',
-    talkativeness: '0.5',
-    favorite: false,
-};
-const worldEntryDefaults = {
-    key: [],
-    keysecondary: [],
-    comment: '',
-    content: '',
-    constant: false,
-    vectorized: false,
-    selective: true,
-    selectiveLogic: 0,
-    addMemo: false,
-    order: 100,
-    position: 0,
-    disable: false,
-    ignoreBudget: false,
-    excludeRecursion: false,
-    preventRecursion: false,
-    probability: 100,
-    useProbability: true,
-    depth: 4,
-    role: 0,
-};
-const worldEntryPositions = [
-    { value: 0, label: '角色前' },
-    { value: 1, label: '角色后' },
-    { value: 2, label: '作者注释顶部' },
-    { value: 3, label: '作者注释底部' },
-    { value: 4, label: '按深度插入' },
-    { value: 5, label: '示例消息顶部' },
-    { value: 6, label: '示例消息底部' },
-];
-const worldEntryPageSize = 20;
 
 const state = {
     route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -289,69 +169,6 @@ const elements = {
 
 document.documentElement.dataset.theme = state.theme;
 let generationAbortController = null;
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
-
-function formatNumber(value) {
-    const number = Number(value || 0);
-    return new Intl.NumberFormat('zh-CN').format(number);
-}
-
-function formatBytes(value) {
-    const number = Number(value || 0);
-    if (!number) {
-        return '0 B';
-    }
-
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const index = Math.min(Math.floor(Math.log(number) / Math.log(1024)), units.length - 1);
-    return `${(number / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
-function formatDate(value) {
-    if (!value) {
-        return '未知';
-    }
-
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-        return '未知';
-    }
-
-    return new Intl.DateTimeFormat('zh-CN', {
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-    }).format(date);
-}
-
-function stripJsonlExtension(value) {
-    return String(value || '').replace(/\.jsonl$/i, '');
-}
-
-function getAvatarUrl(character) {
-    if (!character?.avatar) {
-        return '';
-    }
-
-    return `/characters/${encodeURIComponent(character.avatar)}`;
-}
-
-function getPersonaUrl(avatarId) {
-    return `/User%20Avatars/${encodeURIComponent(avatarId)}`;
-}
-
-function normalizeText(value) {
-    return String(value ?? '').toLowerCase();
-}
 
 function matchesQuery(...values) {
     if (!state.query) {
@@ -1768,10 +1585,6 @@ async function recreateStats() {
     await loadData({ silent: true });
     showToast('统计已重建', '已重新扫描聊天文件。');
     render();
-}
-
-function uniqueValues(values) {
-    return [...new Set(values.filter(Boolean))];
 }
 
 function getGlobalWorldNames() {
