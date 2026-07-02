@@ -36,6 +36,7 @@ import { createNav } from './shell/nav.js';
 import { createPalette } from './shell/palette.js';
 import { createRenderer } from './shell/renderer.js';
 import { createRouter } from './shell/router.js';
+import { createRouteContext } from './shell/route-context.js';
 import { createRouteModules } from './shell/routes.js';
 import { createTheme } from './shell/theme.js';
 import { createToast } from './shell/toast.js';
@@ -558,29 +559,48 @@ const { closePalette, openPalette, renderPalette } = createPalette({
     renderInlineEmpty,
 });
 
-function createRouteContext() {
-    return {
-        state,
+const routeContext = createRouteContext({
+    state,
+    utils: {
         escapeHtml,
         formatBytes,
         formatDate,
         formatDurationMs,
         formatNumber,
+        getPersonaUrl,
+        maskEndpoint,
+        parsePreset,
+        uniqueValues,
+    },
+    components: {
         metricCard,
         pageHead,
+        renderCharacterRow,
         renderEmptyState,
-        getActivityEntries,
-        getActivitySummary,
-        render,
-        showToast,
-        recreateStats,
-        chatCompletionSourceOptions,
-        secretKeyByChatSource,
-        maskEndpoint,
+        renderGroupRow,
         renderInlineEmpty,
         renderKeyValue,
-        getPresetGroups,
+    },
+    shell: {
         getProviderInfo,
+        matchesQuery,
+        render,
+        showToast,
+    },
+    activity: {
+        getActivityEntries,
+        getActivitySummary,
+        recreateStats,
+    },
+    constants: {
+        chatCompletionSourceOptions,
+        secretKeyByChatSource,
+        worldEntryPageSize,
+        worldEntryPositions,
+        worldEntryRoleOptions,
+        worldEntrySelectiveLogicOptions,
+    },
+    api: {
         getSelectedApiMain,
         getChatCompletionModel,
         getApiModelSuggestions,
@@ -592,7 +612,9 @@ function createRouteContext() {
         saveApiConnectionFromForm,
         updateApiSourceFields,
         updateTextCompletionTypeFields,
-        matchesQuery,
+        maskEndpoint,
+    },
+    assets: {
         getAssetGroups,
         getAssetCount,
         getAssetEntries,
@@ -629,8 +651,8 @@ function createRouteContext() {
         confirmAssetDelete,
         toggleBackgroundSelection,
         uploadBackgroundFile,
-        uniqueValues,
-        renderCharacterRow,
+    },
+    characters: {
         getCharacterAvatarUrl,
         getCharacterTags,
         characterToForm,
@@ -653,7 +675,8 @@ function createRouteContext() {
         updateCharacterFormField,
         replaceCharacterAvatar,
         importCharacterFile,
-        renderGroupRow,
+    },
+    chatContext: {
         isGroupChatMode,
         getChatModeLabel,
         getSelectedChatEntity,
@@ -677,6 +700,9 @@ function createRouteContext() {
         increaseCurrentMessageLimit,
         searchSelectedChats,
         loadChatMessages,
+        closeChatSidebarForMobileSelection,
+    },
+    chatFiles: {
         toggleChatBackups,
         loadChatBackups,
         exportModernChat,
@@ -685,20 +711,6 @@ function createRouteContext() {
         beginChatBackupDelete,
         cancelChatBackupDelete,
         confirmChatBackupDelete,
-        sendModernMessage,
-        stopModernGeneration,
-        checkLegacyGenerationEngine,
-        regenerateModernReply,
-        continueModernReply,
-        swipeModernMessage,
-        copyModernMessage,
-        deleteModernMessage,
-        beginModernMessageDelete,
-        cancelModernMessageDelete,
-        confirmModernMessageDelete,
-        beginModernMessageEdit,
-        cancelModernMessageEdit,
-        saveModernMessageEdit,
         startNewModernChat,
         beginModernChatRename,
         cancelModernChatRename,
@@ -707,8 +719,26 @@ function createRouteContext() {
         cancelModernChatDelete,
         confirmModernChatDelete,
         importModernChatFiles,
-        closeChatSidebarForMobileSelection,
-        getPresetCount,
+    },
+    chatGeneration: {
+        sendModernMessage,
+        stopModernGeneration,
+        checkLegacyGenerationEngine,
+        regenerateModernReply,
+        continueModernReply,
+        swipeModernMessage,
+    },
+    chatMessages: {
+        copyModernMessage,
+        deleteModernMessage,
+        beginModernMessageDelete,
+        cancelModernMessageDelete,
+        confirmModernMessageDelete,
+        beginModernMessageEdit,
+        cancelModernMessageEdit,
+        saveModernMessageEdit,
+    },
+    extensions: {
         getExtensionFolderName,
         canManageExtension,
         toggleExtensionInstall,
@@ -718,6 +748,8 @@ function createRouteContext() {
         beginExtensionOperation,
         cancelExtensionOperation,
         confirmExtensionOperation,
+    },
+    groups: {
         defaultGroupForm,
         groupToForm,
         beginGroupCreate,
@@ -731,6 +763,8 @@ function createRouteContext() {
         confirmGroupDelete,
         updateGroupFormField,
         toggleGroupFormMember,
+    },
+    personas: {
         getPersonaUrl,
         getPersonas,
         beginPersonaCreate,
@@ -745,6 +779,10 @@ function createRouteContext() {
         savePersonaEdit,
         updatePersonaFormField,
         replacePersonaAvatar,
+    },
+    presets: {
+        getPresetCount,
+        getPresetGroups,
         parsePreset,
         getVisiblePresetGroups,
         getSelectedPresetRecord,
@@ -762,6 +800,8 @@ function createRouteContext() {
         confirmPresetDelete,
         updatePresetEditorText,
         importPresetFile,
+    },
+    settings: {
         getRequestCompressionSettings,
         loadSettingsSnapshots,
         createSettingsSnapshot,
@@ -771,10 +811,8 @@ function createRouteContext() {
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
         confirmSettingsSnapshotRestore,
-        worldEntryPageSize,
-        worldEntryPositions,
-        worldEntryRoleOptions,
-        worldEntrySelectiveLogicOptions,
+    },
+    worldbooks: {
         isGlobalWorldEnabled,
         getWorldEntryListState,
         getVisibleWorldEntries,
@@ -808,10 +846,9 @@ function createRouteContext() {
         updateWorldEntryFormField,
         importWorldbookFile,
         toggleWorldEntrySelection,
-    };
-}
+    },
+});
 
-const routeContext = createRouteContext();
 const routeModules = createRouteModules(routeContext);
 const routeRenderers = Object.fromEntries(Object.entries(routeModules).map(([route, module]) => [route, module.render]));
 shellRenderer = createRenderer({
