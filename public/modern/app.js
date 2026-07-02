@@ -160,6 +160,15 @@ const state = {
         action: '',
         running: false,
     },
+    settingsSnapshots: {
+        loading: false,
+        creating: false,
+        restoring: false,
+        items: [],
+        previewName: '',
+        previewText: '',
+        restoreConfirm: '',
+    },
     selected: {
         character: '',
         chat: '',
@@ -5093,6 +5102,74 @@ function renderExtensionOperationRow(extension) {
     `;
 }
 
+async function loadSettingsSnapshots({ force = false } = {}) {
+    if (state.settingsSnapshots.items.length && !force) {
+        return state.settingsSnapshots.items;
+    }
+
+    state.settingsSnapshots.loading = true;
+    render();
+    try {
+        const result = await apiFetch('/api/settings/get-snapshots');
+        const snapshots = Array.isArray(result)
+            ? [...result].sort((a, b) => Number(b.date || 0) - Number(a.date || 0))
+            : [];
+        state.settingsSnapshots.items = snapshots;
+        return snapshots;
+    } finally {
+        state.settingsSnapshots.loading = false;
+    }
+}
+
+async function createSettingsSnapshot() {
+    state.settingsSnapshots.creating = true;
+    render();
+    try {
+        await apiFetch('/api/settings/make-snapshot');
+        await loadSettingsSnapshots({ force: true });
+        showToast('设置快照已创建', '当前 settings.json 已备份。');
+    } finally {
+        state.settingsSnapshots.creating = false;
+        render();
+    }
+}
+
+async function previewSettingsSnapshot(name) {
+    const text = await apiFetch('/api/settings/load-snapshot', { body: { name } });
+    state.settingsSnapshots.previewName = name;
+    state.settingsSnapshots.previewText = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
+    render();
+}
+
+function beginSettingsSnapshotRestore(name) {
+    state.settingsSnapshots.restoreConfirm = name;
+    render();
+}
+
+function cancelSettingsSnapshotRestore() {
+    state.settingsSnapshots.restoreConfirm = '';
+    render();
+}
+
+async function confirmSettingsSnapshotRestore() {
+    const name = state.settingsSnapshots.restoreConfirm;
+    if (!name) {
+        throw new Error('请先选择一个设置快照。');
+    }
+
+    state.settingsSnapshots.restoring = true;
+    render();
+    try {
+        await apiFetch('/api/settings/restore-snapshot', { body: { name } });
+        state.settingsSnapshots.restoreConfirm = '';
+        await loadData({ silent: true });
+        showToast('设置已恢复', name);
+    } finally {
+        state.settingsSnapshots.restoring = false;
+        render();
+    }
+}
+
 function renderActivity() {
     const stats = state.stats || {};
     const rows = Object.entries(stats).slice(0, 60);
@@ -5134,6 +5211,14 @@ function renderSettings() {
 
     return `
         ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
+            <button class="primary-button" type="button" data-create-settings-snapshot ${state.settingsSnapshots.creating ? 'disabled' : ''}>
+                <i class="fa-solid ${state.settingsSnapshots.creating ? 'fa-circle-notch fa-spin' : 'fa-camera'}"></i>
+                创建快照
+            </button>
+            <button class="secondary-button" type="button" data-load-settings-snapshots ${state.settingsSnapshots.loading ? 'disabled' : ''}>
+                <i class="fa-solid ${state.settingsSnapshots.loading ? 'fa-circle-notch fa-spin' : 'fa-clock-rotate-left'}"></i>
+                设置快照
+            </button>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-gear"></i>
                 打开设置
@@ -5173,6 +5258,78 @@ function renderSettings() {
                 </div>
             </article>
         </div>
+        ${renderSettingsSnapshots()}
+    `;
+}
+
+function renderSettingsSnapshots() {
+    const snapshots = state.settingsSnapshots.items;
+    const selectedSnapshot = state.settingsSnapshots.previewName;
+    const isLoading = state.settingsSnapshots.loading;
+
+    return `
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">设置快照</h2>
+                    <p class="panel-subtitle">备份和恢复 settings.json。恢复前会要求二次确认。</p>
+                </div>
+                <button class="secondary-button" type="button" data-load-settings-snapshots ${isLoading ? 'disabled' : ''}>
+                    <i class="fa-solid ${isLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
+                    刷新
+                </button>
+            </div>
+            <div class="backup-layout">
+                <div class="resource-list backup-list">
+                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(isLoading ? '正在读取设置快照' : '暂无设置快照')}
+                </div>
+                <div class="backup-preview">
+                    ${selectedSnapshot ? `
+                        <div class="panel-header compact-header">
+                            <div>
+                                <h3 class="panel-title">${escapeHtml(selectedSnapshot)}</h3>
+                                <p class="panel-subtitle">只读预览。恢复会替换当前 settings.json。</p>
+                            </div>
+                        </div>
+                        <textarea readonly>${escapeHtml(state.settingsSnapshots.previewText)}</textarea>
+                    ` : renderEmptyState('fa-file-code', '未选择快照', '点击“预览”查看快照内容。')}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function renderSettingsSnapshotRow(snapshot) {
+    const name = snapshot.name || '';
+    const isConfirming = state.settingsSnapshots.restoreConfirm === name;
+    const isBusy = state.settingsSnapshots.restoring && isConfirming;
+    return `
+        <article class="backup-row ${state.settingsSnapshots.previewName === name ? 'active' : ''}">
+            <div class="row-main">
+                <strong class="row-title">${escapeHtml(name)}</strong>
+                <span class="row-subtitle">${escapeHtml(formatDate(snapshot.date))} · ${escapeHtml(formatBytes(snapshot.size))}</span>
+            </div>
+            <div class="row-actions">
+                <button class="secondary-button" type="button" data-preview-settings-snapshot="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                    <i class="fa-solid fa-eye"></i>
+                    预览
+                </button>
+                ${isConfirming ? `
+                    <button class="secondary-button" type="button" data-cancel-settings-restore ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        取消
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-confirm-settings-restore ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        <i class="fa-solid ${state.settingsSnapshots.restoring ? 'fa-circle-notch fa-spin' : 'fa-rotate-left'}"></i>
+                        确认恢复
+                    </button>
+                ` : `
+                    <button class="secondary-button danger-action" type="button" data-restore-settings-snapshot="${escapeHtml(name)}" ${state.settingsSnapshots.restoring ? 'disabled' : ''}>
+                        <i class="fa-solid fa-rotate-left"></i>
+                        恢复
+                    </button>
+                `}
+            </div>
+        </article>
     `;
 }
 
@@ -5927,6 +6084,63 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'stats-recreate', message: error.message });
             showToast('统计重建失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-load-settings-snapshots]')) {
+        try {
+            await loadSettingsSnapshots({ force: true });
+            render();
+        } catch (error) {
+            state.errors.push({ key: 'settings-snapshots', message: error.message });
+            showToast('设置快照读取失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-create-settings-snapshot]')) {
+        try {
+            await createSettingsSnapshot();
+        } catch (error) {
+            state.errors.push({ key: 'settings-snapshot-create', message: error.message });
+            showToast('设置快照创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const previewSettingsSnapshotButton = event.target.closest('[data-preview-settings-snapshot]');
+    if (previewSettingsSnapshotButton) {
+        try {
+            await previewSettingsSnapshot(previewSettingsSnapshotButton.dataset.previewSettingsSnapshot);
+        } catch (error) {
+            state.errors.push({ key: 'settings-snapshot-preview', message: error.message });
+            showToast('设置快照预览失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const restoreSettingsSnapshotButton = event.target.closest('[data-restore-settings-snapshot]');
+    if (restoreSettingsSnapshotButton) {
+        beginSettingsSnapshotRestore(restoreSettingsSnapshotButton.dataset.restoreSettingsSnapshot);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-settings-restore]')) {
+        cancelSettingsSnapshotRestore();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-settings-restore]')) {
+        try {
+            await confirmSettingsSnapshotRestore();
+        } catch (error) {
+            state.errors.push({ key: 'settings-snapshot-restore', message: error.message });
+            showToast('设置快照恢复失败', error.message);
             render();
         }
         return;
