@@ -16,16 +16,36 @@ export function createActivityRoute(ctx) {
         recreateStats,
     } = ctx;
 
-    function renderActivityEntryRow(entry) {
+    function renderActivityEntryCard(entry) {
         return `
-        <tr>
-            <td class="mono">${escapeHtml(entry.id)}</td>
-            <td>${formatNumber(entry.messages)}</td>
-            <td>${formatNumber(entry.words)}</td>
-            <td>${formatBytes(entry.size)}</td>
-            <td>${formatNumber(entry.swipes)}</td>
-            <td>${escapeHtml(formatDate(entry.last))}</td>
-        </tr>
+        <article class="resource-card activity-card">
+            <div class="card-head">
+                <div class="row-main">
+                    <h3 class="card-title mono">${escapeHtml(entry.id)}</h3>
+                    <p class="row-subtitle">最近聊天 ${escapeHtml(formatDate(entry.last))}</p>
+                </div>
+                <span class="badge">${formatNumber(entry.messages)} 条消息</span>
+            </div>
+            <div class="activity-stat-grid">
+                <span><strong>${formatNumber(entry.words)}</strong><em>词数</em></span>
+                <span><strong>${formatBytes(entry.size)}</strong><em>体积</em></span>
+                <span><strong>${formatNumber(entry.swipes)}</strong><em>候选</em></span>
+                <span><strong>${escapeHtml(formatDurationMs(entry.genTime))}</strong><em>生成耗时</em></span>
+            </div>
+        </article>
+    `;
+    }
+
+    function renderRawStatsRow(key, value) {
+        const valueText = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        return `
+        <article class="resource-row raw-stat-row">
+            <span class="avatar-fallback"><i class="fa-solid fa-code"></i></span>
+            <span class="row-main">
+                <span class="row-title mono">${escapeHtml(key)}</span>
+                <span class="row-subtitle mono">${escapeHtml(valueText)}</span>
+            </span>
+        </article>
     `;
     }
 
@@ -62,15 +82,8 @@ export function createActivityRoute(ctx) {
                     </div>
                     <span class="badge">生成耗时 ${escapeHtml(formatDurationMs(summary.genTime))}</span>
                 </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr><th>对象</th><th>消息</th><th>词数</th><th>大小</th><th>候选</th><th>最近聊天</th></tr>
-                        </thead>
-                        <tbody>
-                            ${entries.slice(0, 80).map(renderActivityEntryRow).join('')}
-                        </tbody>
-                    </table>
+                <div class="activity-list">
+                    ${entries.slice(0, 80).map(renderActivityEntryCard).join('')}
                 </div>
             </section>
         ` : renderEmptyState('fa-chart-line', '暂无统计数据', '统计缓存为空或尚未生成。')}
@@ -83,20 +96,8 @@ export function createActivityRoute(ctx) {
                     </span>
                     <i class="fa-solid fa-chevron-down"></i>
                 </summary>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr><th>字段</th><th>值</th></tr>
-                        </thead>
-                        <tbody>
-                            ${rawRows.map(([key, value]) => `
-                                <tr>
-                                    <td class="mono">${escapeHtml(key)}</td>
-                                    <td>${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : value)}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
+                <div class="resource-list raw-stats-list">
+                    ${rawRows.map(([key, value]) => renderRawStatsRow(key, value)).join('')}
                 </div>
             </details>
         ` : ''}

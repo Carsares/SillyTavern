@@ -1177,6 +1177,54 @@ tr:last-child td {
     white-space: nowrap;
 }
 
+.activity-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.activity-card {
+    align-content: start;
+}
+
+.activity-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.activity-stat-grid span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
+.activity-stat-grid strong,
+.activity-stat-grid em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-stat-grid em {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: normal;
+}
+
+.raw-stats-list {
+    max-height: 520px;
+}
+
+.raw-stat-row .row-subtitle {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 .compact-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
