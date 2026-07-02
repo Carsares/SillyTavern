@@ -228,6 +228,7 @@ export function createModernState() {
             action: '',
             running: false,
         },
+        extensionView: localStorage.getItem('st-modern-extension-view') || 'all',
         extensionInstall: {
             active: false,
             url: '',
