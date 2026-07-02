@@ -34,21 +34,10 @@ import { createNav } from './shell/nav.js';
 import { createPalette } from './shell/palette.js';
 import { createRenderer } from './shell/renderer.js';
 import { createRouter } from './shell/router.js';
+import { createRouteModules } from './shell/routes.js';
 import { createTheme } from './shell/theme.js';
 import { createToast } from './shell/toast.js';
 import { createTopbar } from './shell/topbar.js';
-import { createDashboardRoute } from './routes/dashboard.js';
-import { createChatRoute } from './routes/chat.js';
-import { createCharactersRoute } from './routes/characters.js';
-import { createGroupsRoute } from './routes/groups.js';
-import { createWorldbooksRoute } from './routes/worldbooks.js';
-import { createPresetsRoute } from './routes/presets.js';
-import { createPersonasRoute } from './routes/personas.js';
-import { createAssetsRoute } from './routes/assets.js';
-import { createApiRoute } from './routes/api.js';
-import { createExtensionsRoute } from './routes/extensions.js';
-import { createActivityRoute } from './routes/activity.js';
-import { createSettingsRoute } from './routes/settings.js';
 import {
     arrayToEntryInput,
     downloadFile,
@@ -835,20 +824,7 @@ function createRouteContext() {
 }
 
 const routeContext = createRouteContext();
-const routeModules = {
-    dashboard: createDashboardRoute(routeContext),
-    chat: createChatRoute(routeContext),
-    characters: createCharactersRoute(routeContext),
-    groups: createGroupsRoute(routeContext),
-    worldbooks: createWorldbooksRoute(routeContext),
-    presets: createPresetsRoute(routeContext),
-    personas: createPersonasRoute(routeContext),
-    assets: createAssetsRoute(routeContext),
-    api: createApiRoute(routeContext),
-    extensions: createExtensionsRoute(routeContext),
-    activity: createActivityRoute(routeContext),
-    settings: createSettingsRoute(routeContext),
-};
+const routeModules = createRouteModules(routeContext);
 const routeRenderers = Object.fromEntries(Object.entries(routeModules).map(([route, module]) => [route, module.render]));
 shellRenderer = createRenderer({
     state,
