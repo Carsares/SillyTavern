@@ -181,6 +181,16 @@ export function createRouteContext({
         replacePersonaAvatar,
     } = personas;
     const {
+        copyModernMessage,
+        deleteModernMessage,
+        beginModernMessageDelete,
+        cancelModernMessageDelete,
+        confirmModernMessageDelete,
+        beginModernMessageEdit,
+        cancelModernMessageEdit,
+        saveModernMessageEdit,
+    } = chatMessages;
+    const {
         loadWorldDetail,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
@@ -304,7 +314,14 @@ export function createRouteContext({
         ...chatContext,
         ...chatFiles,
         ...chatGeneration,
-        ...chatMessages,
+        copyModernMessage,
+        deleteModernMessage,
+        beginModernMessageDelete,
+        cancelModernMessageDelete,
+        confirmModernMessageDelete,
+        beginModernMessageEdit,
+        cancelModernMessageEdit,
+        saveModernMessageEdit,
         getExtensionFolderName,
         canManageExtension,
         toggleExtensionInstall,

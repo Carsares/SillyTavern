@@ -290,16 +290,7 @@ const {
     saveGroupMetadata,
 });
 
-const {
-    copyModernMessage,
-    deleteModernMessage,
-    beginModernMessageDelete,
-    cancelModernMessageDelete,
-    confirmModernMessageDelete,
-    beginModernMessageEdit,
-    cancelModernMessageEdit,
-    saveModernMessageEdit,
-} = createChatMessageActions({
+const chatMessageActions = createChatMessageActions({
     state,
     render,
     showToast,
@@ -489,16 +480,7 @@ const routeContext = createRouteContext({
         continueModernReply,
         swipeModernMessage,
     },
-    chatMessages: {
-        copyModernMessage,
-        deleteModernMessage,
-        beginModernMessageDelete,
-        cancelModernMessageDelete,
-        confirmModernMessageDelete,
-        beginModernMessageEdit,
-        cancelModernMessageEdit,
-        saveModernMessageEdit,
-    },
+    chatMessages: chatMessageActions,
     extensions: extensionActions,
     groups: groupActions,
     personas: personaActions,
