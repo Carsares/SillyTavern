@@ -48,6 +48,7 @@ const state = {
     stats: {},
     chatLists: {},
     chatMessages: {},
+    chatMessageLimits: {},
     chatMetadata: {},
     loadingChats: {},
     chatDrafts: {},
@@ -744,6 +745,19 @@ function getSelectedChatMessages() {
     return state.chatMessages[cacheKey] || [];
 }
 
+function getCurrentMessageLimit() {
+    return state.chatMessageLimits[getCurrentDraftKey()] || 80;
+}
+
+function increaseCurrentMessageLimit() {
+    const key = getCurrentDraftKey();
+    if (!key) {
+        return;
+    }
+    state.chatMessageLimits[key] = Math.min(getSelectedChatMessages().length, getCurrentMessageLimit() + 80);
+    render();
+}
+
 function getChatCacheKey(avatar, chatId) {
     return `${avatar || ''}::${chatId || ''}`;
 }
@@ -1143,6 +1157,7 @@ async function confirmModernChatDelete() {
 
     const cacheKey = getChatCacheKey(contextKey, chatId);
     delete state.chatMessages[cacheKey];
+    delete state.chatMessageLimits[cacheKey];
     delete state.chatMetadata[cacheKey];
     delete state.chatDrafts[cacheKey];
     state.chatRenaming = { key: '', name: '' };
@@ -1168,13 +1183,16 @@ function getChatCompletionModel(settings, source) {
 }
 
 function getApiSourceUiState(source) {
+    const settings = getOaiSettings();
     const secretState = getSecretStateForSource(source);
+    const hasReverseProxy = Boolean(settings.reverse_proxy);
     return {
         hasSecretMapping: Boolean(secretKeyByChatSource[source]),
         secretKey: secretKeyByChatSource[source] || '当前来源没有密钥映射',
         secretSaved: secretState.length > 0,
         showEndpoint: source === 'siliconflow',
         showCustomUrl: source === 'custom',
+        showReverseProxy: source === 'openai' || source === 'custom' || hasReverseProxy,
     };
 }
 
@@ -1192,6 +1210,7 @@ function updateApiSourceFields(source) {
         const isVisible = (
             fieldName === 'siliconflow-endpoint' && uiState.showEndpoint
             || fieldName === 'custom-url' && uiState.showCustomUrl
+            || fieldName === 'reverse-proxy' && uiState.showReverseProxy
             || fieldName === 'api-key' && uiState.hasSecretMapping
         );
         field.hidden = !isVisible;
@@ -1279,7 +1298,8 @@ async function saveApiConnectionFromForm() {
     if (source === 'custom') {
         oaiSettings.custom_url = customUrlInput?.value.trim() || oaiSettings.custom_url || '';
     }
-    oaiSettings.reverse_proxy = reverseProxyInput?.value.trim() || '';
+    const apiUiState = getApiSourceUiState(source);
+    oaiSettings.reverse_proxy = apiUiState.showReverseProxy ? (reverseProxyInput?.value.trim() || '') : '';
 
     const apiKey = keyInput?.value.trim() || '';
     if (apiKey) {
@@ -1560,6 +1580,11 @@ function clearCharacterCache(avatar) {
             delete state.chatMessages[key];
         }
     });
+    Object.keys(state.chatMessageLimits).forEach(key => {
+        if (key.startsWith(`${avatar}::`)) {
+            delete state.chatMessageLimits[key];
+        }
+    });
     Object.keys(state.chatMetadata).forEach(key => {
         if (key.startsWith(`${avatar}::`)) {
             delete state.chatMetadata[key];
@@ -1821,6 +1846,11 @@ function clearGroupCache(groupId) {
     Object.keys(state.chatMessages).forEach(key => {
         if (key.startsWith(`${contextKey}::`)) {
             delete state.chatMessages[key];
+        }
+    });
+    Object.keys(state.chatMessageLimits).forEach(key => {
+        if (key.startsWith(`${contextKey}::`)) {
+            delete state.chatMessageLimits[key];
         }
     });
     Object.keys(state.chatMetadata).forEach(key => {
@@ -4189,11 +4219,19 @@ function renderChatBackupRow(backup) {
 }
 
 function renderMessageList(messages) {
-    const startIndex = Math.max(messages.length - 80, 0);
+    const limit = getCurrentMessageLimit();
+    const startIndex = Math.max(messages.length - limit, 0);
+    const hiddenCount = startIndex;
 
     return `
         <div class="message-list">
-            ${messages.slice(-80).map((message, index) => renderMessage(message, startIndex + index)).join('')}
+            ${hiddenCount ? `
+                <button class="secondary-button load-earlier-button" type="button" data-load-earlier-messages>
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    加载更早消息 ${formatNumber(hiddenCount)}
+                </button>
+            ` : ''}
+            ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index)).join('')}
         </div>
     `;
 }
@@ -5904,7 +5942,7 @@ function renderApiConnectionEditor(provider) {
                         <span>Custom URL</span>
                         <input class="text-input" type="url" data-api-custom-url value="${escapeHtml(settings.custom_url || '')}" autocomplete="off" placeholder="OpenAI-compatible base URL">
                     </label>
-                    <label class="field-label">
+                    <label class="field-label" data-api-field="reverse-proxy" ${apiUiState.showReverseProxy ? '' : 'hidden'}>
                         <span>Reverse Proxy</span>
                         <input class="text-input" type="url" data-api-reverse-proxy value="${escapeHtml(settings.reverse_proxy || '')}" autocomplete="off" placeholder="可选">
                     </label>
@@ -7006,12 +7044,39 @@ function renderPalette() {
         select: 'worldbook',
         id: worldbook.file_id,
     }));
-    const commands = [...routeCommands, ...characterCommands, ...groupCommands, ...worldCommands]
+    const chatCommands = getSelectedChatList().slice(0, 80).map(chat => ({
+        type: '聊天文件',
+        label: chat.file_name || getChatId(chat),
+        detail: `${getChatModeLabel()} · ${formatNumber(getChatMessageCount(chat))} 条消息`,
+        route: 'chat',
+        select: 'chat',
+        id: getChatId(chat),
+    }));
+    const presetCommands = getPresetGroups().flatMap(group => getPresetItems(group).slice(0, 20).map(item => ({
+        type: '预设',
+        label: item.name,
+        detail: group.label,
+        route: 'presets',
+    })));
+    const personaCommands = getPersonas().slice(0, 80).map(persona => ({
+        type: '用户人设',
+        label: persona.name || persona.avatarId,
+        detail: persona.title || persona.avatarId,
+        route: 'personas',
+    }));
+    const actionCommands = [
+        { type: '动作', label: '新建角色', detail: '打开角色创建表单', route: 'characters', action: 'create-character' },
+        { type: '动作', label: '新建群组', detail: '打开群组创建表单', route: 'groups', action: 'create-group' },
+        { type: '动作', label: '新建世界书', detail: '打开世界书创建表单', route: 'worldbooks', action: 'create-worldbook' },
+        { type: '动作', label: 'API 连接检查', detail: '进入 API 管理页', route: 'api' },
+        { type: '动作', label: '设置快照', detail: '进入设置中心', route: 'settings' },
+    ];
+    const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands]
         .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))
         .slice(0, 40);
 
     elements.paletteResults.innerHTML = commands.map(command => `
-        <button class="command-row" type="button" data-command-route="${escapeHtml(command.route)}" data-command-select="${escapeHtml(command.select || '')}" data-command-id="${escapeHtml(command.id || '')}">
+        <button class="command-row" type="button" data-command-route="${escapeHtml(command.route)}" data-command-select="${escapeHtml(command.select || '')}" data-command-id="${escapeHtml(command.id || '')}" data-command-action="${escapeHtml(command.action || '')}">
             <span class="avatar-fallback"><i class="fa-solid fa-arrow-right"></i></span>
             <span class="row-main">
                 <span class="row-title">${escapeHtml(command.label)}</span>
@@ -7052,6 +7117,22 @@ function openPalette() {
 
 function closePalette() {
     elements.commandPalette.hidden = true;
+}
+
+function runCommandAction(action) {
+    switch (action) {
+        case 'create-character':
+            beginCharacterCreate();
+            break;
+        case 'create-group':
+            beginGroupCreate();
+            break;
+        case 'create-worldbook':
+            beginWorldbookCreate();
+            break;
+        default:
+            break;
+    }
 }
 
 function openLegacy() {
@@ -7155,6 +7236,11 @@ async function handleClick(event) {
     if (event.target.closest('[data-chat-search-clear]')) {
         clearChatSearch();
         render();
+        return;
+    }
+
+    if (event.target.closest('[data-load-earlier-messages]')) {
+        increaseCurrentMessageLimit();
         return;
     }
 
@@ -8211,11 +8297,15 @@ async function handleClick(event) {
     if (commandButton) {
         const select = commandButton.dataset.commandSelect;
         const id = commandButton.dataset.commandId;
+        const action = commandButton.dataset.commandAction;
         if (select && id) {
             state.selected[select] = id;
         }
         closePalette();
         await setRoute(commandButton.dataset.commandRoute);
+        if (action) {
+            runCommandAction(action);
+        }
         return;
     }
 

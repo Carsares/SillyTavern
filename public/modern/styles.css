@@ -1140,6 +1140,11 @@ tr:last-child td {
     background: var(--surface-muted);
 }
 
+.load-earlier-button {
+    width: fit-content;
+    justify-self: center;
+}
+
 .message {
     max-width: min(78%, 760px);
     padding: 10px 12px;
