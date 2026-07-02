@@ -2437,6 +2437,52 @@ async function runLegacyChatGeneration(type, { character, chatId, message = '', 
     }
 }
 
+async function swipeModernMessage(messageIndex, direction) {
+    if (state.engine.generating) {
+        return;
+    }
+
+    const character = getSelectedCharacter();
+    if (!character?.avatar || !state.selected.chat) {
+        throw new Error('请先选择一个聊天文件');
+    }
+
+    const index = Number(messageIndex);
+    const messages = getSelectedChatMessages();
+    if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
+        throw new Error('消息位置无效，请刷新后重试。');
+    }
+
+    state.engine.generating = true;
+    state.engine.status = '候选切换中';
+    state.engine.error = '';
+    render();
+
+    try {
+        const result = await callLegacyBridge('swipe', {
+            avatar: character.avatar,
+            chat: state.selected.chat,
+            messageIndex: index,
+            direction,
+        });
+        const nextChatId = stripJsonlExtension(result?.chat || state.selected.chat);
+        state.selected.chat = nextChatId;
+        delete state.chatMessages[getChatCacheKey(character.avatar, nextChatId)];
+        delete state.chatMetadata[getChatCacheKey(character.avatar, nextChatId)];
+        await refreshSelectedChatList(character);
+        await loadChatMessages(character, nextChatId, { force: true });
+        state.engine.status = '就绪';
+        showToast('候选已切换', `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`);
+    } catch (error) {
+        state.engine.error = error.message;
+        state.engine.status = '候选切换失败';
+        throw error;
+    } finally {
+        state.engine.generating = false;
+        render();
+    }
+}
+
 async function sendModernMessage() {
     const draftKey = getCurrentDraftKey();
     const draft = (state.chatDrafts[draftKey] || '').trim();
@@ -3112,6 +3158,7 @@ function renderMessage(message, messageIndex) {
     const text = message.extra?.display_text || message.mes || '[空消息]';
     const model = message.extra?.model || message.extra?.api || '';
     const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
+    const canSwipe = !message.is_user && !message.is_system && messageIndex === getSelectedChatMessages().length - 1;
 
     return `
         <article class="message ${message.is_user ? 'user' : ''}">
@@ -3119,6 +3166,14 @@ function renderMessage(message, messageIndex) {
                 <strong>${escapeHtml(name)}</strong>
                 <span class="message-actions">
                     <span>${escapeHtml(formatDate(message.send_date))}</span>
+                    ${canSwipe ? `
+                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="left" title="上一个候选">
+                            <i class="fa-solid fa-chevron-left"></i>
+                        </button>
+                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="right" title="下一个候选">
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    ` : ''}
                     <button class="icon-button mini" type="button" data-copy-message="${messageIndex}" title="复制消息">
                         <i class="fa-solid fa-copy"></i>
                     </button>
@@ -4983,6 +5038,18 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'continue-message', message: error.message });
             showToast('继续生成失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const swipeMessageButton = event.target.closest('[data-swipe-message]');
+    if (swipeMessageButton) {
+        try {
+            await swipeModernMessage(swipeMessageButton.dataset.swipeMessage, swipeMessageButton.dataset.swipeDirection);
+        } catch (error) {
+            state.errors.push({ key: 'swipe-message', message: error.message });
+            showToast('候选切换失败', error.message);
             render();
         }
         return;

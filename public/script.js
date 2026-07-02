@@ -5609,6 +5609,28 @@ async function handleModernBridgeGenerate(payload = {}) {
     };
 }
 
+async function handleModernBridgeSwipe(payload = {}) {
+    const params = payload || {};
+    await useModernBridgeChatContext(params);
+
+    const messageId = Number(params.messageIndex ?? chat.length - 1);
+    if (!Number.isInteger(messageId) || !chat[messageId]) {
+        throw new Error('原版生成引擎找不到要切换候选的消息。');
+    }
+
+    const direction = params.direction === 'left' ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
+    await swipe(null, direction, { source: SWIPE_SOURCE.SWIPE_PICKER, repeated: false, forceMesId: messageId });
+    const message = chat[messageId] || {};
+    return {
+        avatar: characters[this_chid]?.avatar || '',
+        chat: characters[this_chid]?.chat || '',
+        messageCount: chat.length,
+        messageIndex: messageId,
+        swipeId: message.swipe_id ?? 0,
+        swipeCount: Array.isArray(message.swipes) ? message.swipes.length : 0,
+    };
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -5631,6 +5653,10 @@ window.addEventListener('message', async (event) => {
     try {
         if (action === 'generate') {
             postModernBridgeResult(event, id, await handleModernBridgeGenerate(payload));
+            return;
+        }
+        if (action === 'swipe') {
+            postModernBridgeResult(event, id, await handleModernBridgeSwipe(payload));
             return;
         }
         if (action === 'stop') {
