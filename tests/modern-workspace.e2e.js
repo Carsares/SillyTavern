@@ -216,6 +216,7 @@ test.describe('Modern workspace', () => {
         await page.goto('/modern/?view=assets');
 
         await expect(page.locator('.page-title')).toHaveText('素材库');
+        await page.locator('[data-asset-tab="files"]').click();
         await expect(page.locator('.asset-row')).toHaveCount(8);
         await expect(page.locator('[data-toggle-asset-group="bgm"]')).toBeVisible();
 

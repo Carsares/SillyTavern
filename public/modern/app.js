@@ -37,7 +37,7 @@ import {
 
 const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
 const chatSidebarPreference = localStorage.getItem('st-modern-chat-sidebar-open');
-const backgroundPageSize = 24;
+const backgroundPageSize = window.matchMedia('(max-width: 860px)').matches ? 8 : 24;
 
 function getInitialChatSidebarOpen() {
     if (chatSidebarPreference !== null) {
@@ -184,6 +184,7 @@ const state = {
         filename: '',
         running: false,
     },
+    assetTab: localStorage.getItem('st-modern-asset-tab') === 'files' ? 'files' : 'backgrounds',
     assetExpandedGroups: [],
     assetDeleteConfirm: {
         category: '',
@@ -6203,6 +6204,7 @@ function renderAssets() {
     const selection = state.backgroundSelection;
     const selectedCount = selection.filenames.length;
     const folderFilterName = getBackgroundFolderById(state.backgroundFolderFilter)?.name || '全部背景';
+    const assetTab = state.assetTab === 'files' ? 'files' : 'backgrounds';
 
     return `
         ${pageHead('素材库', '背景、音频、Live2D、VRM 和资产文件。', `
@@ -6234,12 +6236,42 @@ function renderAssets() {
             ${metricCard('背景文件夹', formatNumber(backgroundFolders.length), folderFilterName, 'fa-folder')}
             ${metricCard('动画背景', formatNumber(allBackgrounds.filter(item => item.isAnimated).length), 'metadata 标记', 'fa-film')}
         </div>
-        ${renderBackgroundFoldersPanel(backgroundFolders, folderCounts, selectedCount)}
+        ${renderAssetTabs(assetTab, backgrounds.length, getAssetCount())}
+        ${assetTab === 'backgrounds' ? `
+            ${renderBackgroundFoldersPanel(backgroundFolders, folderCounts, selectedCount)}
+            ${renderBackgroundLibraryPanel(folderFilterName, visibleBackgrounds, backgrounds.length, selectedCount, selection, hasMoreBackgrounds)}
+        ` : `
+            <div class="grid-list">
+                ${groups.map(group => renderAssetGroupCard(group)).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
+            </div>
+        `}
+    `;
+}
+
+function renderAssetTabs(assetTab, backgroundCount, assetCount) {
+    return `
+        <div class="segmented-control asset-tabs" role="tablist" aria-label="素材类型">
+            <button class="${assetTab === 'backgrounds' ? 'active' : ''}" type="button" data-asset-tab="backgrounds" aria-selected="${assetTab === 'backgrounds'}">
+                <i class="fa-solid fa-image"></i>
+                背景
+                <span class="badge">${formatNumber(backgroundCount)}</span>
+            </button>
+            <button class="${assetTab === 'files' ? 'active' : ''}" type="button" data-asset-tab="files" aria-selected="${assetTab === 'files'}">
+                <i class="fa-solid fa-folder-tree"></i>
+                文件资产
+                <span class="badge">${formatNumber(assetCount)}</span>
+            </button>
+        </div>
+    `;
+}
+
+function renderBackgroundLibraryPanel(folderFilterName, visibleBackgrounds, totalBackgrounds, selectedCount, selection, hasMoreBackgrounds) {
+    return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景</h2>
-                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(backgrounds.length)} 个匹配项。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
+                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(totalBackgrounds)} 个匹配项。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
                 </div>
             </div>
             ${selection.deleteConfirm ? `
@@ -6264,13 +6296,10 @@ function renderAssets() {
             ${hasMoreBackgrounds ? `
                 <button class="secondary-button load-more-button" type="button" data-load-more-backgrounds>
                     <i class="fa-solid fa-chevron-down"></i>
-                    加载更多背景 ${formatNumber(backgrounds.length - visibleBackgrounds.length)}
+                    加载更多背景 ${formatNumber(totalBackgrounds - visibleBackgrounds.length)}
                 </button>
             ` : ''}
         </section>
-        <div class="grid-list">
-            ${groups.map(group => renderAssetGroupCard(group)).join('') || renderEmptyState('fa-folder-tree', '暂无素材', '当前资产目录还没有可显示文件。')}
-        </div>
     `;
 }
 
@@ -8753,6 +8782,14 @@ async function handleClick(event) {
 
     if (event.target.closest('[data-toggle-background-selection]')) {
         setBackgroundSelectionMode(!state.backgroundSelection.active);
+        return;
+    }
+
+    const assetTabButton = event.target.closest('[data-asset-tab]');
+    if (assetTabButton) {
+        state.assetTab = assetTabButton.dataset.assetTab === 'files' ? 'files' : 'backgrounds';
+        localStorage.setItem('st-modern-asset-tab', state.assetTab);
+        render();
         return;
     }
 
