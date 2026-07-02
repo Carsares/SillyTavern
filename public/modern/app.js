@@ -154,6 +154,15 @@ const state = {
         name: '',
         running: false,
     },
+    backgroundFolderRenaming: {
+        id: '',
+        name: '',
+        running: false,
+    },
+    backgroundFolderDeleteConfirm: {
+        id: '',
+        running: false,
+    },
     assetDownload: {
         active: false,
         url: '',
@@ -2272,6 +2281,85 @@ async function createBackgroundFolder() {
         showToast('背景文件夹已创建', folder?.name || name);
     } finally {
         state.backgroundFolderCreating.running = false;
+        render();
+    }
+}
+
+function beginBackgroundFolderRename(folderId) {
+    const folder = getBackgroundFolderById(folderId);
+    if (!folder) {
+        throw new Error('背景文件夹不存在，请刷新后重试。');
+    }
+    state.backgroundFolderRenaming = { id: folder.id, name: folder.name || '', running: false };
+    state.backgroundFolderDeleteConfirm = { id: '', running: false };
+    render();
+}
+
+function cancelBackgroundFolderRename() {
+    state.backgroundFolderRenaming = { id: '', name: '', running: false };
+    render();
+}
+
+async function confirmBackgroundFolderRename() {
+    const { id, name } = state.backgroundFolderRenaming;
+    const nextName = name.trim();
+    if (!id || !getBackgroundFolderById(id)) {
+        throw new Error('背景文件夹不存在，请刷新后重试。');
+    }
+    if (!nextName) {
+        throw new Error('请输入背景文件夹名称。');
+    }
+
+    state.backgroundFolderRenaming.running = true;
+    render();
+    try {
+        await apiFetch('/api/image-metadata/folders/update', { body: { id, name: nextName } });
+        state.backgroundFolderRenaming = { id: '', name: '', running: false };
+        await loadData({ silent: true });
+        showToast('背景文件夹已重命名', nextName);
+    } finally {
+        state.backgroundFolderRenaming.running = false;
+        render();
+    }
+}
+
+function beginBackgroundFolderDelete(folderId) {
+    const folder = getBackgroundFolderById(folderId);
+    if (!folder) {
+        throw new Error('背景文件夹不存在，请刷新后重试。');
+    }
+    state.backgroundFolderDeleteConfirm = { id: folder.id, running: false };
+    state.backgroundFolderRenaming = { id: '', name: '', running: false };
+    render();
+}
+
+function cancelBackgroundFolderDelete() {
+    state.backgroundFolderDeleteConfirm = { id: '', running: false };
+    render();
+}
+
+async function confirmBackgroundFolderDelete() {
+    const { id } = state.backgroundFolderDeleteConfirm;
+    const folder = getBackgroundFolderById(id);
+    if (!folder) {
+        throw new Error('背景文件夹不存在，请刷新后重试。');
+    }
+
+    state.backgroundFolderDeleteConfirm.running = true;
+    render();
+    try {
+        await apiFetch('/api/image-metadata/folders/delete', { body: { id } });
+        if (state.backgroundFolderFilter === id) {
+            state.backgroundFolderFilter = '';
+        }
+        if (state.backgroundFolderAssignment === id) {
+            state.backgroundFolderAssignment = '';
+        }
+        state.backgroundFolderDeleteConfirm = { id: '', running: false };
+        await loadData({ silent: true });
+        showToast('背景文件夹已删除', `${folder.name}，背景图片未删除。`);
+    } finally {
+        state.backgroundFolderDeleteConfirm.running = false;
         render();
     }
 }
@@ -5732,6 +5820,7 @@ function renderAssets() {
 
 function renderBackgroundFoldersPanel(folders, folderCounts, selectedCount) {
     const creating = state.backgroundFolderCreating;
+    const activeFolder = getBackgroundFolderById(state.backgroundFolderFilter);
     const assignmentOptions = folders.map(folder => `
         <option value="${escapeHtml(folder.id)}" ${state.backgroundFolderAssignment === folder.id ? 'selected' : ''}>${escapeHtml(folder.name)}</option>
     `).join('');
@@ -5762,6 +5851,7 @@ function renderBackgroundFoldersPanel(folders, folderCounts, selectedCount) {
                     </button>
                 `).join('') || renderInlineEmpty('还没有背景文件夹')}
             </div>
+            ${activeFolder ? renderBackgroundFolderManagement(activeFolder, folderCounts[activeFolder.id] || 0) : ''}
             ${creating.active ? `
                 <div class="settings-form inline-form">
                     <label class="field-label">
@@ -5801,6 +5891,72 @@ function renderBackgroundFoldersPanel(folders, folderCounts, selectedCount) {
                 </div>
             ` : ''}
         </section>
+    `;
+}
+
+function renderBackgroundFolderManagement(folder, count) {
+    const renaming = state.backgroundFolderRenaming.id === folder.id ? state.backgroundFolderRenaming : null;
+    const deleting = state.backgroundFolderDeleteConfirm.id === folder.id ? state.backgroundFolderDeleteConfirm : null;
+
+    if (renaming) {
+        return `
+            <div class="settings-form inline-form">
+                <label class="field-label">
+                    <span>重命名文件夹</span>
+                    <input class="text-input" type="text" data-background-folder-rename-name value="${escapeHtml(renaming.name)}" autocomplete="off">
+                </label>
+                <div class="message-edit-actions">
+                    <button class="secondary-button" type="button" data-cancel-background-folder-rename ${renaming.running ? 'disabled' : ''}>
+                        <i class="fa-solid fa-xmark"></i>
+                        取消
+                    </button>
+                    <button class="primary-button" type="button" data-confirm-background-folder-rename ${renaming.running ? 'disabled' : ''}>
+                        <i class="fa-solid ${renaming.running ? 'fa-circle-notch fa-spin' : 'fa-check'}"></i>
+                        ${renaming.running ? '保存中' : '保存'}
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    if (deleting) {
+        return `
+            <div class="settings-form inline-form danger-panel">
+                <div>
+                    <strong>删除背景文件夹</strong>
+                    <p class="panel-subtitle">将删除“${escapeHtml(folder.name)}”这个虚拟文件夹，并移除 ${formatNumber(count)} 个背景的归档关系；不会删除背景图片文件。</p>
+                </div>
+                <div class="message-edit-actions">
+                    <button class="secondary-button" type="button" data-cancel-background-folder-delete ${deleting.running ? 'disabled' : ''}>
+                        <i class="fa-solid fa-xmark"></i>
+                        取消
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-confirm-background-folder-delete ${deleting.running ? 'disabled' : ''}>
+                        <i class="fa-solid ${deleting.running ? 'fa-circle-notch fa-spin' : 'fa-trash'}"></i>
+                        ${deleting.running ? '删除中' : '确认删除'}
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="list-toolbar">
+            <div>
+                <strong>${escapeHtml(folder.name)}</strong>
+                <p class="panel-subtitle">${formatNumber(count)} 个背景已归档到这个文件夹。</p>
+            </div>
+            <div class="toolbar-actions">
+                <button class="secondary-button" type="button" data-rename-background-folder="${escapeHtml(folder.id)}">
+                    <i class="fa-solid fa-i-cursor"></i>
+                    重命名
+                </button>
+                <button class="secondary-button danger-action" type="button" data-delete-background-folder="${escapeHtml(folder.id)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除文件夹
+                </button>
+            </div>
+        </div>
     `;
 }
 
@@ -7914,6 +8070,60 @@ async function handleClick(event) {
         return;
     }
 
+    const renameBackgroundFolderButton = event.target.closest('[data-rename-background-folder]');
+    if (renameBackgroundFolderButton) {
+        try {
+            beginBackgroundFolderRename(renameBackgroundFolderButton.dataset.renameBackgroundFolder);
+        } catch (error) {
+            showToast('背景文件夹不可编辑', error.message);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-background-folder-rename]')) {
+        cancelBackgroundFolderRename();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-background-folder-rename]')) {
+        try {
+            await confirmBackgroundFolderRename();
+        } catch (error) {
+            state.errors.push({ key: 'background-folder-rename', message: error.message });
+            showToast('背景文件夹重命名失败', error.message);
+            state.backgroundFolderRenaming.running = false;
+            render();
+        }
+        return;
+    }
+
+    const deleteBackgroundFolderButton = event.target.closest('[data-delete-background-folder]');
+    if (deleteBackgroundFolderButton) {
+        try {
+            beginBackgroundFolderDelete(deleteBackgroundFolderButton.dataset.deleteBackgroundFolder);
+        } catch (error) {
+            showToast('背景文件夹不可删除', error.message);
+        }
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-background-folder-delete]')) {
+        cancelBackgroundFolderDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-background-folder-delete]')) {
+        try {
+            await confirmBackgroundFolderDelete();
+        } catch (error) {
+            state.errors.push({ key: 'background-folder-delete', message: error.message });
+            showToast('背景文件夹删除失败', error.message);
+            state.backgroundFolderDeleteConfirm.running = false;
+            render();
+        }
+        return;
+    }
+
     if (event.target.closest('[data-assign-selected-backgrounds]')) {
         try {
             await assignSelectedBackgroundsToFolder(false);
@@ -8529,6 +8739,9 @@ elements.content.addEventListener('input', event => {
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-folder-create-name]')) {
         state.backgroundFolderCreating.name = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-background-folder-rename-name]')) {
+        state.backgroundFolderRenaming.name = event.target.value;
     }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-asset-download-url]')) {
         state.assetDownload.url = event.target.value;
