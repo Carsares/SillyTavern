@@ -148,17 +148,7 @@ const extensionActions = createExtensionActions({
     showToast,
 });
 
-const {
-    getRequestCompressionSettings,
-    loadSettingsSnapshots,
-    createSettingsSnapshot,
-    saveModernPreferencesFromForm,
-    saveRequestCompressionFromForm,
-    previewSettingsSnapshot,
-    beginSettingsSnapshotRestore,
-    cancelSettingsSnapshotRestore,
-    confirmSettingsSnapshotRestore,
-} = createSettingsActions({
+const settingsActions = createSettingsActions({
     state,
     elements,
     apiFetch,
@@ -644,17 +634,7 @@ const routeContext = createRouteContext({
         replacePersonaAvatar,
     },
     presets: presetActions,
-    settings: {
-        getRequestCompressionSettings,
-        loadSettingsSnapshots,
-        createSettingsSnapshot,
-        saveModernPreferencesFromForm,
-        saveRequestCompressionFromForm,
-        previewSettingsSnapshot,
-        beginSettingsSnapshotRestore,
-        cancelSettingsSnapshotRestore,
-        confirmSettingsSnapshotRestore,
-    },
+    settings: settingsActions,
     worldbooks: {
         isGlobalWorldEnabled,
         getWorldEntryListState,

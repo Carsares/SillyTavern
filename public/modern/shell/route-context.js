@@ -110,6 +110,17 @@ export function createRouteContext({
         cancelExtensionOperation,
         confirmExtensionOperation,
     } = extensions;
+    const {
+        getRequestCompressionSettings,
+        loadSettingsSnapshots,
+        createSettingsSnapshot,
+        saveModernPreferencesFromForm,
+        saveRequestCompressionFromForm,
+        previewSettingsSnapshot,
+        beginSettingsSnapshotRestore,
+        cancelSettingsSnapshotRestore,
+        confirmSettingsSnapshotRestore,
+    } = settings;
 
     return {
         state,
@@ -205,7 +216,15 @@ export function createRouteContext({
         confirmPresetDelete,
         updatePresetEditorText,
         importPresetFile,
-        ...settings,
+        getRequestCompressionSettings,
+        loadSettingsSnapshots,
+        createSettingsSnapshot,
+        saveModernPreferencesFromForm,
+        saveRequestCompressionFromForm,
+        previewSettingsSnapshot,
+        beginSettingsSnapshotRestore,
+        cancelSettingsSnapshotRestore,
+        confirmSettingsSnapshotRestore,
         ...worldbooks,
     };
 }
