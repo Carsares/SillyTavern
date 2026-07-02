@@ -32,6 +32,7 @@ import { createQueryMatcher, createShellMetadata } from './shell/metadata.js';
 import { createNav } from './shell/nav.js';
 import { createPalette } from './shell/palette.js';
 import { createRouter } from './shell/router.js';
+import { createTheme } from './shell/theme.js';
 import { createToast } from './shell/toast.js';
 import { createTopbar } from './shell/topbar.js';
 import { createDashboardRoute } from './routes/dashboard.js';
@@ -100,6 +101,10 @@ const { matchesQuery } = createQueryMatcher({
 const { showToast } = createToast({
     elements,
     escapeHtml,
+});
+const { setTheme } = createTheme({
+    state,
+    root: document.documentElement,
 });
 
 const {
@@ -929,12 +934,6 @@ async function loadData({ silent = false, notify = !silent } = {}) {
         const summary = state.errors.length ? '部分数据读取失败，详情见右侧检查器。' : '已同步当前用户数据。';
         showToast('刷新完成', summary);
     }
-}
-
-function setTheme(theme) {
-    state.theme = theme;
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('st-modern-theme', theme);
 }
 
 function renderContent() {
