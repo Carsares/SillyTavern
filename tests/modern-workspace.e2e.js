@@ -164,6 +164,18 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.toast', { hasText: '刷新完成' })).toHaveCount(0);
     });
 
+    test('does not expose legacy navigation from modern routes', async ({ page }) => {
+        for (const [route] of modernRoutes) {
+            await page.goto(`/modern/?view=${route}`);
+
+            await expect(page.locator('a[href="/"]')).toHaveCount(0);
+            await expect(page.locator('[data-open-legacy]')).toHaveCount(0);
+            await expect(page.locator('text=打开原版')).toHaveCount(0);
+            await expect(page.locator('text=原版')).toHaveCount(0);
+            await expect(page.locator('text=旧版')).toHaveCount(0);
+        }
+    });
+
     test('shows generation engine controls on chat page', async ({ page }) => {
         await page.goto('/modern/?view=chat');
 

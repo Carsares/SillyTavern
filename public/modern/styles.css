@@ -138,7 +138,6 @@ a {
 }
 
 .nav-button,
-.ghost-link,
 .resource-row,
 .command-row {
     display: flex;
@@ -158,14 +157,12 @@ a {
     padding: 9px 10px;
 }
 
-.nav-button i,
-.ghost-link i {
+.nav-button i {
     width: 17px;
     text-align: center;
 }
 
 .nav-button:hover,
-.ghost-link:hover,
 .resource-row:hover,
 .command-row:hover {
     background: var(--surface-muted);
@@ -187,16 +184,6 @@ a {
     color: var(--text-muted);
     font-size: 12px;
     text-align: center;
-}
-
-.sidebar-footer {
-    margin-top: auto;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-}
-
-.ghost-link {
-    padding: 9px 10px;
 }
 
 .workspace {
@@ -371,36 +358,6 @@ kbd {
 .secondary-button.danger-action {
     border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
     color: var(--danger);
-}
-
-.legacy-menu {
-    position: relative;
-}
-
-.legacy-menu summary {
-    list-style: none;
-}
-
-.legacy-menu summary::-webkit-details-marker {
-    display: none;
-}
-
-.legacy-menu-panel {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 6;
-    min-width: 190px;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: var(--shadow);
-}
-
-.legacy-menu-panel .secondary-button {
-    width: 100%;
-    justify-content: flex-start;
 }
 
 .file-action {

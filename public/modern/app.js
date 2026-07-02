@@ -348,7 +348,7 @@ function handleLegacyBridgeMessage(event) {
     window.clearTimeout(request.timer);
     legacyBridge.pending.delete(event.data.id);
     if (event.data.error) {
-        request.reject(new Error(event.data.error.message || '原版生成引擎执行失败。'));
+        request.reject(new Error(event.data.error.message || '生成引擎执行失败。'));
         return;
     }
     request.resolve(event.data.result);
@@ -367,7 +367,7 @@ async function ensureLegacyBridgeFrame() {
     legacyBridge.loadPromise = new Promise((resolve, reject) => {
         const frame = document.createElement('iframe');
         const timer = window.setTimeout(() => {
-            reject(new Error('原版生成引擎加载超时。'));
+            reject(new Error('生成引擎加载超时。'));
         }, 30000);
 
         frame.hidden = true;
@@ -380,7 +380,7 @@ async function ensureLegacyBridgeFrame() {
         }, { once: true });
         frame.addEventListener('error', () => {
             window.clearTimeout(timer);
-            reject(new Error('原版生成引擎加载失败。'));
+            reject(new Error('生成引擎加载失败。'));
         }, { once: true });
 
         legacyBridge.frame = frame;
@@ -404,7 +404,7 @@ async function callLegacyBridge(action, payload = {}, timeoutMs = 180000) {
     const responsePromise = new Promise((resolve, reject) => {
         const timer = window.setTimeout(() => {
             legacyBridge.pending.delete(id);
-            reject(new Error('原版生成引擎响应超时。'));
+            reject(new Error('生成引擎响应超时。'));
         }, timeoutMs);
         legacyBridge.pending.set(id, { resolve, reject, timer });
     });
@@ -1427,7 +1427,7 @@ async function saveApiConnectionFromForm() {
     const model = modelInput?.value.trim() || '';
 
     if (mainApi !== 'openai') {
-        throw new Error('现代页暂不支持保存文本补全连接，请使用原版连接配置。');
+        throw new Error('现代页当前以只读方式展示文本补全连接，暂不写入该连接配置。');
     }
     if (!modelField || !model) {
         throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
@@ -3469,7 +3469,7 @@ async function testApiConnection() {
         return;
     }
     if (getSelectedApiMain() !== 'openai') {
-        throw new Error('现代页当前只支持测试聊天补全连接；文本补全请使用原版连接配置。');
+        throw new Error('现代页当前只支持测试聊天补全连接；文本补全连接暂以只读状态展示。');
     }
 
     const settings = getChatCompletionSettingsFromForm();
@@ -3545,7 +3545,7 @@ async function checkLegacyGenerationEngine({ quiet = false } = {}) {
     state.engine.ready = false;
     state.engine.status = '检查生成引擎';
     state.engine.error = '';
-    state.engine.detail = '正在加载原版生成上下文。';
+    state.engine.detail = '正在加载生成上下文。';
     render();
 
     try {
@@ -3629,7 +3629,7 @@ async function runLegacyChatGeneration(type, { entity, chatId, message = '', toa
     }
 
     state.engine.generating = true;
-    state.engine.status = '原版生成中';
+    state.engine.status = '生成中';
     state.engine.error = '';
     state.engine.detail = `${getChatEntityName(entity)} · ${chatId}`;
     render();
@@ -3735,7 +3735,7 @@ async function sendModernMessage() {
         chatId,
         message: draft,
         toastTitle: '消息已生成',
-        toastMessage: '原版生成引擎已完成回复并保存聊天文件。',
+        toastMessage: '生成引擎已完成回复并保存聊天文件。',
     });
 }
 
@@ -3757,7 +3757,7 @@ async function regenerateModernReply() {
         entity,
         chatId: state.selected.chat,
         toastTitle: '回复已重生成',
-        toastMessage: '原版生成引擎已更新最后一条回复。',
+        toastMessage: '生成引擎已更新最后一条回复。',
     });
 }
 
@@ -3779,7 +3779,7 @@ async function continueModernReply() {
         entity,
         chatId: state.selected.chat,
         toastTitle: '已继续生成',
-        toastMessage: '原版生成引擎已追加到当前回复。',
+        toastMessage: '生成引擎已追加到当前回复。',
     });
 }
 
@@ -4116,7 +4116,7 @@ async function stopModernGeneration() {
     }
     state.engine.generating = false;
     state.engine.status = '已停止';
-    state.engine.detail = '已向原版生成引擎发送停止请求。';
+    state.engine.detail = '已向生成引擎发送停止请求。';
     render();
 }
 
@@ -4191,23 +4191,6 @@ function pageHead(title, description, actions = '') {
     `;
 }
 
-function legacyMenu(label) {
-    return `
-        <details class="legacy-menu">
-            <summary class="secondary-button">
-                <i class="fa-solid fa-ellipsis"></i>
-                更多
-            </summary>
-            <div class="legacy-menu-panel">
-                <button class="secondary-button ghost-action" type="button" data-open-legacy>
-                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                    ${escapeHtml(label)}
-                </button>
-            </div>
-        </details>
-    `;
-}
-
 function metricCard(label, value, detail, icon) {
     return `
         <section class="metric-card">
@@ -4226,7 +4209,6 @@ function renderDashboard() {
 
     return `
         ${pageHead('工作台', '资源、连接和最近会话。', `
-            ${legacyMenu('打开原版')}
             <button class="primary-button" type="button" data-route="chat">
                 <i class="fa-solid fa-comments"></i>
                 进入聊天
@@ -4387,7 +4369,6 @@ function renderChat() {
                 <i class="fa-solid ${state.chatSidebarOpen ? 'fa-table-columns' : 'fa-list'}"></i>
                 ${state.chatSidebarOpen ? '收起列表' : '展开列表'}
             </button>
-            ${legacyMenu('打开原版聊天')}
         `)}
         <div class="chat-layout ${state.chatSidebarOpen ? '' : 'chat-sidebar-collapsed'}">
             ${state.chatSidebarOpen ? `
@@ -4909,7 +4890,6 @@ function renderCharacters() {
                 导入文件
                 <input class="visually-hidden" type="file" accept=".png,.json,.yaml,.yml,.charx,.byaf" data-character-import-file>
             </label>
-            ${legacyMenu('打开原版编辑')}
         `)}
         <div class="split-grid">
             <section class="panel">
@@ -5191,7 +5171,6 @@ function renderGroups() {
                 <i class="fa-solid fa-plus"></i>
                 新建群组
             </button>
-            ${legacyMenu('打开原版群组')}
         `)}
         <div class="split-grid">
             <section class="panel">
@@ -5415,7 +5394,6 @@ function renderWorldbooks() {
                 导入 JSON
                 <input class="visually-hidden" type="file" accept=".json,application/json" data-worldbook-import-file>
             </label>
-            ${legacyMenu('打开原版编辑器')}
         `)}
         <div class="split-grid">
             <section class="panel">
@@ -5829,7 +5807,6 @@ function renderPresets() {
                 导入到当前类型
                 <input class="visually-hidden" type="file" accept=".json,application/json" data-preset-import-file>
             </label>
-            ${legacyMenu('打开原版编辑器')}
         `)}
         <div class="preset-workspace">
             <section class="panel preset-browser">
@@ -5958,7 +5935,7 @@ function renderPresetDetail(group, item) {
         <section class="form-section">
             <div>
                 <h3 class="form-section-title">JSON 编辑</h3>
-                <p class="panel-subtitle">直接编辑预设文件内容，保存后调用原版预设保存接口。</p>
+                <p class="panel-subtitle">直接编辑预设文件内容，保存后调用现有预设保存接口。</p>
             </div>
             <textarea class="preset-json-editor" spellcheck="false" data-preset-json-input>${escapeHtml(jsonText)}</textarea>
             ${editorError ? `<p class="danger">${escapeHtml(editorError)}</p>` : ''}
@@ -6047,7 +6024,6 @@ function renderPersonas() {
                 <i class="fa-solid fa-plus"></i>
                 新建人设
             </button>
-            ${legacyMenu('打开原版管理')}
         `)}
         ${state.personaCreating.active ? renderPersonaCreatePanel() : ''}
         <div class="grid-list">
@@ -6227,7 +6203,6 @@ function renderAssets() {
                     删除所选 ${formatNumber(selectedCount)}
                 </button>
             ` : ''}
-            ${legacyMenu('打开原版素材')}
         `)}
         ${state.assetDownload.active ? renderAssetDownloadPanel() : ''}
         <div class="metrics-grid">
@@ -6277,7 +6252,7 @@ function renderBackgroundLibraryPanel(folderFilterName, visibleBackgrounds, tota
             ${selection.deleteConfirm ? `
                 <div class="settings-form inline-form danger-panel">
                     <strong>删除所选背景</strong>
-                    <p class="panel-subtitle">将删除 ${formatNumber(selectedCount)} 个背景文件，此操作会调用原版背景删除接口。</p>
+                    <p class="panel-subtitle">将删除 ${formatNumber(selectedCount)} 个背景文件，此操作会调用现有背景删除接口。</p>
                     <div class="message-edit-actions">
                         <button class="secondary-button" type="button" data-cancel-background-delete ${selection.deleting ? 'disabled' : ''}>
                             <i class="fa-solid fa-xmark"></i>
@@ -6342,7 +6317,7 @@ function renderBackgroundFoldersPanel(folders, folderCounts, selectedCount) {
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景文件夹</h2>
-                    <p class="panel-subtitle">使用原版 image metadata 文件夹能力筛选和批量归档背景。</p>
+                    <p class="panel-subtitle">使用现有 image metadata 文件夹能力筛选和批量归档背景。</p>
                 </div>
                 <button class="secondary-button" type="button" data-toggle-background-folder-create>
                     <i class="fa-solid ${creating.active ? 'fa-xmark' : 'fa-folder-plus'}"></i>
@@ -6578,7 +6553,7 @@ function renderAssetEntryRow(entry) {
     const isDeleting = state.assetDeleteConfirm.category === entry.category && state.assetDeleteConfirm.filename === entry.filename;
     const isBusy = isDeleting && state.assetDeleteConfirm.running;
     const readOnlyReason = entry.filename?.includes('/')
-        ? '嵌套资源需在原版资源目录管理'
+        ? '嵌套资源需在资源目录管理'
         : '当前分类不支持删除';
 
     return `
@@ -6626,7 +6601,6 @@ function renderApi() {
                 <i class="fa-solid fa-rotate"></i>
                 刷新
             </button>
-            ${legacyMenu('打开原版连接配置')}
         `)}
         <div class="dashboard-grid">
             <section class="panel">
@@ -6798,7 +6772,7 @@ function renderApiConnectionEditor(provider) {
                 <section class="form-section">
                     <div>
                         <h3 class="form-section-title">连接</h3>
-                        <p class="panel-subtitle">现代页当前只编辑聊天补全连接；文本补全连接保持只读。</p>
+                        <p class="panel-subtitle">现代页当前可编辑聊天补全连接；文本补全连接以只读档案展示。</p>
                     </div>
                     <div class="form-grid two-columns">
                         ${renderApiMainSelect(mainApi)}
@@ -6807,7 +6781,7 @@ function renderApiConnectionEditor(provider) {
                 <section class="form-section">
                     <div>
                         <h3 class="form-section-title">文本补全档案</h3>
-                        <p class="panel-subtitle">如需修改文本补全来源、端点和采样参数，请打开原版连接配置。</p>
+                        <p class="panel-subtitle">文本补全高级编辑暂不开放；当前在新版内展示来源、端点和采样参数状态。</p>
                     </div>
                     <div class="kv-list">
                         ${renderKeyValue('来源', textgenProfile.source || '未配置')}
@@ -6904,7 +6878,7 @@ function renderApiConnectionEditor(provider) {
             <div class="form-section">
                 <div>
                     <h3 class="form-section-title">安全密钥</h3>
-                    <p class="panel-subtitle">密钥仍写入原版 secrets，不在页面回显。</p>
+                    <p class="panel-subtitle">密钥写入本地 secrets，不在页面回显。</p>
                 </div>
                 <label class="field-label" data-api-field="api-key" ${apiUiState.hasSecretMapping ? '' : 'hidden'}>
                     <span>API Key</span>
@@ -7225,7 +7199,6 @@ function renderExtensions() {
                 <i class="fa-solid ${state.extensionInstall.active ? 'fa-xmark' : 'fa-plus'}"></i>
                 ${state.extensionInstall.active ? '取消安装' : '安装扩展'}
             </button>
-            ${legacyMenu('打开原版扩展')}
         `)}
         ${state.extensionInstall.active ? renderExtensionInstallPanel() : ''}
         <div class="metrics-grid">
@@ -7662,7 +7635,6 @@ function renderSettings() {
                 <i class="fa-solid ${state.settingsSnapshots.loading ? 'fa-circle-notch fa-spin' : 'fa-clock-rotate-left'}"></i>
                 设置快照
             </button>
-            ${legacyMenu('打开原版设置')}
         `)}
         <div class="metrics-grid">
             ${metricCard('数据状态', dataStatus, state.errors.length ? `${formatNumber(state.errors.length)} 个读取错误` : '读取正常', 'fa-heart-pulse')}
@@ -8156,10 +8128,6 @@ function runCommandAction(action) {
         default:
             break;
     }
-}
-
-function openLegacy() {
-    window.location.href = '/';
 }
 
 async function handleClick(event) {
@@ -9509,11 +9477,6 @@ async function handleClick(event) {
         if (action) {
             runCommandAction(action);
         }
-        return;
-    }
-
-    if (event.target.closest('[data-open-legacy]')) {
-        openLegacy();
         return;
     }
 
