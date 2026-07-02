@@ -35,14 +35,15 @@ test.describe('Modern workspace', () => {
         });
     }
 
-    test('shows text completion API as read-only in the modern editor', async ({ page }) => {
+    test('shows text completion API shallow editor in the modern page', async ({ page }) => {
         await page.goto('/modern/?view=api');
 
         await expect(page.locator('.page-title')).toHaveText('API 连接管理');
         await page.locator('[data-api-main]').selectOption('textgenerationwebui');
 
-        await expect(page.locator('.form-section-title', { hasText: '文本补全档案' })).toBeVisible();
-        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
+        await expect(page.locator('[data-textgen-type]')).toBeVisible();
+        await expect(page.locator('[data-textgen-endpoint]')).toBeVisible();
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(1);
     });
 
     test('hides irrelevant API fields for SiliconFlow', async ({ page }) => {
@@ -99,8 +100,8 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.api-history-panel')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
 
         await page.locator('[data-api-profile-main="textgenerationwebui"]').click();
-        await expect(page.locator('.form-section-title', { hasText: '文本补全档案' })).toBeVisible();
-        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
+        await expect(page.locator('[data-textgen-type]')).toBeVisible();
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(1);
     });
 
     test('edits modern preferences and request compression settings', async ({ page }) => {

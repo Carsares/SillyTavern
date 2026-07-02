@@ -1,3 +1,52 @@
+const textCompletionTypeOptions = [
+    { id: 'ooba', label: 'Text Generation WebUI / Ooba' },
+    { id: 'generic', label: 'Generic OpenAI-compatible' },
+    { id: 'openrouter', label: 'OpenRouter' },
+    { id: 'ollama', label: 'Ollama' },
+    { id: 'vllm', label: 'vLLM' },
+    { id: 'aphrodite', label: 'Aphrodite' },
+    { id: 'tabby', label: 'TabbyAPI' },
+    { id: 'llamacpp', label: 'llama.cpp' },
+    { id: 'mancer', label: 'Mancer' },
+    { id: 'togetherai', label: 'TogetherAI' },
+    { id: 'infermaticai', label: 'InfermaticAI' },
+    { id: 'dreamgen', label: 'DreamGen' },
+    { id: 'featherless', label: 'Featherless' },
+];
+
+const textCompletionModelFields = {
+    ooba: 'custom_model',
+    generic: 'generic_model',
+    openrouter: 'openrouter_model',
+    ollama: 'ollama_model',
+    vllm: 'vllm_model',
+    aphrodite: 'aphrodite_model',
+    tabby: 'tabby_model',
+    llamacpp: 'llamacpp_model',
+    mancer: 'mancer_model',
+    togetherai: 'togetherai_model',
+    infermaticai: 'infermaticai_model',
+    dreamgen: 'dreamgen_model',
+    featherless: 'featherless_model',
+};
+
+const secretKeyByTextCompletionType = {
+    ooba: 'api_key_ooba',
+    generic: 'api_key_generic',
+    openrouter: 'api_key_openrouter',
+    vllm: 'api_key_vllm',
+    aphrodite: 'api_key_aphrodite',
+    tabby: 'api_key_tabby',
+    llamacpp: 'api_key_llamacpp',
+    koboldcpp: 'api_key_koboldcpp',
+    mancer: 'api_key_mancer',
+    togetherai: 'api_key_togetherai',
+    infermaticai: 'api_key_infermaticai',
+    dreamgen: 'api_key_dreamgen',
+    featherless: 'api_key_featherless',
+    huggingface: 'api_key_huggingface',
+};
+
 export function createApiComponents(ctx) {
     const {
         state,
@@ -21,10 +70,10 @@ export function createApiComponents(ctx) {
     } = ctx;
 
     function renderApi() {
-        const provider = getProviderInfo();
+        const provider = getCurrentProviderInfo();
         const profiles = getApiProfiles();
         const checks = getApiChecks(provider, profiles);
-        const canTestConnection = getSelectedApiMain() === 'openai';
+        const canTestConnection = ['openai', 'textgenerationwebui'].includes(getSelectedApiMain());
 
         return `
         ${pageHead('API 连接管理', '连接、模型、预设和请求状态。', `
@@ -200,29 +249,20 @@ export function createApiComponents(ctx) {
         const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
         const mainApi = getSelectedApiMain();
 
+        if (mainApi === 'textgenerationwebui') {
+            return renderTextCompletionEditor(mainApi);
+        }
+
         if (mainApi !== 'openai') {
-            const textgenProfile = getApiProfiles().find(profile => profile.title === '文本补全') || {};
             return `
             <div class="settings-form">
                 <section class="form-section">
                     <div>
                         <h3 class="form-section-title">连接</h3>
-                        <p class="panel-subtitle">现代页当前可编辑聊天补全连接；文本补全连接以只读档案展示。</p>
+                        <p class="panel-subtitle">当前主 API 暂不支持在现代页编辑。</p>
                     </div>
                     <div class="form-grid two-columns">
                         ${renderApiMainSelect(mainApi)}
-                    </div>
-                </section>
-                <section class="form-section">
-                    <div>
-                        <h3 class="form-section-title">文本补全档案</h3>
-                        <p class="panel-subtitle">文本补全高级编辑暂不开放；当前在新版内展示来源、端点和采样参数状态。</p>
-                    </div>
-                    <div class="kv-list">
-                        ${renderKeyValue('来源', textgenProfile.source || '未配置')}
-                        ${renderKeyValue('模型', textgenProfile.model || '未配置')}
-                        ${renderKeyValue('预设', textgenProfile.preset || '未配置')}
-                        ${renderKeyValue('端点', textgenProfile.endpoint || '未配置')}
                     </div>
                 </section>
             </div>
@@ -340,23 +380,90 @@ export function createApiComponents(ctx) {
             <span>主 API</span>
             <select class="select-input" data-api-main>
                 <option value="openai" ${mainApi === 'openai' ? 'selected' : ''}>聊天补全</option>
-                <option value="textgenerationwebui" ${mainApi === 'textgenerationwebui' ? 'selected' : ''}>文本补全（只读）</option>
+                <option value="textgenerationwebui" ${mainApi === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
             </select>
         </label>
     `;
     }
 
+    function renderTextCompletionEditor(mainApi) {
+        const profile = getTextCompletionProfile();
+        const textgenPresetNames = getPresetGroups().find(group => group.id === 'textgenerationwebui')?.names || [];
+        const secretUiState = getTextCompletionSecretUiState(profile.source);
+        const typeOptions = getTextCompletionTypeOptions(profile.source);
+
+        return `
+        <div class="settings-form">
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">连接</h3>
+                    <p class="panel-subtitle">在现代页编辑文本补全的 type、端点和档案字段。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    ${renderApiMainSelect(mainApi)}
+                    <label class="field-label">
+                        <span>文本补全来源</span>
+                        <select class="select-input" data-textgen-type>
+                            ${typeOptions.map(option => `<option value="${escapeHtml(option.id)}" ${profile.source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="field-label">
+                        <span>端点</span>
+                        <input class="text-input" type="url" data-textgen-endpoint value="${escapeHtml(profile.rawEndpoint)}" autocomplete="off" placeholder="例如 http://127.0.0.1:5000">
+                    </label>
+                </div>
+            </section>
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">模型参数</h3>
+                    <p class="panel-subtitle">只承接文本补全连接必需的浅层档案字段。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>模型</span>
+                        <input class="text-input" type="text" data-textgen-model value="${escapeHtml(profile.model)}" autocomplete="off" placeholder="当前 type 对应模型字段">
+                    </label>
+                    <label class="field-label">
+                        <span>文本补全预设</span>
+                        <select class="select-input" data-textgen-preset>
+                            <option value="">未选择</option>
+                            ${textgenPresetNames.map(name => `<option value="${escapeHtml(name)}" ${profile.preset === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                        </select>
+                    </label>
+                </div>
+            </section>
+            <div class="form-section">
+                <div>
+                    <h3 class="form-section-title">安全密钥</h3>
+                    <p class="panel-subtitle">密钥写入本地 secrets，不在页面回显。</p>
+                </div>
+                <label class="field-label" data-textgen-field="api-key" ${secretUiState.hasSecretMapping ? '' : 'hidden'}>
+                    <span>API Key</span>
+                    <input class="text-input" type="password" data-textgen-api-key value="" autocomplete="new-password" placeholder="${secretUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
+                </label>
+            </div>
+            <div class="connection-test">
+                <span class="badge" data-textgen-secret-status>${secretUiState.secretSaved ? '密钥已保存' : (secretUiState.hasSecretMapping ? '未保存密钥' : '无密钥字段')}</span>
+                <span data-textgen-secret-key>${escapeHtml(secretUiState.secretKey)}</span>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-save-api-connection>
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    保存连接字段
+                </button>
+            </div>
+        </div>
+    `;
+    }
+
     function getApiProfiles() {
         const settings = state.settings || {};
-        const textgen = settings.textgenerationwebui_settings || {};
         const oaiSettings = settings.oai_settings || {};
         const openaiSource = settings.chat_completion_source || oaiSettings.chat_completion_source || '';
         const openaiModel = openaiSource ? getChatCompletionModel(oaiSettings, openaiSource) : '';
-        const textgenModel = textgen.openrouter_model || textgen.custom_model || textgen.generic_model || textgen.ollama_model || textgen.model || '';
+        const textgenProfile = getTextCompletionProfile();
         const chatPreset = oaiSettings.preset_settings_openai || settings.preset_settings_openai || '';
         const chatEndpoint = getChatCompletionEndpoint(openaiSource, oaiSettings);
-        const textgenPreset = settings.textgenerationwebui_preset || settings.textgenerationwebui_settings_preset || '';
-        const textgenEndpoint = maskEndpoint(textgen.server_urls?.[textgen.type] || textgen.api_server || settings.api_server_textgenerationwebui || '');
         const mainIsChat = settings.main_api === 'openai';
         const mainIsTextgen = settings.main_api === 'textgenerationwebui';
 
@@ -367,9 +474,9 @@ export function createApiComponents(ctx) {
                 mainApi: settings.main_api || '',
                 active: true,
                 source: settings.main_api || '',
-                model: mainIsChat ? openaiModel : (mainIsTextgen ? textgenModel : settings.model || ''),
-                preset: mainIsChat ? chatPreset : (mainIsTextgen ? textgenPreset : settings.preset_settings || settings.active_preset || ''),
-                endpoint: mainIsChat ? chatEndpoint : (mainIsTextgen ? textgenEndpoint : maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || '')),
+                model: mainIsChat ? openaiModel : (mainIsTextgen ? textgenProfile.model : settings.model || ''),
+                preset: mainIsChat ? chatPreset : (mainIsTextgen ? textgenProfile.preset : settings.preset_settings || settings.active_preset || ''),
+                endpoint: mainIsChat ? chatEndpoint : (mainIsTextgen ? textgenProfile.endpoint : maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || '')),
             },
             {
                 title: '聊天补全',
@@ -386,12 +493,75 @@ export function createApiComponents(ctx) {
                 kind: 'text-completions',
                 mainApi: 'textgenerationwebui',
                 active: settings.main_api === 'textgenerationwebui',
-                source: textgen.type || settings.textgen_type || '',
-                model: textgenModel,
-                preset: textgenPreset,
-                endpoint: textgenEndpoint,
+                source: textgenProfile.source,
+                model: textgenProfile.model,
+                preset: textgenProfile.preset,
+                endpoint: textgenProfile.endpoint,
             },
         ];
+    }
+
+    function getCurrentProviderInfo() {
+        const provider = getProviderInfo();
+        if (getSelectedApiMain() !== 'textgenerationwebui') {
+            return provider;
+        }
+
+        const textgenProfile = getTextCompletionProfile();
+        return {
+            ...provider,
+            api: 'textgenerationwebui',
+            chatSource: textgenProfile.source,
+            model: textgenProfile.model,
+            preset: textgenProfile.preset,
+        };
+    }
+
+    function getTextCompletionProfile() {
+        const settings = state.settings || {};
+        const textgen = settings.textgenerationwebui_settings || {};
+        const source = textgen.type || settings.textgen_type || 'ooba';
+        const rawEndpoint = getTextCompletionEndpoint(textgen, source, settings);
+
+        return {
+            source,
+            model: getTextCompletionModel(textgen, source),
+            preset: textgen.preset || settings.textgenerationwebui_preset || settings.textgenerationwebui_settings_preset || '',
+            rawEndpoint,
+            endpoint: maskEndpoint(rawEndpoint),
+        };
+    }
+
+    function getTextCompletionModel(textgen, source) {
+        const modelField = textCompletionModelFields[source];
+        return (modelField ? textgen[modelField] : '') || textgen.model || '';
+    }
+
+    function getTextCompletionEndpoint(textgen, source, settings) {
+        return textgen.server_urls?.[source] || textgen.api_server || settings.api_server_textgenerationwebui || '';
+    }
+
+    function getTextCompletionTypeOptions(source) {
+        const knownTypes = new Set(textCompletionTypeOptions.map(option => option.id));
+        if (!source || knownTypes.has(source)) {
+            return textCompletionTypeOptions;
+        }
+
+        return [
+            ...textCompletionTypeOptions,
+            { id: source, label: source },
+        ];
+    }
+
+    function getTextCompletionSecretUiState(source) {
+        const secretKey = secretKeyByTextCompletionType[source];
+        const value = secretKey ? state.secretState?.[secretKey] : null;
+        const secretState = Array.isArray(value) ? value : [];
+        return {
+            hasSecretMapping: Boolean(secretKey),
+            secretKey: secretKey || '当前来源没有密钥映射',
+            secretSaved: secretState.length > 0,
+        };
     }
 
     function getChatCompletionEndpoint(source, settings) {
@@ -411,8 +581,10 @@ export function createApiComponents(ctx) {
     }
 
     function getApiChecks(provider, profiles) {
-        const secretKey = secretKeyByChatSource[provider.chatSource];
-        const secretState = getSecretStateForSource(provider.chatSource);
+        const mainApi = getSelectedApiMain();
+        const secretKey = mainApi === 'textgenerationwebui' ? secretKeyByTextCompletionType[provider.chatSource] : secretKeyByChatSource[provider.chatSource];
+        const textgenSecretState = secretKey ? state.secretState?.[secretKey] : null;
+        const secretState = mainApi === 'textgenerationwebui' ? (Array.isArray(textgenSecretState) ? textgenSecretState : []) : getSecretStateForSource(provider.chatSource);
 
         return [
             {

@@ -1,3 +1,36 @@
+const textCompletionModelFields = {
+    ooba: 'custom_model',
+    generic: 'generic_model',
+    openrouter: 'openrouter_model',
+    ollama: 'ollama_model',
+    vllm: 'vllm_model',
+    aphrodite: 'aphrodite_model',
+    tabby: 'tabby_model',
+    llamacpp: 'llamacpp_model',
+    mancer: 'mancer_model',
+    togetherai: 'togetherai_model',
+    infermaticai: 'infermaticai_model',
+    dreamgen: 'dreamgen_model',
+    featherless: 'featherless_model',
+};
+
+const secretKeyByTextCompletionType = {
+    ooba: 'api_key_ooba',
+    generic: 'api_key_generic',
+    openrouter: 'api_key_openrouter',
+    vllm: 'api_key_vllm',
+    aphrodite: 'api_key_aphrodite',
+    tabby: 'api_key_tabby',
+    llamacpp: 'api_key_llamacpp',
+    koboldcpp: 'api_key_koboldcpp',
+    mancer: 'api_key_mancer',
+    togetherai: 'api_key_togetherai',
+    infermaticai: 'api_key_infermaticai',
+    dreamgen: 'api_key_dreamgen',
+    featherless: 'api_key_featherless',
+    huggingface: 'api_key_huggingface',
+};
+
 export function createApiConnectionActions({
     state,
     elements,
@@ -13,6 +46,10 @@ export function createApiConnectionActions({
 }) {
     function getOaiSettings() {
         return state.settings.oai_settings || {};
+    }
+
+    function getTextCompletionSettings() {
+        return state.settings.textgenerationwebui_settings || {};
     }
 
     function getSelectedApiMain() {
@@ -152,8 +189,12 @@ export function createApiConnectionActions({
         const keyInput = elements.content.querySelector('[data-api-key]');
         const model = modelInput?.value.trim() || '';
 
+        if (mainApi === 'textgenerationwebui') {
+            await saveTextCompletionConnectionFromForm();
+            return;
+        }
         if (mainApi !== 'openai') {
-            throw new Error('现代页当前以只读方式展示文本补全连接，暂不写入该连接配置。');
+            throw new Error('现代页当前不支持保存该主 API。');
         }
         if (!modelField || !model) {
             throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
@@ -193,6 +234,68 @@ export function createApiConnectionActions({
         state.apiMainDraft = '';
         await loadData({ silent: true });
         showToast('连接配置已保存', `${source} / ${model}`);
+    }
+
+    function getTextCompletionModel(settings, source) {
+        const modelField = textCompletionModelFields[source];
+        return (modelField ? settings[modelField] : '') || settings.model || '';
+    }
+
+    function getTextCompletionEndpoint(settings, source) {
+        return settings.server_urls?.[source] || settings.api_server || state.settings.api_server_textgenerationwebui || '';
+    }
+
+    function getTextCompletionSettingsFromForm() {
+        const savedSettings = getTextCompletionSettings();
+        const source = elements.content.querySelector('[data-textgen-type]')?.value || savedSettings.type || state.settings.textgen_type || 'ooba';
+        const endpoint = elements.content.querySelector('[data-textgen-endpoint]')?.value.trim() || getTextCompletionEndpoint(savedSettings, source);
+        const model = elements.content.querySelector('[data-textgen-model]')?.value.trim() || getTextCompletionModel(savedSettings, source);
+        const preset = elements.content.querySelector('[data-textgen-preset]')?.value || savedSettings.preset || '';
+
+        if (!endpoint) {
+            throw new Error('当前文本补全表单没有可用端点。');
+        }
+
+        return {
+            source,
+            endpoint,
+            model,
+            preset,
+        };
+    }
+
+    async function saveTextCompletionConnectionFromForm() {
+        const settings = getTextCompletionSettingsFromForm();
+        const textgenSettings = state.settings.textgenerationwebui_settings || {};
+        const modelField = textCompletionModelFields[settings.source];
+        const keyInput = elements.content.querySelector('[data-textgen-api-key]');
+        const apiKey = keyInput?.value.trim() || '';
+
+        if (modelField && !settings.model) {
+            throw new Error('当前文本补全表单没有可用模型。');
+        }
+
+        state.settings.textgenerationwebui_settings = textgenSettings;
+        state.settings.main_api = 'textgenerationwebui';
+        textgenSettings.type = settings.source;
+        textgenSettings.server_urls = { ...(textgenSettings.server_urls || {}), [settings.source]: settings.endpoint };
+        textgenSettings.preset = settings.preset;
+        if (modelField) {
+            textgenSettings[modelField] = settings.model;
+        }
+
+        if (apiKey) {
+            const secretKey = secretKeyByTextCompletionType[settings.source];
+            if (!secretKey) {
+                throw new Error('当前文本补全来源没有可写入的密钥映射。');
+            }
+            await apiFetch('/api/secrets/write', { body: { key: secretKey, value: apiKey, label: `${settings.source} modern text completion` } });
+        }
+
+        await apiFetch('/api/settings/save', { body: state.settings });
+        state.apiMainDraft = '';
+        await loadData({ silent: true });
+        showToast('文本补全连接已保存', `${settings.source} / ${settings.model || settings.endpoint}`);
     }
 
     function responseContentToText(content) {
@@ -244,12 +347,60 @@ export function createApiConnectionActions({
         };
     }
 
+    async function testTextCompletionConnection() {
+        const settings = getTextCompletionSettingsFromForm();
+
+        state.apiTest = {
+            running: true,
+            status: '测试中',
+            detail: `${settings.source} / ${settings.model || settings.endpoint}`,
+        };
+        render();
+
+        try {
+            const response = await apiFetch('/api/backends/text-completions/status', {
+                body: {
+                    api_server: settings.endpoint,
+                    api_type: settings.source,
+                },
+            });
+            const result = response?.result || settings.model || '已连接';
+            state.apiTest = {
+                running: false,
+                status: '可用',
+                detail: `${settings.source}: ${result}`,
+            };
+            recordApiTestResult('可用', state.apiTest.detail, {
+                source: settings.source,
+                model: settings.model || result,
+            });
+            showToast('文本补全连接测试成功', state.apiTest.detail);
+        } catch (error) {
+            state.apiTest = {
+                running: false,
+                status: '失败',
+                detail: error.message,
+            };
+            recordApiTestResult('失败', error.message, {
+                source: settings.source,
+                model: settings.model || settings.endpoint,
+            });
+            throw error;
+        } finally {
+            render();
+        }
+    }
+
     async function testApiConnection() {
         if (state.apiTest.running) {
             return;
         }
+        if (getSelectedApiMain() === 'textgenerationwebui') {
+            await testTextCompletionConnection();
+            return;
+        }
         if (getSelectedApiMain() !== 'openai') {
-            throw new Error('现代页当前只支持测试聊天补全连接；文本补全连接暂以只读状态展示。');
+            throw new Error('现代页当前不支持测试该主 API。');
         }
 
         const settings = getChatCompletionSettingsFromForm();
