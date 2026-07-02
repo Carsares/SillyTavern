@@ -45,11 +45,39 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
 
+    test('hides irrelevant API fields for SiliconFlow', async ({ page }) => {
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await page.locator('[data-api-main]').selectOption('openai');
+        await page.locator('[data-api-source]').selectOption('siliconflow');
+
+        await expect(page.locator('[data-api-field="siliconflow-endpoint"]')).toBeVisible();
+        await expect(page.locator('[data-api-field="custom-url"]')).toBeHidden();
+    });
+
+    test('does not show refresh toast on initial load', async ({ page }) => {
+        await page.goto('/modern/?view=dashboard');
+
+        await expect(page.locator('.page-title')).toHaveText('工作台');
+        await expect(page.locator('.toast', { hasText: '刷新完成' })).toHaveCount(0);
+    });
+
     test('shows generation engine controls on chat page', async ({ page }) => {
         await page.goto('/modern/?view=chat');
 
         await expect(page.locator('.page-title')).toHaveText('聊天工作区');
         await expect(page.locator('.engine-panel')).toBeVisible();
         await expect(page.locator('[data-check-generation-engine]')).toBeVisible();
+    });
+
+    test('prioritizes the chat thread on mobile', async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+        await expect(page.locator('.chat-thread')).toBeVisible();
+        await expect(page.locator('.chat-browser')).toHaveCount(0);
+        await expect(page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' })).toBeVisible();
     });
 });

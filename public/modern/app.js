@@ -33,6 +33,15 @@ import {
 } from './core/utils.js';
 
 const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
+const chatSidebarPreference = localStorage.getItem('st-modern-chat-sidebar-open');
+
+function getInitialChatSidebarOpen() {
+    if (chatSidebarPreference !== null) {
+        return chatSidebarPreference !== 'false';
+    }
+
+    return !window.matchMedia('(max-width: 860px)').matches;
+}
 
 const state = {
     route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -218,7 +227,7 @@ const state = {
         detail: '生成引擎会在首次发送时自动加载。',
     },
     chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
-    chatSidebarOpen: localStorage.getItem('st-modern-chat-sidebar-open') !== 'false',
+    chatSidebarOpen: getInitialChatSidebarOpen(),
     inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
     apiTest: {
         running: false,
@@ -547,7 +556,7 @@ function getRouteCount(routeId) {
     }
 }
 
-async function loadData({ silent = false } = {}) {
+async function loadData({ silent = false, notify = !silent } = {}) {
     state.loading = true;
     state.errors = [];
     if (!silent) {
@@ -614,7 +623,7 @@ async function loadData({ silent = false } = {}) {
     state.loading = false;
     render();
 
-    if (!silent) {
+    if (notify) {
         const summary = state.errors.length ? '部分数据读取失败，详情见右侧检查器。' : '已同步当前用户数据。';
         showToast('刷新完成', summary);
     }
@@ -9108,4 +9117,4 @@ document.addEventListener('keydown', event => {
 });
 
 render();
-loadData();
+loadData({ notify: false });
