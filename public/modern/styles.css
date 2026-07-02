@@ -971,6 +971,15 @@ tr:last-child td {
     min-height: calc(100vh - 155px);
 }
 
+.chat-layout.chat-sidebar-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-layout.chat-sidebar-collapsed .chat-thread {
+    width: min(1040px, 100%);
+    margin: 0 auto;
+}
+
 .chat-browser {
     display: grid;
     grid-template-rows: minmax(220px, 0.9fr) minmax(260px, 1.1fr);
@@ -1004,15 +1013,28 @@ tr:last-child td {
 
 .chat-thread {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto;
+    align-content: stretch;
     min-height: 0;
+}
+
+.chat-context-strip {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
 }
 
 .message-list {
     display: grid;
     align-content: start;
     gap: 10px;
-    min-height: 360px;
+    min-height: clamp(360px, 54vh, 680px);
     overflow: auto;
     padding: 12px;
     border: 1px solid var(--border);
@@ -1021,7 +1043,7 @@ tr:last-child td {
 }
 
 .message {
-    max-width: 78%;
+    max-width: min(78%, 760px);
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -1491,6 +1513,15 @@ tr:last-child td {
     .backup-layout {
         grid-template-columns: 1fr;
         grid-template-rows: auto;
+    }
+
+    .chat-context-strip {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .chat-context-strip .secondary-button {
+        grid-column: 1 / -1;
+        justify-content: center;
     }
 
     .list-toolbar {

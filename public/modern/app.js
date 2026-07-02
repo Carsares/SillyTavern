@@ -165,6 +165,7 @@ const state = {
         status: '就绪',
         error: '',
     },
+    chatSidebarOpen: localStorage.getItem('st-modern-chat-sidebar-open') !== 'false',
     inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
     apiTest: {
         running: false,
@@ -3178,6 +3179,12 @@ function setTheme(theme) {
     localStorage.setItem('st-modern-theme', theme);
 }
 
+function toggleChatSidebar(open = !state.chatSidebarOpen) {
+    state.chatSidebarOpen = open;
+    localStorage.setItem('st-modern-chat-sidebar-open', String(open));
+    render();
+}
+
 function renderNav() {
     elements.navList.innerHTML = routes.map(route => {
         const count = getRouteCount(route.id);
@@ -3361,13 +3368,18 @@ function renderChat() {
                 <i class="fa-solid fa-clock-rotate-left"></i>
                 ${state.chatBackups.open ? '收起备份' : '聊天备份'}
             </button>
+            <button class="secondary-button" type="button" data-toggle-chat-sidebar>
+                <i class="fa-solid ${state.chatSidebarOpen ? 'fa-table-columns' : 'fa-list'}"></i>
+                ${state.chatSidebarOpen ? '收起列表' : '展开列表'}
+            </button>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 打开原版聊天
             </button>
         `)}
-        <div class="chat-layout">
-            <aside class="chat-browser">
+        <div class="chat-layout ${state.chatSidebarOpen ? '' : 'chat-sidebar-collapsed'}">
+            ${state.chatSidebarOpen ? `
+                <aside class="chat-browser">
                 <section class="panel chat-browser-panel">
                     <div class="panel-header">
                         <div>
@@ -3403,8 +3415,9 @@ function renderChat() {
 	                    </div>
 	                </section>
 	            </aside>
+            ` : ''}
 	            <section class="panel chat-thread">
-	                ${selected ? renderChatThread(selected) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
+	                ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState('fa-address-card', '没有可用角色', '当前目录没有可用角色卡。')}
 	            </section>
 	        </div>
 	        ${state.chatBackups.open ? renderChatBackupsPanel() : ''}
@@ -3433,7 +3446,7 @@ function renderChatFileRow(chat) {
     `;
 }
 
-function renderChatThread(character) {
+function renderChatThread(character, options = {}) {
     const avatar = getAvatarUrl(character);
     const name = character.name || character.data?.name || '未命名角色';
     const chats = getSelectedChatList();
@@ -3445,6 +3458,19 @@ function renderChatThread(character) {
     const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(character.avatar, state.selected.chat);
 
     return `
+        ${options.compactContext ? `
+            <div class="chat-context-strip">
+                <span class="avatar-fallback"><i class="fa-solid fa-comments"></i></span>
+                <span class="row-main">
+                    <strong>${escapeHtml(name)}</strong>
+                    <span class="row-subtitle">${escapeHtml(selectedChat?.file_name || '未选择聊天文件')} · ${formatNumber(options.chatCount || chats.length)} 个会话</span>
+                </span>
+                <button class="secondary-button" type="button" data-toggle-chat-sidebar>
+                    <i class="fa-solid fa-list"></i>
+                    选择角色/会话
+                </button>
+            </div>
+        ` : ''}
         <div class="detail-hero">
             ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : '<span class="avatar-fallback large">C</span>'}
             <div>
@@ -6073,6 +6099,11 @@ function openLegacy() {
 async function handleClick(event) {
     if (event.target.closest('[data-toggle-inspector]')) {
         toggleInspector();
+        return;
+    }
+
+    if (event.target.closest('[data-toggle-chat-sidebar]')) {
+        toggleChatSidebar();
         return;
     }
 
