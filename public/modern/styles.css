@@ -527,6 +527,55 @@ kbd {
     box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.form-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.form-grid.two-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.world-entry-form {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.world-entry-form textarea {
+    min-height: 140px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+
+.checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.checkbox-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+}
+
 .dashboard-grid {
     display: grid;
     align-items: start;

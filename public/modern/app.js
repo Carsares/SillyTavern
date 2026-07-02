@@ -42,6 +42,36 @@ const chatCompletionModelFields = {
     workers_ai: 'workers_ai_model',
     minimax: 'minimax_model',
 };
+const worldEntryDefaults = {
+    key: [],
+    keysecondary: [],
+    comment: '',
+    content: '',
+    constant: false,
+    vectorized: false,
+    selective: true,
+    selectiveLogic: 0,
+    addMemo: false,
+    order: 100,
+    position: 0,
+    disable: false,
+    ignoreBudget: false,
+    excludeRecursion: false,
+    preventRecursion: false,
+    probability: 100,
+    useProbability: true,
+    depth: 4,
+    role: 0,
+};
+const worldEntryPositions = [
+    { value: 0, label: '角色前' },
+    { value: 1, label: '角色后' },
+    { value: 2, label: '作者注释顶部' },
+    { value: 3, label: '作者注释底部' },
+    { value: 4, label: '按深度插入' },
+    { value: 5, label: '示例消息顶部' },
+    { value: 6, label: '示例消息底部' },
+];
 
 const state = {
     route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -82,10 +112,22 @@ const state = {
         key: '',
         name: '',
     },
+    worldbookCreating: {
+        active: false,
+        name: '',
+    },
+    worldbookDeleteConfirm: {
+        worldbookId: '',
+    },
     worldEntryEditing: {
         worldbookId: '',
         entryKey: '',
-        content: '',
+        mode: '',
+        form: {},
+    },
+    worldEntryDeleteConfirm: {
+        worldbookId: '',
+        entryKey: '',
     },
     engine: {
         generating: false,
@@ -874,9 +916,242 @@ async function toggleWorldEntry(worldbookId, entryKey) {
     }
 
     entry.disable = !entry.disable;
-    await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: nextDetail } });
-    state.worldDetails[worldbookId] = nextDetail;
+    syncWorldEntryOriginalData(nextDetail, Number(entryKey), entry);
+    await saveWorldbookDetail(worldbookId, nextDetail);
     showToast(entry.disable ? '条目已禁用' : '条目已启用', entry.comment || entry.name || entryKey);
+    render();
+}
+
+function getWorldEntryTitle(entry, entryKey) {
+    return entry?.comment || entry?.name || (Array.isArray(entry?.key) ? entry.key.join(', ') : '') || `条目 ${entryKey}`;
+}
+
+function getFreeWorldEntryUid(detail) {
+    if (!detail?.entries) {
+        return null;
+    }
+
+    for (let uid = 0; uid < 1_000_000; uid++) {
+        if (!(uid in detail.entries)) {
+            return uid;
+        }
+    }
+
+    return null;
+}
+
+function createWorldEntry(uid) {
+    return {
+        uid,
+        ...structuredClone(worldEntryDefaults),
+    };
+}
+
+function arrayToEntryInput(value) {
+    return Array.isArray(value) ? value.join(', ') : String(value || '');
+}
+
+function entryInputToArray(value) {
+    return String(value || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function numberInput(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+function setObjectPath(target, path, value) {
+    const parts = String(path || '').split('.').filter(Boolean);
+    if (!target || !parts.length) {
+        return;
+    }
+
+    let cursor = target;
+    for (const part of parts.slice(0, -1)) {
+        if (!cursor[part] || typeof cursor[part] !== 'object') {
+            cursor[part] = {};
+        }
+        cursor = cursor[part];
+    }
+    cursor[parts.at(-1)] = value;
+}
+
+function worldEntryToForm(entry) {
+    return {
+        key: arrayToEntryInput(entry?.key),
+        keysecondary: arrayToEntryInput(entry?.keysecondary),
+        comment: entry?.comment || '',
+        content: entry?.content || '',
+        order: String(entry?.order ?? worldEntryDefaults.order),
+        position: String(entry?.position ?? worldEntryDefaults.position),
+        depth: String(entry?.depth ?? worldEntryDefaults.depth),
+        probability: String(entry?.probability ?? worldEntryDefaults.probability),
+        constant: !!entry?.constant,
+        vectorized: !!entry?.vectorized,
+        selective: entry?.selective !== false,
+        useProbability: entry?.useProbability !== false,
+        disable: !!entry?.disable,
+        ignoreBudget: !!entry?.ignoreBudget,
+        excludeRecursion: !!entry?.excludeRecursion,
+        preventRecursion: !!entry?.preventRecursion,
+    };
+}
+
+function formToWorldEntry(form, uid, previous = {}) {
+    return {
+        ...previous,
+        uid,
+        key: entryInputToArray(form.key),
+        keysecondary: entryInputToArray(form.keysecondary),
+        comment: String(form.comment || ''),
+        content: String(form.content || ''),
+        order: numberInput(form.order, worldEntryDefaults.order),
+        position: numberInput(form.position, worldEntryDefaults.position),
+        depth: numberInput(form.depth, worldEntryDefaults.depth),
+        probability: Math.max(0, Math.min(100, numberInput(form.probability, worldEntryDefaults.probability))),
+        constant: !!form.constant,
+        vectorized: !!form.vectorized,
+        selective: !!form.selective,
+        useProbability: !!form.useProbability,
+        disable: !!form.disable,
+        ignoreBudget: !!form.ignoreBudget,
+        excludeRecursion: !!form.excludeRecursion,
+        preventRecursion: !!form.preventRecursion,
+    };
+}
+
+function syncWorldEntryOriginalData(detail, uid, entry) {
+    if (!detail?.originalData || !Array.isArray(detail.originalData.entries)) {
+        return;
+    }
+
+    const originalEntry = detail.originalData.entries.find(item => item.uid === uid);
+    if (!originalEntry) {
+        return;
+    }
+
+    const fieldMap = {
+        comment: ['comment', entry.comment],
+        content: ['content', entry.content],
+        constant: ['constant', entry.constant],
+        order: ['insertion_order', entry.order],
+        depth: ['extensions.depth', entry.depth],
+        probability: ['extensions.probability', entry.probability],
+        position: ['extensions.position', entry.position],
+        key: ['keys', entry.key],
+        keysecondary: ['secondary_keys', entry.keysecondary],
+        selective: ['selective', entry.selective],
+        vectorized: ['extensions.vectorized', entry.vectorized],
+        ignoreBudget: ['extensions.ignore_budget', entry.ignoreBudget],
+        excludeRecursion: ['extensions.exclude_recursion', entry.excludeRecursion],
+        preventRecursion: ['extensions.prevent_recursion', entry.preventRecursion],
+        enabled: ['enabled', !entry.disable],
+    };
+
+    for (const [path, value] of Object.values(fieldMap)) {
+        setObjectPath(originalEntry, path, value);
+    }
+}
+
+function deleteWorldEntryOriginalData(detail, entryKey) {
+    if (!detail?.originalData || !Array.isArray(detail.originalData.entries)) {
+        return;
+    }
+
+    const originalIndex = detail.originalData.entries.findIndex(item => item.uid == entryKey);
+    if (originalIndex >= 0) {
+        detail.originalData.entries.splice(originalIndex, 1);
+    }
+}
+
+async function saveWorldbookDetail(worldbookId, detail) {
+    await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: detail } });
+    state.worldDetails[worldbookId] = detail;
+}
+
+function beginWorldbookCreate() {
+    state.worldbookCreating = { active: true, name: '' };
+    render();
+}
+
+function cancelWorldbookCreate() {
+    state.worldbookCreating = { active: false, name: '' };
+    render();
+}
+
+async function saveWorldbookCreate() {
+    const name = state.worldbookCreating.name.trim();
+    if (!name) {
+        throw new Error('世界书名称不能为空。');
+    }
+    const exists = state.worldbooks.some(worldbook => worldbook.file_id === name) || (state.settingsBundle.world_names || []).includes(name);
+    if (exists) {
+        throw new Error('同名世界书已存在。');
+    }
+
+    const detail = { name, entries: {}, extensions: {} };
+    await apiFetch('/api/worldinfo/edit', { body: { name, data: detail } });
+    delete state.worldDetails[name];
+    state.worldbookCreating = { active: false, name: '' };
+    state.selected.worldbook = name;
+    await loadData({ silent: true });
+    await loadWorldDetail(name);
+    showToast('世界书已创建', `${name}.json`);
+    render();
+}
+
+function beginWorldbookDelete(worldbookId) {
+    state.worldbookDeleteConfirm = { worldbookId };
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+    render();
+}
+
+function cancelWorldbookDelete() {
+    state.worldbookDeleteConfirm = { worldbookId: '' };
+    render();
+}
+
+async function confirmWorldbookDelete() {
+    const worldbookId = state.worldbookDeleteConfirm.worldbookId;
+    if (!worldbookId || state.selected.worldbook !== worldbookId) {
+        throw new Error('删除目标已变化，请重新选择世界书。');
+    }
+
+    await apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } });
+    delete state.worldDetails[worldbookId];
+    state.worldbookDeleteConfirm = { worldbookId: '' };
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+    const globalWorlds = getGlobalWorldNames();
+    if (globalWorlds.includes(worldbookId)) {
+        state.settings.world_info_settings.world_info.globalSelect = globalWorlds.filter(name => name !== worldbookId);
+        await apiFetch('/api/settings/save', { body: state.settings });
+    }
+    state.selected.worldbook = '';
+    await loadData({ silent: true });
+    showToast('世界书已删除', `${worldbookId}.json`);
+}
+
+async function beginWorldEntryCreate(worldbookId) {
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    detail.entries = detail.entries || {};
+    const uid = getFreeWorldEntryUid(detail);
+    if (!Number.isInteger(uid)) {
+        showToast('新增失败', '无法分配世界书条目 UID。');
+        return;
+    }
+
+    state.worldEntryEditing = {
+        worldbookId,
+        entryKey: String(uid),
+        mode: 'create',
+        form: worldEntryToForm(createWorldEntry(uid)),
+    };
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
     render();
 }
 
@@ -891,36 +1166,105 @@ async function beginWorldEntryEdit(worldbookId, entryKey) {
     state.worldEntryEditing = {
         worldbookId,
         entryKey,
-        content: entry.content || '',
+        mode: 'edit',
+        form: worldEntryToForm(entry),
     };
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
     render();
 }
 
 function cancelWorldEntryEdit() {
-    state.worldEntryEditing = { worldbookId: '', entryKey: '', content: '' };
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
     render();
 }
 
 async function saveWorldEntryEdit() {
     const edit = state.worldEntryEditing;
-    const content = edit.content.trim();
-    if (!edit.worldbookId || edit.entryKey === '' || !content) {
-        throw new Error('世界书条目内容不能为空。');
+    const form = edit.form || {};
+    if (!edit.worldbookId || edit.entryKey === '') {
+        throw new Error('世界书条目目标无效。');
     }
 
     await loadWorldDetail(edit.worldbookId);
     const detail = state.worldDetails[edit.worldbookId];
     const nextDetail = structuredClone(detail);
+    const uid = Number(edit.entryKey);
     const entry = nextDetail?.entries?.[edit.entryKey];
+    if (edit.mode !== 'create' && !entry) {
+        throw new Error('世界书条目不存在，请刷新后重试。');
+    }
+
+    nextDetail.entries = nextDetail.entries || {};
+    nextDetail.entries[edit.entryKey] = formToWorldEntry(form, uid, entry || createWorldEntry(uid));
+    syncWorldEntryOriginalData(nextDetail, uid, nextDetail.entries[edit.entryKey]);
+    await saveWorldbookDetail(edit.worldbookId, nextDetail);
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+    showToast(edit.mode === 'create' ? '条目已创建' : '条目已保存', getWorldEntryTitle(nextDetail.entries[edit.entryKey], edit.entryKey));
+    render();
+}
+
+async function duplicateWorldEntry(worldbookId, entryKey) {
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    const source = detail?.entries?.[entryKey];
+    const uid = getFreeWorldEntryUid(detail);
+    if (!source || !Number.isInteger(uid)) {
+        throw new Error('无法复制这个世界书条目。');
+    }
+
+    const nextDetail = structuredClone(detail);
+    const copiedEntry = structuredClone(source);
+    copiedEntry.uid = uid;
+    nextDetail.entries[String(uid)] = copiedEntry;
+    await saveWorldbookDetail(worldbookId, nextDetail);
+    showToast('条目已复制', getWorldEntryTitle(copiedEntry, uid));
+    render();
+}
+
+function beginWorldEntryDelete(worldbookId, entryKey) {
+    state.worldEntryDeleteConfirm = { worldbookId, entryKey };
+    state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+    render();
+}
+
+function cancelWorldEntryDelete() {
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+    render();
+}
+
+function updateWorldEntryFormField(element) {
+    if (!state.worldEntryEditing.worldbookId) {
+        return;
+    }
+
+    const field = element.dataset.worldEntryField;
+    if (!field) {
+        return;
+    }
+
+    state.worldEntryEditing.form = state.worldEntryEditing.form || {};
+    state.worldEntryEditing.form[field] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+}
+
+async function confirmWorldEntryDelete() {
+    const { worldbookId, entryKey } = state.worldEntryDeleteConfirm;
+    if (!worldbookId || entryKey === '') {
+        throw new Error('删除目标已变化，请重新选择条目。');
+    }
+
+    await loadWorldDetail(worldbookId);
+    const detail = state.worldDetails[worldbookId];
+    const entry = detail?.entries?.[entryKey];
     if (!entry) {
         throw new Error('世界书条目不存在，请刷新后重试。');
     }
 
-    entry.content = content;
-    await apiFetch('/api/worldinfo/edit', { body: { name: edit.worldbookId, data: nextDetail } });
-    state.worldDetails[edit.worldbookId] = nextDetail;
-    state.worldEntryEditing = { worldbookId: '', entryKey: '', content: '' };
-    showToast('条目已保存', entry.comment || entry.name || edit.entryKey);
+    const nextDetail = structuredClone(detail);
+    delete nextDetail.entries[entryKey];
+    deleteWorldEntryOriginalData(nextDetail, entryKey);
+    await saveWorldbookDetail(worldbookId, nextDetail);
+    state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+    showToast('条目已删除', getWorldEntryTitle(entry, entryKey));
     render();
 }
 
@@ -1973,6 +2317,10 @@ function renderWorldbooks() {
 
     return `
         ${pageHead('世界书', '知识库文件、条目和启用状态。', `
+            <button class="primary-button" type="button" data-create-worldbook>
+                <i class="fa-solid fa-plus"></i>
+                新建世界书
+            </button>
             <button class="secondary-button" type="button" data-open-legacy>
                 <i class="fa-solid fa-pen-to-square"></i>
                 打开编辑器
@@ -1986,6 +2334,7 @@ function renderWorldbooks() {
                         <p class="panel-subtitle">${formatNumber(worldbooks.length)} 个匹配项</p>
                     </div>
                 </div>
+                ${state.worldbookCreating.active ? renderWorldbookCreatePanel() : ''}
                 <div class="resource-list">
                     ${worldbooks.map(worldbook => renderWorldbookRow(worldbook)).join('') || renderInlineEmpty('暂无世界书')}
                 </div>
@@ -1993,6 +2342,27 @@ function renderWorldbooks() {
             <section class="panel">
                 ${selected ? renderWorldbookDetail(selected) : renderEmptyState('fa-book-open', '暂无世界书', '当前用户目录里没有世界书。')}
             </section>
+        </div>
+    `;
+}
+
+function renderWorldbookCreatePanel() {
+    return `
+        <div class="settings-form inline-form">
+            <label class="field-label">
+                <span>世界书名称</span>
+                <input class="text-input" type="text" data-worldbook-create-name value="${escapeHtml(state.worldbookCreating.name)}" placeholder="例如：角色设定集">
+            </label>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-worldbook-create>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" data-save-worldbook-create>
+                    <i class="fa-solid fa-check"></i>
+                    创建
+                </button>
+            </div>
         </div>
     `;
 }
@@ -2017,6 +2387,8 @@ function renderWorldbookDetail(worldbook) {
     const entries = detail?.entries ? Object.entries(detail.entries) : [];
     const enabledEntries = entries.filter(([, entry]) => !entry.disable);
     const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
+    const isDeleting = state.worldbookDeleteConfirm.worldbookId === worldbook.file_id;
+    const isCreatingEntry = state.worldEntryEditing.worldbookId === worldbook.file_id && state.worldEntryEditing.mode === 'create';
 
     return `
         <div class="panel-header">
@@ -2033,14 +2405,26 @@ function renderWorldbookDetail(worldbook) {
                     <i class="fa-solid fa-database"></i>
                     读取条目
                 </button>
+                ${detail ? `
+                    <button class="secondary-button" type="button" data-create-world-entry="${escapeHtml(worldbook.file_id)}">
+                        <i class="fa-solid fa-plus"></i>
+                        新条目
+                    </button>
+                ` : ''}
+                <button class="secondary-button danger-action" type="button" data-delete-worldbook="${escapeHtml(worldbook.file_id)}">
+                    <i class="fa-solid fa-trash"></i>
+                    删除
+                </button>
             </div>
         </div>
+        ${isDeleting ? renderWorldbookDeletePanel(worldbook) : ''}
         ${detail ? `
             <div class="metrics-grid compact-metrics">
                 ${metricCard('条目', formatNumber(entries.length), '全部 entries', 'fa-list')}
                 ${metricCard('启用', formatNumber(enabledEntries.length), '未禁用条目', 'fa-toggle-on')}
                 ${metricCard('扩展字段', formatNumber(Object.keys(detail.extensions || {}).length), 'metadata', 'fa-code-branch')}
             </div>
+            ${isCreatingEntry ? renderWorldEntryCreatePanel(state.worldEntryEditing.entryKey) : ''}
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -2055,8 +2439,30 @@ function renderWorldbookDetail(worldbook) {
     `;
 }
 
+function renderWorldbookDeletePanel(worldbook) {
+    return `
+        <div class="settings-form inline-form danger-panel">
+            <div>
+                <strong>删除世界书</strong>
+                <p class="panel-subtitle">将删除 ${escapeHtml(worldbook.file_id)}.json，并从全局启用列表移除。角色卡里已有的关联字段不会自动改写。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-worldbook-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-worldbook-delete>
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 function renderWorldEntryRow(worldbook, entryKey, entry) {
     const isEditing = state.worldEntryEditing.worldbookId === worldbook.file_id && state.worldEntryEditing.entryKey === entryKey;
+    const isDeleting = state.worldEntryDeleteConfirm.worldbookId === worldbook.file_id && state.worldEntryDeleteConfirm.entryKey === entryKey;
 
     return `
         <tr>
@@ -2073,28 +2479,139 @@ function renderWorldEntryRow(worldbook, entryKey, entry) {
                         <i class="fa-solid ${entry.disable ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
                         ${entry.disable ? '启用' : '禁用'}
                     </button>
+                    <button class="secondary-button" type="button" data-copy-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                        <i class="fa-solid fa-copy"></i>
+                        复制
+                    </button>
+                    <button class="secondary-button danger-action" type="button" data-delete-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                        <i class="fa-solid fa-trash"></i>
+                        删除
+                    </button>
                 </div>
             </td>
         </tr>
-        ${isEditing ? `
-            <tr>
-                <td colspan="4">
-                    <div class="message-edit">
-                        <textarea data-edit-world-entry-input>${escapeHtml(state.worldEntryEditing.content)}</textarea>
-                        <div class="message-edit-actions">
-                            <button class="secondary-button" type="button" data-cancel-world-entry-edit>
-                                <i class="fa-solid fa-xmark"></i>
-                                取消
-                            </button>
-                            <button class="primary-button" type="button" data-save-world-entry-edit>
-                                <i class="fa-solid fa-check"></i>
-                                保存
-                            </button>
-                        </div>
+        ${isEditing ? renderWorldEntryForm(entryKey, entry) : ''}
+        ${isDeleting ? renderWorldEntryDeleteRow(entryKey, entry) : ''}
+    `;
+}
+
+function renderWorldEntryDeleteRow(entryKey, entry) {
+    return `
+        <tr>
+            <td colspan="4">
+                <div class="settings-form inline-form danger-panel">
+                    <div>
+                        <strong>删除条目</strong>
+                        <p class="panel-subtitle">将删除 ${escapeHtml(getWorldEntryTitle(entry, entryKey))}，操作不可撤销。</p>
                     </div>
-                </td>
-            </tr>
-        ` : ''}
+                    <div class="message-edit-actions">
+                        <button class="secondary-button" type="button" data-cancel-world-entry-delete>
+                            <i class="fa-solid fa-xmark"></i>
+                            取消
+                        </button>
+                        <button class="secondary-button danger-action" type="button" data-confirm-world-entry-delete>
+                            <i class="fa-solid fa-trash"></i>
+                            确认删除
+                        </button>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+function renderWorldEntryForm(entryKey, entry) {
+    const edit = state.worldEntryEditing;
+    const form = edit.form || worldEntryToForm(entry || createWorldEntry(Number(entryKey)));
+    const isCreate = edit.mode === 'create';
+    const formContent = renderWorldEntryFormContent(form, isCreate);
+
+    return `
+        <tr>
+            <td colspan="4">${formContent}</td>
+        </tr>
+    `;
+}
+
+function renderWorldEntryCreatePanel(entryKey) {
+    const form = state.worldEntryEditing.form || worldEntryToForm(createWorldEntry(Number(entryKey)));
+    return `
+        <div class="settings-form inline-form">
+            <strong>新建条目</strong>
+            ${renderWorldEntryFormContent(form, true)}
+        </div>
+    `;
+}
+
+function renderWorldEntryFormContent(form, isCreate) {
+    return `
+        <div class="world-entry-form">
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>主关键词</span>
+                    <input class="text-input" type="text" data-world-entry-field="key" value="${escapeHtml(form.key)}" placeholder="用逗号分隔">
+                </label>
+                <label class="field-label">
+                    <span>次级关键词</span>
+                    <input class="text-input" type="text" data-world-entry-field="keysecondary" value="${escapeHtml(form.keysecondary)}" placeholder="用逗号分隔">
+                </label>
+                <label class="field-label">
+                    <span>注释</span>
+                    <input class="text-input" type="text" data-world-entry-field="comment" value="${escapeHtml(form.comment)}">
+                </label>
+                <label class="field-label">
+                    <span>插入位置</span>
+                    <select class="select-input" data-world-entry-field="position">
+                        ${worldEntryPositions.map(position => `<option value="${position.value}" ${Number(form.position) === position.value ? 'selected' : ''}>${escapeHtml(position.label)}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="field-label">
+                    <span>顺序</span>
+                    <input class="text-input" type="number" data-world-entry-field="order" value="${escapeHtml(form.order)}">
+                </label>
+                <label class="field-label">
+                    <span>深度</span>
+                    <input class="text-input" type="number" data-world-entry-field="depth" value="${escapeHtml(form.depth)}">
+                </label>
+                <label class="field-label">
+                    <span>概率</span>
+                    <input class="text-input" type="number" min="0" max="100" data-world-entry-field="probability" value="${escapeHtml(form.probability)}">
+                </label>
+            </div>
+            <label class="field-label">
+                <span>内容</span>
+                <textarea data-world-entry-field="content">${escapeHtml(form.content)}</textarea>
+            </label>
+            <div class="checkbox-grid">
+                ${renderWorldEntryCheckbox('constant', '常驻', form.constant)}
+                ${renderWorldEntryCheckbox('vectorized', '向量化', form.vectorized)}
+                ${renderWorldEntryCheckbox('selective', '使用关键词触发', form.selective)}
+                ${renderWorldEntryCheckbox('useProbability', '使用概率', form.useProbability)}
+                ${renderWorldEntryCheckbox('disable', '禁用', form.disable)}
+                ${renderWorldEntryCheckbox('ignoreBudget', '忽略预算', form.ignoreBudget)}
+                ${renderWorldEntryCheckbox('excludeRecursion', '不递归扫描', form.excludeRecursion)}
+                ${renderWorldEntryCheckbox('preventRecursion', '阻止递归', form.preventRecursion)}
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-world-entry-edit>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="primary-button" type="button" data-save-world-entry-edit>
+                    <i class="fa-solid fa-check"></i>
+                    ${isCreate ? '创建条目' : '保存条目'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderWorldEntryCheckbox(field, label, checked) {
+    return `
+        <label class="checkbox-card">
+            <input type="checkbox" data-world-entry-field="${escapeHtml(field)}" ${checked ? 'checked' : ''}>
+            <span>${escapeHtml(label)}</span>
+        </label>
     `;
 }
 
@@ -3013,6 +3530,27 @@ async function handleClick(event) {
         return;
     }
 
+    if (event.target.closest('[data-create-worldbook]')) {
+        beginWorldbookCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-worldbook-create]')) {
+        cancelWorldbookCreate();
+        return;
+    }
+
+    if (event.target.closest('[data-save-worldbook-create]')) {
+        try {
+            await saveWorldbookCreate();
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-create', message: error.message });
+            showToast('世界书创建失败', error.message);
+            render();
+        }
+        return;
+    }
+
     const loadWorldbookButton = event.target.closest('[data-load-worldbook]');
     if (loadWorldbookButton) {
         await loadWorldDetail(loadWorldbookButton.dataset.loadWorldbook);
@@ -3032,6 +3570,34 @@ async function handleClick(event) {
         return;
     }
 
+    const deleteWorldbookButton = event.target.closest('[data-delete-worldbook]');
+    if (deleteWorldbookButton) {
+        beginWorldbookDelete(deleteWorldbookButton.dataset.deleteWorldbook);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-worldbook-delete]')) {
+        cancelWorldbookDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-worldbook-delete]')) {
+        try {
+            await confirmWorldbookDelete();
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-delete', message: error.message });
+            showToast('世界书删除失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const createWorldEntryButton = event.target.closest('[data-create-world-entry]');
+    if (createWorldEntryButton) {
+        await beginWorldEntryCreate(createWorldEntryButton.dataset.createWorldEntry);
+        return;
+    }
+
     const toggleWorldEntryButton = event.target.closest('[data-toggle-world-entry]');
     if (toggleWorldEntryButton) {
         try {
@@ -3039,6 +3605,40 @@ async function handleClick(event) {
         } catch (error) {
             state.errors.push({ key: 'worldbook-entry', message: error.message });
             showToast('条目切换失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const copyWorldEntryButton = event.target.closest('[data-copy-world-entry]');
+    if (copyWorldEntryButton) {
+        try {
+            await duplicateWorldEntry(copyWorldEntryButton.dataset.copyWorldEntry, copyWorldEntryButton.dataset.worldEntryKey);
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry-copy', message: error.message });
+            showToast('条目复制失败', error.message);
+            render();
+        }
+        return;
+    }
+
+    const deleteWorldEntryButton = event.target.closest('[data-delete-world-entry]');
+    if (deleteWorldEntryButton) {
+        beginWorldEntryDelete(deleteWorldEntryButton.dataset.deleteWorldEntry, deleteWorldEntryButton.dataset.worldEntryKey);
+        return;
+    }
+
+    if (event.target.closest('[data-cancel-world-entry-delete]')) {
+        cancelWorldEntryDelete();
+        return;
+    }
+
+    if (event.target.closest('[data-confirm-world-entry-delete]')) {
+        try {
+            await confirmWorldEntryDelete();
+        } catch (error) {
+            state.errors.push({ key: 'worldbook-entry-delete', message: error.message });
+            showToast('条目删除失败', error.message);
             render();
         }
         return;
@@ -3102,11 +3702,19 @@ elements.content.addEventListener('input', event => {
     if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
         state.chatEditing.text = event.target.value;
     }
-    if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-world-entry-input]')) {
-        state.worldEntryEditing.content = event.target.value;
-    }
     if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-rename-input]')) {
         state.chatRenaming.name = event.target.value;
+    }
+    if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-create-name]')) {
+        state.worldbookCreating.name = event.target.value;
+    }
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-world-entry-field]')) {
+        updateWorldEntryFormField(event.target);
+    }
+});
+elements.content.addEventListener('change', event => {
+    if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) && event.target.matches('[data-world-entry-field]')) {
+        updateWorldEntryFormField(event.target);
     }
 });
 elements.paletteSearch.addEventListener('input', event => {
