@@ -64,17 +64,6 @@
     gap: 14px;
 }
 
-.connection-summary-list {
-    gap: 10px;
-}
-
-.connection-summary-list .kv-row {
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
-}
-
 .kv-key {
     color: var(--text-muted);
 }
