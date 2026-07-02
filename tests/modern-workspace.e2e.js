@@ -237,6 +237,31 @@ test.describe('Modern workspace', () => {
     });
 
     test('prioritizes the chat thread on mobile', async ({ page }) => {
+        await page.route('**/api/characters/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ avatar: 'mock-mobile.png', name: 'Mobile Character', data: { name: 'Mobile Character' } }]),
+        }));
+        await page.route('**/api/groups/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+        }));
+        await page.route('**/api/characters/chats', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ file_id: 'mobile-chat', file_name: 'mobile-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: Date.now() }]),
+        }));
+        await page.route('**/api/chats/get', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                { chat_metadata: {}, user_name: 'User', character_name: 'Mobile Character' },
+                { name: 'User', is_user: true, mes: 'mobile hello', send_date: Date.now() - 1000 },
+                { name: 'Mobile Character', is_user: false, mes: 'mobile reply', send_date: Date.now() },
+            ]),
+        }));
+
         await page.setViewportSize({ width: 390, height: 844 });
         await page.goto('/modern/?view=chat');
 
@@ -248,6 +273,18 @@ test.describe('Modern workspace', () => {
         await page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' }).click();
         await expect(page.locator('.chat-browser')).toBeVisible();
         await expect(page.locator('.chat-sidebar-scrim')).toBeVisible();
+
+        await page.locator('[data-select-character="mock-mobile.png"]').click();
+        await expect(page.locator('.chat-browser')).toHaveCount(0);
+        await expect(page.locator('.chat-sidebar-scrim')).toHaveCount(0);
+        await expect(page.locator('.chat-thread')).toBeVisible();
+
+        await page.locator('[data-toggle-chat-sidebar]', { hasText: '展开列表' }).click();
+        await expect(page.locator('[data-select-chat="mobile-chat"]')).toBeVisible();
+        await page.locator('[data-select-chat="mobile-chat"]').click();
+        await expect(page.locator('.chat-browser')).toHaveCount(0);
+        await expect(page.locator('.chat-sidebar-scrim')).toHaveCount(0);
+        await expect(page.locator('.message', { hasText: 'mobile reply' })).toBeVisible();
     });
 
     test('loads more backgrounds instead of hard truncating asset grid', async ({ page }) => {

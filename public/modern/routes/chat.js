@@ -8,6 +8,7 @@ export function createChatRoute(ctx) {
         getSelectedChatEntity,
         clearChatSearch,
         prepareChatForSelectedContext,
+        closeChatSidebarForMobileSelection,
         loadChatMessages,
         searchSelectedChats,
         increaseCurrentMessageLimit,
@@ -66,6 +67,7 @@ export function createChatRoute(ctx) {
         if (chatButton) {
             state.selected.chat = chatButton.dataset.selectChat;
             await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
+            closeChatSidebarForMobileSelection();
             render();
             return true;
         }

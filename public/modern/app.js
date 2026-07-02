@@ -353,6 +353,7 @@ const {
     refreshSelectedChatList,
     createModernChatFile,
     toggleChatSidebar,
+    closeChatSidebarForMobileSelection,
 } = createChatContextActions({
     state,
     apiFetch,
@@ -653,6 +654,7 @@ function createRouteContext() {
         setCurrentDraft,
         increaseCurrentMessageLimit,
         searchSelectedChats,
+        loadChatMessages,
         toggleChatBackups,
         loadChatBackups,
         exportModernChat,
@@ -683,6 +685,7 @@ function createRouteContext() {
         cancelModernChatDelete,
         confirmModernChatDelete,
         importModernChatFiles,
+        closeChatSidebarForMobileSelection,
         getPresetCount,
         getExtensionFolderName,
         canManageExtension,
@@ -1092,6 +1095,7 @@ async function handleClick(event) {
         clearChatSearch();
         if (state.route === 'chat') {
             await prepareChatForSelectedContext();
+            closeChatSidebarForMobileSelection();
         }
         render();
         return;
@@ -1106,6 +1110,7 @@ async function handleClick(event) {
         clearChatSearch();
         if (state.route === 'chat') {
             await prepareChatForSelectedContext();
+            closeChatSidebarForMobileSelection();
         }
         render();
         return;

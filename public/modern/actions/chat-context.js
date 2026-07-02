@@ -437,6 +437,21 @@ export function createChatContextActions({
         render();
     }
 
+    function isChatSidebarOverlayVisible() {
+        const scrim = document.querySelector('.chat-sidebar-scrim');
+        return !!scrim && window.getComputedStyle(scrim).display !== 'none';
+    }
+
+    function closeChatSidebarForMobileSelection() {
+        if (!state.chatSidebarOpen || !isChatSidebarOverlayVisible()) {
+            return false;
+        }
+
+        state.chatSidebarOpen = false;
+        localStorage.setItem('st-modern-chat-sidebar-open', 'false');
+        return true;
+    }
+
     return {
         getSelectedCharacter,
         getSelectedGroup,
@@ -477,5 +492,6 @@ export function createChatContextActions({
         refreshSelectedChatList,
         createModernChatFile,
         toggleChatSidebar,
+        closeChatSidebarForMobileSelection,
     };
 }
