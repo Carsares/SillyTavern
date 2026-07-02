@@ -5697,7 +5697,8 @@ window.addEventListener('message', async (event) => {
             return;
         }
         if (action === 'status') {
-            const group = selected_group ? groups.find(x => x.id === selected_group) : null;
+            const context = payload?.groupId || payload?.avatar ? await useModernBridgeChatContext(payload) : {};
+            const group = context.group || (selected_group ? groups.find(x => x.id === selected_group) : null);
             postModernBridgeResult(event, id, {
                 avatar: selected_group ? '' : (characters[this_chid]?.avatar || ''),
                 groupId: group?.id || '',

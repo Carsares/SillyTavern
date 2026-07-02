@@ -213,6 +213,9 @@ const state = {
         generating: false,
         status: '就绪',
         error: '',
+        checking: false,
+        ready: false,
+        detail: '生成引擎会在首次发送时自动加载。',
     },
     chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
     chatSidebarOpen: localStorage.getItem('st-modern-chat-sidebar-open') !== 'false',
@@ -3290,6 +3293,53 @@ function createChatCompletionRequestBody(settings, messages) {
     };
 }
 
+async function checkLegacyGenerationEngine({ quiet = false } = {}) {
+    if (state.engine.checking || state.engine.generating) {
+        return;
+    }
+
+    const entity = getSelectedChatEntity();
+    if (!entity) {
+        state.engine.status = '未选择对象';
+        state.engine.detail = '请先选择角色或群聊。';
+        state.engine.error = '';
+        render();
+        return;
+    }
+    state.engine.checking = true;
+    state.engine.ready = false;
+    state.engine.status = '检查生成引擎';
+    state.engine.error = '';
+    state.engine.detail = '正在加载原版生成上下文。';
+    render();
+
+    try {
+        const result = await callLegacyBridge('status', {
+            avatar: isGroupChatMode() ? null : entity?.avatar,
+            groupId: isGroupChatMode() ? entity?.id : null,
+            chat: state.selected.chat || '',
+        }, 60000);
+        const messageCount = Number(result?.messageCount || 0);
+        state.engine.ready = true;
+        state.engine.status = '引擎就绪';
+        state.engine.detail = `${result?.chat || state.selected.chat || '未选择聊天'} · ${formatNumber(messageCount)} 条上下文消息`;
+        if (!quiet) {
+            showToast('生成引擎已就绪', state.engine.detail);
+        }
+    } catch (error) {
+        state.engine.ready = false;
+        state.engine.error = error.message;
+        state.engine.status = '引擎不可用';
+        state.engine.detail = error.message;
+        if (!quiet) {
+            throw error;
+        }
+    } finally {
+        state.engine.checking = false;
+        render();
+    }
+}
+
 async function refreshSelectedChatList(entity) {
     const contextKey = getChatContextKey(entity);
     delete state.chatLists[contextKey];
@@ -3346,6 +3396,7 @@ async function runLegacyChatGeneration(type, { entity, chatId, message = '', toa
     state.engine.generating = true;
     state.engine.status = '原版生成中';
     state.engine.error = '';
+    state.engine.detail = `${getChatEntityName(entity)} · ${chatId}`;
     render();
 
     try {
@@ -3362,11 +3413,14 @@ async function runLegacyChatGeneration(type, { entity, chatId, message = '', toa
         delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
         await refreshSelectedChatList(entity);
         await loadChatMessages(entity, nextChatId, { force: true });
+        state.engine.ready = true;
         state.engine.status = '就绪';
+        state.engine.detail = `${nextChatId} · 已同步最新消息`;
         showToast(toastTitle, toastMessage);
     } catch (error) {
         state.engine.error = error.message;
         state.engine.status = error.message.includes('停止') ? '已停止' : '生成失败';
+        state.engine.detail = error.message;
         throw error;
     } finally {
         state.engine.generating = false;
@@ -3394,6 +3448,7 @@ async function swipeModernMessage(messageIndex, direction) {
     state.engine.generating = true;
     state.engine.status = '候选切换中';
     state.engine.error = '';
+    state.engine.detail = `${state.selected.chat} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`;
     render();
 
     try {
@@ -3410,11 +3465,14 @@ async function swipeModernMessage(messageIndex, direction) {
         delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
         await refreshSelectedChatList(entity);
         await loadChatMessages(entity, nextChatId, { force: true });
+        state.engine.ready = true;
         state.engine.status = '就绪';
+        state.engine.detail = `${nextChatId} · 当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
         showToast('候选已切换', `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`);
     } catch (error) {
         state.engine.error = error.message;
         state.engine.status = '候选切换失败';
+        state.engine.detail = error.message;
         throw error;
     } finally {
         state.engine.generating = false;
@@ -3823,6 +3881,7 @@ async function stopModernGeneration() {
     }
     state.engine.generating = false;
     state.engine.status = '已停止';
+    state.engine.detail = '已向原版生成引擎发送停止请求。';
     render();
 }
 
@@ -4238,6 +4297,7 @@ function renderChatThread(entity, options = {}) {
                 </div>
             ` : ''}
         </div>
+        ${renderGenerationEnginePanel(entity, selectedChat)}
         ${isRenaming ? renderChatRenamePanel() : ''}
         ${isDeleting ? renderChatDeletePanel() : ''}
         ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
@@ -4263,6 +4323,29 @@ function renderChatThread(entity, options = {}) {
                     停止
                 </button>
             ` : ''}
+        </div>
+    `;
+}
+
+function renderGenerationEnginePanel(entity, selectedChat) {
+    const engine = state.engine;
+    const isBusy = engine.generating || engine.checking;
+    const statusClass = engine.error ? 'danger' : (engine.ready ? 'success' : '');
+
+    return `
+        <div class="settings-form inline-form engine-panel">
+            <div>
+                <strong>生成引擎</strong>
+                <p class="panel-subtitle">${escapeHtml(engine.detail || '生成引擎会在首次发送时自动加载。')}</p>
+                ${engine.error ? `<p class="danger">${escapeHtml(engine.error)}</p>` : ''}
+            </div>
+            <div class="message-edit-actions">
+                <span class="badge ${statusClass}">${escapeHtml(engine.status)}</span>
+                <button class="secondary-button" type="button" data-check-generation-engine ${isBusy || !entity ? 'disabled' : ''}>
+                    <i class="fa-solid ${engine.checking ? 'fa-circle-notch fa-spin' : 'fa-plug-circle-check'}"></i>
+                    ${engine.checking ? '检查中' : (selectedChat ? '检查引擎' : '预热引擎')}
+                </button>
+            </div>
         </div>
     `;
 }
@@ -7678,6 +7761,17 @@ async function handleClick(event) {
 
     if (event.target.closest('[data-stop-generation]')) {
         await stopModernGeneration();
+        return;
+    }
+
+    if (event.target.closest('[data-check-generation-engine]')) {
+        try {
+            await checkLegacyGenerationEngine();
+        } catch (error) {
+            state.errors.push({ key: 'legacy-engine-check', message: error.message });
+            showToast('生成引擎检查失败', error.message);
+            render();
+        }
         return;
     }
 

@@ -44,4 +44,12 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.form-section-title', { hasText: '文本补全档案' })).toBeVisible();
         await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
+
+    test('shows generation engine controls on chat page', async ({ page }) => {
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+        await expect(page.locator('.engine-panel')).toBeVisible();
+        await expect(page.locator('[data-check-generation-engine]')).toBeVisible();
+    });
 });
