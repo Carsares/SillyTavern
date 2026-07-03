@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createServer } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { gotoModern } from './modern-test-utils.js';
@@ -24,6 +26,44 @@ function apiUrl(path) {
 
 function uniqueName(label) {
     return `ModernContract-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function execGit(cwd, args) {
+    execFileSync('git', args, { cwd, stdio: 'pipe' });
+}
+
+function readGit(cwd, args) {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function createGitExtensionFixture(extensionName) {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'st-modern-extension-'));
+    const sourcePath = path.join(fixtureRoot, 'source');
+    const extensionPath = path.join(localExtensionsDir, extensionName);
+
+    fs.rmSync(extensionPath, { recursive: true, force: true });
+    fs.mkdirSync(sourcePath, { recursive: true });
+    execGit(sourcePath, ['init', '-b', 'main']);
+    execGit(sourcePath, ['config', 'user.name', 'Modern Contract Test']);
+    execGit(sourcePath, ['config', 'user.email', 'modern-contract@example.invalid']);
+    fs.writeFileSync(path.join(sourcePath, 'manifest.json'), JSON.stringify({ display_name: extensionName, version: '1.0.0' }, null, 4));
+    fs.writeFileSync(path.join(sourcePath, 'README.md'), 'main branch\n');
+    execGit(sourcePath, ['add', '.']);
+    execGit(sourcePath, ['commit', '-m', 'initial extension']);
+
+    execGit(sourcePath, ['checkout', '-b', 'next']);
+    fs.writeFileSync(path.join(sourcePath, 'branch.txt'), 'next branch\n');
+    execGit(sourcePath, ['add', '.']);
+    execGit(sourcePath, ['commit', '-m', 'add next branch marker']);
+
+    execGit(sourcePath, ['checkout', 'main']);
+    execGit(fixtureRoot, ['clone', sourcePath, extensionPath]);
+
+    fs.writeFileSync(path.join(sourcePath, 'update.txt'), 'updated on main\n');
+    execGit(sourcePath, ['add', '.']);
+    execGit(sourcePath, ['commit', '-m', 'add main update marker']);
+
+    return { fixtureRoot, extensionPath };
 }
 
 function getPersonaAvatarByName(settings, name) {
@@ -979,6 +1019,61 @@ test.describe('Modern real backend integration', () => {
             expect(fs.existsSync(extensionPath)).toBe(false);
         } finally {
             fs.rmSync(extensionPath, { recursive: true, force: true });
+        }
+    });
+
+    test('updates, reads branches, switches, and deletes a local git extension from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const extensionName = uniqueName('GitExtension').toLowerCase();
+        const { fixtureRoot, extensionPath } = createGitExtensionFixture(extensionName);
+
+        try {
+            await gotoModern(page, 'extensions', '扩展');
+            await page.locator('[data-extension-view="local"]').click();
+            const card = page.locator(`[data-extension-card="local:${extensionName}"]`);
+            await expect(card).toContainText(`third-party/${extensionName}`);
+
+            await page.locator(`[data-extension-details="${extensionName}"][data-extension-type="local"]`).click();
+            await expectFrontendRequest(tracker, '/api/extensions/version');
+            await expect(card.locator('.extension-detail-panel')).toContainText('main');
+            await expect(card.locator('.extension-detail-panel')).toContainText('有更新');
+
+            const updateCountBefore = tracker.count('/api/extensions/update');
+            await page.locator(`[data-extension-action="update"][data-extension-name="${extensionName}"][data-extension-type="local"]`).click();
+            await page.locator('[data-confirm-extension-operation]').click();
+            await expect.poll(() => tracker.count('/api/extensions/update')).toBeGreaterThan(updateCountBefore);
+            await expect.poll(() => fs.existsSync(path.join(extensionPath, 'update.txt'))).toBe(true);
+            expect(fs.readFileSync(path.join(extensionPath, 'update.txt'), 'utf8')).toBe('updated on main\n');
+
+            await page.locator(`[data-extension-details="${extensionName}"][data-extension-type="local"]`).click();
+            const branchCountBefore = tracker.count('/api/extensions/branches');
+            await page.locator(`[data-load-extension-branches="${extensionName}"][data-extension-type="local"]`).click();
+            await expect.poll(() => tracker.count('/api/extensions/branches')).toBeGreaterThan(branchCountBefore);
+            await expect(page.locator('[data-extension-branch] option[value="origin/next"]')).toHaveCount(1);
+
+            const switchCountBefore = tracker.count('/api/extensions/switch');
+            await page.locator('[data-extension-branch]').selectOption('origin/next');
+            await page.locator('[data-switch-extension-branch]').click();
+            await expect.poll(() => tracker.count('/api/extensions/switch')).toBeGreaterThan(switchCountBefore);
+            await expect.poll(() => {
+                try {
+                    return readGit(extensionPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
+                } catch {
+                    return '';
+                }
+            }).toBe('next');
+            await expect(card.locator('.extension-detail-panel')).toContainText('next');
+
+            const deleteCountBefore = tracker.count('/api/extensions/delete');
+            await page.locator(`[data-extension-action="delete"][data-extension-name="${extensionName}"][data-extension-type="local"]`).click();
+            await page.locator('[data-confirm-extension-operation]').click();
+
+            await expect.poll(() => tracker.count('/api/extensions/delete')).toBeGreaterThan(deleteCountBefore);
+            await expect(page.locator(`[data-extension-card="local:${extensionName}"]`)).toHaveCount(0);
+            expect(fs.existsSync(extensionPath)).toBe(false);
+        } finally {
+            fs.rmSync(extensionPath, { recursive: true, force: true });
+            fs.rmSync(fixtureRoot, { recursive: true, force: true });
         }
     });
 
