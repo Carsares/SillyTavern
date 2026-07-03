@@ -87,14 +87,31 @@ git diff --check ; echo EXIT=$?
 运行 modern E2E 时固定使用 headless/list reporter，不打开可视浏览器或 HTML report：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 npx playwright test modern-*.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-*.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
 只跑真实后端集成覆盖：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 npx playwright test modern-real-backend-integration.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-real-backend-integration.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
+
+外部依赖真实回归默认跳过，避免普通本地回归误打公网、真实 GitHub 仓库或供应商 API。需要验证公网资产下载、真实扩展安装/更新、真实 OpenRouter 供应商调用时，显式开启：
+
+```bash
+MODERN_EXTERNAL_E2E=1 \
+MODERN_EXTERNAL_OPENROUTER_API_KEY=... \
+MODERN_EXTERNAL_OPENROUTER_MODEL=... \
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-external-dependencies.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+```
+
+可选覆盖项：
+
+- `MODERN_EXTERNAL_ASSET_URL`：外部资产 URL，默认使用 `raw.githubusercontent.com` 白名单域名下的公开文件。
+- `MODERN_EXTERNAL_ASSET_EXPECT`：下载文件内容断言片段。
+- `MODERN_EXTERNAL_EXTENSION_URL`：外部扩展 Git URL，默认使用公开 SillyTavern 扩展仓库。
+- `MODERN_EXTERNAL_EXTENSION_BRANCH`：外部扩展分支，默认 `main`。
+- `MODERN_EXTERNAL_EXTENSION_NAME`：扩展目录名，默认从 Git URL 推导。
 
 ## 新版开发规则
 
@@ -103,6 +120,7 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 - route、action、component、style 按现有目录归属就近演进。
 - 只移动或拆分代码时保持 API payload、错误文案、默认值、localStorage key 和 DOM data selector 稳定。
 - 新增 API 调用时，同步补 real-backend E2E，并确认 endpoint audit 无缺口。
+- 涉及真实供应商、公网 Git 或外部 URL 的链路，同步补 `modern-external-dependencies.e2e.js` 或对应外部依赖测试。
 - 每个功能点按可验证的小提交推进。
 
 ## 上游资源

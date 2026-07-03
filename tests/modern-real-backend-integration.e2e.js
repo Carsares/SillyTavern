@@ -888,7 +888,8 @@ test.describe('Modern real backend integration', () => {
             await expectFrontendRequest(tracker, '/api/presets/save');
             const presetButton = page.locator(`[data-select-preset="${presetName}"]`).first();
             await expect(presetButton).toBeVisible();
-            apiId = await presetButton.getAttribute('data-preset-api');
+            await expect(presetButton).toHaveAttribute('data-preset-api', /.+/u);
+            apiId = await presetButton.evaluate(element => element.dataset.presetApi || '');
             expect(apiId).toBeTruthy();
 
             await presetButton.click();
@@ -1203,7 +1204,7 @@ test.describe('Modern real backend integration', () => {
         try {
             avatar = await createCharacter(page, characterName);
             chatBackupPrefix = getChatBackupPrefix(avatar);
-            await page.addInitScript(() => window.localStorage.setItem('st-modern-chat-mode', 'character'));
+            await page.addInitScript('window.localStorage.setItem("st-modern-chat-mode", "character")');
             const characterChatsCountBeforeRoute = tracker.count('/api/characters/chats');
             await gotoModern(page, 'chat', '聊天工作区');
             await expect.poll(() => tracker.count('/api/characters/chats')).toBeGreaterThan(characterChatsCountBeforeRoute);
@@ -1349,7 +1350,7 @@ test.describe('Modern real backend integration', () => {
             });
             groupId = group.id;
 
-            await page.addInitScript(() => window.localStorage.setItem('st-modern-chat-mode', 'group'));
+            await page.addInitScript('window.localStorage.setItem("st-modern-chat-mode", "group")');
             await gotoModern(page, 'chat', '聊天工作区');
             await page.locator('[data-chat-mode="group"]').click();
             await page.locator(`[data-select-group="${groupId}"]`).click();

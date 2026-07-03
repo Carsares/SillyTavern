@@ -30,6 +30,7 @@
 - 模块拆分：`public/modern/app.js` 已收敛为启动装配层；业务动作、route、component、shell、core 已拆到对应目录。
 - 样式拆分：样式已拆为基础、shell、组件、布局、覆盖层、响应式和 route 级 CSS，不再存在需要优先拆分的单体 `styles.css`。
 - 后端兼容验证：`tests/modern-real-backend-integration.e2e.js` 已覆盖新版 UI 触发的真实后端主链路；当前 endpoint 审计无缺口。
+- 外部依赖验证：`tests/modern-external-dependencies.e2e.js` 已覆盖公网 URL 资产下载、公开 Git 扩展安装/更新/删除、OpenRouter 真实供应商 smoke；默认跳过，配置 `MODERN_EXTERNAL_E2E=1` 后进入外部依赖回归。
 - E2E 基线：modern E2E 覆盖入口、路由、聊天、角色、群组、世界书、预设、人设、素材、API、扩展、活动、设置、inspector 和真实后端集成。
 
 当前不再作为缺口处理：
@@ -106,7 +107,18 @@
 - endpoint audit 无缺口。
 - 不只 mock 请求，不只验证按钮点击。
 
-### 3. 聊天体验增量优化
+### 3. 外部依赖链路维护
+
+真实供应商 API、公网 Git 仓库、公网 URL 下载依赖外部状态，不能混入普通本地回归直接运行，但必须有可自动执行的外部依赖回归入口。
+
+验收标准：
+
+- 新增或调整真实供应商调用时，补 `tests/modern-external-dependencies.e2e.js` 的供应商 smoke，使用显式密钥环境变量。
+- 新增或调整扩展安装、更新、分支、删除链路时，覆盖公开 Git 仓库或等价远端仓库的真实 clone/fetch/pull 行为。
+- 新增或调整 URL 下载链路时，覆盖白名单公网 URL 下载到本地文件并校验文件内容。
+- 外部依赖测试默认 skip；配置 `MODERN_EXTERNAL_E2E=1` 后必须能在 headless/list Playwright 命令中自动执行。
+
+### 4. 聊天体验增量优化
 
 聊天页已经完成功能承接，后续优化应围绕具体体验问题推进：
 
@@ -121,7 +133,7 @@
 - 移动端不会出现内容遮挡或无法操作。
 - 聊天文件和生成链路 E2E 仍通过。
 
-### 4. Dashboard、Activity、Inspector 增强
+### 5. Dashboard、Activity、Inspector 增强
 
 这三块已经具备新版形态。后续只在有明确用户路径时增强：
 
@@ -135,7 +147,7 @@
 - 不把说明文案变成旧版入口。
 - 覆盖 dashboard/activity/inspector 对应 E2E。
 
-### 5. 旧版可见页面下线评估
+### 6. 旧版可见页面下线评估
 
 旧版 `public/` 仍是上游 SillyTavern 的重要组成，包括历史页面、资源、脚本和内部 bridge 依赖。是否删除或彻底停用旧版可见页面，不属于当前默认改造范围，需要单独确认产品边界和兼容风险。
 
@@ -170,13 +182,19 @@ nice -n 19 npm run start -- --port 8011 --browserLaunchEnabled=false
 modern E2E 固定 headless/list reporter，不打开可视浏览器或 HTML report：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 npx playwright test modern-*.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-*.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
 真实后端集成：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 npx playwright test modern-real-backend-integration.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-real-backend-integration.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+```
+
+外部依赖真实回归：
+
+```bash
+MODERN_EXTERNAL_E2E=1 MODERN_EXTERNAL_OPENROUTER_API_KEY=... MODERN_EXTERNAL_OPENROUTER_MODEL=... PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-external-dependencies.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
 改动只影响单一路由时，可以先跑对应 `modern-*.e2e.js` 文件；改动影响 API 契约、状态装配、聊天主链路或入口语义时，需要跑 real-backend E2E 或完整 modern E2E。
@@ -189,6 +207,7 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 - 常规用户可见功能在新版闭环。
 - 新版 API 调用与后端契约兼容。
 - 真实后端集成测试覆盖当前新版前端 endpoint 表面。
+- 高风险外部依赖链路有显式可执行的外部回归入口。
 - 文档不再把已完成事项列为待办。
 
 后续工作应以具体新增功能、体验问题或维护成本为触发条件，而不是继续做无目标拆分。
