@@ -13,6 +13,7 @@ export function createChatGenerationActions({
     getSelectedChatMessages,
     getCurrentDraftKey,
     getChatCacheKey,
+    getUserName,
     loadChatMessages,
     refreshSelectedChatList,
     createModernChatFile,
@@ -161,6 +162,20 @@ export function createChatGenerationActions({
         }
     }
 
+    function appendOptimisticUserMessage(cacheKey, message) {
+        const messages = state.chatMessages[cacheKey] || [];
+        state.chatMessages[cacheKey] = [
+            ...messages,
+            {
+                name: getUserName(),
+                is_user: true,
+                is_system: false,
+                send_date: new Date().toISOString(),
+                mes: message,
+            },
+        ];
+    }
+
     async function sendModernMessage() {
         const draftKey = getCurrentDraftKey();
         const draft = (state.chatDrafts[draftKey] || '').trim();
@@ -174,15 +189,29 @@ export function createChatGenerationActions({
             chatId = await createModernChatFile(entity);
         }
 
+        const contextKey = getChatContextKey(entity);
+        if (!contextKey || !chatId) {
+            throw new Error(isGroupChatMode() ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
+        }
+
+        const cacheKey = getChatCacheKey(contextKey, chatId);
         state.chatDrafts[draftKey] = '';
-        state.chatDrafts[getChatCacheKey(getChatContextKey(entity), chatId)] = '';
-        await runLegacyChatGeneration('normal', {
-            entity,
-            chatId,
-            message: draft,
-            toastTitle: '消息已生成',
-            toastMessage: '生成引擎已完成回复并保存聊天文件。',
-        });
+        state.chatDrafts[cacheKey] = '';
+        appendOptimisticUserMessage(cacheKey, draft);
+
+        try {
+            await runLegacyChatGeneration('normal', {
+                entity,
+                chatId,
+                message: draft,
+                toastTitle: '消息已生成',
+                toastMessage: '生成引擎已完成回复并保存聊天文件。',
+            });
+        } catch (error) {
+            delete state.chatMessages[cacheKey];
+            await loadChatMessages(entity, chatId, { force: true });
+            throw error;
+        }
     }
 
     async function regenerateModernReply() {

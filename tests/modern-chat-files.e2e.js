@@ -19,6 +19,18 @@ function multipartFileName(bodyText, fieldName) {
     return match?.[1]?.trim() || '';
 }
 
+function createDeferred() {
+    /** @type {(value?: unknown) => void} */
+    let resolve;
+    /** @type {(reason?: unknown) => void} */
+    let reject;
+    const promise = new Promise((promiseResolve, promiseReject) => {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+}
+
 function createChatFixture() {
     const now = Date.now();
     return {
@@ -263,7 +275,7 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     return fixture;
 }
 
-async function mockLegacyGenerationBridge(page, fixture) {
+async function mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse = null } = {}) {
     await page.route(/.*\?modernBridge=1$/u, route => route.fulfill({
         status: 200,
         contentType: 'text/html',
@@ -291,12 +303,13 @@ async function mockLegacyGenerationBridge(page, fixture) {
             </html>`,
     }));
 
-    await page.route('**/modern-test-bridge', route => {
+    await page.route('**/modern-test-bridge', async route => {
         const request = route.request().postDataJSON();
         const payload = request.payload || {};
         fixture.requests.bridge.push(request);
 
         if (request.action === 'generate') {
+            await beforeGenerateResponse?.(request);
             const chatId = stripJsonlExtension(payload.chat);
             const currentMessages = fixture.messagesByChat[chatId] || [];
             let messages = [];
@@ -449,6 +462,20 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('.toast-stack')).toContainText('消息已复制');
     });
 
+    test('renders roleplay emphasis markers as plain text in the modern workspace', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        fixture.messagesByChat['existing-chat'][1] = {
+            ...fixture.messagesByChat['existing-chat'][1],
+            mes: '*gentle action* "plain dialogue" _quiet thought_',
+        };
+
+        await page.goto('/modern/?view=chat');
+
+        const characterMessage = page.locator('.message').nth(1);
+        await expect(characterMessage.locator('.message-body')).toContainText('gentle action "plain dialogue" quiet thought');
+        await expect(characterMessage.locator('.message-body em')).toHaveCount(0);
+    });
+
     test('uses bridge controls to regenerate, continue, and switch response candidates', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
         fixture.messagesByChat['existing-chat'][1] = {
@@ -497,7 +524,8 @@ test.describe('Modern chat files', () => {
 
     test('sends a message through the modern generation bridge', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
-        await mockLegacyGenerationBridge(page, fixture);
+        const bridgeResponse = createDeferred();
+        await mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse: () => bridgeResponse.promise });
 
         await page.goto('/modern/?view=chat');
 
@@ -515,7 +543,9 @@ test.describe('Modern chat files', () => {
                 message: 'hello bridge generation',
             },
         });
-        await expect(page.locator('.chat-thread')).toContainText('hello bridge generation');
+        await expect(page.locator('.message.user').last()).toContainText('hello bridge generation');
+        await expect(page.locator('.chat-thread')).not.toContainText('generated reply to hello bridge generation');
+        bridgeResponse.resolve();
         await expect(page.locator('.chat-thread')).toContainText('generated reply to hello bridge generation');
         await expect(page.locator('[data-chat-input]')).toHaveValue('');
         await expect(page.locator('[data-send-message]')).toBeDisabled();

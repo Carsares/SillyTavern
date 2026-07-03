@@ -7,7 +7,8 @@ export function createChatMessageContentComponents({
         return escapeHtml(value)
             .replace(/`([^`\n]+)`/g, '<code>$1</code>')
             .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+            .replace(/\*([^*\n]+)\*/g, '$1')
+            .replace(/(^|[\s([{<"'])_([^_\n]+)_($|[\s)\]}>.,!?;:"'])/g, '$1$2$3')
             .replace(/\n/g, '<br>');
     }
 

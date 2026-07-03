@@ -101,6 +101,7 @@ export function createChatActionRegistry({
         getSelectedChatMessages,
         getCurrentDraftKey,
         getChatCacheKey,
+        getUserName,
         loadChatMessages,
         refreshSelectedChatList,
         createModernChatFile,
