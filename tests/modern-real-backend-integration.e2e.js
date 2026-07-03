@@ -14,6 +14,7 @@ const assetsDir = path.join(userDataRoot, 'assets');
 const localExtensionsDir = path.join(userDataRoot, 'extensions');
 const globalExtensionsDir = path.resolve('public/scripts/extensions/third-party');
 const openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
+const statsFilePath = path.join(userDataRoot, 'stats.json');
 const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1S3PwAAAABJRU5ErkJggg==',
     'base64',
@@ -457,6 +458,43 @@ async function deleteNewSecrets(page, key, beforeIds) {
 }
 
 test.describe('Modern real backend integration', () => {
+    test('loads bootstrap data and rebuilds stats from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const statsBefore = fs.existsSync(statsFilePath) ? fs.readFileSync(statsFilePath, 'utf8') : null;
+
+        try {
+            await gotoModern(page, 'activity', '活动与统计');
+
+            await expectFrontendRequest(tracker, '/api/users/me', 'GET');
+            await expectFrontendRequest(tracker, '/api/settings/get');
+            await expectFrontendRequest(tracker, '/api/characters/all');
+            await expectFrontendRequest(tracker, '/api/groups/all');
+            await expectFrontendRequest(tracker, '/api/worldinfo/list');
+            await expectFrontendRequest(tracker, '/api/backgrounds/all');
+            await expectFrontendRequest(tracker, '/api/backgrounds/folders');
+            await expectFrontendRequest(tracker, '/api/assets/get');
+            await expectFrontendRequest(tracker, '/api/extensions/discover', 'GET');
+            await expectFrontendRequest(tracker, '/api/secrets/settings');
+            await expectFrontendRequest(tracker, '/api/secrets/read');
+            await expectFrontendRequest(tracker, '/api/stats/get');
+
+            const statsGetCountBeforeRebuild = tracker.count('/api/stats/get');
+            const statsRecreateCountBefore = tracker.count('/api/stats/recreate');
+            await page.locator('[data-recreate-stats]').click();
+
+            await expect.poll(() => tracker.count('/api/stats/recreate')).toBeGreaterThan(statsRecreateCountBefore);
+            await expect.poll(() => tracker.count('/api/stats/get')).toBeGreaterThan(statsGetCountBeforeRebuild);
+            await expect(page.locator('.toast', { hasText: '统计已重建' })).toBeVisible();
+            expect(await apiFetch(page, '/api/stats/get')).toEqual(expect.any(Object));
+        } finally {
+            if (statsBefore === null) {
+                fs.rmSync(statsFilePath, { force: true });
+            } else {
+                fs.writeFileSync(statsFilePath, statsBefore);
+            }
+        }
+    });
+
     test('creates, edits, groups, and deletes character resources from the UI', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const characterName = uniqueName('Character');
