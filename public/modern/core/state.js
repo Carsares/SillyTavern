@@ -1,6 +1,7 @@
 import { characterFormDefaults, routeLabels } from './constants.js';
 
 const chatSidebarPreference = localStorage.getItem('st-modern-chat-sidebar-open');
+export const chatReadStateStorageKey = 'st-modern-chat-read-state:v1';
 
 export const backgroundPageSize = window.matchMedia('(max-width: 860px)').matches ? 8 : 24;
 
@@ -10,6 +11,32 @@ function getInitialChatSidebarOpen() {
     }
 
     return !window.matchMedia('(max-width: 860px)').matches;
+}
+
+function loadChatReadState() {
+    try {
+        const value = JSON.parse(localStorage.getItem(chatReadStateStorageKey) || '{}');
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            if (value.cursors && typeof value.cursors === 'object' && !Array.isArray(value.cursors)) {
+                return {
+                    cursors: value.cursors,
+                    contexts: value.contexts && typeof value.contexts === 'object' && !Array.isArray(value.contexts) ? value.contexts : {},
+                };
+            }
+
+            return {
+                cursors: value,
+                contexts: {},
+            };
+        }
+    } catch {
+        // Ignore invalid localStorage state and rebuild it from loaded chat lists.
+    }
+
+    return {
+        cursors: {},
+        contexts: {},
+    };
 }
 
 export function createModernState() {
@@ -42,6 +69,7 @@ export function createModernState() {
         chatMessages: {},
         chatMessageLimits: {},
         chatMetadata: {},
+        chatReadState: loadChatReadState(),
         loadingChats: {},
         chatDrafts: {},
         chatSearch: {

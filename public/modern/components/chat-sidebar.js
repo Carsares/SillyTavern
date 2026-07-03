@@ -8,7 +8,16 @@ export function createChatSidebarComponents({
     getChatEntityListEmptyText,
     getChatId,
     getChatMessageCount,
+    getChatUnreadCount,
 }) {
+    function renderUnreadBadge(count) {
+        if (!count) {
+            return '';
+        }
+
+        return `<span class="unread-badge" data-unread-count="${count}" aria-label="${formatNumber(count)} 条未读消息"><span class="dot danger"></span>${formatNumber(count)}</span>`;
+    }
+
     function renderChatSidebar({
         resourceCount,
         resourceRows,
@@ -70,6 +79,7 @@ export function createChatSidebarComponents({
     function renderChatFileRow(chat) {
         const chatId = getChatId(chat);
         const messageCount = getChatMessageCount(chat);
+        const unreadCount = getChatUnreadCount(chat);
         const subtitle = [
             `${formatNumber(messageCount)} 条消息`,
             chat.file_size || '',
@@ -78,13 +88,14 @@ export function createChatSidebarComponents({
         const preview = chat.preview_message || '';
 
         return `
-        <button class="resource-row ${state.selected.chat === chatId ? 'active' : ''}" type="button" data-select-chat="${escapeHtml(chatId)}">
+        <button class="resource-row ${state.selected.chat === chatId ? 'active' : ''} ${unreadCount ? 'unread' : ''}" type="button" data-select-chat="${escapeHtml(chatId)}">
             <span class="avatar-fallback"><i class="fa-solid fa-message"></i></span>
             <span class="row-main">
                 <span class="row-title">${escapeHtml(chat.file_name || chatId)}</span>
                 <span class="row-subtitle">${escapeHtml(subtitle)}</span>
                 ${preview ? `<span class="row-subtitle chat-preview">${escapeHtml(preview)}</span>` : ''}
             </span>
+            ${renderUnreadBadge(unreadCount)}
         </button>
     `;
     }

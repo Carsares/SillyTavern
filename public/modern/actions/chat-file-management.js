@@ -13,6 +13,8 @@ export function createChatFileManagementActions({
     saveGroupMetadata,
     refreshSelectedChatList,
     loadChatMessages,
+    moveChatReadState,
+    deleteChatReadState,
 }) {
     function beginModernChatRename() {
         const entity = getSelectedChatEntity();
@@ -85,6 +87,7 @@ export function createChatFileManagementActions({
             state.chatMetadata[newKey] = state.chatMetadata[oldKey];
             delete state.chatMetadata[oldKey];
         }
+        moveChatReadState(contextKey, oldChatId, renamedChatId);
         state.chatRenaming = { key: '', name: '' };
         await refreshSelectedChatList(entity);
         await loadChatMessages(entity, renamedChatId);
@@ -153,6 +156,7 @@ export function createChatFileManagementActions({
         delete state.chatMessageLimits[cacheKey];
         delete state.chatMetadata[cacheKey];
         delete state.chatDrafts[cacheKey];
+        deleteChatReadState(contextKey, chatId);
         state.chatRenaming = { key: '', name: '' };
         state.chatDeleteConfirm = { key: '', name: '' };
         state.selected.chat = '';

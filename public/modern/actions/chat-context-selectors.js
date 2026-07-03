@@ -87,6 +87,38 @@ export function createChatContextSelectorHelpers({
         return `${avatar || ''}::${chatId || ''}`;
     }
 
+    function getChatReadCursor(contextKey, chatId) {
+        return state.chatReadState?.cursors?.[getChatCacheKey(contextKey, chatId)] || null;
+    }
+
+    function isChatReadContextInitialized(contextKey) {
+        return !!state.chatReadState?.contexts?.[contextKey];
+    }
+
+    function getChatUnreadCount(chat, entity = getSelectedChatEntity()) {
+        const contextKey = getChatContextKey(entity);
+        const chatId = getChatId(chat);
+        if (!contextKey || !chatId) {
+            return 0;
+        }
+
+        const messageCount = getChatMessageCount(chat);
+        const cursor = getChatReadCursor(contextKey, chatId);
+        if (!cursor) {
+            return isChatReadContextInitialized(contextKey) ? messageCount : 0;
+        }
+
+        const cursorCount = Number(cursor.messageCount);
+        const readCount = Number.isFinite(cursorCount) ? cursorCount : 0;
+        return Math.max(0, messageCount - readCount);
+    }
+
+    function getEntityUnreadCount(entity = getSelectedChatEntity()) {
+        const contextKey = getChatContextKey(entity);
+        const chats = state.chatLists[contextKey] || [];
+        return chats.reduce((total, chat) => total + getChatUnreadCount(chat, entity), 0);
+    }
+
     function getSelectedChatMessages() {
         const cacheKey = getChatCacheKey(getChatContextKey(), state.selected.chat);
         return state.chatMessages[cacheKey] || [];
@@ -168,8 +200,10 @@ export function createChatContextSelectorHelpers({
         getChatId,
         getChatMessageCount,
         getChatModeLabel,
+        getChatUnreadCount,
         getCurrentDraftKey,
         getCurrentMessageLimit,
+        getEntityUnreadCount,
         getSelectedCharacter,
         getSelectedChatEntity,
         getSelectedChatList,

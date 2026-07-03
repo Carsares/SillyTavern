@@ -365,6 +365,51 @@ async function mockLegacyGenerationBridge(page, fixture, { beforeGenerateRespons
 }
 
 test.describe('Modern chat files', () => {
+    test('shows unread counts and clears them after opening the chat file', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 2000 },
+            { file_id: 'unread-chat', file_name: 'unread-chat.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'existing-chat': [
+                { name: 'Modern User', is_user: true, mes: 'hello', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'reply', send_date: now - 2000 },
+            ],
+            'unread-chat': [
+                { name: 'Modern User', is_user: true, mes: 'older unread context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'first unread reply', send_date: now - 1000 },
+                { name: 'Mock Character', is_user: false, mes: 'second unread reply', send_date: now },
+            ],
+        };
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::existing-chat': { messageCount: 2, lastMes: now - 2000 },
+                    'mock.png::unread-chat': { messageCount: 1, lastMes: now - 3000 },
+                },
+                contexts: { 'mock.png': true },
+            },
+        });
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveText('2');
+
+        await page.locator('[data-select-chat="unread-chat"]').click();
+
+        await expect(page.locator('.chat-thread')).toContainText('second unread reply');
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveCount(0);
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}')?.cursors?.['mock.png::unread-chat']?.messageCount)).toBe(3);
+    });
+
     test('searches and clears character chat files inside the modern workspace', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();

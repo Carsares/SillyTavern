@@ -1,7 +1,7 @@
-import { routeLabels } from '../core/constants.js';
 import { escapeHtml, formatDate, formatNumber } from '../core/utils.js';
+import { routeLabels } from '../core/constants.js';
 
-export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEntityAvatarUrl }) {
+export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEntityAvatarUrl, getEntityUnreadCount = () => 0 }) {
     function pageHead(title, description, actions = '') {
         return `
             <div class="page-head">
@@ -29,21 +29,31 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEn
         return `<div class="muted">${escapeHtml(text)}</div>`;
     }
 
+    function renderUnreadBadge(count, label) {
+        if (!count) {
+            return '';
+        }
+
+        return `<span class="unread-badge" data-unread-count="${count}" aria-label="${escapeHtml(label)}"><span class="dot danger"></span>${formatNumber(count)}</span>`;
+    }
+
     function renderCharacterRow(character) {
         const avatar = getCharacterAvatarUrl(character);
         const title = character.name || character.data?.name || character.avatar || '未命名角色';
+        const unreadCount = getEntityUnreadCount(character);
         const subtitle = [
             character.data?.creator ? `作者 ${character.data.creator}` : '',
             character.date_last_chat ? `最近 ${formatDate(character.date_last_chat)}` : '',
         ].filter(Boolean).join(' · ') || character.avatar || '角色卡';
 
         return `
-            <button class="resource-row ${state.selected.character === character.avatar ? 'active' : ''}" type="button" data-select-character="${escapeHtml(character.avatar)}">
+            <button class="resource-row ${state.selected.character === character.avatar ? 'active' : ''} ${unreadCount ? 'unread' : ''}" type="button" data-select-character="${escapeHtml(character.avatar)}">
                 ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : '<span class="avatar-fallback">C</span>'}
                 <span class="row-main">
                     <span class="row-title">${escapeHtml(title)}</span>
                     <span class="row-subtitle">${escapeHtml(subtitle)}</span>
                 </span>
+                ${renderUnreadBadge(unreadCount, `${title} 有 ${formatNumber(unreadCount)} 条未读消息`)}
             </button>
         `;
     }
@@ -52,6 +62,7 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEn
         const avatar = getChatEntityAvatarUrl(group);
         const memberCount = Array.isArray(group.members) ? group.members.length : 0;
         const chatCount = Array.isArray(group.chats) ? group.chats.length : 0;
+        const unreadCount = getEntityUnreadCount(group);
         const subtitle = [
             `${formatNumber(memberCount)} 个成员`,
             `${formatNumber(chatCount)} 个会话`,
@@ -59,12 +70,13 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEn
         ].filter(Boolean).join(' · ') || group.id || '群聊';
 
         return `
-            <button class="resource-row ${state.selected.group === group.id ? 'active' : ''}" type="button" data-select-group="${escapeHtml(group.id)}">
+            <button class="resource-row ${state.selected.group === group.id ? 'active' : ''} ${unreadCount ? 'unread' : ''}" type="button" data-select-group="${escapeHtml(group.id)}">
                 ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : '<span class="avatar-fallback"><i class="fa-solid fa-users"></i></span>'}
                 <span class="row-main">
                     <span class="row-title">${escapeHtml(group.name || group.id || '未命名群聊')}</span>
                     <span class="row-subtitle">${escapeHtml(subtitle)}</span>
                 </span>
+                ${renderUnreadBadge(unreadCount, `${group.name || group.id || '未命名群聊'} 有 ${formatNumber(unreadCount)} 条未读消息`)}
             </button>
         `;
     }

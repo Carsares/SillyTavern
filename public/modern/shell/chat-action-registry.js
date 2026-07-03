@@ -33,6 +33,8 @@ export function createChatActionRegistry({
         getSelectedChatList,
         getChatId,
         getChatMessageCount,
+        getChatUnreadCount,
+        getEntityUnreadCount,
         getSelectedChatMessages,
         getChatCacheKey,
         clearChatSearch,
@@ -45,6 +47,8 @@ export function createChatActionRegistry({
         saveModernChat,
         refreshSelectedChatList,
         createModernChatFile,
+        moveChatReadState,
+        deleteChatReadState,
         toggleChatSidebar,
         closeChatSidebarForMobileSelection,
         closeChatSidebarOverlay,
@@ -72,6 +76,8 @@ export function createChatActionRegistry({
         refreshSelectedChatList,
         createModernChatFile,
         saveGroupMetadata,
+        moveChatReadState,
+        deleteChatReadState,
     });
     const { closeChatBackups } = chatFileActions;
 
@@ -135,6 +141,8 @@ export function createChatActionRegistry({
         getChatEntityName,
         getChatId,
         getChatMessageCount,
+        getChatUnreadCount,
+        getEntityUnreadCount,
         getChatModeLabel,
         getSelectedChatEntity,
         getSelectedChatList,
