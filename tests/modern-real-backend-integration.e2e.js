@@ -1,8 +1,15 @@
 import { Buffer } from 'node:buffer';
+import fs from 'node:fs';
+import { createServer } from 'node:http';
+import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { gotoModern } from './modern-test-utils.js';
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8000';
+const userDataRoot = path.resolve('data/default-user');
+const backupsDir = path.join(userDataRoot, 'backups');
+const assetsDir = path.join(userDataRoot, 'assets');
+const localExtensionsDir = path.join(userDataRoot, 'extensions');
 const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1S3PwAAAABJRU5ErkJggg==',
     'base64',
@@ -24,6 +31,109 @@ function getPersonaAvatarByName(settings, name) {
 
 function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/iu, '');
+}
+
+function getChatBackupPrefix(avatar) {
+    const baseName = String(avatar || '').replace(/\.png$/iu, '');
+    return `chat_${baseName.replace(/[^a-z0-9]/giu, '_').toLowerCase()}_`;
+}
+
+function deleteBackupFile(name) {
+    const fileName = path.basename(String(name || ''));
+    if (!fileName || fileName !== name) {
+        return;
+    }
+    fs.rmSync(path.join(backupsDir, fileName), { force: true });
+}
+
+function deleteChatBackupsByPrefix(prefix) {
+    if (!prefix || !fs.existsSync(backupsDir)) {
+        return;
+    }
+    for (const fileName of fs.readdirSync(backupsDir)) {
+        if (fileName.startsWith(prefix)) {
+            fs.rmSync(path.join(backupsDir, fileName), { force: true });
+        }
+    }
+}
+
+function getSecretIds(secretState, key) {
+    return new Set((secretState?.[key] || []).map(secret => secret.id).filter(Boolean));
+}
+
+async function startServer(server, host = '127.0.0.1') {
+    await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, host, () => {
+            server.off('error', reject);
+            resolve();
+        });
+    });
+    return server.address().port;
+}
+
+async function closeServer(server) {
+    if (!server.listening) {
+        return;
+    }
+    await new Promise(resolve => server.close(resolve));
+}
+
+async function startLocalAssetServer(body) {
+    const server = createServer((request, response) => {
+        if (request.method === 'GET' && request.url === '/asset.txt') {
+            response.writeHead(200, { 'Content-Type': 'text/plain' });
+            response.end(body);
+            return;
+        }
+        response.writeHead(404);
+        response.end();
+    });
+    const port = await startServer(server, 'localhost');
+    return {
+        url: `http://localhost:${port}/asset.txt`,
+        close: () => closeServer(server),
+    };
+}
+
+async function startLocalChatCompletionServer(replyText) {
+    const requests = [];
+    const server = createServer((request, response) => {
+        let rawBody = '';
+        request.on('data', chunk => {
+            rawBody += chunk.toString();
+        });
+        request.on('end', () => {
+            if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
+                response.writeHead(404);
+                response.end();
+                return;
+            }
+
+            const body = rawBody ? JSON.parse(rawBody) : {};
+            requests.push({
+                body,
+                headers: request.headers,
+            });
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({
+                choices: [
+                    {
+                        message: {
+                            role: 'assistant',
+                            content: replyText,
+                        },
+                    },
+                ],
+            }));
+        });
+    });
+    const port = await startServer(server);
+    return {
+        url: `http://127.0.0.1:${port}/v1`,
+        requests,
+        close: () => closeServer(server),
+    };
 }
 
 function trackApiRequests(page) {
@@ -117,6 +227,15 @@ async function getSettings(page) {
     return JSON.parse(bundle.settings || '{}');
 }
 
+async function getSettingsSnapshots(page) {
+    const snapshots = await apiFetch(page, '/api/settings/get-snapshots');
+    return Array.isArray(snapshots) ? snapshots : [];
+}
+
+async function getSecretState(page) {
+    return apiFetch(page, '/api/secrets/read');
+}
+
 async function restoreSettings(page, settings) {
     if (settings) {
         await safeApiFetch(page, '/api/settings/save', settings);
@@ -179,6 +298,15 @@ async function deleteBackgroundFolderByName(page, name) {
     const folder = await findBackgroundFolderByName(page, name);
     if (folder?.id) {
         await safeApiFetch(page, '/api/image-metadata/folders/delete', { id: folder.id });
+    }
+}
+
+async function deleteNewSecrets(page, key, beforeIds) {
+    const secretState = await safeApiFetch(page, '/api/secrets/read');
+    for (const secret of secretState?.[key] || []) {
+        if (!beforeIds.has(secret.id)) {
+            await safeApiFetch(page, '/api/secrets/delete', { key, id: secret.id });
+        }
     }
 }
 
@@ -390,6 +518,44 @@ test.describe('Modern real backend integration', () => {
         }
     });
 
+    test('creates, previews, and restores a settings snapshot from the UI', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const settingsBefore = await getSettings(page);
+        const snapshotsBefore = await getSettingsSnapshots(page);
+        const snapshotDatesBefore = new Map(snapshotsBefore.map(snapshot => [snapshot.name, Number(snapshot.date || 0)]));
+        let snapshotName = '';
+
+        try {
+            await gotoModern(page, 'settings', '设置中心');
+            await page.locator('[data-settings-section="snapshots"]').click();
+            const createStartedAt = Date.now();
+            await page.locator('[data-create-settings-snapshot]').click();
+
+            await expectFrontendRequest(tracker, '/api/settings/make-snapshot');
+            snapshotName = await waitForValue(async () => {
+                const snapshots = await getSettingsSnapshots(page);
+                return snapshots
+                    .filter(snapshot => Number(snapshot.date || 0) >= createStartedAt - 1000
+                        || Number(snapshot.date || 0) > (snapshotDatesBefore.get(snapshot.name) || 0))
+                    .sort((a, b) => Number(b.date || 0) - Number(a.date || 0))[0]?.name || '';
+            });
+            await expect(page.locator(`[data-preview-settings-snapshot="${snapshotName}"]`)).toBeVisible();
+
+            await page.locator(`[data-preview-settings-snapshot="${snapshotName}"]`).click();
+            await expectFrontendRequest(tracker, '/api/settings/load-snapshot');
+            await expect(page.locator('.backup-preview textarea')).toContainText('"main_api"');
+
+            await page.locator(`[data-restore-settings-snapshot="${snapshotName}"]`).click();
+            await page.locator('[data-confirm-settings-restore]').click();
+
+            await expectFrontendRequest(tracker, '/api/settings/restore-snapshot');
+            await expect.poll(async () => JSON.stringify(await getSettings(page))).toBe(JSON.stringify(settingsBefore));
+        } finally {
+            await restoreSettings(page, settingsBefore);
+            deleteBackupFile(snapshotName);
+        }
+    });
+
     test('uploads, files, renames, folders, and deletes backgrounds from the UI', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const backgroundName = `${uniqueName('Background')}.png`;
@@ -479,14 +645,54 @@ test.describe('Modern real backend integration', () => {
         }
     });
 
+    test('downloads and deletes an asset file from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const filename = `${uniqueName('Asset')}.txt`;
+        const category = 'bgm';
+        const assetBody = `asset fixture for ${filename}`;
+        let assetServer = null;
+
+        try {
+            assetServer = await startLocalAssetServer(assetBody);
+            await gotoModern(page, 'assets', '素材库');
+
+            await page.locator('[data-toggle-asset-download]').click();
+            await page.locator('[data-asset-download-url]').fill(assetServer.url);
+            await page.locator('[data-asset-download-filename]').fill(filename);
+            await page.locator('[data-asset-download-category]').selectOption(category);
+            await page.locator('[data-download-asset]').click();
+
+            await expectFrontendRequest(tracker, '/api/assets/download');
+            await page.locator('[data-asset-tab="files"]').click();
+            const row = page.locator(`[data-asset-row="${category}:assets/${category}/${filename}"]`);
+            await expect(row).toBeVisible();
+            expect(fs.readFileSync(path.join(assetsDir, category, filename), 'utf8')).toBe(assetBody);
+
+            await page.locator(`[data-delete-asset][data-asset-category="${category}"][data-asset-filename="${filename}"]`).click();
+            await page.locator('[data-confirm-asset-delete]').click();
+
+            await expectFrontendRequest(tracker, '/api/assets/delete');
+            await expect(row).toHaveCount(0);
+        } finally {
+            await safeApiFetch(page, '/api/assets/delete', { category, filename });
+            fs.rmSync(path.join(assetsDir, category, filename), { force: true });
+            if (assetServer) {
+                await assetServer.close();
+            }
+        }
+    });
+
     test('manages character chat files and messages from the UI against the real backend', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const characterName = uniqueName('ChatCharacter');
         const importedMessage = `${characterName} imported message`;
         let avatar = '';
+        let chatBackupName = '';
+        let chatBackupPrefix = '';
 
         try {
             avatar = await createCharacter(page, characterName);
+            chatBackupPrefix = getChatBackupPrefix(avatar);
             await page.addInitScript(() => window.localStorage.setItem('st-modern-chat-mode', 'character'));
             await gotoModern(page, 'chat', '聊天工作区');
 
@@ -510,6 +716,26 @@ test.describe('Modern real backend integration', () => {
             await expect(page.locator('.chat-thread')).toContainText(editedMessage);
             const savedChat = await apiFetch(page, '/api/chats/get', { avatar_url: avatar, file_name: chatId });
             expect(savedChat.some(message => message.mes === editedMessage)).toBe(true);
+
+            chatBackupName = `${chatBackupPrefix}${Date.now()}.jsonl`;
+            fs.mkdirSync(backupsDir, { recursive: true });
+            fs.writeFileSync(path.join(backupsDir, chatBackupName), [
+                JSON.stringify({ chat_metadata: {}, user_name: 'Modern User', character_name: characterName }),
+                JSON.stringify({ name: characterName, is_user: false, mes: `${characterName} backup preview`, send_date: new Date().toISOString() }),
+            ].join('\n'));
+            await page.locator('[data-chat-backups-toggle]').click();
+            await expectFrontendRequest(tracker, '/api/backups/chat/get');
+            await expect(page.locator(`[data-view-chat-backup="${chatBackupName}"]`)).toBeVisible();
+            await page.locator(`[data-view-chat-backup="${chatBackupName}"]`).click();
+            await expectFrontendRequest(tracker, '/api/backups/chat/download');
+            await expect(page.locator('.backup-preview textarea')).toContainText(`${characterName} backup preview`);
+            await page.locator(`[data-delete-chat-backup="${chatBackupName}"]`).click();
+            await page.locator('[data-confirm-chat-backup-delete]').click();
+            await expectFrontendRequest(tracker, '/api/backups/chat/delete');
+            await expect(page.locator(`[data-view-chat-backup="${chatBackupName}"]`)).toHaveCount(0);
+            chatBackupName = '';
+            await page.locator('[aria-label="关闭聊天备份"]').click({ position: { x: 10, y: 10 } });
+            await expect(page.locator('.chat-tools-drawer')).toHaveCount(0);
 
             const renamedChatId = uniqueName('ChatFile');
             await page.locator('[data-delete-chat]').click();
@@ -545,10 +771,44 @@ test.describe('Modern real backend integration', () => {
             await expectFrontendRequest(tracker, '/api/chats/import');
             await expect(page.locator('.chat-thread')).toContainText(importedMessage);
         } finally {
+            if (chatBackupName) {
+                await safeApiFetch(page, '/api/backups/chat/delete', { name: chatBackupName });
+            }
+            deleteChatBackupsByPrefix(chatBackupPrefix);
             await deleteCharacterByName(page, characterName);
             if (avatar) {
                 await safeApiFetch(page, '/api/characters/delete', { avatar_url: avatar, delete_chats: true });
             }
+        }
+    });
+
+    test('reads and deletes a local extension directory from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const extensionName = uniqueName('Extension').toLowerCase();
+        const extensionPath = path.join(localExtensionsDir, extensionName);
+
+        try {
+            fs.rmSync(extensionPath, { recursive: true, force: true });
+            fs.mkdirSync(extensionPath, { recursive: true });
+            fs.writeFileSync(path.join(extensionPath, 'manifest.json'), JSON.stringify({ display_name: extensionName }, null, 4));
+
+            await gotoModern(page, 'extensions', '扩展');
+            await page.locator('[data-extension-view="local"]').click();
+            const card = page.locator(`[data-extension-card="local:${extensionName}"]`);
+            await expect(card).toContainText(`third-party/${extensionName}`);
+
+            await page.locator(`[data-extension-details="${extensionName}"][data-extension-type="local"]`).click();
+            await expectFrontendRequest(tracker, '/api/extensions/version');
+            await expect(card.locator('.extension-detail-panel')).toContainText('未配置');
+
+            await page.locator(`[data-extension-action="delete"][data-extension-name="${extensionName}"][data-extension-type="local"]`).click();
+            await page.locator('[data-confirm-extension-operation]').click();
+
+            await expectFrontendRequest(tracker, '/api/extensions/delete');
+            await expect(page.locator(`[data-extension-card="local:${extensionName}"]`)).toHaveCount(0);
+            expect(fs.existsSync(extensionPath)).toBe(false);
+        } finally {
+            fs.rmSync(extensionPath, { recursive: true, force: true });
         }
     });
 
@@ -605,6 +865,57 @@ test.describe('Modern real backend integration', () => {
             });
         } finally {
             await restoreSettings(page, settingsBefore);
+        }
+    });
+
+    test('tests a custom chat completion endpoint from the UI through the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const settingsBefore = await getSettings(page);
+        const secretStateBefore = await getSecretState(page);
+        const customSecretIdsBefore = getSecretIds(secretStateBefore, 'api_key_custom');
+        const modelName = uniqueName('ProviderModel');
+        const apiKey = `sk-${uniqueName('ProviderKey')}`;
+        const providerReply = `OK from ${modelName}`;
+        let providerServer = null;
+
+        try {
+            providerServer = await startLocalChatCompletionServer(providerReply);
+            await gotoModern(page, 'api', 'API 连接管理');
+
+            await page.locator('[data-api-main]').selectOption('openai');
+            await page.locator('[data-api-source]').selectOption('custom');
+            await expect(page.locator('[data-api-custom-url]')).toBeVisible();
+            await page.locator('[data-api-model]').fill(modelName);
+            await page.locator('[data-api-custom-url]').fill(providerServer.url);
+            await page.locator('[data-api-reverse-proxy]').fill('');
+            await page.locator('[data-api-key]').fill(apiKey);
+            await page.locator('[data-save-api-connection]').click();
+
+            await expectFrontendRequest(tracker, '/api/secrets/write');
+            await expectFrontendRequest(tracker, '/api/settings/save');
+            await expect(page.locator('[data-api-secret-status]')).toContainText('密钥已保存');
+
+            await page.locator('[data-test-api]').click();
+            await expectFrontendRequest(tracker, '/api/backends/chat-completions/generate');
+            await expect(page.locator('.api-history-panel')).toContainText(modelName);
+            await expect(page.locator('.api-history-panel')).toContainText(providerReply);
+            await expect.poll(() => providerServer.requests.length).toBe(1);
+
+            expect(providerServer.requests[0].body).toMatchObject({
+                model: modelName,
+                max_tokens: 20,
+                stream: false,
+            });
+            expect(providerServer.requests[0].body.messages).toEqual([
+                { role: 'user', content: '请只回复 OK。' },
+            ]);
+            expect(providerServer.requests[0].headers.authorization).toBe(`Bearer ${apiKey}`);
+        } finally {
+            await restoreSettings(page, settingsBefore);
+            await deleteNewSecrets(page, 'api_key_custom', customSecretIdsBefore);
+            if (providerServer) {
+                await providerServer.close();
+            }
         }
     });
 });
