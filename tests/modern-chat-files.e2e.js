@@ -476,6 +476,38 @@ test.describe('Modern chat files', () => {
         await expect(characterMessage.locator('.message-body em')).toHaveCount(0);
     });
 
+    test('collapses the first character message as an opening message', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        const longOpeningMessage = Array.from({ length: 14 }, (_, index) => `Opening scene sentence ${index + 1} keeps enough character greeting text to span multiple visible lines.`).join(' ');
+        fixture.messagesByChat['existing-chat'] = [
+            { name: fixture.character.name, is_user: false, mes: longOpeningMessage, send_date: Date.now() - 2000 },
+            { name: 'Modern User', is_user: true, mes: 'hello after opening', send_date: Date.now() - 1000 },
+            { name: fixture.character.name, is_user: false, mes: 'normal character reply should stay plain', send_date: Date.now() },
+        ];
+
+        await page.setViewportSize({ width: 1600, height: 900 });
+        await page.goto('/modern/?view=chat');
+
+        const openingMessage = page.locator('.message-opening');
+        const openingBody = openingMessage.locator('.message-body');
+        await expect(openingMessage).toHaveCount(1);
+        await expect(openingMessage.locator('.message-opening-title')).toHaveText('开场消息');
+        await expect(openingBody).toContainText('Opening scene sentence 1');
+        await expect(openingMessage.locator('.message-opening-expand')).toBeVisible();
+        await expect(openingMessage.locator('.message-opening-collapse')).toBeHidden();
+        await expect.poll(() => openingBody.evaluate(element => element.ownerDocument.defaultView.getComputedStyle(element).webkitLineClamp)).toBe('5');
+        const collapsedBox = await openingBody.boundingBox();
+
+        await openingMessage.locator('[data-toggle-opening-message]').click();
+
+        await expect(openingMessage.locator('[data-opening-message-toggle]')).toBeChecked();
+        await expect(openingMessage.locator('.message-opening-collapse')).toBeVisible();
+        await expect.poll(() => openingBody.evaluate(element => element.ownerDocument.defaultView.getComputedStyle(element).webkitLineClamp)).toBe('none');
+        const expandedBox = await openingBody.boundingBox();
+        expect(expandedBox?.height).toBeGreaterThan(collapsedBox?.height || 0);
+        await expect(page.locator('.message').last().locator('.message-opening')).toHaveCount(0);
+    });
+
     test('uses bridge controls to regenerate, continue, and switch response candidates', async ({ page }) => {
         const fixture = await mockModernChatWorkspace(page);
         fixture.messagesByChat['existing-chat'][1] = {

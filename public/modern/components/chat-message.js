@@ -46,6 +46,7 @@ export function createChatMessageComponents({
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
         const isDeleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
         const canSwipe = !message.is_user && !message.is_system && messageIndex === getSelectedChatMessages().length - 1;
+        const isOpeningMessage = messageIndex === 0 && !message.is_user && !message.is_system;
 
         return `
         <article class="message ${message.is_user ? 'user' : ''}">
@@ -83,12 +84,36 @@ export function createChatMessageComponents({
                         </button>
                     </div>
                 </div>
-            ` : `<div class="message-body">${renderMessageText(text)}</div>`}
+            ` : renderMessageBody(text, messageIndex, isOpeningMessage)}
             ${renderMessageReasoning(message)}
             ${renderMessageAttachments(message)}
             ${renderMessageFoot(message, model)}
             ${isDeleting ? renderMessageManagePanel(message, messageIndex) : ''}
         </article>
+    `;
+    }
+
+    function renderMessageBody(text, messageIndex, isOpeningMessage) {
+        if (!isOpeningMessage) {
+            return `<div class="message-body">${renderMessageText(text)}</div>`;
+        }
+
+        const canExpand = text.length > 260;
+        const toggleId = `opening-message-toggle-${messageIndex}`;
+        return `
+        <section class="message-opening">
+            ${canExpand ? `<input class="visually-hidden message-opening-toggle" id="${toggleId}" type="checkbox" data-opening-message-toggle>` : ''}
+            <div class="message-opening-header">
+                <h3 class="message-opening-title">开场消息</h3>
+                ${canExpand ? `
+                    <label class="secondary-button message-opening-action" for="${toggleId}" data-toggle-opening-message>
+                        <span class="message-opening-expand"><i class="fa-solid fa-chevron-down"></i> 展开</span>
+                        <span class="message-opening-collapse"><i class="fa-solid fa-chevron-up"></i> 收起</span>
+                    </label>
+                ` : ''}
+            </div>
+            <div class="message-body">${renderMessageText(text)}</div>
+        </section>
     `;
     }
 

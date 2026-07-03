@@ -162,6 +162,52 @@
     margin: 0;
 }
 
+.message-opening {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+}
+
+.message-opening-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.message-opening-title {
+    margin: 0;
+    font-size: 13px;
+}
+
+.message-opening-action {
+    min-height: 30px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.message-opening-collapse {
+    display: none;
+}
+
+.message-opening-toggle:not(:checked) ~ .message-body {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 5;
+}
+
+.message-opening-toggle:checked ~ .message-opening-header .message-opening-expand {
+    display: none;
+}
+
+.message-opening-toggle:checked ~ .message-opening-header .message-opening-collapse {
+    display: inline;
+}
+
 .message-body pre {
     overflow: auto;
     max-width: 100%;
