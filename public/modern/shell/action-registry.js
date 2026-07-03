@@ -10,7 +10,6 @@ import {
     downloadFile,
     entryInputToArray,
     formatBytes,
-    formatDate,
     formatNumber,
     normalizeText,
     numberInput,
@@ -21,17 +20,13 @@ import {
 import { createActivityActions } from '../actions/activity.js';
 import { createApiConnectionActions } from '../actions/api-connection.js';
 import { createAssetActions } from '../actions/assets.js';
-import { createChatContextActions } from '../actions/chat-context.js';
-import { createChatFileActions } from '../actions/chat-files.js';
-import { createChatGenerationActions } from '../actions/chat-generation.js';
-import { createChatMessageActions } from '../actions/chat-messages.js';
 import { createCharacterActions } from '../actions/characters.js';
 import { createExtensionActions } from '../actions/extensions.js';
-import { createGroupActions } from '../actions/groups.js';
 import { createPersonaActions } from '../actions/personas.js';
 import { createPresetActions } from '../actions/presets.js';
 import { createSettingsActions } from '../actions/settings.js';
 import { createWorldbookActions } from '../actions/worldbooks.js';
+import { createChatActionRegistry } from './chat-action-registry.js';
 
 export function createActionRegistry({
     state,
@@ -148,40 +143,17 @@ export function createActionRegistry({
         beginCharacterCreate,
     } = characterActions;
 
-    const chatContextActions = createChatContextActions({
+    const chatRegistry = createChatActionRegistry({
         state,
         apiFetch,
+        apiFetchResponse,
+        loadData,
         render,
         showToast,
+        callLegacyBridge,
         getCharacterAvatarUrl,
     });
-    const {
-        isGroupChatMode,
-        ensureAvailableChatMode,
-        getChatModeLabel,
-        getSelectedChatEntity,
-        getChatContextKey,
-        getChatEntityName,
-        getChatEntityAvatarUrl,
-        getSelectedChatList,
-        getChatId,
-        getChatMessageCount,
-        getSelectedChatMessages,
-        getChatCacheKey,
-        clearChatSearch,
-        loadChatMessages,
-        prepareChatForSelectedContext,
-        getCurrentDraftKey,
-        getUserName,
-        sortChats,
-        saveGroupMetadata,
-        saveModernChat,
-        refreshSelectedChatList,
-        createModernChatFile,
-        toggleChatSidebar,
-        closeChatSidebarForMobileSelection,
-        closeChatSidebarOverlay,
-    } = chatContextActions;
+    const { getChatModeLabel } = chatRegistry;
 
     const settingsActions = createSettingsActions({
         state,
@@ -196,72 +168,6 @@ export function createActionRegistry({
         formatBytes,
     });
 
-    const chatFileActions = createChatFileActions({
-        state,
-        apiFetch,
-        apiFetchResponse,
-        render,
-        showToast,
-        formatDate,
-        formatNumber,
-        getSelectedChatEntity,
-        getChatContextKey,
-        getChatEntityName,
-        isGroupChatMode,
-        getSelectedChatList,
-        getChatId,
-        getChatCacheKey,
-        getUserName,
-        sortChats,
-        clearChatSearch,
-        loadChatMessages,
-        refreshSelectedChatList,
-        createModernChatFile,
-        saveGroupMetadata,
-    });
-    const { closeChatBackups } = chatFileActions;
-
-    const chatMessageActions = createChatMessageActions({
-        state,
-        render,
-        showToast,
-        getSelectedChatEntity,
-        getChatContextKey,
-        getSelectedChatMessages,
-        getCurrentDraftKey,
-        getChatCacheKey,
-        saveModernChat,
-        refreshSelectedChatList,
-    });
-
-    const chatGenerationActions = createChatGenerationActions({
-        state,
-        render,
-        showToast,
-        callLegacyBridge,
-        formatNumber,
-        getSelectedChatEntity,
-        getChatContextKey,
-        getChatEntityName,
-        isGroupChatMode,
-        getSelectedChatMessages,
-        getCurrentDraftKey,
-        getChatCacheKey,
-        loadChatMessages,
-        refreshSelectedChatList,
-        createModernChatFile,
-    });
-
-    const groupActions = createGroupActions({
-        state,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        ensureAvailableChatMode,
-    });
-    const { beginGroupCreate } = groupActions;
-
     const personaActions = createPersonaActions({
         state,
         apiFetch,
@@ -275,53 +181,27 @@ export function createActionRegistry({
         activityActions,
         apiConnectionActions,
         assetActions,
-        chatContextActions,
-        chatFileActions,
-        chatGenerationActions,
-        chatMessageActions,
         characterActions,
         extensionActions,
-        groupActions,
         personaActions,
         presetActions,
         settingsActions,
         worldbookActions,
         beginCharacterCreate,
-        beginGroupCreate,
         beginWorldbookCreate,
-        clearChatSearch,
-        closeChatBackups,
-        closeChatSidebarForMobileSelection,
-        closeChatSidebarOverlay,
-        createModernChatFile,
-        ensureAvailableChatMode,
         getAssetCount,
         getAssetEntries,
         getAssetGroups,
         getBackgroundFilename,
         getCharacterAvatarUrl,
         getChatCompletionModel,
-        getChatContextKey,
-        getChatEntityAvatarUrl,
-        getChatEntityName,
-        getChatId,
-        getChatMessageCount,
-        getChatModeLabel,
         getPersonas,
         getPresetCount,
         getPresetGroups,
         getPresetItems,
-        getSelectedChatEntity,
-        getSelectedChatList,
         getExtensionFolderName,
-        isGroupChatMode,
-        loadChatMessages,
         loadWorldDetail,
-        prepareChatForSelectedContext,
-        refreshSelectedChatList,
-        saveGroupMetadata,
         selectPreset,
-        sortChats,
-        toggleChatSidebar,
+        ...chatRegistry,
     };
 }
