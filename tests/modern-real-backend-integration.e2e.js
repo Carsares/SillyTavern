@@ -692,6 +692,110 @@ test.describe('Modern real backend integration', () => {
         }
     });
 
+    test('imports, exports, toggles, bulk edits, and deletes a worldbook from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const settingsBefore = await getSettings(page);
+        const worldbookName = uniqueName('ImportedWorldbook');
+        const worldbookData = {
+            name: worldbookName,
+            entries: {
+                0: {
+                    uid: 0,
+                    key: [`${worldbookName}-alpha`],
+                    keysecondary: [],
+                    comment: `${worldbookName} alpha entry`,
+                    content: `${worldbookName} alpha content`,
+                    disable: false,
+                    constant: false,
+                    selective: false,
+                    order: 100,
+                    position: 0,
+                },
+                1: {
+                    uid: 1,
+                    key: [`${worldbookName}-beta`],
+                    keysecondary: [],
+                    comment: `${worldbookName} beta entry`,
+                    content: `${worldbookName} beta content`,
+                    disable: false,
+                    constant: false,
+                    selective: false,
+                    order: 200,
+                    position: 0,
+                },
+            },
+            extensions: { modern_contract: true },
+        };
+
+        try {
+            await deleteWorldbook(page, worldbookName);
+            await gotoModern(page, 'worldbooks', '世界书');
+
+            const listCountBeforeImport = tracker.count('/api/worldinfo/list');
+            await page.locator('[data-worldbook-import-file]').setInputFiles({
+                name: `${worldbookName}.json`,
+                mimeType: 'application/json',
+                buffer: Buffer.from(JSON.stringify(worldbookData)),
+            });
+
+            await expectFrontendRequest(tracker, '/api/worldinfo/import');
+            await expect.poll(() => tracker.count('/api/worldinfo/list')).toBeGreaterThan(listCountBeforeImport);
+            await expect(page.locator(`[data-select-worldbook="${worldbookName}"]`)).toBeVisible();
+            await expect(page.locator('.panel-title').filter({ hasText: worldbookName })).toBeVisible();
+            await expect(page.locator('.world-entry-list')).toContainText(`${worldbookName} alpha entry`);
+            await expect(page.locator('.world-entry-list')).toContainText(`${worldbookName} beta entry`);
+
+            const importedWorldbook = await apiFetch(page, '/api/worldinfo/get', { name: worldbookName });
+            expect(importedWorldbook.entries['0']).toMatchObject({ comment: `${worldbookName} alpha entry`, disable: false });
+            expect(importedWorldbook.entries['1']).toMatchObject({ comment: `${worldbookName} beta entry`, disable: false });
+
+            const downloadPromise = page.waitForEvent('download');
+            await page.locator(`[data-export-worldbook="${worldbookName}"]`).click();
+            const download = await downloadPromise;
+            expect(download.suggestedFilename()).toBe(`${worldbookName}.json`);
+            await expectFrontendRequest(tracker, '/api/worldinfo/get');
+
+            const settingsSaveCountBeforeToggle = tracker.count('/api/settings/save');
+            await page.locator(`[data-toggle-world-global="${worldbookName}"]`).click();
+            await expect.poll(() => tracker.count('/api/settings/save')).toBeGreaterThan(settingsSaveCountBeforeToggle);
+            const enabledSettings = await waitForValue(async () => {
+                const settings = await getSettings(page);
+                return settings.world_info_settings?.world_info?.globalSelect?.includes(worldbookName) ? settings : null;
+            });
+            expect(enabledSettings.world_info_settings.world_info.globalSelect).toContain(worldbookName);
+
+            await page.locator('[data-world-entry-select="0"]').check();
+            await page.locator('[data-world-entry-select="1"]').check();
+            const editCountBeforeDisable = tracker.count('/api/worldinfo/edit');
+            await page.locator('[data-bulk-world-entries="disable"]').click();
+            await expect.poll(() => tracker.count('/api/worldinfo/edit')).toBeGreaterThan(editCountBeforeDisable);
+            const disabledWorldbook = await apiFetch(page, '/api/worldinfo/get', { name: worldbookName });
+            expect(disabledWorldbook.entries['0'].disable).toBe(true);
+            expect(disabledWorldbook.entries['1'].disable).toBe(true);
+
+            const alphaEntryCard = page.locator('.world-entry-card', { hasText: `${worldbookName} alpha entry` });
+            await alphaEntryCard.locator('[data-world-entry-select="0"]').click();
+            await expect(alphaEntryCard).toContainText('已选择');
+            await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 1');
+            await expect(page.locator('[data-delete-selected-world-entries]')).toBeEnabled();
+            const editCountBeforeDelete = tracker.count('/api/worldinfo/edit');
+            await page.locator('[data-delete-selected-world-entries]').click();
+            await page.locator('[data-confirm-world-entry-bulk-delete]').click();
+            await expect.poll(() => tracker.count('/api/worldinfo/edit')).toBeGreaterThan(editCountBeforeDelete);
+            const prunedWorldbook = await apiFetch(page, '/api/worldinfo/get', { name: worldbookName });
+            expect(prunedWorldbook.entries['0']).toBeUndefined();
+            expect(prunedWorldbook.entries['1']).toMatchObject({ comment: `${worldbookName} beta entry`, disable: true });
+
+            await page.locator(`[data-delete-worldbook="${worldbookName}"]`).click();
+            await page.locator('[data-confirm-worldbook-delete]').click();
+            await expectFrontendRequest(tracker, '/api/worldinfo/delete');
+            await expect(page.locator(`[data-select-worldbook="${worldbookName}"]`)).toHaveCount(0);
+        } finally {
+            await deleteWorldbook(page, worldbookName);
+            await restoreSettings(page, settingsBefore);
+        }
+    });
+
     test('imports, duplicates, exports, restores, uses, and deletes presets from the UI against the real backend', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const settingsBefore = await getSettings(page);
