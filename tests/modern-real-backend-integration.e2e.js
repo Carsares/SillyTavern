@@ -33,9 +33,13 @@ function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/iu, '');
 }
 
-function getChatBackupPrefix(avatar) {
-    const baseName = String(avatar || '').replace(/\.png$/iu, '');
+function getChatBackupPrefixForName(name) {
+    const baseName = String(name || '').replace(/\.png$/iu, '');
     return `chat_${baseName.replace(/[^a-z0-9]/giu, '_').toLowerCase()}_`;
+}
+
+function getChatBackupPrefix(avatar) {
+    return getChatBackupPrefixForName(avatar);
 }
 
 function deleteBackupFile(name) {
@@ -775,6 +779,121 @@ test.describe('Modern real backend integration', () => {
                 await safeApiFetch(page, '/api/backups/chat/delete', { name: chatBackupName });
             }
             deleteChatBackupsByPrefix(chatBackupPrefix);
+            await deleteCharacterByName(page, characterName);
+            if (avatar) {
+                await safeApiFetch(page, '/api/characters/delete', { avatar_url: avatar, delete_chats: true });
+            }
+        }
+    });
+
+    test('manages group chat files from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const characterName = uniqueName('GroupChatCharacter');
+        const groupName = uniqueName('ChatGroup');
+        const importedMessage = `${groupName} imported group message`;
+        let avatar = '';
+        let groupId = '';
+        let chatId = '';
+        let renamedChatId = '';
+        let importedChatId = '';
+
+        try {
+            avatar = await createCharacter(page, characterName);
+            const group = await apiFetch(page, '/api/groups/create', {
+                name: groupName,
+                members: [avatar],
+                allow_self_responses: true,
+                activation_strategy: 0,
+                generation_mode: 0,
+                chats: [],
+                chat_id: '',
+            });
+            groupId = group.id;
+
+            await page.addInitScript(() => window.localStorage.setItem('st-modern-chat-mode', 'group'));
+            await gotoModern(page, 'chat', '聊天工作区');
+            await page.locator('[data-chat-mode="group"]').click();
+            await page.locator(`[data-select-group="${groupId}"]`).click();
+            await expect(page.locator('.detail-title')).toHaveText(groupName);
+
+            const groupEditCountBeforeCreate = tracker.count('/api/groups/edit');
+            await page.locator('[data-new-chat]').click();
+            await expectFrontendRequest(tracker, '/api/chats/group/save');
+            await expect.poll(() => tracker.count('/api/groups/edit')).toBeGreaterThan(groupEditCountBeforeCreate);
+            chatId = tracker.lastJson('/api/chats/group/save')?.id || '';
+            expect(chatId).toBeTruthy();
+            await expect(page.locator(`[data-select-chat="${chatId}"]`)).toBeVisible();
+            await apiFetch(page, '/api/chats/group/get', { id: chatId });
+
+            renamedChatId = uniqueName('GroupChatFile');
+            const groupEditCountBeforeRename = tracker.count('/api/groups/edit');
+            await page.locator('[data-delete-chat]').click();
+            await page.locator('[data-rename-chat]').click();
+            await page.locator('[data-chat-rename-input]').fill(renamedChatId);
+            await page.locator('[data-save-chat-rename]').click();
+
+            await expectFrontendRequest(tracker, '/api/chats/rename');
+            await expect.poll(() => tracker.count('/api/groups/edit')).toBeGreaterThan(groupEditCountBeforeRename);
+            expect(tracker.lastJson('/api/chats/rename')).toMatchObject({
+                avatar_url: null,
+                original_file: `${chatId}.jsonl`,
+                renamed_file: `${renamedChatId}.jsonl`,
+                is_group: true,
+            });
+            chatId = renamedChatId;
+            await expect(page.locator(`[data-select-chat="${chatId}"]`)).toBeVisible();
+
+            await page.locator('[data-delete-chat]').click();
+            const downloadPromise = page.waitForEvent('download');
+            await page.locator('[data-export-chat="jsonl"]').click();
+            const download = await downloadPromise;
+            expect(download.suggestedFilename()).toBe(`${chatId}.jsonl`);
+            await expectFrontendRequest(tracker, '/api/chats/export');
+            expect(tracker.lastJson('/api/chats/export')).toMatchObject({
+                is_group: true,
+                avatar_url: null,
+                file: `${chatId}.jsonl`,
+                exportfilename: `${chatId}.jsonl`,
+                format: 'jsonl',
+            });
+
+            const groupEditCountBeforeDelete = tracker.count('/api/groups/edit');
+            await page.locator('[data-confirm-chat-delete]').click();
+
+            await expectFrontendRequest(tracker, '/api/chats/group/delete');
+            await expect.poll(() => tracker.count('/api/groups/edit')).toBeGreaterThan(groupEditCountBeforeDelete);
+            expect(tracker.lastJson('/api/chats/group/delete')).toEqual({ id: chatId });
+            await expect(page.locator(`[data-select-chat="${chatId}"]`)).toHaveCount(0);
+            deleteChatBackupsByPrefix(getChatBackupPrefixForName(chatId));
+            chatId = '';
+
+            const groupEditCountBeforeImport = tracker.count('/api/groups/edit');
+            await page.locator('[data-chat-import-file]').setInputFiles({
+                name: `${uniqueName('ImportedGroupChat')}.jsonl`,
+                mimeType: 'application/jsonl',
+                buffer: Buffer.from([
+                    JSON.stringify({ chat_metadata: {}, user_name: 'Modern User', character_name: groupName }),
+                    JSON.stringify({ name: 'Modern User', is_user: true, mes: importedMessage, send_date: new Date().toISOString() }),
+                ].join('\n')),
+            });
+
+            await expectFrontendRequest(tracker, '/api/chats/group/import');
+            await expect.poll(() => tracker.count('/api/groups/edit')).toBeGreaterThan(groupEditCountBeforeImport);
+            importedChatId = tracker.lastJson('/api/groups/edit')?.chat_id || '';
+            expect(importedChatId).toBeTruthy();
+            await expect(page.locator(`[data-select-chat="${importedChatId}"]`)).toBeVisible();
+            await expect(page.locator('.chat-thread')).toContainText(importedMessage);
+        } finally {
+            for (const id of [chatId, renamedChatId, importedChatId]) {
+                if (id) {
+                    await safeApiFetch(page, '/api/chats/group/delete', { id });
+                    deleteChatBackupsByPrefix(getChatBackupPrefixForName(id));
+                }
+            }
+            if (groupId) {
+                await safeApiFetch(page, '/api/groups/delete', { id: groupId });
+            }
+            await deleteGroupByName(page, groupName);
             await deleteCharacterByName(page, characterName);
             if (avatar) {
                 await safeApiFetch(page, '/api/characters/delete', { avatar_url: avatar, delete_chats: true });
