@@ -1170,9 +1170,18 @@ test.describe('Modern real backend integration', () => {
             avatar = await createCharacter(page, characterName);
             chatBackupPrefix = getChatBackupPrefix(avatar);
             await page.addInitScript(() => window.localStorage.setItem('st-modern-chat-mode', 'character'));
+            const characterChatsCountBeforeRoute = tracker.count('/api/characters/chats');
             await gotoModern(page, 'chat', '聊天工作区');
+            await expect.poll(() => tracker.count('/api/characters/chats')).toBeGreaterThan(characterChatsCountBeforeRoute);
 
-            await page.locator(`[data-select-character="${avatar}"]`).click();
+            if (tracker.lastJson('/api/characters/chats')?.avatar_url !== avatar) {
+                await page.locator(`[data-select-character="${avatar}"]`).click();
+            }
+            await expect.poll(() => tracker.lastJson('/api/characters/chats')?.avatar_url || '').toBe(avatar);
+            expect(tracker.lastJson('/api/characters/chats')).toEqual({
+                avatar_url: avatar,
+                metadata: true,
+            });
             await expect(page.locator('.detail-title')).toHaveText(characterName);
             await page.locator('[data-new-chat]').click();
 
@@ -1192,6 +1201,19 @@ test.describe('Modern real backend integration', () => {
             await expect(page.locator('.chat-thread')).toContainText(editedMessage);
             const savedChat = await apiFetch(page, '/api/chats/get', { avatar_url: avatar, file_name: chatId });
             expect(savedChat.some(message => message.mes === editedMessage)).toBe(true);
+
+            const chatGetCountBeforeReloadRoute = tracker.count('/api/chats/get');
+            await gotoModern(page, 'chat', '聊天工作区');
+            await expect.poll(() => tracker.count('/api/chats/get')).toBeGreaterThan(chatGetCountBeforeReloadRoute);
+            if (tracker.lastJson('/api/chats/get')?.avatar_url !== avatar || tracker.lastJson('/api/chats/get')?.file_name !== chatId) {
+                await page.locator(`[data-select-character="${avatar}"]`).click();
+            }
+            await expect.poll(() => tracker.lastJson('/api/chats/get')?.file_name || '').toBe(chatId);
+            expect(tracker.lastJson('/api/chats/get')).toMatchObject({
+                avatar_url: avatar,
+                file_name: chatId,
+            });
+            await expect(page.locator('.chat-thread')).toContainText(editedMessage);
 
             chatBackupName = `${chatBackupPrefix}${Date.now()}.jsonl`;
             fs.mkdirSync(backupsDir, { recursive: true });
@@ -1246,6 +1268,17 @@ test.describe('Modern real backend integration', () => {
 
             await expectFrontendRequest(tracker, '/api/chats/import');
             await expect(page.locator('.chat-thread')).toContainText(importedMessage);
+
+            const chatSearchCountBefore = tracker.count('/api/chats/search');
+            await page.locator('[data-chat-search-input]').fill(importedMessage);
+            await page.locator('[data-chat-search-run]').click();
+            await expect.poll(() => tracker.count('/api/chats/search')).toBeGreaterThan(chatSearchCountBefore);
+            expect(tracker.lastJson('/api/chats/search')).toEqual({
+                query: importedMessage,
+                avatar_url: avatar,
+                group_id: null,
+            });
+            await expect(page.locator('.chat-browser')).toContainText(importedMessage);
         } finally {
             if (chatBackupName) {
                 await safeApiFetch(page, '/api/backups/chat/delete', { name: chatBackupName });
@@ -1295,7 +1328,15 @@ test.describe('Modern real backend integration', () => {
             chatId = tracker.lastJson('/api/chats/group/save')?.id || '';
             expect(chatId).toBeTruthy();
             await expect(page.locator(`[data-select-chat="${chatId}"]`)).toBeVisible();
-            await apiFetch(page, '/api/chats/group/get', { id: chatId });
+
+            await gotoModern(page, 'chat', '聊天工作区');
+            await page.locator('[data-chat-mode="group"]').click();
+            const groupChatGetCountBeforeSelect = tracker.count('/api/chats/group/get');
+            await page.locator(`[data-select-group="${groupId}"]`).click();
+            await expect(page.locator(`[data-select-chat="${chatId}"]`)).toBeVisible();
+            await page.locator(`[data-select-chat="${chatId}"]`).click();
+            await expect.poll(() => tracker.count('/api/chats/group/get')).toBeGreaterThan(groupChatGetCountBeforeSelect);
+            expect(tracker.lastJson('/api/chats/group/get')).toEqual({ id: chatId });
 
             renamedChatId = uniqueName('GroupChatFile');
             const groupEditCountBeforeRename = tracker.count('/api/groups/edit');
