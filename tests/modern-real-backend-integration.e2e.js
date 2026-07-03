@@ -382,6 +382,11 @@ async function findCharacterByName(page, name) {
     return characters.find(character => character.name === name || character.data?.name === name) || null;
 }
 
+async function findCharacterByAvatar(page, avatar) {
+    const characters = await apiFetch(page, '/api/characters/all');
+    return characters.find(character => character.avatar === avatar) || null;
+}
+
 async function findGroupByName(page, name) {
     const groups = await apiFetch(page, '/api/groups/all');
     return groups.find(group => group.name === name) || null;
@@ -396,6 +401,12 @@ async function deleteCharacterByName(page, name) {
     const character = await findCharacterByName(page, name);
     if (character?.avatar) {
         await safeApiFetch(page, '/api/characters/delete', { avatar_url: character.avatar, delete_chats: true });
+    }
+}
+
+async function deleteCharacterByAvatar(page, avatar) {
+    if (avatar) {
+        await safeApiFetch(page, '/api/characters/delete', { avatar_url: avatar, delete_chats: true });
     }
 }
 
@@ -521,6 +532,114 @@ test.describe('Modern real backend integration', () => {
             }
             await deleteGroupByName(page, groupName);
             await deleteCharacterByName(page, characterName);
+        }
+    });
+
+    test('imports, renames, duplicates, exports, edits avatar, and deletes a character from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const characterName = uniqueName('ImportedCharacter');
+        const renamedName = uniqueName('RenamedCharacter');
+        let avatar = '';
+        let renamedAvatar = '';
+        let duplicateAvatar = '';
+
+        const characterCard = {
+            spec: 'chara_card_v2',
+            spec_version: '2.0',
+            data: {
+                name: characterName,
+                description: `${characterName} imported description`,
+                personality: 'Imported through the modern real UI.',
+                scenario: '',
+                first_mes: `Hello from ${characterName}.`,
+                mes_example: '',
+                creator_notes: '',
+                system_prompt: '',
+                post_history_instructions: '',
+                alternate_greetings: [],
+                tags: ['modern-contract'],
+                creator: 'Modern contract test',
+                character_version: '1.0.0',
+                extensions: {},
+            },
+        };
+
+        try {
+            await gotoModern(page, 'characters', '角色库');
+
+            await page.locator('[data-character-import-file]').setInputFiles({
+                name: `${characterName}.json`,
+                mimeType: 'application/json',
+                buffer: Buffer.from(JSON.stringify(characterCard)),
+            });
+
+            await expectFrontendRequest(tracker, '/api/characters/import');
+            const importedCharacter = await waitForValue(() => findCharacterByName(page, characterName));
+            avatar = importedCharacter.avatar;
+            await expect(page.locator(`[data-select-character="${avatar}"]`)).toBeVisible();
+            await expect(page.locator('.detail-title')).toHaveText(characterName);
+
+            await page.locator(`[data-character-avatar-file="${avatar}"]`).setInputFiles({
+                name: `${characterName}-avatar.png`,
+                mimeType: 'image/png',
+                buffer: tinyPng,
+            });
+            await expectFrontendRequest(tracker, '/api/characters/edit-avatar');
+            expect(tracker.lastJson('/api/characters/edit-avatar')).toBeNull();
+            await expect(page.locator('.toast', { hasText: '角色头像已替换' })).toBeVisible();
+
+            await page.locator(`[data-rename-character="${avatar}"]`).click();
+            await page.locator('[data-character-rename-input]').fill(renamedName);
+            await page.locator('[data-confirm-character-rename]').click();
+            await expectFrontendRequest(tracker, '/api/characters/rename');
+            expect(tracker.lastJson('/api/characters/rename')).toMatchObject({
+                avatar_url: avatar,
+                new_name: renamedName,
+            });
+            const renamedCharacter = await waitForValue(() => findCharacterByName(page, renamedName));
+            renamedAvatar = renamedCharacter.avatar;
+            avatar = '';
+            await expect(page.locator(`[data-select-character="${renamedAvatar}"]`)).toBeVisible();
+            await expect.poll(() => findCharacterByName(page, characterName)).toBeNull();
+
+            await page.locator(`[data-duplicate-character="${renamedAvatar}"]`).click();
+            await expectFrontendRequest(tracker, '/api/characters/duplicate');
+            expect(tracker.lastJson('/api/characters/duplicate')).toEqual({ avatar_url: renamedAvatar });
+            duplicateAvatar = `${path.basename(renamedAvatar, '.png')}_1.png`;
+            await expect.poll(() => findCharacterByAvatar(page, duplicateAvatar)).not.toBeNull();
+            await expect(page.locator(`[data-select-character="${duplicateAvatar}"]`)).toBeVisible();
+
+            const downloadPromise = page.waitForEvent('download');
+            await page.locator(`[data-export-character="${duplicateAvatar}"][data-character-export-format="json"]`).click();
+            const download = await downloadPromise;
+            expect(download.suggestedFilename()).toBe(`${path.basename(duplicateAvatar, '.png')}.json`);
+            await expectFrontendRequest(tracker, '/api/characters/export');
+            expect(tracker.lastJson('/api/characters/export')).toEqual({
+                avatar_url: duplicateAvatar,
+                format: 'json',
+            });
+
+            await page.locator(`[data-delete-character="${duplicateAvatar}"]`).click();
+            await page.locator('[data-character-delete-chats]').check();
+            await page.locator('[data-confirm-character-delete]').click();
+            await expectFrontendRequest(tracker, '/api/characters/delete');
+            await expect.poll(() => findCharacterByAvatar(page, duplicateAvatar)).toBeNull();
+            duplicateAvatar = '';
+
+            const deleteCountAfterDuplicate = tracker.count('/api/characters/delete');
+            await page.locator(`[data-select-character="${renamedAvatar}"]`).click();
+            await page.locator(`[data-delete-character="${renamedAvatar}"]`).click();
+            await page.locator('[data-character-delete-chats]').check();
+            await page.locator('[data-confirm-character-delete]').click();
+            await expect.poll(() => tracker.count('/api/characters/delete')).toBeGreaterThan(deleteCountAfterDuplicate);
+            await expect.poll(() => findCharacterByAvatar(page, renamedAvatar)).toBeNull();
+            renamedAvatar = '';
+        } finally {
+            await deleteCharacterByAvatar(page, duplicateAvatar);
+            await deleteCharacterByAvatar(page, renamedAvatar);
+            await deleteCharacterByAvatar(page, avatar);
+            await deleteCharacterByName(page, characterName);
+            await deleteCharacterByName(page, renamedName);
         }
     });
 
