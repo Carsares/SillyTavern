@@ -2,7 +2,7 @@ const defaultBridgeSource = 'sillytavern-modern-bridge';
 
 export function createLegacyBridge({
     source = defaultBridgeSource,
-    frameSrc = '/?modernBridge=1',
+    frameSrc = '/index.html?modernBridge=1',
     frameTitle = 'SillyTavern legacy generation engine',
     origin = window.location.origin,
     loadTimeoutMs = 30000,

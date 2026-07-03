@@ -419,6 +419,7 @@ let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
 let firstRun = false;
+const isModernBridgeMode = new URLSearchParams(location.search).has('modernBridge');
 export let settingsReady = false;
 let currentVersion = '0.0.0';
 export let displayVersion = 'SillyTavern';
@@ -3335,6 +3336,10 @@ export function createLazyFields(resolvers) {
     return result;
 }
 
+function trimCharacterStringField(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
 /**
  * Returns the character card fields for the current character as lazy getters.
  * Each field is only processed (baseChatReplace) when first accessed.
@@ -3352,58 +3357,58 @@ export function getCharacterCardFieldsLazy({ chid = undefined } = {}) {
 
     /** @type {Record<string, () => string|string[]>} */
     const resolvers = {
-        persona: () => baseChatReplace(power_user.persona_description?.trim()),
+        persona: () => baseChatReplace(trimCharacterStringField(power_user.persona_description)),
         system: () => {
             if (!character) return '';
             const systemPrompt = chat_metadata.system_prompt || character.data?.system_prompt || '';
-            return power_user.prefer_character_prompt ? baseChatReplace(systemPrompt.trim()) : '';
+            return power_user.prefer_character_prompt ? baseChatReplace(trimCharacterStringField(systemPrompt)) : '';
         },
         jailbreak: () => {
             if (!character) return '';
-            return power_user.prefer_character_jailbreak ? baseChatReplace(character.data?.post_history_instructions?.trim()) : '';
+            return power_user.prefer_character_jailbreak ? baseChatReplace(trimCharacterStringField(character.data?.post_history_instructions)) : '';
         },
         version: () => character?.data?.character_version ?? '',
         charDepthPrompt: () => {
             if (!character) return '';
-            return baseChatReplace(character.data?.extensions?.depth_prompt?.prompt?.trim());
+            return baseChatReplace(trimCharacterStringField(character.data?.extensions?.depth_prompt?.prompt));
         },
         creatorNotes: () => {
             if (!character) return '';
-            return baseChatReplace(character.data?.creator_notes?.trim());
+            return baseChatReplace(trimCharacterStringField(character.data?.creator_notes));
         },
         // These four fields may be overridden by group cards
         description: () => {
             if (groupCardsLazy) return groupCardsLazy.description;
             if (!character) return '';
-            return baseChatReplace(character.description?.trim());
+            return baseChatReplace(trimCharacterStringField(character.description));
         },
         personality: () => {
             if (groupCardsLazy) return groupCardsLazy.personality;
             if (!character) return '';
-            return baseChatReplace(character.personality?.trim());
+            return baseChatReplace(trimCharacterStringField(character.personality));
         },
         scenario: () => {
             if (groupCardsLazy) return groupCardsLazy.scenario;
             if (!character) return '';
             const scenarioText = chat_metadata.scenario || character.scenario || '';
-            return baseChatReplace(scenarioText.trim());
+            return baseChatReplace(trimCharacterStringField(scenarioText));
         },
         mesExamples: () => {
             if (groupCardsLazy) return groupCardsLazy.mesExamples;
             if (!character) return '';
             const exampleDialog = chat_metadata.mes_example || character.mes_example || '';
-            return baseChatReplace(exampleDialog.trim());
+            return baseChatReplace(trimCharacterStringField(exampleDialog));
         },
         firstMessage: () => {
             if (!character) return '';
-            const firstMes = character.first_mes?.trim() || '';
+            const firstMes = trimCharacterStringField(character.first_mes);
             return baseChatReplace(firstMes);
         },
         alternateGreetings: () => {
             if (!character) return [];
             const altGreetings = character.data?.alternate_greetings;
             if (!Array.isArray(altGreetings)) return [];
-            return altGreetings.map(greeting => baseChatReplace(greeting?.trim()));
+            return altGreetings.map(greeting => baseChatReplace(trimCharacterStringField(greeting)));
         },
     };
 
@@ -5568,12 +5573,36 @@ function formatModernBridgeChatName(chatName) {
     return String(chatName || '').replace(/\.jsonl$/i, '');
 }
 
-function getModernBridgeCharacterId(avatar) {
-    return characters.findIndex(character => character?.avatar === avatar);
+async function waitForModernBridgeToken() {
+    if (!token) {
+        await waitUntilCondition(() => Boolean(token), 30000, 100);
+    }
+}
+
+async function waitForModernBridgeReady() {
+    await waitForModernBridgeToken();
+    if (!settingsReady) {
+        await waitUntilCondition(() => settingsReady, 30000, 100);
+    }
+    if (!Array.isArray(world_names)) {
+        await waitUntilCondition(() => Array.isArray(world_names), 30000, 100);
+    }
+}
+
+async function getModernBridgeCharacterId(avatar) {
+    let characterId = characters.findIndex(character => character?.avatar === avatar);
+    if (characterId < 0 && avatar) {
+        // The hidden legacy iframe can receive bridge messages before characters are loaded.
+        await getCharacters();
+        characterId = characters.findIndex(character => character?.avatar === avatar);
+    }
+    return characterId;
 }
 
 async function useModernBridgeChatContext(payload = {}) {
     const { avatar, groupId, chat: chatName } = payload || {};
+    await waitForModernBridgeReady();
+
     if (groupId) {
         const group = groups.find(x => x.id === groupId);
         if (!group) {
@@ -5598,7 +5627,7 @@ async function useModernBridgeChatContext(payload = {}) {
         return { group: currentGroup || group };
     }
 
-    const characterId = getModernBridgeCharacterId(avatar);
+    const characterId = await getModernBridgeCharacterId(avatar);
     if (characterId < 0) {
         throw new Error('原版生成引擎找不到当前选择的角色。');
     }
@@ -5619,6 +5648,7 @@ async function handleModernBridgeGenerate(payload = {}) {
     const params = payload || {};
     const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
     const context = await useModernBridgeChatContext(params);
+    const messageCountBefore = chat.length;
 
     if (type === 'normal') {
         const textarea = $('#send_textarea');
@@ -5626,9 +5656,16 @@ async function handleModernBridgeGenerate(payload = {}) {
         textarea[0]?.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
+    if (online_status === 'no_connection') {
+        setOnlineStatus('Modern bridge status check skipped');
+    }
+
     const result = context.group
         ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type))
         : await Generate(type);
+    if (type === 'normal' && chat.length <= messageCountBefore) {
+        throw new Error('原版生成引擎未生成新消息，请检查 API 连接状态。');
+    }
     const group = context.group ? groups.find(x => x.id === context.group.id) : null;
     return {
         avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
@@ -5710,6 +5747,7 @@ window.addEventListener('message', async (event) => {
 
         throw new Error(`现代页不支持的原版生成引擎动作：${action}`);
     } catch (error) {
+        console.error('Modern bridge action failed', action, error);
         postModernBridgeResult(event, id, null, error);
     }
 });
@@ -8129,7 +8167,7 @@ export async function getSettings(initLoaderHandle = null) {
             $('#extensions_api_key').attr('disabled', 'disabled');
         }
 
-        firstRun = !!settings.firstRun;
+        firstRun = !!settings.firstRun && !isModernBridgeMode;
 
         if (firstRun) {
             await initLoaderHandle?.hide();

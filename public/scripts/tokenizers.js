@@ -1,5 +1,5 @@
 import { localforage } from '../lib.js';
-import { characters, event_types, eventSource, main_api, nai_settings, online_status, this_chid } from '../script.js';
+import { characters, event_types, eventSource, getRequestHeaders, main_api, nai_settings, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { chat_completion_sources, model_list, oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';
@@ -821,6 +821,7 @@ export function countTokensOpenAI(messages, full = false) {
                 async: false,
                 type: 'POST', //
                 url: tokenizerEndpoint,
+                headers: getRequestHeaders(),
                 data: JSON.stringify([message]),
                 dataType: 'json',
                 contentType: 'application/json',
@@ -871,6 +872,7 @@ export async function countTokensOpenAIAsync(messages, full = false) {
                 async: true,
                 type: 'POST', //
                 url: tokenizerEndpoint,
+                headers: getRequestHeaders(),
                 data: JSON.stringify([message]),
                 dataType: 'json',
                 contentType: 'application/json',
@@ -925,6 +927,7 @@ function countTokensFromServer(endpoint, str, resolve) {
         async: isAsync,
         type: 'POST',
         url: endpoint,
+        headers: getRequestHeaders(),
         data: JSON.stringify({ text: str }),
         dataType: 'json',
         contentType: 'application/json',
@@ -956,6 +959,7 @@ function countTokensFromKoboldAPI(str, resolve) {
         async: isAsync,
         type: 'POST',
         url: TOKENIZER_URLS[tokenizers.API_KOBOLD].count,
+        headers: getRequestHeaders(),
         data: JSON.stringify({
             text: str,
             url: kai_settings.api_server,
@@ -999,6 +1003,7 @@ function countTokensFromTextgenAPI(str, resolve) {
         async: isAsync,
         type: 'POST',
         url: TOKENIZER_URLS[tokenizers.API_TEXTGENERATIONWEBUI].count,
+        headers: getRequestHeaders(),
         data: JSON.stringify(getTextgenAPITokenizationParams(str)),
         dataType: 'json',
         contentType: 'application/json',
@@ -1051,6 +1056,7 @@ function getTextTokensFromServer(endpoint, str, resolve) {
         async: isAsync,
         type: 'POST',
         url: endpoint,
+        headers: getRequestHeaders(),
         data: JSON.stringify({ text: str }),
         dataType: 'json',
         contentType: 'application/json',
@@ -1081,6 +1087,7 @@ function getTextTokensFromTextgenAPI(str, resolve) {
         async: isAsync,
         type: 'POST',
         url: TOKENIZER_URLS[tokenizers.API_TEXTGENERATIONWEBUI].encode,
+        headers: getRequestHeaders(),
         data: JSON.stringify(getTextgenAPITokenizationParams(str)),
         dataType: 'json',
         contentType: 'application/json',
@@ -1106,6 +1113,7 @@ function getTextTokensFromKoboldAPI(str, resolve) {
         async: isAsync,
         type: 'POST',
         url: TOKENIZER_URLS[tokenizers.API_KOBOLD].encode,
+        headers: getRequestHeaders(),
         data: JSON.stringify({
             text: str,
             url: kai_settings.api_server,
@@ -1136,6 +1144,7 @@ function decodeTextTokensFromServer(endpoint, ids, resolve) {
         async: isAsync,
         type: 'POST',
         url: endpoint,
+        headers: getRequestHeaders(),
         data: JSON.stringify({ ids: ids }),
         dataType: 'json',
         contentType: 'application/json',
@@ -1228,4 +1237,3 @@ export async function initTokenizers() {
     await loadTokenCache();
     registerDebugFunction('resetTokenCache', 'Reset token cache', 'Purges the calculated token counts. Use this if you want to force a full re-tokenization of all chats or suspect the token counts are wrong.', resetTokenCache);
 }
-
