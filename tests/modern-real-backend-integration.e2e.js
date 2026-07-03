@@ -1007,6 +1007,7 @@ test.describe('Modern real backend integration', () => {
         const backgroundName = `${uniqueName('Background')}.png`;
         const renamedBackgroundName = backgroundName.replace(/\.png$/u, '-renamed.png');
         const folderName = uniqueName('Folder');
+        const renamedFolderName = `${folderName} Renamed`;
         let folderId = '';
         let currentBackgroundName = '';
 
@@ -1051,6 +1052,34 @@ test.describe('Modern real backend integration', () => {
                 return foldersAfterAssign.imageFolderMap?.[backgroundName]?.includes(folderId) || false;
             }).toBe(true);
 
+            await page.locator(`[data-background-folder-filter="${folderId}"]`).click();
+            await page.locator(`[data-rename-background-folder="${folderId}"]`).click();
+            await page.locator('[data-background-folder-rename-name]').fill(renamedFolderName);
+            await page.locator('[data-confirm-background-folder-rename]').click();
+
+            await expectFrontendRequest(tracker, '/api/image-metadata/folders/update');
+            expect(tracker.lastJson('/api/image-metadata/folders/update')).toEqual({
+                id: folderId,
+                name: renamedFolderName,
+            });
+            await expect(page.locator(`[data-background-folder-filter="${folderId}"]`)).toContainText(renamedFolderName);
+            await expect.poll(() => findBackgroundFolderByName(page, renamedFolderName)).not.toBeNull();
+
+            await expect(page.locator(`[data-background-select="${backgroundName}"]`)).toBeChecked();
+            await expect(page.locator('[data-unassign-selected-backgrounds]')).toBeEnabled();
+            await page.locator('[data-unassign-selected-backgrounds]').click();
+
+            await expectFrontendRequest(tracker, '/api/image-metadata/folders/unassign');
+            expect(tracker.lastJson('/api/image-metadata/folders/unassign')).toEqual({
+                id: folderId,
+                paths: [`backgrounds/${backgroundName}`],
+            });
+            await expect.poll(async () => {
+                const foldersAfterUnassign = await apiFetch(page, '/api/backgrounds/folders');
+                return foldersAfterUnassign.imageFolderMap?.[backgroundName]?.includes(folderId) || false;
+            }).toBe(false);
+
+            await page.locator('[data-background-folder-filter=""]').click();
             await page.locator('[data-toggle-background-selection]').click();
             await expect(page.locator(`[data-background-select="${backgroundName}"]`)).toHaveCount(0);
             await page.locator(`[data-background-rename="${backgroundName}"]`).click();
@@ -1085,6 +1114,7 @@ test.describe('Modern real backend integration', () => {
                 await safeApiFetch(page, '/api/image-metadata/folders/delete', { id: folderId });
             }
             await deleteBackgroundFolderByName(page, folderName);
+            await deleteBackgroundFolderByName(page, renamedFolderName);
             if (currentBackgroundName) {
                 await safeApiFetch(page, '/api/backgrounds/delete', { bg: currentBackgroundName });
             }
