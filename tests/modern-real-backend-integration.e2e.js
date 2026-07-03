@@ -10,6 +10,7 @@ const userDataRoot = path.resolve('data/default-user');
 const backupsDir = path.join(userDataRoot, 'backups');
 const assetsDir = path.join(userDataRoot, 'assets');
 const localExtensionsDir = path.join(userDataRoot, 'extensions');
+const openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
 const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1S3PwAAAABJRU5ErkJggg==',
     'base64',
@@ -442,9 +443,14 @@ test.describe('Modern real backend integration', () => {
         }
     });
 
-    test('imports and deletes a preset from the UI against the real backend', async ({ page }) => {
+    test('imports, duplicates, exports, restores, uses, and deletes presets from the UI against the real backend', async ({ page }) => {
         const tracker = trackApiRequests(page);
+        const settingsBefore = await getSettings(page);
         const presetName = uniqueName('Preset');
+        const duplicateName = `${presetName} copy`;
+        const defaultPresetPath = path.join(openAiSettingsDir, 'Default.json');
+        const defaultPresetBefore = fs.existsSync(defaultPresetPath) ? fs.readFileSync(defaultPresetPath, 'utf8') : null;
+        let apiId = '';
 
         try {
             await gotoModern(page, 'presets', '预设管理');
@@ -462,18 +468,63 @@ test.describe('Modern real backend integration', () => {
             await expectFrontendRequest(tracker, '/api/presets/save');
             const presetButton = page.locator(`[data-select-preset="${presetName}"]`).first();
             await expect(presetButton).toBeVisible();
-            const apiId = await presetButton.getAttribute('data-preset-api');
+            apiId = await presetButton.getAttribute('data-preset-api');
             expect(apiId).toBeTruthy();
 
             await presetButton.click();
             await expect(page.locator('[data-preset-json-input]')).toContainText(`${presetName}-model`);
+
+            const saveCountAfterImport = tracker.count('/api/presets/save');
+            await page.locator(`[data-duplicate-preset="${presetName}"][data-preset-api="${apiId}"]`).click();
+            await expect.poll(() => tracker.count('/api/presets/save')).toBeGreaterThan(saveCountAfterImport);
+            await expect(page.locator(`[data-select-preset="${duplicateName}"][data-preset-api="${apiId}"]`)).toBeVisible();
+            await expect(page.locator('[data-preset-json-input]')).toContainText(`${presetName}-model`);
+
+            const downloadPromise = page.waitForEvent('download');
+            await page.locator(`[data-export-preset="${duplicateName}"][data-preset-api="${apiId}"]`).click();
+            const download = await downloadPromise;
+            expect(download.suggestedFilename()).toBe(`${apiId}-${duplicateName}.json`);
+
+            const settingsSaveCountBeforeUse = tracker.count('/api/settings/save');
+            await page.locator(`[data-use-openai-preset="${duplicateName}"]`).click();
+            await expect.poll(() => tracker.count('/api/settings/save')).toBeGreaterThan(settingsSaveCountBeforeUse);
+            const usedSettings = await waitForValue(async () => {
+                const settings = await getSettings(page);
+                return settings.oai_settings?.preset_settings_openai === duplicateName ? settings.oai_settings : null;
+            });
+            expect(usedSettings).toMatchObject({
+                preset_settings_openai: duplicateName,
+                temp_openai: 0.42,
+            });
+
+            await page.locator('[data-select-preset="Default"][data-preset-api="openai"]').click();
+            const restoreCountBefore = tracker.count('/api/presets/restore');
+            const saveCountBeforeRestore = tracker.count('/api/presets/save');
+            await page.locator('[data-restore-preset="Default"][data-preset-api="openai"]').click();
+            await expect.poll(() => tracker.count('/api/presets/restore')).toBeGreaterThan(restoreCountBefore);
+            await expect.poll(() => tracker.count('/api/presets/save')).toBeGreaterThan(saveCountBeforeRestore);
+            await expect(page.locator('[data-preset-json-input]')).toContainText('"openai_max_tokens"');
+
+            await page.locator(`[data-select-preset="${duplicateName}"][data-preset-api="${apiId}"]`).click();
+            await page.locator(`[data-delete-preset="${duplicateName}"][data-preset-api="${apiId}"]`).click();
+            await page.locator('[data-confirm-preset-delete]').click();
+            await expectFrontendRequest(tracker, '/api/presets/delete');
+            await expect(page.locator(`[data-select-preset="${duplicateName}"]`)).toHaveCount(0);
+
+            const deleteCountAfterDuplicate = tracker.count('/api/presets/delete');
+            await page.locator(`[data-select-preset="${presetName}"][data-preset-api="${apiId}"]`).click();
             await page.locator(`[data-delete-preset="${presetName}"][data-preset-api="${apiId}"]`).click();
             await page.locator('[data-confirm-preset-delete]').click();
 
-            await expectFrontendRequest(tracker, '/api/presets/delete');
+            await expect.poll(() => tracker.count('/api/presets/delete')).toBeGreaterThan(deleteCountAfterDuplicate);
             await expect(page.locator(`[data-select-preset="${presetName}"]`)).toHaveCount(0);
         } finally {
             await deletePresetFromKnownApis(page, presetName);
+            await deletePresetFromKnownApis(page, duplicateName);
+            await restoreSettings(page, settingsBefore);
+            if (defaultPresetBefore !== null) {
+                fs.writeFileSync(defaultPresetPath, defaultPresetBefore);
+            }
         }
     });
 
