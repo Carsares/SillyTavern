@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -12,6 +12,7 @@ const userDataRoot = path.resolve('data/default-user');
 const backupsDir = path.join(userDataRoot, 'backups');
 const assetsDir = path.join(userDataRoot, 'assets');
 const localExtensionsDir = path.join(userDataRoot, 'extensions');
+const globalExtensionsDir = path.resolve('public/scripts/extensions/third-party');
 const openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
 const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1S3PwAAAABJRU5ErkJggg==',
@@ -64,6 +65,24 @@ function createGitExtensionFixture(extensionName) {
     execGit(sourcePath, ['commit', '-m', 'add main update marker']);
 
     return { fixtureRoot, extensionPath };
+}
+
+function createHttpGitExtensionFixture(extensionName) {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'st-modern-http-extension-'));
+    const sourcePath = path.join(fixtureRoot, 'source');
+    const barePath = path.join(fixtureRoot, `${extensionName}.git`);
+
+    fs.mkdirSync(sourcePath, { recursive: true });
+    execGit(sourcePath, ['init', '-b', 'main']);
+    execGit(sourcePath, ['config', 'user.name', 'Modern Contract Test']);
+    execGit(sourcePath, ['config', 'user.email', 'modern-contract@example.invalid']);
+    fs.writeFileSync(path.join(sourcePath, 'manifest.json'), JSON.stringify({ display_name: extensionName, version: '1.0.0' }, null, 4));
+    fs.writeFileSync(path.join(sourcePath, 'README.md'), 'installed through local smart HTTP\n');
+    execGit(sourcePath, ['add', '.']);
+    execGit(sourcePath, ['commit', '-m', 'initial installable extension']);
+    execGit(fixtureRoot, ['clone', '--bare', sourcePath, barePath]);
+
+    return { fixtureRoot };
 }
 
 function getPersonaAvatarByName(settings, name) {
@@ -177,6 +196,77 @@ async function startLocalChatCompletionServer(replyText) {
     return {
         url: `http://127.0.0.1:${port}/v1`,
         requests,
+        close: () => closeServer(server),
+    };
+}
+
+async function startLocalGitHttpServer(projectRoot) {
+    const server = createServer((request, response) => {
+        const url = new URL(request.url || '/', 'http://127.0.0.1');
+        const child = spawn('git', ['http-backend'], {
+            env: {
+                ...process.env,
+                GIT_PROJECT_ROOT: projectRoot,
+                GIT_HTTP_EXPORT_ALL: '1',
+                PATH_INFO: url.pathname,
+                REQUEST_METHOD: request.method || 'GET',
+                QUERY_STRING: url.search.slice(1),
+                CONTENT_TYPE: request.headers['content-type'] || '',
+                CONTENT_LENGTH: request.headers['content-length'] || '',
+            },
+        });
+        const chunks = [];
+        let settled = false;
+
+        child.stdout.on('data', chunk => chunks.push(chunk));
+        child.on('error', error => {
+            if (!settled) {
+                settled = true;
+                response.writeHead(500, { 'Content-Type': 'text/plain' });
+                response.end(error.message);
+            }
+        });
+        child.on('close', () => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            const output = Buffer.concat(chunks);
+            const crlfHeaderEnd = output.indexOf(Buffer.from('\r\n\r\n'));
+            const lfHeaderEnd = output.indexOf(Buffer.from('\n\n'));
+            const headerEnd = crlfHeaderEnd >= 0 ? crlfHeaderEnd + 4 : (lfHeaderEnd >= 0 ? lfHeaderEnd + 2 : -1);
+            if (headerEnd < 0) {
+                response.writeHead(500, { 'Content-Type': 'text/plain' });
+                response.end(output);
+                return;
+            }
+
+            const rawHeaders = output.slice(0, headerEnd).toString('utf8');
+            let status = 200;
+            for (const line of rawHeaders.split(/\r?\n/u)) {
+                if (!line) {
+                    continue;
+                }
+                const separator = line.indexOf(':');
+                if (separator < 0) {
+                    continue;
+                }
+                const name = line.slice(0, separator);
+                const value = line.slice(separator + 1).trim();
+                if (name.toLowerCase() === 'status') {
+                    status = Number.parseInt(value, 10) || 200;
+                } else {
+                    response.setHeader(name, value);
+                }
+            }
+            response.writeHead(status);
+            response.end(output.slice(headerEnd));
+        });
+        request.pipe(child.stdin);
+    });
+    const port = await startServer(server);
+    return {
+        urlForRepo: repoName => `http://127.0.0.1:${port}/${repoName}.git`,
         close: () => closeServer(server),
     };
 }
@@ -1073,6 +1163,63 @@ test.describe('Modern real backend integration', () => {
             expect(fs.existsSync(extensionPath)).toBe(false);
         } finally {
             fs.rmSync(extensionPath, { recursive: true, force: true });
+            fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('installs, moves, and deletes an HTTP git extension from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const extensionName = uniqueName('InstallExtension').toLowerCase();
+        const { fixtureRoot } = createHttpGitExtensionFixture(extensionName);
+        const gitServer = await startLocalGitHttpServer(fixtureRoot);
+        const extensionUrl = gitServer.urlForRepo(extensionName);
+        const localExtensionPath = path.join(localExtensionsDir, extensionName);
+        const globalExtensionPath = path.join(globalExtensionsDir, extensionName);
+
+        try {
+            fs.rmSync(localExtensionPath, { recursive: true, force: true });
+            fs.rmSync(globalExtensionPath, { recursive: true, force: true });
+
+            await gotoModern(page, 'extensions', '扩展');
+            await page.locator('[data-toggle-extension-install]').click();
+            await page.locator('[data-extension-install-url]').fill(extensionUrl);
+            await page.locator('[data-install-extension]').click();
+
+            await expectFrontendRequest(tracker, '/api/extensions/install');
+            expect(tracker.lastJson('/api/extensions/install')).toMatchObject({
+                url: extensionUrl,
+                branch: '',
+                global: false,
+            });
+            await page.locator('[data-extension-view="local"]').click();
+            await expect(page.locator(`[data-extension-card="local:${extensionName}"]`)).toContainText(`third-party/${extensionName}`);
+            expect(fs.existsSync(path.join(localExtensionPath, 'manifest.json'))).toBe(true);
+
+            const moveCountBefore = tracker.count('/api/extensions/move');
+            await page.locator(`[data-extension-action="move"][data-extension-name="${extensionName}"][data-extension-type="local"]`).click();
+            await page.locator('[data-confirm-extension-operation]').click();
+            await expect.poll(() => tracker.count('/api/extensions/move')).toBeGreaterThan(moveCountBefore);
+            expect(tracker.lastJson('/api/extensions/move')).toEqual({
+                extensionName,
+                source: 'local',
+                destination: 'global',
+            });
+            await page.locator('[data-extension-view="global"]').click();
+            await expect(page.locator(`[data-extension-card="global:${extensionName}"]`)).toContainText(`third-party/${extensionName}`);
+            expect(fs.existsSync(localExtensionPath)).toBe(false);
+            expect(fs.existsSync(path.join(globalExtensionPath, 'manifest.json'))).toBe(true);
+
+            const deleteCountBefore = tracker.count('/api/extensions/delete');
+            await page.locator(`[data-extension-action="delete"][data-extension-name="${extensionName}"][data-extension-type="global"]`).click();
+            await page.locator('[data-confirm-extension-operation]').click();
+            await expect.poll(() => tracker.count('/api/extensions/delete')).toBeGreaterThan(deleteCountBefore);
+            expect(tracker.lastJson('/api/extensions/delete')).toEqual({ extensionName, global: true });
+            await expect(page.locator(`[data-extension-card="global:${extensionName}"]`)).toHaveCount(0);
+            expect(fs.existsSync(globalExtensionPath)).toBe(false);
+        } finally {
+            await gitServer.close();
+            fs.rmSync(localExtensionPath, { recursive: true, force: true });
+            fs.rmSync(globalExtensionPath, { recursive: true, force: true });
             fs.rmSync(fixtureRoot, { recursive: true, force: true });
         }
     });
