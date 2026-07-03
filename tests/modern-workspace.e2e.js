@@ -16,6 +16,13 @@ const modernRoutes = [
 ];
 
 test.describe('Modern workspace', () => {
+    test('redirects the root entry to the modern workspace', async ({ page }) => {
+        await page.goto('/?view=chat');
+
+        await expect(page).toHaveURL(/\/modern\/\?view=chat$/);
+        await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+    });
+
     for (const [route, title] of modernRoutes) {
         test(`renders ${route}`, async ({ page }) => {
             const errors = [];

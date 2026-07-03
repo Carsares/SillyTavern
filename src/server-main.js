@@ -212,13 +212,15 @@ if (!cliArgs.disableCsrf) {
 // Static files
 // Host index page
 app.get('/', cacheBuster.middleware, (request, response) => {
+    const query = request.url.split('?')[1];
+
     if (shouldRedirectToLogin(request)) {
-        const query = request.url.split('?')[1];
         const redirectUrl = query ? `/login?${query}` : '/login';
         return response.redirect(redirectUrl);
     }
 
-    return response.sendFile('index.html', { root: path.join(serverDirectory, 'public') });
+    const redirectUrl = query ? `/modern/?${query}` : '/modern/';
+    return response.redirect(redirectUrl);
 });
 
 // Host modern workspace page
