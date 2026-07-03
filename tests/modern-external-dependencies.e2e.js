@@ -130,6 +130,10 @@ function getSecretIds(secretState, key) {
     return new Set((secretState?.[key] || []).map(secret => secret.id).filter(Boolean));
 }
 
+function getActiveSecretId(secretState, key) {
+    return (secretState?.[key] || []).find(secret => secret.active)?.id || '';
+}
+
 async function deleteNewSecrets(page, key, beforeIds) {
     const secretState = await safeApiFetch(page, '/api/secrets/read');
     for (const secret of secretState?.[key] || []) {
@@ -205,6 +209,7 @@ test.describe('Modern external dependency integration', () => {
             await page.locator(`[data-extension-action="update"][data-extension-name="${externalExtensionName}"][data-extension-type="local"]`).click();
             await page.locator('[data-confirm-extension-operation]').click();
             await expect.poll(() => tracker.count('/api/extensions/update'), { timeout: 180_000 }).toBeGreaterThan(updateCountBefore);
+            await expect(page.locator('.toast', { hasText: /扩展已(是最新|更新)/u })).toBeVisible({ timeout: 180_000 });
             await expect(page.locator('[data-confirm-extension-operation]')).toHaveCount(0, { timeout: 180_000 });
             await expect(card).toBeVisible();
 
@@ -230,6 +235,7 @@ test.describe('Modern external dependency integration', () => {
         const settingsBefore = await getSettings(page);
         const secretStateBefore = await getSecretState(page);
         const openRouterSecretIdsBefore = getSecretIds(secretStateBefore, 'api_key_openrouter');
+        const openRouterActiveSecretIdBefore = getActiveSecretId(secretStateBefore, 'api_key_openrouter');
 
         try {
             await gotoModern(page, 'api', 'API 连接管理');
@@ -258,6 +264,9 @@ test.describe('Modern external dependency integration', () => {
         } finally {
             await restoreSettings(page, settingsBefore);
             await deleteNewSecrets(page, 'api_key_openrouter', openRouterSecretIdsBefore);
+            if (openRouterActiveSecretIdBefore) {
+                await safeApiFetch(page, '/api/secrets/rotate', { key: 'api_key_openrouter', id: openRouterActiveSecretIdBefore });
+            }
         }
     });
 });
