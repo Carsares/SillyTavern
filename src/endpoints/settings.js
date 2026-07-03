@@ -221,7 +221,8 @@ router.post('/get', (request, response) => {
     try {
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
         settings = fs.readFileSync(pathToSettings, 'utf8');
-    } catch (e) {
+    } catch (error) {
+        console.error('Could not read settings file', error);
         return response.sendStatus(500);
     }
 

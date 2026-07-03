@@ -45,7 +45,7 @@ import {
 import getWebpackServeMiddleware from './middleware/webpack-serve.js';
 import basicAuthMiddleware from './middleware/basicAuth.js';
 import getWhitelistMiddleware from './middleware/whitelist.js';
-import accessLoggerMiddleware, { backendErrorLoggerMiddleware, getLogRootPath, migrateAccessLog, prepareBackendLogStorage } from './middleware/accessLogWriter.js';
+import accessLoggerMiddleware, { backendErrorLoggerMiddleware, getLogRootPath, installBackendConsoleLogger, migrateAccessLog, prepareBackendLogStorage } from './middleware/accessLogWriter.js';
 import multerMonkeyPatch from './middleware/multerMonkeyPatch.js';
 import initRequestProxy from './request-proxy.js';
 import initPrivateRequestFilter from './private-request-filter.js';
@@ -150,8 +150,6 @@ if (cliArgs.whitelistMode) {
 
 app.use(hostWhitelistMiddleware);
 
-app.use(accessLoggerMiddleware());
-
 app.use(cookieSession({
     name: getCookieSessionName(),
     sameSite: 'lax',
@@ -161,6 +159,7 @@ app.use(cookieSession({
 }));
 
 app.use(setUserDataMiddleware);
+app.use(accessLoggerMiddleware());
 
 // CSRF Protection //
 if (!cliArgs.disableCsrf) {
@@ -320,6 +319,7 @@ async function preSetupTasks() {
     if (backendAccessLogEnabled) {
         prepareBackendLogStorage();
         migrateAccessLog();
+        installBackendConsoleLogger();
     }
 
     await settingsInit();
@@ -463,6 +463,9 @@ async function postSetupTasks(result) {
     console.log('\n' + getSeparator(plainGoToLog.length) + '\n');
 
     setupLogLevel();
+    if (backendAccessLogEnabled) {
+        installBackendConsoleLogger();
+    }
     serverEvents.emit(EVENT_NAMES.SERVER_STARTED, { url: browserLaunchUrl });
 }
 

@@ -134,7 +134,7 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 
 When `logging.enableAccessLog` is enabled, backend interface access and error logs are written under `/var/logs/SillyTavern`. Logs are grouped by local date as `/var/logs/SillyTavern/YYYY-MM-DD/access.log` and `/var/logs/SillyTavern/YYYY-MM-DD/error.log`.
 
-Access logs cover backend interface requests with method, path, status, duration, IP, user agent and user identity when available. Error logs cover uncaught interface errors and 5xx interface responses. During server startup, dated log directories older than one week are removed.
+Access logs cover backend interface requests with request ID, method, path, status, duration, IP, user agent and user identity when available. Error logs cover request-scoped warnings/errors, uncaught interface errors and 5xx interface responses. Use the request ID to correlate `access.log` and `error.log` entries. During server startup, dated log directories older than one week are removed.
 
 ## License
 

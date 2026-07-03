@@ -48,11 +48,20 @@ describe('backend interface access log writer', () => {
     });
 
     test('formats access and status error entries without request body data', () => {
+        const logContext = {
+            requestId: 'request-123',
+            method: 'POST',
+            path: '/api/settings/save',
+            ip: '127.0.0.1',
+            userAgent: 'unit-test',
+            user: 'alice',
+        };
         const request = {
             method: 'POST',
             path: '/api/settings/save',
             headers: { 'user-agent': 'unit-test' },
             user: { profile: { handle: 'alice' } },
+            backendLogContext: logContext,
         };
         const response = {
             statusCode: 500,
@@ -63,6 +72,7 @@ describe('backend interface access log writer', () => {
         const accessEntry = accessLogWriter.createAccessLogEntry(request, response, startAt);
         expect(accessEntry).toEqual(expect.objectContaining({
             type: 'access',
+            requestId: 'request-123',
             method: 'POST',
             path: '/api/settings/save',
             statusCode: 500,
@@ -78,8 +88,37 @@ describe('backend interface access log writer', () => {
         expect(errorEntry).toEqual(expect.objectContaining({
             type: 'error',
             errorType: 'http_status',
+            requestId: 'request-123',
             message: 'Backend interface completed with status 500',
         }));
+    });
+
+    test('formats request-scoped console error entries', () => {
+        const error = new Error('disk full');
+        const logContext = {
+            requestId: 'request-456',
+            method: 'POST',
+            path: '/api/chats/save',
+            ip: '127.0.0.1',
+            userAgent: 'unit-test',
+            user: 'alice',
+        };
+
+        const errorEntry = accessLogWriter.createConsoleErrorLogEntry('error', ['Chat save failed:', error], logContext);
+
+        expect(errorEntry).toEqual(expect.objectContaining({
+            type: 'error',
+            errorType: 'console_error',
+            requestId: 'request-456',
+            method: 'POST',
+            path: '/api/chats/save',
+            ip: '127.0.0.1',
+            userAgent: 'unit-test',
+            user: 'alice',
+            stack: error.stack,
+        }));
+        expect(errorEntry.message).toContain('Chat save failed:');
+        expect(errorEntry.message).toContain('disk full');
     });
 
     test('cleans dated log directories older than one week', () => {
