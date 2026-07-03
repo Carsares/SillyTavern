@@ -201,6 +201,32 @@ async function startLocalChatCompletionServer(replyText) {
     };
 }
 
+async function startLocalTextCompletionServer(modelName) {
+    const requests = [];
+    const server = createServer((request, response) => {
+        requests.push({
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+        });
+
+        if (request.method === 'GET' && request.url === '/v1/models') {
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ data: [{ id: modelName }] }));
+            return;
+        }
+
+        response.writeHead(404);
+        response.end();
+    });
+    const port = await startServer(server);
+    return {
+        url: `http://127.0.0.1:${port}`,
+        requests,
+        close: () => closeServer(server),
+    };
+}
+
 async function startLocalGitHttpServer(projectRoot) {
     const server = createServer((request, response) => {
         const url = new URL(request.url || '/', 'http://127.0.0.1');
@@ -511,12 +537,15 @@ test.describe('Modern real backend integration', () => {
             await page.locator('[data-character-field="creator"][data-character-scope="create"]').fill('Modern contract test');
             await page.locator('[data-character-field="description"][data-character-scope="create"]').fill(`${characterName} description`);
             await page.locator('[data-character-field="first_mes"][data-character-scope="create"]').fill('Hello from a real integration test.');
+            const characterGetCountBeforeCreate = tracker.count('/api/characters/get');
             await page.locator('[data-save-character-create]').click();
 
             await expectFrontendRequest(tracker, '/api/characters/create');
+            await expect.poll(() => tracker.count('/api/characters/get')).toBeGreaterThan(characterGetCountBeforeCreate);
             await expect(page.locator('.detail-title')).toHaveText(characterName);
             const character = await waitForValue(() => findCharacterByName(page, characterName));
             avatar = character.avatar;
+            expect(tracker.lastJson('/api/characters/get')).toEqual({ avatar_url: avatar });
 
             await page.locator(`[data-edit-character="${avatar}"]`).click();
             await page.locator('[data-character-field="description"][data-character-scope="edit"]').fill(editedDescription);
@@ -973,11 +1002,16 @@ test.describe('Modern real backend integration', () => {
 
         try {
             await gotoModern(page, 'settings', '设置中心');
+            const snapshotsCountBeforeOpen = tracker.count('/api/settings/get-snapshots');
             await page.locator('[data-settings-section="snapshots"]').click();
+            await page.locator('[data-load-settings-snapshots]').last().click();
+            await expect.poll(() => tracker.count('/api/settings/get-snapshots')).toBeGreaterThan(snapshotsCountBeforeOpen);
             const createStartedAt = Date.now();
+            const snapshotsCountBeforeCreate = tracker.count('/api/settings/get-snapshots');
             await page.locator('[data-create-settings-snapshot]').click();
 
             await expectFrontendRequest(tracker, '/api/settings/make-snapshot');
+            await expect.poll(() => tracker.count('/api/settings/get-snapshots')).toBeGreaterThan(snapshotsCountBeforeCreate);
             snapshotName = await waitForValue(async () => {
                 const snapshots = await getSettingsSnapshots(page);
                 return snapshots
@@ -1560,9 +1594,30 @@ test.describe('Modern real backend integration', () => {
         const tracker = trackApiRequests(page);
         const settingsBefore = await getSettings(page);
         const modelName = uniqueName('ApiModel');
+        const textModelName = uniqueName('TextModel');
+        let textCompletionServer = null;
 
         try {
+            textCompletionServer = await startLocalTextCompletionServer(textModelName);
             await gotoModern(page, 'api', 'API 连接管理');
+
+            await page.locator('[data-api-main]').selectOption({ value: 'textgenerationwebui' });
+            await expect(page.locator('[data-api-main]')).toHaveValue('textgenerationwebui');
+            await expect(page.locator('[data-textgen-type]')).toBeVisible();
+            await expect(page.locator('[data-textgen-type]')).toHaveValue('ooba');
+            await page.locator('[data-textgen-endpoint]').fill(textCompletionServer.url);
+            await expect(page.locator('[data-textgen-endpoint]')).toHaveValue(textCompletionServer.url);
+            await page.locator('[data-textgen-model]').fill(textModelName);
+            await expect(page.locator('[data-textgen-model]')).toHaveValue(textModelName);
+            const textStatusCountBeforeTest = tracker.count('/api/backends/text-completions/status');
+            await page.locator('[data-test-api]').click();
+            await expect.poll(() => tracker.count('/api/backends/text-completions/status')).toBeGreaterThan(textStatusCountBeforeTest);
+            expect(tracker.lastJson('/api/backends/text-completions/status')).toEqual({
+                api_server: textCompletionServer.url,
+                api_type: 'ooba',
+            });
+            await expect(page.locator('.api-history-panel')).toContainText(textModelName);
+            await expect.poll(() => textCompletionServer.requests.filter(request => request.method === 'GET' && request.url === '/v1/models').length).toBe(1);
 
             await page.locator('[data-api-main]').selectOption('openai');
             await page.locator('[data-api-source]').selectOption('custom');
@@ -1609,6 +1664,9 @@ test.describe('Modern real backend integration', () => {
             });
         } finally {
             await restoreSettings(page, settingsBefore);
+            if (textCompletionServer) {
+                await textCompletionServer.close();
+            }
         }
     });
 
