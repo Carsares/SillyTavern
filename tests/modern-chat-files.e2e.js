@@ -575,6 +575,28 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('.chat-thread')).toContainText('generated reply to keyboard bridge generation');
     });
 
+    test('keeps the composer compact when a chat has no messages', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'empty-chat', file_name: 'empty-chat.jsonl', chat_items: 0, file_size: '0 B', last_mes: now },
+        ];
+        fixture.messagesByChat = {
+            'empty-chat': [],
+        };
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.setViewportSize({ width: 2048, height: 1049 });
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('.empty-state')).toBeVisible();
+        await expect(page.locator('[data-chat-input]')).toBeVisible();
+        const detailHeroBox = await page.locator('.detail-hero').boundingBox();
+        const composerBox = await page.locator('.composer').boundingBox();
+        expect(detailHeroBox?.height).toBeLessThan(160);
+        expect(composerBox?.height).toBeLessThan(180);
+    });
+
     test('manages group chat files through group endpoints', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();

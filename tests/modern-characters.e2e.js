@@ -32,6 +32,33 @@ function createScrollableCharacters(count = 32) {
     });
 }
 
+function createCharacterWithDescription(description) {
+    return {
+        avatar: 'long-description.png',
+        name: 'Long Description Character',
+        description,
+        data: {
+            name: 'Long Description Character',
+            description,
+            personality: 'Keeps long lore readable.',
+            scenario: 'Modern long description fixture scenario.',
+            first_mes: 'Hello from the long description character.',
+            creator: 'Modern E2E',
+            tags: ['fixture', 'description'],
+            extensions: {
+                world: '',
+                talkativeness: 0.5,
+                fav: false,
+                depth_prompt: {
+                    prompt: '',
+                    depth: 4,
+                    role: 'system',
+                },
+            },
+        },
+    };
+}
+
 test.describe('Modern character resources', () => {
     test('creates and edits a character in the modern workspace', async ({ page }) => {
         const fixture = createModernResourceFixture();
@@ -156,6 +183,33 @@ test.describe('Modern character resources', () => {
         expect(fixture.requests.characterAvatarEdit[0].contentType).toContain('multipart/form-data');
         expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar"; filename="alice-new-avatar.png"');
         expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar_url"');
+    });
+
+    test('collapses long character descriptions behind a labelled section', async ({ page }) => {
+        const longDescription = Array.from({ length: 16 }, (_, index) => `Long description sentence ${index + 1} keeps enough text in the role card to require multiple visible lines.`).join(' ');
+        const fixture = createModernResourceFixture({
+            characters: [createCharacterWithDescription(longDescription)],
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await page.setViewportSize({ width: 1600, height: 900 });
+        await gotoModern(page, 'characters', '角色库');
+
+        const descriptionText = page.locator('.detail-description .detail-text');
+        await expect(page.locator('.detail-description-title')).toHaveText('角色描述');
+        await expect(descriptionText).toContainText('Long description sentence 1');
+        await expect(page.locator('.detail-description-expand')).toBeVisible();
+        await expect(page.locator('.detail-description-collapse')).toBeHidden();
+        await expect.poll(() => descriptionText.evaluate(element => element.ownerDocument.defaultView.getComputedStyle(element).webkitLineClamp)).toBe('5');
+        const collapsedBox = await descriptionText.boundingBox();
+
+        await page.locator('[data-toggle-character-description]').click();
+
+        await expect(page.locator('[data-character-description-toggle]')).toBeChecked();
+        await expect(page.locator('.detail-description-collapse')).toBeVisible();
+        await expect.poll(() => descriptionText.evaluate(element => element.ownerDocument.defaultView.getComputedStyle(element).webkitLineClamp)).toBe('none');
+        const expandedBox = await descriptionText.boundingBox();
+        expect(expandedBox?.height).toBeGreaterThan(collapsedBox?.height || 0);
     });
 
     test('keeps the character list scroll position when selecting a character', async ({ page }) => {

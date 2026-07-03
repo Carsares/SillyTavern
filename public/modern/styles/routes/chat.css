@@ -56,7 +56,7 @@
 .chat-thread {
     display: grid;
     grid-template-rows: auto;
-    align-content: stretch;
+    align-content: start;
     min-height: 0;
 }
 

@@ -106,6 +106,8 @@ export function createCharactersComponents(ctx) {
         const isEditing = state.characterEditing.avatar === character.avatar;
         const isRenaming = state.characterRenaming.avatar === character.avatar;
         const isDeleting = state.characterDeleteConfirm.avatar === character.avatar;
+        const description = detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。';
+        const canExpandDescription = description.length > 260;
 
         return `
         <div class="detail-hero character-detail-hero">
@@ -164,7 +166,19 @@ export function createCharactersComponents(ctx) {
             ${renderKeyValue('作者', detail.data?.creator || '未知')}
             ${renderKeyValue('关联世界书', detail.data?.extensions?.world || '未关联')}
         </div>
-        <p class="detail-text">${escapeHtml(detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。')}</p>
+        <section class="detail-description">
+            ${canExpandDescription ? '<input class="visually-hidden detail-description-toggle" id="character-description-toggle" type="checkbox" data-character-description-toggle>' : ''}
+            <div class="detail-description-header">
+                <h3 class="detail-description-title">角色描述</h3>
+                ${canExpandDescription ? `
+                    <label class="secondary-button detail-description-action" for="character-description-toggle" data-toggle-character-description>
+                        <span class="detail-description-expand"><i class="fa-solid fa-chevron-down"></i> 展开</span>
+                        <span class="detail-description-collapse"><i class="fa-solid fa-chevron-up"></i> 收起</span>
+                    </label>
+                ` : ''}
+            </div>
+            <p class="detail-text">${escapeHtml(description)}</p>
+        </section>
     `;
     }
 
