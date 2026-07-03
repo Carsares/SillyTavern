@@ -45,7 +45,7 @@ import {
 import getWebpackServeMiddleware from './middleware/webpack-serve.js';
 import basicAuthMiddleware from './middleware/basicAuth.js';
 import getWhitelistMiddleware from './middleware/whitelist.js';
-import accessLoggerMiddleware, { getAccessLogPath, migrateAccessLog } from './middleware/accessLogWriter.js';
+import accessLoggerMiddleware, { backendErrorLoggerMiddleware, getLogRootPath, migrateAccessLog, prepareBackendLogStorage } from './middleware/accessLogWriter.js';
 import multerMonkeyPatch from './middleware/multerMonkeyPatch.js';
 import initRequestProxy from './request-proxy.js';
 import initPrivateRequestFilter from './private-request-filter.js';
@@ -90,6 +90,7 @@ util.inspect.defaultOptions.depth = 4;
 
 /** @type {import('./command-line.js').CommandLineArguments} */
 const cliArgs = globalThis.COMMAND_LINE_ARGS;
+const backendAccessLogEnabled = getConfigValue('logging.enableAccessLog', true, 'boolean');
 
 if (!cliArgs.enableIPv6 && !cliArgs.enableIPv4) {
     console.error('error: You can\'t disable all internet protocols: at least IPv6 or IPv4 must be enabled.');
@@ -149,9 +150,7 @@ if (cliArgs.whitelistMode) {
 
 app.use(hostWhitelistMiddleware);
 
-if (cliArgs.listen) {
-    app.use(accessLoggerMiddleware());
-}
+app.use(accessLoggerMiddleware());
 
 app.use(cookieSession({
     name: getCookieSessionName(),
@@ -289,6 +288,7 @@ app.get('/version', async function (_, response) {
 
 redirectDeprecatedEndpoints(app);
 setupPrivateEndpoints(app);
+app.use(backendErrorLoggerMiddleware());
 
 /**
  * Tasks that need to be run before the server starts listening.
@@ -317,7 +317,10 @@ async function preSetupTasks() {
     await diskCache.verify(directories);
     migrateFlatSecrets(directories);
     cleanUploads();
-    migrateAccessLog();
+    if (backendAccessLogEnabled) {
+        prepareBackendLogStorage();
+        migrateAccessLog();
+    }
 
     await settingsInit();
     await statsInit();
@@ -451,7 +454,9 @@ async function postSetupTasks(result) {
     if (cliArgs.listen) {
         console.log();
         console.log('To limit connections to internal localhost only ([::1] or 127.0.0.1), change the setting in config.yaml to "listen: false".');
-        console.log('Check the "access.log" file in the data directory to inspect incoming connections:', color.green(getAccessLogPath()));
+    }
+    if (backendAccessLogEnabled) {
+        console.log('Backend interface logs are grouped by date under:', color.green(getLogRootPath()));
     }
     console.log('\n' + getSeparator(plainGoToLog.length) + '\n');
     console.log(goToLog);

@@ -182,8 +182,11 @@ disableCsrfProtection: false
 securityOverride: false
 # -- LOGGING CONFIGURATION --
 logging:
-  # Enable access logging to access.log file and console output
-  # Records new connections with timestamp, IP address and user agent
+  # Enable backend interface access and error logging.
+  # Logs are grouped by date under /var/logs/SillyTavern/YYYY-MM-DD/.
+  # access.log records method, path, status, duration, IP, user agent and user.
+  # error.log records uncaught interface errors and 5xx interface responses.
+  # Dated log directories older than one week are cleaned during server startup.
   enableAccessLog: true
   # Minimum log level to display in the terminal (DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3)
   minLogLevel: 0
