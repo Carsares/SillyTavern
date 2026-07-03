@@ -100,6 +100,9 @@ export function createRouter({
                 await prepareChatForSelectedContext();
                 closeChatSidebarForMobileSelection();
             }
+            if (state.route === 'characters' && routeModules.characters?.renderSelection?.()) {
+                return;
+            }
             render();
             return;
         }

@@ -23,13 +23,49 @@ export function createCharactersComponents(ctx) {
         renderCharacterDeletePanel,
     } = createCharacterFormComponents(ctx);
 
-    function renderCharacters() {
-        const characters = state.characters.filter(character => matchesQuery(character.name, character.avatar, character.data?.creator, character.data?.tags?.join(' ')));
+    function getVisibleCharacters() {
+        return state.characters.filter(character => matchesQuery(character.name, character.avatar, character.data?.creator, character.data?.tags?.join(' ')));
+    }
+
+    function getSelectedCharacter(characters = getVisibleCharacters()) {
         const selected = state.characters.find(character => character.avatar === state.selected.character) || characters[0];
         if (selected && state.selected.character !== selected.avatar) {
             state.selected.character = selected.avatar;
         }
 
+        return selected;
+    }
+
+    function renderCharacterListPanel() {
+        const characters = getVisibleCharacters();
+
+        return `
+            <section class="panel" data-character-list-panel>
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">角色列表</h2>
+                        <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
+                    </div>
+                </div>
+                ${state.characterCreating.active ? renderCharacterCreatePanel() : ''}
+                <div class="resource-list" data-character-list>
+                    ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
+                </div>
+            </section>
+        `;
+    }
+
+    function renderCharacterDetailPanel() {
+        const selected = getSelectedCharacter();
+
+        return `
+            <section class="panel" data-character-detail-panel>
+                ${selected ? renderCharacterDetail(selected) : renderEmptyState('fa-address-card', '暂无角色', '当前用户目录里没有角色卡。')}
+            </section>
+        `;
+    }
+
+    function renderCharacters() {
         return `
         ${pageHead('角色库', '角色卡、来源、世界书和聊天占用。', `
             <button class="primary-button" type="button" data-create-character>
@@ -43,23 +79,23 @@ export function createCharactersComponents(ctx) {
             </label>
         `)}
         <div class="split-grid">
-            <section class="panel">
-                <div class="panel-header">
-                    <div>
-                        <h2 class="panel-title">角色列表</h2>
-                        <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
-                    </div>
-                </div>
-                ${state.characterCreating.active ? renderCharacterCreatePanel() : ''}
-                <div class="resource-list">
-                    ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
-                </div>
-            </section>
-            <section class="panel">
-                ${selected ? renderCharacterDetail(selected) : renderEmptyState('fa-address-card', '暂无角色', '当前用户目录里没有角色卡。')}
-            </section>
+            ${renderCharacterListPanel()}
+            ${renderCharacterDetailPanel()}
         </div>
     `;
+    }
+
+    function renderCharacterSelection() {
+        const detailPanel = document.querySelector('[data-character-detail-panel]');
+        if (!detailPanel) {
+            return false;
+        }
+
+        document.querySelectorAll('[data-select-character]').forEach(button => {
+            button.classList.toggle('active', button.dataset.selectCharacter === state.selected.character);
+        });
+        detailPanel.outerHTML = renderCharacterDetailPanel();
+        return true;
     }
 
     function renderCharacterDetail(character) {
@@ -134,5 +170,6 @@ export function createCharactersComponents(ctx) {
 
     return {
         renderCharacters,
+        renderCharacterSelection,
     };
 }

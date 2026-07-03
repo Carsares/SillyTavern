@@ -2,6 +2,36 @@ import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
+function createScrollableCharacters(count = 32) {
+    return Array.from({ length: count }, (_, index) => {
+        const name = `Scroll Character ${index + 1}`;
+        return {
+            avatar: `scroll-character-${index + 1}.png`,
+            name,
+            description: `${name} visible description.`,
+            data: {
+                name,
+                description: `${name} visible description.`,
+                personality: 'Keeps the list stable.',
+                scenario: 'Modern scroll fixture scenario.',
+                first_mes: `Hello from ${name}.`,
+                creator: 'Modern E2E',
+                tags: ['fixture', 'scroll'],
+                extensions: {
+                    world: '',
+                    talkativeness: 0.5,
+                    fav: false,
+                    depth_prompt: {
+                        prompt: '',
+                        depth: 4,
+                        role: 'system',
+                    },
+                },
+            },
+        };
+    });
+}
+
 test.describe('Modern character resources', () => {
     test('creates and edits a character in the modern workspace', async ({ page }) => {
         const fixture = createModernResourceFixture();
@@ -126,5 +156,31 @@ test.describe('Modern character resources', () => {
         expect(fixture.requests.characterAvatarEdit[0].contentType).toContain('multipart/form-data');
         expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar"; filename="alice-new-avatar.png"');
         expect(fixture.requests.characterAvatarEdit[0].bodyText).toContain('name="avatar_url"');
+    });
+
+    test('keeps the character list scroll position when selecting a character', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            characters: createScrollableCharacters(),
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+
+        const list = page.locator('[data-character-list]');
+        await expect(list).toBeVisible();
+        await expect.poll(() => list.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+
+        const target = page.locator('[data-select-character="scroll-character-28.png"]');
+        await target.scrollIntoViewIfNeeded();
+        const beforeSelectScrollTop = await list.evaluate(element => element.scrollTop);
+        expect(beforeSelectScrollTop).toBeGreaterThan(0);
+
+        await target.click();
+
+        await expect(page.locator('.detail-title')).toHaveText('Scroll Character 28');
+        await expect(target).toHaveClass(/active/);
+        const afterSelectScrollTop = await list.evaluate(element => element.scrollTop);
+        expect(afterSelectScrollTop).toBeGreaterThan(0);
+        expect(Math.abs(afterSelectScrollTop - beforeSelectScrollTop)).toBeLessThan(8);
     });
 });

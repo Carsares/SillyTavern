@@ -2,7 +2,7 @@ import { createCharactersComponents } from '../components/characters.js';
 import { createCharactersEvents } from './characters-events.js';
 
 export function createCharactersRoute(ctx) {
-    const { renderCharacters } = createCharactersComponents(ctx);
+    const { renderCharacters, renderCharacterSelection } = createCharactersComponents(ctx);
     const { handleCharactersClick, handleCharactersInput, handleCharactersChange } = createCharactersEvents(ctx);
 
     async function handleClick(event) {
@@ -19,6 +19,7 @@ export function createCharactersRoute(ctx) {
 
     return {
         render: renderCharacters,
+        renderSelection: renderCharacterSelection,
         handleClick,
         handleInput,
         handleChange,
