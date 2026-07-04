@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 
+/* global document, localStorage */
+
 function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/i, '');
 }
