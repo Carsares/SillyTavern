@@ -26,6 +26,11 @@ function createSettingsFixture() {
             enable_extensions: true,
             enable_accounts: true,
             enable_extensions_auto_update: false,
+            request_compression: {
+                enabled: false,
+                minPayloadSize: 128,
+                maxPayloadSize: 1024,
+            },
         },
         extensions: [
             { name: 'assets', type: 'system' },
@@ -131,8 +136,11 @@ test.describe('Modern settings page', () => {
         expect(requests.restores[0]).toEqual({ name: 'settings-older.json' });
 
         await page.locator('[data-settings-section="preferences"]').click();
-        await expect(page.locator('[data-request-compression-enabled]')).toBeChecked();
-        await expect(page.locator('[data-request-compression-min]')).toHaveValue('2048');
-        await expect(page.locator('[data-request-compression-max]')).toHaveValue('8192');
+        await expect(page.locator('[data-request-compression-enabled]')).not.toBeChecked();
+        await expect(page.locator('[data-request-compression-enabled]')).toBeDisabled();
+        await expect(page.locator('[data-request-compression-min]')).toHaveValue('128');
+        await expect(page.locator('[data-request-compression-min]')).toBeDisabled();
+        await expect(page.locator('[data-request-compression-max]')).toHaveValue('1024');
+        await expect(page.locator('[data-request-compression-max]')).toBeDisabled();
     });
 });

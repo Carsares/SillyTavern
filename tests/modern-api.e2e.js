@@ -280,6 +280,45 @@ test.describe('Modern API page', () => {
         await expect(page.locator('.api-history-panel')).toContainText('OK from custom');
     });
 
+    test('keeps supported chat completion sources outside the short list', async ({ page }) => {
+        let savedSettings = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                oai_settings: {
+                    chat_completion_source: 'aimlapi',
+                    aimlapi_model: 'aimlapi/saved-model',
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ ok: true }),
+            });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('[data-api-source]')).toHaveValue('aimlapi');
+        await expect(page.locator('[data-api-model]')).toHaveValue('aimlapi/saved-model');
+        await page.locator('[data-api-model]').fill('aimlapi/new-model');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => savedSettings?.oai_settings?.aimlapi_model).toBe('aimlapi/new-model');
+        expect(savedSettings.chat_completion_source).toBe('aimlapi');
+        expect(savedSettings.oai_settings.chat_completion_source).toBe('aimlapi');
+    });
+
     test('edits and tests text completion connection without exposing secrets', async ({ page }) => {
         let savedSettings = null;
         let writtenSecret = null;

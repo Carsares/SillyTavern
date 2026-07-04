@@ -98,32 +98,26 @@ export function createSettingsPreferenceComponents(ctx) {
 
     function renderRequestCompressionForm(requestCompression) {
         return `
-        <section class="form-section">
-            <div>
-                <h3 class="form-section-title">请求压缩</h3>
-                <p class="panel-subtitle">控制大请求压缩边界，保存到 settings.json。</p>
-            </div>
-            <label class="checkbox-card compact-checkbox">
-                <input type="checkbox" data-request-compression-enabled ${requestCompression.enabled ? 'checked' : ''}>
-                <span>启用请求压缩</span>
-            </label>
-            <div class="form-grid two-columns">
-                <label class="field-label">
-                    <span>最小载荷 Byte</span>
-                    <input class="text-input" type="number" min="0" step="1" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}">
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">请求压缩</h3>
+                    <p class="panel-subtitle">来自 config.yaml 的启动配置，运行中不可在现代页修改。</p>
+                </div>
+                <label class="checkbox-card compact-checkbox">
+                    <input type="checkbox" data-request-compression-enabled ${requestCompression.enabled ? 'checked' : ''} disabled>
+                    <span>启用请求压缩</span>
                 </label>
-                <label class="field-label">
-                    <span>最大载荷 Byte</span>
-                    <input class="text-input" type="number" min="0" step="1" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}">
-                </label>
-            </div>
-            <div class="message-edit-actions">
-                <button class="secondary-button" type="button" data-save-request-compression>
-                    <i class="fa-solid fa-floppy-disk"></i>
-                    保存请求压缩
-                </button>
-            </div>
-        </section>
+                <div class="form-grid two-columns">
+                    <label class="field-label">
+                        <span>最小载荷 Byte</span>
+                        <input class="text-input" type="number" min="0" step="1" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}" disabled>
+                    </label>
+                    <label class="field-label">
+                        <span>最大载荷 Byte</span>
+                        <input class="text-input" type="number" min="0" step="1" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}" disabled>
+                    </label>
+                </div>
+            </section>
     `;
     }
 

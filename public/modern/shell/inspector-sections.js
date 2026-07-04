@@ -117,7 +117,7 @@ export function createInspectorSections({
             ['上下文抽屉', state.inspectorOpen ? '展开' : '收起'],
             ['快照数量', `${formatNumber(state.settingsSnapshots.items.length)} 个`],
             ['快照预览', state.settingsSnapshots.previewName || '未选择'],
-            ['请求压缩', state.settings?.request_compression?.enabled ? '已开启' : '未开启'],
+            ['请求压缩', state.settingsBundle?.request_compression?.enabled ? '已开启' : '未开启'],
         ]);
     }
 

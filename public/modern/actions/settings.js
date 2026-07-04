@@ -79,7 +79,7 @@ export function createSettingsActions({
     }
 
     function getRequestCompressionSettings() {
-        return state.settings.request_compression || state.settingsBundle.request_compression || {};
+        return state.settingsBundle.request_compression || {};
     }
 
     function saveModernPreferencesFromForm() {
@@ -97,28 +97,9 @@ export function createSettingsActions({
         render();
     }
 
-    async function saveRequestCompressionFromForm() {
+    function saveRequestCompressionFromForm() {
         const current = getRequestCompressionSettings();
-        const enabled = Boolean(elements.content.querySelector('[data-request-compression-enabled]')?.checked);
-        const minPayloadSize = numberInput(elements.content.querySelector('[data-request-compression-min]')?.value, Number(current.minPayloadSize || 0));
-        const maxPayloadSize = numberInput(elements.content.querySelector('[data-request-compression-max]')?.value, Number(current.maxPayloadSize || 0));
-
-        if (minPayloadSize < 0 || maxPayloadSize < 0) {
-            throw new Error('请求压缩载荷大小不能小于 0。');
-        }
-        if (maxPayloadSize && minPayloadSize > maxPayloadSize) {
-            throw new Error('最小载荷不能大于最大载荷。');
-        }
-
-        state.settings.request_compression = {
-            ...current,
-            enabled,
-            minPayloadSize,
-            maxPayloadSize,
-        };
-        await apiFetch('/api/settings/save', { body: state.settings });
-        await loadData({ silent: true });
-        showToast('请求压缩设置已保存', `${formatBytes(minPayloadSize)} - ${formatBytes(maxPayloadSize)}`);
+        showToast('请求压缩为启动配置', `当前运行值：${current.enabled ? '已开启' : '未开启'}，${formatBytes(current.minPayloadSize || 0)} - ${formatBytes(current.maxPayloadSize || 0)}`);
         render();
     }
 

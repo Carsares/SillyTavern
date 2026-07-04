@@ -1648,21 +1648,11 @@ test.describe('Modern real backend integration', () => {
 
             const saveCount = tracker.count('/api/settings/save');
             await gotoModern(page, 'settings', '设置中心');
-            await page.locator('[data-request-compression-enabled]').check();
-            await page.locator('[data-request-compression-min]').fill('2048');
-            await page.locator('[data-request-compression-max]').fill('8192');
-            await page.locator('[data-save-request-compression]').click();
-
-            await expect.poll(() => tracker.count('/api/settings/save')).toBeGreaterThan(saveCount);
-            const compressionSettings = await waitForValue(async () => {
-                const settings = await getSettings(page);
-                return settings.request_compression?.minPayloadSize === 2048 ? settings.request_compression : null;
-            });
-            expect(compressionSettings).toMatchObject({
-                enabled: true,
-                minPayloadSize: 2048,
-                maxPayloadSize: 8192,
-            });
+            await expect(page.locator('[data-request-compression-enabled]')).toBeDisabled();
+            await expect(page.locator('[data-request-compression-min]')).toBeDisabled();
+            await expect(page.locator('[data-request-compression-max]')).toBeDisabled();
+            await expect(page.locator('[data-save-request-compression]')).toHaveCount(0);
+            expect(tracker.count('/api/settings/save')).toBe(saveCount);
         } finally {
             await restoreSettings(page, settingsBefore);
             if (textCompletionServer) {

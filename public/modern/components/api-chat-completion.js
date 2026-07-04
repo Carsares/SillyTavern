@@ -17,6 +17,9 @@ export function createApiChatCompletionComponents(ctx) {
         const model = getChatCompletionModel(settings, source);
         const endpoint = settings.siliconflow_endpoint === 'global' ? 'global' : 'cn';
         const apiUiState = getApiSourceUiState(source);
+        const sourceOptions = chatCompletionSourceOptions.some(option => option.id === source)
+            ? chatCompletionSourceOptions
+            : [{ id: source, label: `${source} (当前来源)` }, ...chatCompletionSourceOptions];
         const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
 
         return `
@@ -31,7 +34,7 @@ export function createApiChatCompletionComponents(ctx) {
                     <label class="field-label">
                         <span>聊天补全来源</span>
                         <select class="select-input" data-api-source>
-                            ${chatCompletionSourceOptions.map(option => `<option value="${escapeHtml(option.id)}" ${source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                            ${sourceOptions.map(option => `<option value="${escapeHtml(option.id)}" ${source === option.id ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
                         </select>
                     </label>
                     <label class="field-label" data-api-field="siliconflow-endpoint" ${apiUiState.showEndpoint ? '' : 'hidden'}>
