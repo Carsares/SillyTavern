@@ -239,7 +239,8 @@ app.get('/callback/:source?', (request, response) => {
     const searchParams = new URLSearchParams();
     source && searchParams.set('source', source);
     query && searchParams.set('query', query);
-    const path = `/?${searchParams.toString()}`;
+    const queryString = searchParams.toString();
+    const path = queryString ? `/index.html?${queryString}` : '/index.html';
     return response.redirect(307, path);
 });
 

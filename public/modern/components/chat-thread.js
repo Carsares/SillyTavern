@@ -42,7 +42,7 @@ export function createChatThreadComponents(ctx) {
         return `
         ${options.compactContext ? `
             <div class="chat-context-strip">
-                ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : `<span class="avatar-fallback"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
+                ${avatar ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="">` : `<span class="avatar-fallback"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
                 <span class="row-main">
                     <strong>${escapeHtml(name)}</strong>
                     <span class="row-subtitle">${escapeHtml(selectedChat?.file_name || '未选择聊天文件')} · ${formatNumber(options.chatCount || chats.length)} 个会话</span>
@@ -54,7 +54,7 @@ export function createChatThreadComponents(ctx) {
             </div>
         ` : ''}
         <div class="detail-hero">
-            ${avatar ? `<img class="avatar large" src="${avatar}" alt="">` : `<span class="avatar-fallback large"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
+            ${avatar ? `<img class="avatar large" src="${escapeHtml(avatar)}" alt="">` : `<span class="avatar-fallback large"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
                 <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || subtitle)}</p>

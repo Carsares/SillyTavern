@@ -1,7 +1,7 @@
 import { escapeHtml, formatDate, formatNumber } from '../core/utils.js';
 import { routeLabels } from '../core/constants.js';
 
-export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEntityAvatarUrl, getEntityUnreadCount = () => 0 }) {
+export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupAvatarUrl, getEntityUnreadCount = () => 0 }) {
     function pageHead(title, description, actions = '') {
         return `
             <div class="page-head">
@@ -59,7 +59,7 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEn
     }
 
     function renderGroupRow(group) {
-        const avatar = getChatEntityAvatarUrl(group);
+        const avatar = getGroupAvatarUrl(group);
         const memberCount = Array.isArray(group.members) ? group.members.length : 0;
         const chatCount = Array.isArray(group.chats) ? group.chats.length : 0;
         const unreadCount = getEntityUnreadCount(group);
@@ -71,7 +71,7 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getChatEn
 
         return `
             <button class="resource-row ${state.selected.group === group.id ? 'active' : ''} ${unreadCount ? 'unread' : ''}" type="button" data-select-group="${escapeHtml(group.id)}">
-                ${avatar ? `<img class="avatar" src="${avatar}" alt="">` : '<span class="avatar-fallback"><i class="fa-solid fa-users"></i></span>'}
+                ${avatar ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="">` : '<span class="avatar-fallback"><i class="fa-solid fa-users"></i></span>'}
                 <span class="row-main">
                     <span class="row-title">${escapeHtml(group.name || group.id || '未命名群聊')}</span>
                     <span class="row-subtitle">${escapeHtml(subtitle)}</span>

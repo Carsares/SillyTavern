@@ -1,4 +1,4 @@
-import { stripJsonlExtension } from '../core/utils.js';
+import { isValidGroupAvatarUrl, stripJsonlExtension } from '../core/utils.js';
 
 export function createChatContextSelectorHelpers({
     state,
@@ -38,11 +38,13 @@ export function createChatContextSelectorHelpers({
         return entity?.name || entity?.data?.name || '未命名角色';
     }
 
+    function getGroupAvatarUrl(group) {
+        const avatarUrl = group?.avatar_url || '';
+        return isValidGroupAvatarUrl(avatarUrl) ? avatarUrl : '';
+    }
+
     function getChatEntityAvatarUrl(entity = getSelectedChatEntity()) {
-        if (isGroupChatMode()) {
-            return entity?.avatar_url || '';
-        }
-        return getCharacterAvatarUrl(entity);
+        return isGroupChatMode() ? getGroupAvatarUrl(entity) : getCharacterAvatarUrl(entity);
     }
 
     function getChatEntityFallbackIcon() {
@@ -217,6 +219,7 @@ export function createChatContextSelectorHelpers({
         getChatMessageCount,
         getChatModeLabel,
         getChatUnreadCount,
+        getGroupAvatarUrl,
         getCurrentDraftKey,
         getCurrentMessageLimit,
         getEntityUnreadCount,

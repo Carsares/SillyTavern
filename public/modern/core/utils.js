@@ -57,6 +57,16 @@ export function getPersonaUrl(avatarId) {
     return `/User%20Avatars/${encodeURIComponent(avatarId)}`;
 }
 
+function isDataUrl(value) {
+    const regex = /^data:([a-z]+\/[a-z0-9-+.]+(;[a-z-]+=[a-z0-9-]+)*;?)?(base64)?,([a-z0-9!$&',()*+;=\-_%.~:@/?#]+)?$/i;
+    return typeof value === 'string' && regex.test(value);
+}
+
+export function isValidGroupAvatarUrl(value) {
+    const url = String(value || '');
+    return !!url && (isDataUrl(url) || url.startsWith('user') || url.startsWith('/user'));
+}
+
 export function normalizeText(value) {
     return String(value ?? '').toLowerCase();
 }

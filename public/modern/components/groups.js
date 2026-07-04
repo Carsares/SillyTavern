@@ -14,7 +14,7 @@ export function createGroupsComponents(ctx) {
         renderGroupRow,
         renderInlineEmpty,
         matchesQuery,
-        getChatEntityAvatarUrl,
+        getGroupAvatarUrl,
         getCharacterByAvatar,
     } = ctx;
     const {
@@ -58,7 +58,7 @@ export function createGroupsComponents(ctx) {
     }
 
     function renderGroupDetail(group) {
-        const avatar = getChatEntityAvatarUrl(group);
+        const avatar = getGroupAvatarUrl(group);
         const memberAvatars = Array.isArray(group.members) ? group.members : [];
         const members = memberAvatars.map(avatarId => getCharacterByAvatar(avatarId)).filter(Boolean);
         const missingMembers = memberAvatars.filter(avatarId => !getCharacterByAvatar(avatarId));

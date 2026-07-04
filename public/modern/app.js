@@ -102,6 +102,7 @@ const {
     getChatId,
     getChatMessageCount,
     getEntityUnreadCount,
+    getGroupAvatarUrl,
     getTotalChatUnreadCount,
     getChatModeLabel,
     getExtensionFolderName,
@@ -135,6 +136,7 @@ const commonComponents = createCommonComponents({
     state,
     getCharacterAvatarUrl,
     getChatEntityAvatarUrl,
+    getGroupAvatarUrl,
     getEntityUnreadCount,
 });
 

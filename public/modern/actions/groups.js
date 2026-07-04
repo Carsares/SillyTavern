@@ -1,4 +1,4 @@
-import { formatNumber, numberInput } from '../core/utils.js';
+import { formatNumber, isValidGroupAvatarUrl, numberInput } from '../core/utils.js';
 
 export function createGroupActions({
     state,
@@ -37,10 +37,12 @@ export function createGroupActions({
 
     function groupFormToPayload(form, previous = {}) {
         const members = Array.isArray(form.members) ? form.members : [];
+        const avatarUrl = form.avatar_url.trim();
+        const previousAvatarUrl = previous.avatar_url || '';
         return {
             ...previous,
             name: form.name.trim() || `群组 ${formatNumber(state.groups.length + 1)}`,
-            avatar_url: form.avatar_url.trim() || previous.avatar_url || '',
+            avatar_url: avatarUrl ? (isValidGroupAvatarUrl(avatarUrl) ? avatarUrl : '') : (isValidGroupAvatarUrl(previousAvatarUrl) ? previousAvatarUrl : ''),
             members,
             allow_self_responses: !!form.allow_self_responses,
             activation_strategy: numberInput(form.activation_strategy, 0),
