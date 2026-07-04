@@ -576,6 +576,68 @@ test.describe('Modern real backend integration', () => {
         }));
     });
 
+    test('loads and manages remote resource state from the UI against the real backend', async ({ page }) => {
+        const tracker = trackApiRequests(page);
+        const secretStateBefore = await getSecretState(page);
+        const githubSecretIdsBefore = getSecretIds(secretStateBefore, 'remote_resources_github_token');
+        let recordId = '';
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/providers', 'GET');
+            await expectFrontendRequest(tracker, '/api/remote-resources/records', 'GET');
+            await expect(page.locator('[data-remote-provider="official-content"]')).toBeVisible();
+
+            for (const providerId of ['github-extensions', 'risu-realm']) {
+                const checkbox = page.locator(`[data-remote-provider="${providerId}"]`);
+                if (await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+            await page.locator('[data-remote-resource-query]').fill('world');
+            await page.locator('[data-remote-resource-type]').selectOption('extension');
+            await page.locator('[data-remote-resource-query]').press('Enter');
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            await expect(page.locator('.remote-resource-card').first()).toContainText('World');
+
+            recordId = (await apiFetch(page, '/api/remote-resources/records', {
+                providerId: 'contract-test',
+                providerName: 'Contract Test',
+                remoteId: 'contract-remote-id',
+                resourceType: 'extension',
+                title: 'Contract Remote Resource',
+                sourceUrl: 'https://example.invalid/remote-resource',
+                localType: 'extension',
+                localId: 'contract-extension',
+                action: 'import',
+            }))?.id || '';
+
+            await page.locator('[data-refresh-remote-resources]').click();
+            await page.locator('[data-remote-resource-tab="records"]').click();
+            await expect(page.locator('.remote-record-card', { hasText: 'Contract Remote Resource' })).toBeVisible();
+            await page.locator(`[data-delete-remote-record="${recordId}"]`).click();
+            await expectFrontendRequest(tracker, `/api/remote-resources/records/${recordId}`, 'DELETE');
+            await expect(page.locator('.remote-record-card', { hasText: 'Contract Remote Resource' })).toHaveCount(0);
+            recordId = '';
+
+            await page.locator('[data-remote-resource-tab="accounts"]').click();
+            await page.locator('[data-remote-credential-provider="github-extensions"][data-remote-credential-id="token"]').fill('temporary-contract-token');
+            await page.locator('[data-save-remote-credential][data-provider-id="github-extensions"][data-credential-id="token"]').click();
+            await expectFrontendRequest(tracker, '/api/remote-resources/credentials');
+            await expect(page.locator('.toast', { hasText: '资源站凭据已保存' })).toBeVisible();
+            await page.locator('[data-delete-remote-credential][data-provider-id="github-extensions"][data-credential-id="token"]').click();
+            await expectFrontendRequest(tracker, '/api/remote-resources/credentials', 'DELETE');
+            await expect(page.locator('.toast', { hasText: '资源站凭据已删除' })).toBeVisible();
+        } finally {
+            if (recordId) {
+                await safeApiFetch(page, `/api/remote-resources/records/${recordId}`, undefined, 'DELETE');
+            }
+            await deleteNewSecrets(page, 'remote_resources_github_token', githubSecretIdsBefore);
+        }
+    });
+
     test('creates, edits, groups, and deletes character resources from the UI', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const characterName = uniqueName('Character');

@@ -9,6 +9,7 @@ const modernRoutes = [
     ['presets', '预设管理'],
     ['personas', '用户人设'],
     ['assets', '素材库'],
+    ['remoteResources', '远程资源'],
     ['api', 'API 连接管理'],
     ['extensions', '扩展'],
     ['activity', '活动与统计'],
