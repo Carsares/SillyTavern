@@ -31,13 +31,13 @@ export function createCharacterActions({
     });
 
     function beginCharacterCreate() {
-        state.characterCreating = { active: true, form: defaultCharacterForm() };
-        state.characterEditing = { avatar: '', form: {} };
+        state.characterCreating = { active: true, form: defaultCharacterForm(), errors: {} };
+        state.characterEditing = { avatar: '', form: {}, errors: {} };
         render();
     }
 
     function cancelCharacterCreate() {
-        state.characterCreating = { active: false, form: defaultCharacterForm() };
+        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
         render();
     }
 
@@ -45,11 +45,12 @@ export function createCharacterActions({
         const form = state.characterCreating.form;
         const payload = characterCreatePayload(form);
         if (!payload.ch_name) {
-            throw new Error('角色名称不能为空。');
+            showCharacterFormError('create', 'name', '请输入角色名称。', '角色创建失败');
+            return;
         }
 
         const avatar = await apiFetch('/api/characters/create', { body: payload });
-        state.characterCreating = { active: false, form: defaultCharacterForm() };
+        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
         state.selected.character = avatar;
         state.selected.chat = '';
         await loadData({ silent: true });
@@ -64,15 +65,15 @@ export function createCharacterActions({
             return;
         }
 
-        state.characterEditing = { avatar, form: characterToForm(character) };
-        state.characterCreating = { active: false, form: defaultCharacterForm() };
+        state.characterEditing = { avatar, form: characterToForm(character), errors: {} };
+        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
         state.characterRenaming = { avatar: '', name: '' };
         state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
         render();
     }
 
     function cancelCharacterEdit() {
-        state.characterEditing = { avatar: '', form: {} };
+        state.characterEditing = { avatar: '', form: {}, errors: {} };
         render();
     }
 
@@ -82,11 +83,12 @@ export function createCharacterActions({
             throw new Error('编辑目标已变化，请重新选择角色。');
         }
         if (!form.name?.trim()) {
-            throw new Error('角色名称不能为空。');
+            showCharacterFormError('edit', 'name', '请输入角色名称。', '角色保存失败');
+            return;
         }
 
         await apiFetch('/api/characters/merge-attributes', { body: characterMergePayload(avatar, form) });
-        state.characterEditing = { avatar: '', form: {} };
+        state.characterEditing = { avatar: '', form: {}, errors: {} };
         clearCharacterCache(avatar);
         await loadData({ silent: true });
         await loadCharacterDetail(avatar, { force: true });
@@ -297,10 +299,24 @@ export function createCharacterActions({
     }
 
     function updateCharacterFormField(element) {
-        const form = element.dataset.characterScope === 'create'
-            ? state.characterCreating.form
-            : state.characterEditing.form;
-        form[element.dataset.characterField] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+        const formState = element.dataset.characterScope === 'create'
+            ? state.characterCreating
+            : state.characterEditing;
+        const field = element.dataset.characterField;
+        formState.form[field] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+        if (formState.errors?.[field]) {
+            delete formState.errors[field];
+        }
+    }
+
+    function showCharacterFormError(scope, field, message, title) {
+        const formState = scope === 'create' ? state.characterCreating : state.characterEditing;
+        formState.errors = { ...(formState.errors || {}), [field]: message };
+        showToast(title, message);
+        render();
+        window.setTimeout(() => {
+            document.querySelector(`[data-character-field="${field}"][data-character-scope="${scope}"]`)?.focus();
+        }, 0);
     }
 
     return {

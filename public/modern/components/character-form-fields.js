@@ -5,14 +5,15 @@ export function createCharacterFormFieldComponents({
 }) {
     function renderCharacterFormContent(form, scope, isCreate) {
         const scopeAttribute = escapeHtml(scope);
+        const errors = getCharacterFormErrors(scope);
 
         return `
         <div class="character-form">
             <div class="form-grid two-columns">
-                ${renderCharacterInput('name', '名称', form.name, scopeAttribute)}
-                ${renderCharacterInput('creator', '作者', form.creator, scopeAttribute)}
-                ${renderCharacterInput('character_version', '版本', form.character_version, scopeAttribute)}
-                ${renderCharacterInput('tags', '标签', form.tags, scopeAttribute, '用逗号分隔')}
+                ${renderCharacterInput('name', '名称', form.name, scopeAttribute, '', errors, true)}
+                ${renderCharacterInput('creator', '作者', form.creator, scopeAttribute, '', errors)}
+                ${renderCharacterInput('character_version', '版本', form.character_version, scopeAttribute, '', errors)}
+                ${renderCharacterInput('tags', '标签', form.tags, scopeAttribute, '用逗号分隔', errors)}
                 ${renderCharacterWorldSelect(form, scopeAttribute)}
                 ${renderCharacterNumberInput('talkativeness', '发言概率', form.talkativeness, scopeAttribute, '0', '1', '0.05')}
                 ${renderCharacterNumberInput('depth_prompt_depth', 'Depth 深度', form.depth_prompt_depth, scopeAttribute, '0', '9999', '1')}
@@ -43,11 +44,31 @@ export function createCharacterFormFieldComponents({
     `;
     }
 
-    function renderCharacterInput(field, label, value, scope, placeholder = '') {
+    function getCharacterFormErrors(scope) {
+        return scope === 'create'
+            ? state.characterCreating.errors || {}
+            : state.characterEditing.errors || {};
+    }
+
+    function renderCharacterInput(field, label, value, scope, placeholder = '', errors = {}, required = false) {
+        const error = errors[field] || '';
+        const errorId = `character-${scope}-${field}-error`;
+        const requiredAttribute = required ? 'required' : '';
+        const errorAttribute = error ? `aria-invalid="true" aria-describedby="${escapeHtml(errorId)}"` : '';
         return `
         <label class="field-label">
-            <span>${escapeHtml(label)}</span>
-            <input class="text-input" type="text" data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
+            <span>${escapeHtml(label)}${required ? '<span class="required-marker">必填</span>' : ''}</span>
+            <input
+                class="text-input"
+                type="text"
+                data-character-field="${escapeHtml(field)}"
+                data-character-scope="${scope}"
+                value="${escapeHtml(value)}"
+                placeholder="${escapeHtml(placeholder)}"
+                ${requiredAttribute}
+                ${errorAttribute}
+            >
+            ${error ? `<span class="field-error" id="${escapeHtml(errorId)}">${escapeHtml(error)}</span>` : ''}
         </label>
     `;
     }
@@ -56,7 +77,16 @@ export function createCharacterFormFieldComponents({
         return `
         <label class="field-label">
             <span>${escapeHtml(label)}</span>
-            <input class="text-input" type="number" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" data-character-field="${escapeHtml(field)}" data-character-scope="${scope}" value="${escapeHtml(value)}">
+            <input
+                class="text-input"
+                type="number"
+                min="${escapeHtml(min)}"
+                max="${escapeHtml(max)}"
+                step="${escapeHtml(step)}"
+                data-character-field="${escapeHtml(field)}"
+                data-character-scope="${scope}"
+                value="${escapeHtml(value)}"
+            >
         </label>
     `;
     }

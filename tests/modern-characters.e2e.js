@@ -60,6 +60,35 @@ function createCharacterWithDescription(description) {
 }
 
 test.describe('Modern character resources', () => {
+    test('shows field errors for missing character names without marking data load failed', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+
+        await page.locator('[data-create-character]').click();
+        await page.locator('[data-save-character-create]').click();
+
+        const createName = page.locator('[data-character-field="name"][data-character-scope="create"]');
+        await expect(createName).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('#character-create-name-error')).toHaveText('请输入角色名称。');
+        await expect(createName).toBeFocused();
+        await expect(page.locator('#connectionStatus')).not.toContainText('部分失败');
+        expect(fixture.requests.characterCreate).toHaveLength(0);
+
+        await page.locator('[data-cancel-character-create]').click();
+        await page.locator('[data-edit-character="alice.png"]').click();
+        const editName = page.locator('[data-character-field="name"][data-character-scope="edit"]');
+        await editName.fill('');
+        await page.locator('[data-save-character-edit]').click();
+
+        await expect(editName).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('#character-edit-name-error')).toHaveText('请输入角色名称。');
+        await expect(editName).toBeFocused();
+        await expect(page.locator('#connectionStatus')).not.toContainText('部分失败');
+        expect(fixture.requests.characterMerge).toHaveLength(0);
+    });
+
     test('creates and edits a character in the modern workspace', async ({ page }) => {
         const fixture = createModernResourceFixture();
         await mockModernWorkspace(page, fixture);

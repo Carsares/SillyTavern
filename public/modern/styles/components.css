@@ -109,6 +109,13 @@
     font-weight: 680;
 }
 
+.required-marker {
+    margin-left: 6px;
+    color: var(--danger);
+    font-size: 11px;
+    font-weight: 760;
+}
+
 .text-input,
 .select-input {
     width: 100%;
@@ -127,6 +134,24 @@
 .select-input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.text-input[aria-invalid="true"],
+.select-input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+    border-color: color-mix(in srgb, var(--danger) 72%, var(--border));
+}
+
+.text-input[aria-invalid="true"]:focus,
+.select-input[aria-invalid="true"]:focus,
+textarea[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.field-error {
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 680;
 }
 
 .form-grid {

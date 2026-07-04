@@ -110,10 +110,12 @@ export function createModernState() {
         characterCreating: {
             active: false,
             form: { ...characterFormDefaults },
+            errors: {},
         },
         characterEditing: {
             avatar: '',
             form: {},
+            errors: {},
         },
         characterRenaming: {
             avatar: '',
