@@ -183,6 +183,27 @@ test.describe('Modern extensions page', () => {
         await expect(page.locator('.extension-card', { hasText: 'new-ext' })).toContainText('global');
     });
 
+    test('shows inline validation for an empty extension install URL', async ({ page }) => {
+        const fixture = await mockModernExtensionsWorkspace(page);
+        const requests = fixture.requests.extensionWorkflows;
+
+        await gotoModern(page, 'extensions', '扩展');
+
+        await page.locator('[data-toggle-extension-install]').click();
+        await page.locator('[data-install-extension]').click();
+
+        await expect(page.locator('[data-extension-install-url]')).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('#extension-install-url-error')).toHaveText('请输入扩展 Git URL。');
+        await expect(page.locator('.toast', { hasText: '扩展安装失败' })).toBeVisible();
+        await expect(page.locator('#connectionStatus')).not.toContainText('部分失败');
+        expect(requests.installs).toHaveLength(0);
+
+        await page.locator('[data-extension-install-url]').fill('https://github.com/example/new-ext.git');
+
+        await expect(page.locator('[data-extension-install-url]')).not.toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('#extension-install-url-error')).toHaveCount(0);
+    });
+
     test('reads details, loads branches, and switches extension branch', async ({ page }) => {
         const fixture = await mockModernExtensionsWorkspace(page);
         const requests = fixture.requests.extensionWorkflows;

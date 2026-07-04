@@ -30,6 +30,7 @@ export function createExtensionActions({
         state.extensionInstall = {
             active,
             url: active ? state.extensionInstall.url : '',
+            urlError: '',
             branch: active ? state.extensionInstall.branch : '',
             global: active ? state.extensionInstall.global : false,
             running: false,
@@ -37,21 +38,39 @@ export function createExtensionActions({
         render();
     }
 
+    function showExtensionInstallUrlError(message) {
+        state.extensionInstall.urlError = message;
+        showToast('扩展安装失败', message);
+        render();
+        window.setTimeout(() => {
+            document.querySelector('[data-extension-install-url]')?.focus();
+        }, 0);
+    }
+
     async function installExtensionFromForm() {
         const url = state.extensionInstall.url.trim();
         const branch = state.extensionInstall.branch.trim();
         if (!url) {
-            throw new Error('请输入扩展 Git URL。');
+            showExtensionInstallUrlError('请输入扩展 Git URL。');
+            return;
         }
 
-        const parsedUrl = new URL(url);
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            showExtensionInstallUrlError('请输入有效的扩展 Git URL。');
+            return;
+        }
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-            throw new Error('扩展 URL 只支持 HTTP 或 HTTPS。');
+            showExtensionInstallUrlError('扩展 URL 只支持 HTTP 或 HTTPS。');
+            return;
         }
         if (!isOfficialExtensionUrl(parsedUrl.href) && !window.confirm('即将安装第三方扩展。第三方扩展可以运行前端代码，请确认你信任该来源。')) {
             throw new Error('已取消扩展安装。');
         }
 
+        state.extensionInstall.urlError = '';
         state.extensionInstall.running = true;
         render();
         try {
@@ -62,7 +81,7 @@ export function createExtensionActions({
                     global: Boolean(state.extensionInstall.global && state.me?.admin),
                 },
             });
-            state.extensionInstall = { active: false, url: '', branch: '', global: false, running: false };
+            state.extensionInstall = { active: false, url: '', urlError: '', branch: '', global: false, running: false };
             resetExtensionDetails();
             await loadData({ silent: true });
             showToast('扩展已安装', result?.display_name || result?.folderName || parsedUrl.pathname.split('/').pop());

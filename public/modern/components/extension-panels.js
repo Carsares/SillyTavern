@@ -10,6 +10,9 @@ export function createExtensionPanelComponents(ctx) {
 
     function renderExtensionInstallPanel() {
         const install = state.extensionInstall;
+        const urlError = install.urlError || '';
+        const urlErrorId = 'extension-install-url-error';
+        const urlErrorAttrs = urlError ? `aria-invalid="true" aria-describedby="${urlErrorId}"` : '';
 
         return `
         <section class="panel section-panel">
@@ -23,7 +26,8 @@ export function createExtensionPanelComponents(ctx) {
                 <div class="form-grid two-columns">
                     <label class="field-label">
                         <span>Git URL</span>
-                        <input class="text-input" type="url" data-extension-install-url value="${escapeHtml(install.url)}" placeholder="https://github.com/user/extension.git" autocomplete="off">
+                        <input class="text-input" type="url" data-extension-install-url value="${escapeHtml(install.url)}" placeholder="https://github.com/user/extension.git" autocomplete="off" ${urlErrorAttrs}>
+                        ${urlError ? `<span class="field-error" id="${urlErrorId}">${escapeHtml(urlError)}</span>` : ''}
                     </label>
                     <label class="field-label">
                         <span>分支</span>

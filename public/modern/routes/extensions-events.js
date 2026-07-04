@@ -114,7 +114,18 @@ export function createExtensionsEvents(ctx) {
 
     function handleExtensionsInput(event) {
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-url]')) {
+            const hadError = Boolean(state.extensionInstall.urlError);
+            const cursor = event.target.selectionStart ?? event.target.value.length;
             state.extensionInstall.url = event.target.value;
+            state.extensionInstall.urlError = '';
+            if (hadError) {
+                render();
+                const input = document.querySelector('[data-extension-install-url]');
+                if (input instanceof HTMLInputElement) {
+                    input.focus();
+                    input.setSelectionRange(cursor, cursor);
+                }
+            }
         }
 
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-extension-install-branch]')) {

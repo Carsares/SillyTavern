@@ -268,6 +268,7 @@ export function createModernState() {
         extensionInstall: {
             active: false,
             url: '',
+            urlError: '',
             branch: '',
             global: false,
             running: false,
