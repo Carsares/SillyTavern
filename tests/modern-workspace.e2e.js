@@ -275,6 +275,21 @@ test.describe('Modern workspace', () => {
         expect(contentBox?.y).toBeGreaterThanOrEqual((topbarBox?.y || 0) + (topbarBox?.height || 0) - 1);
     });
 
+    test('closes mobile navigation when tapping outside the sidebar', async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+
+        await page.goto('/modern/?view=dashboard');
+
+        await page.locator('#mobileMenuButton').click();
+        await expect(page.locator('.sidebar.open')).toHaveCount(1);
+
+        await page.mouse.click(360, 420);
+
+        await expect(page.locator('.sidebar.open')).toHaveCount(0);
+        await expect(page.locator('.page-title')).toHaveText('工作台');
+        await expect(page).toHaveURL(/view=dashboard/);
+    });
+
     test('opens a specific preset from the command palette', async ({ page }) => {
         await page.route('**/api/settings/get', route => route.fulfill({
             status: 200,

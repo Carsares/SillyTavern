@@ -64,6 +64,21 @@ export function bindShellEvents({
             closePalette();
         }
     });
+    function closeMobileSidebarOnOutsideClick(event) {
+        const sidebar = elements.app.querySelector('.sidebar');
+        if (!sidebar?.classList.contains('open') || !window.matchMedia('(max-width: 860px)').matches) {
+            return false;
+        }
+
+        const target = event.target;
+        if (!(target instanceof Node) || sidebar.contains(target) || elements.mobileMenuButton.contains(target)) {
+            return false;
+        }
+
+        sidebar.classList.remove('open');
+        return true;
+    }
+
     function clickFirstPaletteCommand() {
         const firstCommand = elements.paletteResults.querySelector('[data-command-route]');
         if (firstCommand) {
@@ -71,6 +86,10 @@ export function bindShellEvents({
         }
     }
     document.addEventListener('click', event => {
+        if (closeMobileSidebarOnOutsideClick(event)) {
+            return;
+        }
+
         handleClick(event);
     });
     document.addEventListener('keydown', event => {
