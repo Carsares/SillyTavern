@@ -404,6 +404,50 @@ async function restoreSettings(page, settings) {
     }
 }
 
+/* global document, window */
+async function callLegacyBridgeStatus(page) {
+    return page.evaluate(() => new Promise((resolve, reject) => {
+        const source = 'sillytavern-modern-bridge';
+        const id = `bridge-smoke-${Date.now()}`;
+        const frame = document.createElement('iframe');
+        const timer = window.setTimeout(() => {
+            cleanup();
+            reject(new Error('Legacy bridge status timed out'));
+        }, 60000);
+
+        function cleanup() {
+            window.clearTimeout(timer);
+            window.removeEventListener('message', handleMessage);
+            frame.remove();
+        }
+
+        function handleMessage(event) {
+            if (event.origin !== window.location.origin || event.data?.source !== source || event.data?.id !== id) {
+                return;
+            }
+
+            cleanup();
+            if (event.data.error) {
+                reject(new Error(event.data.error.message || 'Legacy bridge status failed'));
+                return;
+            }
+            resolve(event.data.result);
+        }
+
+        window.addEventListener('message', handleMessage);
+        frame.hidden = true;
+        frame.src = '/index.html?modernBridge=1';
+        frame.addEventListener('load', () => {
+            frame.contentWindow.postMessage({ source, id, action: 'status', payload: {} }, window.location.origin);
+        }, { once: true });
+        frame.addEventListener('error', () => {
+            cleanup();
+            reject(new Error('Legacy bridge iframe failed to load'));
+        }, { once: true });
+        document.body.append(frame);
+    }));
+}
+
 async function findCharacterByName(page, name) {
     const characters = await apiFetch(page, '/api/characters/all');
     return characters.find(character => character.name === name || character.data?.name === name) || null;
@@ -519,6 +563,17 @@ test.describe('Modern real backend integration', () => {
                 fs.writeFileSync(statsFilePath, statsBefore);
             }
         }
+    });
+
+    test('loads the real legacy bridge page for modern actions', async ({ page }) => {
+        await gotoModern(page, 'dashboard', '工作台');
+
+        const status = await callLegacyBridgeStatus(page);
+
+        expect(status).toEqual(expect.objectContaining({
+            chat: expect.any(String),
+            messageCount: expect.any(Number),
+        }));
     });
 
     test('creates, edits, groups, and deletes character resources from the UI', async ({ page }) => {

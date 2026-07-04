@@ -79,7 +79,7 @@ git diff --check ; echo EXIT=$?
 前端 JS 改动至少执行语法检查和 lint：
 
 ```bash
-find public/modern -name '*.js' -print0 | xargs -0 node --check ; echo EXIT=$?
+find public/modern -name '*.js' -print0 | xargs -0 -n 1 node --check ; echo EXIT=$?
 nice -n 19 npm run lint ; echo EXIT=$?
 git diff --check ; echo EXIT=$?
 ```
@@ -87,7 +87,7 @@ git diff --check ; echo EXIT=$?
 运行 modern E2E 时固定使用 headless/list reporter，不打开可视浏览器或 HTML report：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-*.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test "modern-*.e2e.js" --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
 只跑真实后端集成覆盖：

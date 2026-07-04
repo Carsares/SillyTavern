@@ -19,6 +19,8 @@ export function createRenderer({
     }
 
     function render() {
+        elements.app.dataset.loaded = state.loaded ? 'true' : 'false';
+        elements.app.dataset.route = state.route;
         renderNav();
         renderStatus();
         renderContent();
