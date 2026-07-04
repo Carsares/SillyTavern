@@ -212,6 +212,7 @@ test.describe('Modern workspace', () => {
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('#globalSearch')).toHaveValue('');
         await expect(page.locator('.page-title')).toHaveText('角色库');
         await expect(page.locator('.detail-title')).toHaveText('Atlas Fixture');
     });
@@ -247,6 +248,7 @@ test.describe('Modern workspace', () => {
 
         await page.keyboard.press('Escape');
         await expect(page.locator('#commandPalette')).toBeHidden();
+        await expect(page.locator('#globalSearch')).toHaveValue('');
 
         await page.locator('[data-route-filter]').fill('atlas');
 

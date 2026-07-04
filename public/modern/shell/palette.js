@@ -135,6 +135,9 @@ export function createPalette({
 
     function closePalette() {
         elements.commandPalette.hidden = true;
+        state.paletteQuery = '';
+        elements.paletteSearch.value = '';
+        elements.search.value = '';
     }
 
     return {
