@@ -4,13 +4,22 @@ export function createExtensionActions({
     loadData,
     render,
     showToast,
+    callLegacyBridge,
 }) {
     function getExtensionFolderName(extension) {
         return String(extension?.name || '').replace(/^third-party\//, '');
     }
 
     function canManageExtension(extension) {
-        return extension?.type === 'local' || extension?.type === 'global';
+        return extension?.type === 'local' || (extension?.type === 'global' && state.me?.admin);
+    }
+
+    function isOfficialExtensionUrl(url) {
+        try {
+            return /^https:\/\/github\.com\/SillyTavern\/(.+)$/i.test(new URL(url).href);
+        } catch {
+            return false;
+        }
     }
 
     function resetExtensionDetails() {
@@ -39,17 +48,25 @@ export function createExtensionActions({
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             throw new Error('扩展 URL 只支持 HTTP 或 HTTPS。');
         }
+        if (!isOfficialExtensionUrl(parsedUrl.href) && !window.confirm('即将安装第三方扩展。第三方扩展可以运行前端代码，请确认你信任该来源。')) {
+            throw new Error('已取消扩展安装。');
+        }
 
         state.extensionInstall.running = true;
         render();
         try {
             const result = await apiFetch('/api/extensions/install', {
                 body: {
-                    url,
+                    url: parsedUrl.href,
                     branch,
                     global: Boolean(state.extensionInstall.global && state.me?.admin),
                 },
             });
+            try {
+                await callLegacyBridge('extensionInstalled', { response: result }, 60000);
+            } catch (error) {
+                showToast('扩展已安装，请刷新页面完成初始化', error.message);
+            }
             state.extensionInstall = { active: false, url: '', branch: '', global: false, running: false };
             resetExtensionDetails();
             await loadData({ silent: true });
@@ -161,7 +178,12 @@ export function createExtensionActions({
                     global: details.type === 'global',
                 },
             });
-            showToast('扩展分支已切换', `${details.name} → ${branch}`);
+            try {
+                await callLegacyBridge('extensionBranchSwitched', {}, 60000);
+            } catch (error) {
+                showToast('扩展设置同步失败，请刷新页面', error.message);
+            }
+            showToast('扩展分支已切换', `${details.name} → ${branch}，请刷新页面应用更新`);
             await loadExtensionDetails(details.name, details.type, { branches: true });
         } finally {
             state.extensionDetails.loading = false;

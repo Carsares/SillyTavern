@@ -189,7 +189,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
+import { cancelDebouncedMetadataSave, completeExtensionInstallLifecycle, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, reloadExtensionSettingsAfterBranchSwitch, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -5701,6 +5701,18 @@ async function handleModernBridgeSwipe(payload = {}) {
     };
 }
 
+async function handleModernBridgeExtensionInstalled(payload = {}) {
+    await waitForModernBridgeReady();
+    await completeExtensionInstallLifecycle(payload.response || {});
+    return { ok: true };
+}
+
+async function handleModernBridgeExtensionBranchSwitched() {
+    await waitForModernBridgeReady();
+    await reloadExtensionSettingsAfterBranchSwitch();
+    return { ok: true };
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -5742,6 +5754,14 @@ window.addEventListener('message', async (event) => {
                 chat: group?.chat_id || characters[this_chid]?.chat || '',
                 messageCount: chat.length,
             });
+            return;
+        }
+        if (action === 'extensionInstalled') {
+            postModernBridgeResult(event, id, await handleModernBridgeExtensionInstalled(payload));
+            return;
+        }
+        if (action === 'extensionBranchSwitched') {
+            postModernBridgeResult(event, id, await handleModernBridgeExtensionBranchSwitched());
             return;
         }
 

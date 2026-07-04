@@ -1763,6 +1763,17 @@ export async function installExtension(url, global, branch = '') {
     const response = await request.json();
     toastr.success(t`Extension '${response.display_name}' has been installed successfully!`, t`Extension installation successful`);
     console.debug(`Extension "${response.display_name}" has been installed successfully at ${response.extensionPath}`);
+    await completeExtensionInstallLifecycle(response);
+
+    return true;
+}
+
+/**
+ * Completes the client-side extension lifecycle after an extension has been installed by the API.
+ * @param {object} response Extension installation API response
+ * @returns {Promise<void>}
+ */
+export async function completeExtensionInstallLifecycle(response) {
     await loadExtensionSettings({}, false, false);
     await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED, response);
 
@@ -1770,8 +1781,10 @@ export async function installExtension(url, global, branch = '') {
         const extensionName = `third-party/${response.folderName}`;
         await callExtensionHook(extensionName, 'install');
     }
+}
 
-    return true;
+export async function reloadExtensionSettingsAfterBranchSwitch() {
+    await loadExtensionSettings({}, false, false);
 }
 
 /**

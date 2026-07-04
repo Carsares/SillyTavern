@@ -99,6 +99,7 @@ export function createActionRegistry({
         loadData,
         render,
         showToast,
+        callLegacyBridge,
     });
     const { getExtensionFolderName } = extensionActions;
 
