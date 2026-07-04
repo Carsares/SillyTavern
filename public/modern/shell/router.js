@@ -32,7 +32,7 @@ export function createRouter({
         render();
 
         if (routeId === 'chat') {
-            await prepareChatForSelectedContext();
+            await prepareChatForSelectedContext({ forceList: true });
             render();
         }
         if (routeId === 'worldbooks') {
@@ -97,7 +97,7 @@ export function createRouter({
             state.selected.chat = '';
             clearChatSearch();
             if (state.route === 'chat') {
-                await prepareChatForSelectedContext();
+                await prepareChatForSelectedContext({ forceList: true });
                 closeChatSidebarForMobileSelection();
             }
             if (state.route === 'characters' && routeModules.characters?.renderSelection?.()) {
@@ -115,7 +115,7 @@ export function createRouter({
             state.selected.chat = '';
             clearChatSearch();
             if (state.route === 'chat') {
-                await prepareChatForSelectedContext();
+                await prepareChatForSelectedContext({ forceList: true });
                 closeChatSidebarForMobileSelection();
             }
             render();

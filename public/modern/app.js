@@ -102,6 +102,7 @@ const {
     getChatId,
     getChatMessageCount,
     getEntityUnreadCount,
+    getTotalChatUnreadCount,
     getChatModeLabel,
     getExtensionFolderName,
     getPersonas,
@@ -114,6 +115,7 @@ const {
     ensureAvailableChatMode,
     loadWorldDetail,
     prepareChatForSelectedContext,
+    refreshSelectedChatUnreadState,
     selectPreset,
     toggleChatSidebar,
 } = createActionRegistry({
@@ -142,14 +144,15 @@ const {
     renderLoading,
 } = commonComponents;
 
-const { getProviderInfo, getRouteCount } = createShellMetadata({
+const { getProviderInfo, getRouteCount, getRouteUnreadCount } = createShellMetadata({
     state,
     getChatCompletionModel,
     getPresetCount,
     getPersonas,
     getAssetCount,
+    getTotalChatUnreadCount,
 });
-const { renderNav } = createNav({ state, elements, getRouteCount });
+const { renderNav } = createNav({ state, elements, getRouteCount, getRouteUnreadCount });
 const { renderStatus } = createTopbar({ state, elements, getProviderInfo });
 const { renderInspector, toggleInspector } = createInspector({
     state,
@@ -274,6 +277,24 @@ function render() {
     shellRenderer.render();
 }
 
+let chatUnreadPolling = false;
+
+async function pollChatUnreadState() {
+    if (!state.loaded || document.hidden || chatUnreadPolling) {
+        return;
+    }
+
+    chatUnreadPolling = true;
+    try {
+        await refreshSelectedChatUnreadState();
+        render();
+    } catch (error) {
+        state.errors.push({ key: 'chat-unread-poll', message: error.message });
+    } finally {
+        chatUnreadPolling = false;
+    }
+}
+
 bindShellEvents({
     state,
     elements,
@@ -293,3 +314,9 @@ bindShellEvents({
 
 render();
 loadData({ notify: false });
+setInterval(pollChatUnreadState, 5000);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        pollChatUnreadState();
+    }
+});

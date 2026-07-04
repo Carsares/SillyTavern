@@ -13,11 +13,11 @@ export function createChatContextLoaderActions({
     sortChats,
     syncChatReadStateForList,
 }) {
-    async function loadCharacterChats(character) {
+    async function loadCharacterChats(character, { force = false, quiet = false } = {}) {
         if (!character?.avatar) {
             return [];
         }
-        if (state.chatLists[character.avatar]) {
+        if (!force && state.chatLists[character.avatar]) {
             return state.chatLists[character.avatar];
         }
 
@@ -34,21 +34,23 @@ export function createChatContextLoaderActions({
             syncChatReadStateForList(character.avatar, chats);
             return chats;
         } catch (error) {
-            state.errors.push({ key: 'chats', message: error.message });
-            showToast('聊天列表读取失败', error.message);
-            return [];
+            if (!quiet) {
+                state.errors.push({ key: 'chats', message: error.message });
+                showToast('聊天列表读取失败', error.message);
+            }
+            return state.chatLists[character.avatar] || [];
         } finally {
             state.loadingChats[character.avatar] = false;
         }
     }
 
-    async function loadGroupChats(group) {
+    async function loadGroupChats(group, { force = false, quiet = false } = {}) {
         if (!group?.id) {
             return [];
         }
 
         const contextKey = `group:${group.id}`;
-        if (state.chatLists[contextKey]) {
+        if (!force && state.chatLists[contextKey]) {
             return state.chatLists[contextKey];
         }
 
@@ -66,9 +68,11 @@ export function createChatContextLoaderActions({
             syncChatReadStateForList(contextKey, chats);
             return chats;
         } catch (error) {
-            state.errors.push({ key: 'group-chats', message: error.message });
-            showToast('群聊列表读取失败', error.message);
-            return [];
+            if (!quiet) {
+                state.errors.push({ key: 'group-chats', message: error.message });
+                showToast('群聊列表读取失败', error.message);
+            }
+            return state.chatLists[contextKey] || [];
         } finally {
             state.loadingChats[contextKey] = false;
         }
@@ -174,9 +178,9 @@ export function createChatContextLoaderActions({
         }
     }
 
-    async function prepareChatForSelectedContext() {
+    async function prepareChatForSelectedContext({ forceList = false, quiet = false } = {}) {
         const entity = getSelectedChatEntity();
-        const chats = isGroupChatMode() ? await loadGroupChats(entity) : await loadCharacterChats(entity);
+        const chats = isGroupChatMode() ? await loadGroupChats(entity, { force: forceList, quiet }) : await loadCharacterChats(entity, { force: forceList, quiet });
 
         if (!state.selected.chat && chats[0]?.file_id) {
             state.selected.chat = chats[0].file_id;
@@ -185,13 +189,11 @@ export function createChatContextLoaderActions({
         await loadChatMessages(entity, state.selected.chat);
     }
 
-    async function refreshSelectedChatList(entity) {
-        const contextKey = getChatContextKey(entity);
-        delete state.chatLists[contextKey];
+    async function refreshSelectedChatList(entity, { quiet = false } = {}) {
         if (isGroupChatMode()) {
-            await loadGroupChats(entity);
+            await loadGroupChats(entity, { force: true, quiet });
         } else {
-            await loadCharacterChats(entity);
+            await loadCharacterChats(entity, { force: true, quiet });
         }
     }
 

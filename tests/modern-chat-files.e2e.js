@@ -58,6 +58,7 @@ function createChatFixture() {
             { file_id: 'backup-chat', file_name: 'backup-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now },
         ],
         requests: {
+            characterChats: [],
             saves: [],
             renames: [],
             deletes: [],
@@ -150,7 +151,13 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     await page.route('**/api/secrets/settings', route => fulfillJson(route, { allowKeysExposure: false }));
     await page.route('**/api/secrets/read', route => fulfillJson(route, {}));
     await page.route('**/api/stats/get', route => fulfillJson(route, {}));
-    await page.route('**/api/characters/chats', route => fulfillJson(route, fixture.chats));
+    await page.route('**/api/characters/chats', route => {
+        fixture.requests.characterChats.push({ failed: Boolean(fixture.failCharacterChats) });
+        if (fixture.failCharacterChats) {
+            return fulfillJson(route, { error: 'chat list unavailable' }, 500);
+        }
+        return fulfillJson(route, fixture.chats);
+    });
     await page.route('**/api/chats/search', route => {
         const payload = route.request().postDataJSON();
         fixture.requests.searches.push(payload);
@@ -408,6 +415,102 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveCount(0);
         await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}')?.cursors?.['mock.png::unread-chat']?.messageCount)).toBe(3);
+    });
+
+    test('refreshes unread counts without reloading the page', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 2000 },
+            { file_id: 'later-chat', file_name: 'later-chat.jsonl', chat_items: 1, file_size: '1 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'existing-chat': [
+                { name: 'Modern User', is_user: true, mes: 'hello', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'reply', send_date: now - 2000 },
+            ],
+            'later-chat': [
+                { name: 'Modern User', is_user: true, mes: 'read baseline', send_date: now - 1000 },
+            ],
+        };
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="later-chat"] .unread-badge')).toHaveCount(0);
+
+        fixture.messagesByChat['later-chat'].push(
+            { name: 'Mock Character', is_user: false, mes: 'new reply without page reload', send_date: now + 3000 },
+            { name: 'Mock Character', is_user: false, mes: 'second new reply without page reload', send_date: now + 4000 },
+        );
+        fixture.chats = fixture.chats.map(chat => chat.file_id === 'later-chat'
+            ? { ...chat, chat_items: 3, file_size: '3 KB', last_mes: now + 4000 }
+            : chat);
+
+        await page.locator('[data-refresh-chat-list]').click();
+
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-select-chat="later-chat"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
+
+        await page.locator('[data-select-chat="later-chat"]').click();
+
+        await expect(page.locator('.chat-thread')).toContainText('second new reply without page reload');
+        await expect(page.locator('[data-select-chat="later-chat"] .unread-badge')).toHaveCount(0);
+    });
+
+    test('polls unread counts and updates chat navigation automatically', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 2000 },
+            { file_id: 'watched-chat', file_name: 'watched-chat.jsonl', chat_items: 1, file_size: '1 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'existing-chat': [
+                { name: 'Modern User', is_user: true, mes: 'hello', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'reply', send_date: now - 2000 },
+            ],
+            'watched-chat': [
+                { name: 'Modern User', is_user: true, mes: 'read baseline', send_date: now - 1000 },
+            ],
+        };
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveCount(0);
+        fixture.messagesByChat['watched-chat'].push(
+            { name: 'Mock Character', is_user: false, mes: 'polled reply', send_date: now + 3000 },
+            { name: 'Mock Character', is_user: false, mes: 'second polled reply', send_date: now + 4000 },
+        );
+        fixture.chats = fixture.chats.map(chat => chat.file_id === 'watched-chat'
+            ? { ...chat, chat_items: 3, file_size: '3 KB', last_mes: now + 4000 }
+            : chat);
+
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2', { timeout: 7000 });
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-select-chat="watched-chat"] .unread-badge')).toHaveText('2');
+    });
+
+    test('keeps cached chat list when quiet unread refresh fails', async ({ page }) => {
+        const fixture = createChatFixture();
+        await page.addInitScript('localStorage.setItem("st-modern-inspector-open", "true")');
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await expect(page.locator('#inspector')).toContainText('暂无错误。');
+
+        fixture.failCharacterChats = true;
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await expect.poll(() => fixture.requests.characterChats.filter(request => request.failed).length).toBe(1);
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await expect.poll(() => fixture.requests.characterChats.filter(request => request.failed).length).toBe(2);
+
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await expect(page.locator('#inspector')).toContainText('暂无错误。');
     });
 
     test('searches and clears character chat files inside the modern workspace', async ({ page }) => {

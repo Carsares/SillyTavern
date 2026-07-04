@@ -119,6 +119,19 @@ export function createChatContextSelectorHelpers({
         return chats.reduce((total, chat) => total + getChatUnreadCount(chat, entity), 0);
     }
 
+    function getTotalChatUnreadCount() {
+        return Object.entries(state.chatLists).reduce((total, [contextKey, chats]) => {
+            const entity = contextKey.startsWith('group:')
+                ? state.groups.find(group => `group:${group.id}` === contextKey)
+                : state.characters.find(character => character.avatar === contextKey);
+            if (!entity || !Array.isArray(chats)) {
+                return total;
+            }
+
+            return total + chats.reduce((chatTotal, chat) => chatTotal + getChatUnreadCount(chat, entity), 0);
+        }, 0);
+    }
+
     function getSelectedChatMessages() {
         const cacheKey = getChatCacheKey(getChatContextKey(), state.selected.chat);
         return state.chatMessages[cacheKey] || [];
@@ -204,6 +217,7 @@ export function createChatContextSelectorHelpers({
         getCurrentDraftKey,
         getCurrentMessageLimit,
         getEntityUnreadCount,
+        getTotalChatUnreadCount,
         getSelectedCharacter,
         getSelectedChatEntity,
         getSelectedChatList,

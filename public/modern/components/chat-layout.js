@@ -75,6 +75,7 @@ export function createChatLayoutComponents(ctx) {
         chats,
         searchSummary,
         isSearching,
+        isLoadingChats,
     }) : ''}
             <section class="panel chat-thread">
                 ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState(isGroupChatMode() ? 'fa-users' : 'fa-address-card', getChatEntityEmptyTitle(), getChatEntityEmptyDescription())}

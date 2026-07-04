@@ -29,6 +29,7 @@ export function createChatContextActions({
         getCurrentDraftKey,
         getCurrentMessageLimit,
         getEntityUnreadCount,
+        getTotalChatUnreadCount,
         getSelectedCharacter,
         getSelectedChatEntity,
         getSelectedChatList,
@@ -253,6 +254,15 @@ export function createChatContextActions({
         await apiFetch('/api/groups/edit', { body: group });
     }
 
+    async function refreshSelectedChatUnreadState() {
+        const entity = getSelectedChatEntity();
+        if (!entity) {
+            return;
+        }
+
+        await refreshSelectedChatList(entity, { quiet: true });
+    }
+
     async function saveModernChat(entity, chatId, messages) {
         const contextKey = getChatContextKey(entity);
         if (!contextKey || !chatId) {
@@ -359,6 +369,7 @@ export function createChatContextActions({
         getChatUnreadCount,
         getVisibleChatList,
         getEntityUnreadCount,
+        getTotalChatUnreadCount,
         getSelectedChatMessages,
         getCurrentMessageLimit,
         increaseCurrentMessageLimit,
@@ -378,6 +389,7 @@ export function createChatContextActions({
         saveGroupMetadata,
         saveModernChat,
         refreshSelectedChatList,
+        refreshSelectedChatUnreadState,
         createModernChatFile,
         moveChatReadState,
         deleteChatReadState,

@@ -19,6 +19,7 @@ export function createShellMetadata({
     getPresetCount,
     getPersonas,
     getAssetCount,
+    getTotalChatUnreadCount,
 }) {
     function getProviderInfo() {
         const settings = state.settings || {};
@@ -66,8 +67,13 @@ export function createShellMetadata({
         }
     }
 
+    function getRouteUnreadCount(routeId) {
+        return routeId === 'chat' ? getTotalChatUnreadCount() : 0;
+    }
+
     return {
         getProviderInfo,
         getRouteCount,
+        getRouteUnreadCount,
     };
 }

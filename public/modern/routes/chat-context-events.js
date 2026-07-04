@@ -24,9 +24,22 @@ export function createChatContextEvents(ctx) {
                 state.chatDeleteConfirm = { key: '', name: '' };
                 state.chatEditing = { key: '', index: -1, text: '' };
                 clearChatSearch();
-                await prepareChatForSelectedContext();
+                await prepareChatForSelectedContext({ forceList: true });
             }
             render();
+            return true;
+        }
+
+        if (event.target.closest('[data-refresh-chat-list]')) {
+            try {
+                clearChatSearch();
+                await prepareChatForSelectedContext({ forceList: true });
+                render();
+            } catch (error) {
+                state.errors.push({ key: 'chat-refresh', message: error.message });
+                showToast('聊天列表刷新失败', error.message);
+                render();
+            }
             return true;
         }
 

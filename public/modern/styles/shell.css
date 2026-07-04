@@ -106,6 +106,23 @@
     text-align: center;
 }
 
+.nav-unread-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    min-width: 28px;
+    padding: 2px 8px;
+    border: 1px solid color-mix(in srgb, var(--danger) 36%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 780;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
 .workspace {
     display: grid;
     grid-template-rows: 66px minmax(0, 1fr);
@@ -319,4 +336,3 @@ kbd {
 .mobile-menu {
     display: none;
 }
-

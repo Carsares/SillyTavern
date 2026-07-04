@@ -25,6 +25,7 @@ export function createChatSidebarComponents({
         chats,
         searchSummary,
         isSearching,
+        isLoadingChats,
     }) {
         return `
                 <aside class="chat-browser">
@@ -55,9 +56,14 @@ export function createChatSidebarComponents({
                             <h2 class="panel-title">聊天文件</h2>
                             <p class="panel-subtitle">${escapeHtml(searchSummary)}</p>
                         </div>
-                        <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
-                            <i class="fa-solid fa-plus"></i>
-                        </button>
+                        <div class="panel-actions">
+                            <button class="icon-button" type="button" data-refresh-chat-list title="刷新聊天列表" ${selected && !isLoadingChats ? '' : 'disabled'}>
+                                <i class="fa-solid ${isLoadingChats ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
+                            </button>
+                            <button class="icon-button" type="button" data-new-chat title="新聊天" ${selected ? '' : 'disabled'}>
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="chat-search-row">
                         <input class="text-input" type="search" data-chat-search-input value="${escapeHtml(state.chatSearch.query)}" placeholder="搜索文件名和消息内容">
