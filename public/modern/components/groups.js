@@ -10,7 +10,6 @@ export function createGroupsComponents(ctx) {
         metricCard,
         pageHead,
         renderCharacterRow,
-        renderEmptyState,
         renderGroupRow,
         renderInlineEmpty,
         renderRouteFilter,
@@ -53,8 +52,24 @@ export function createGroupsComponents(ctx) {
                 </div>
             </section>
             <section class="panel">
-                ${selected ? renderGroupDetail(selected) : renderEmptyState('fa-users', '暂无群组', '当前用户目录里没有群组。')}
+                ${selected ? renderGroupDetail(selected) : renderGroupEmptyState()}
             </section>
+        </div>
+    `;
+    }
+
+    function renderGroupEmptyState() {
+        return `
+        <div class="empty-state">
+            <div>
+                <i class="fa-solid fa-users"></i>
+                <strong>暂无群组</strong>
+                <div>当前用户目录里没有群组，可以从已有角色创建一个群聊。</div>
+                <button class="primary-button empty-state-action" type="button" data-create-group>
+                    <i class="fa-solid fa-plus"></i>
+                    新建群组
+                </button>
+            </div>
         </div>
     `;
     }

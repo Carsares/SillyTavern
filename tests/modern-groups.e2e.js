@@ -2,6 +2,19 @@ import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 test.describe('Modern group resources', () => {
+    test('opens group creation from the empty state call to action', async ({ page }) => {
+        const fixture = createModernResourceFixture({ groups: [] });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'groups', '群组管理');
+
+        await expect(page.locator('.empty-state', { hasText: '暂无群组' })).toBeVisible();
+        await page.locator('.empty-state [data-create-group]').click();
+
+        await expect(page.locator('.settings-form', { hasText: '新建群组' })).toBeVisible();
+        expect(fixture.requests.groupCreate).toHaveLength(0);
+    });
+
     test('creates and edits a group in the modern workspace', async ({ page }) => {
         const fixture = createModernResourceFixture();
         await mockModernWorkspace(page, fixture);

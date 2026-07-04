@@ -503,6 +503,10 @@ textarea[aria-invalid="true"]:focus {
     font-size: 28px;
 }
 
+.empty-state-action {
+    margin-top: 14px;
+}
+
 .table-wrap {
     overflow: auto;
     border: 1px solid var(--border);
