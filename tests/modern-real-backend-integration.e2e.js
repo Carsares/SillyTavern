@@ -613,7 +613,7 @@ test.describe('Modern real backend integration', () => {
             expect(editedCharacter.description || editedCharacter.data?.description).toBe(editedDescription);
 
             await gotoModern(page, 'groups', '群组管理');
-            await page.locator('[data-create-group]').click();
+            await page.locator('.page-head .page-actions [data-create-group]').click();
             await page.locator('[data-group-field="name"][data-group-scope="create"]').fill(groupName);
             await page.locator(`[data-group-member="${avatar}"][data-group-scope="create"]`).check();
             await page.locator('[data-save-group-create]').click();
