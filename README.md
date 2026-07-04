@@ -87,7 +87,7 @@ git diff --check ; echo EXIT=$?
 运行 modern E2E 时固定使用 headless/list reporter，不打开可视浏览器或 HTML report：
 
 ```bash
-PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test "modern-*.e2e.js" --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
+PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test "tests/modern-.*\\.e2e\\.js" --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
 只跑真实后端集成覆盖：

@@ -20,7 +20,7 @@ export function createRenderer({
 
     function render() {
         elements.app.dataset.loaded = state.loaded ? 'true' : 'false';
-        elements.app.dataset.route = state.route;
+        elements.app.dataset.currentRoute = state.route;
         renderNav();
         renderStatus();
         renderContent();

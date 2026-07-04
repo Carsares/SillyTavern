@@ -69,7 +69,7 @@ export function createRouter({
             return;
         }
 
-        const routeButton = event.target.closest('[data-route]');
+        const routeButton = event.target.closest('button[data-route], a[data-route]');
         if (routeButton) {
             if (routeButton.dataset.openCharacterChat) {
                 state.chatMode = 'character';

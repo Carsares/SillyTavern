@@ -5,13 +5,13 @@ export function createChatContextLoaderActions({
     showToast,
     getChatCacheKey,
     getChatContextKey,
-    getChatId,
-    getChatMessageCount,
+    getChatId = chat => String(chat?.file_id || chat?.file_name || '').replace(/\.jsonl$/i, ''),
+    getChatMessageCount = chat => Number(chat?.chat_items ?? chat?.message_count ?? 0),
     getSelectedChatEntity,
     isGroupChatMode,
-    markChatRead,
+    markChatRead = () => {},
     sortChats,
-    syncChatReadStateForList,
+    syncChatReadStateForList = () => {},
 }) {
     async function loadCharacterChats(character, { force = false, quiet = false } = {}) {
         if (!character?.avatar) {

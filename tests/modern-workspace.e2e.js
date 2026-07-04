@@ -39,6 +39,7 @@ test.describe('Modern workspace', () => {
             await expect(page.locator('.page-title')).toHaveText(title);
             await expect(page.locator('.nav-button.active')).toBeVisible();
             await expect(page.locator('#modernApp')).toHaveAttribute('data-loaded', 'true');
+            await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', route);
             expect(errors).toEqual([]);
         });
     }

@@ -401,6 +401,8 @@ export async function gotoModern(page, view, title) {
     await page.goto(`/modern/?view=${view}`);
     await expect(page.locator('.brand-title')).toHaveText('SillyTavern');
     await expect(page.locator('.page-title')).toHaveText(title);
+    await expect(page.locator('#modernApp')).toHaveAttribute('data-loaded', 'true');
+    await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', view);
     await expectModernOnly(page);
 }
 
