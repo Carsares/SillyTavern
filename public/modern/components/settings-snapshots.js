@@ -12,6 +12,7 @@ export function createSettingsSnapshotComponents(ctx) {
         const snapshots = state.settingsSnapshots.items;
         const selectedSnapshot = state.settingsSnapshots.previewName;
         const isLoading = state.settingsSnapshots.loading;
+        const isLoaded = state.settingsSnapshots.loaded;
 
         return `
         <section class="panel section-panel">
@@ -27,7 +28,7 @@ export function createSettingsSnapshotComponents(ctx) {
             </div>
             <div class="backup-layout">
                 <div class="resource-list backup-list">
-                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(isLoading ? '正在读取设置快照' : '暂无设置快照')}
+                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(getSettingsSnapshotEmptyText(isLoading, isLoaded))}
                 </div>
                 <div class="backup-preview">
                     ${selectedSnapshot ? `
@@ -43,6 +44,13 @@ export function createSettingsSnapshotComponents(ctx) {
             </div>
         </section>
     `;
+    }
+
+    function getSettingsSnapshotEmptyText(isLoading, isLoaded) {
+        if (isLoading) {
+            return '正在读取设置快照';
+        }
+        return isLoaded ? '暂无设置快照' : '正在准备读取设置快照';
     }
 
     function renderSettingsSnapshotRow(snapshot) {

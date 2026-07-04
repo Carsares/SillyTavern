@@ -11,7 +11,7 @@ export function createSettingsActions({
     formatBytes,
 }) {
     async function loadSettingsSnapshots({ force = false } = {}) {
-        if (state.settingsSnapshots.items.length && !force) {
+        if (state.settingsSnapshots.loaded && !force) {
             return state.settingsSnapshots.items;
         }
 
@@ -23,6 +23,7 @@ export function createSettingsActions({
                 ? [...result].sort((a, b) => Number(b.date || 0) - Number(a.date || 0))
                 : [];
             state.settingsSnapshots.items = snapshots;
+            state.settingsSnapshots.loaded = true;
             return snapshots;
         } finally {
             state.settingsSnapshots.loading = false;

@@ -280,6 +280,7 @@ export function createModernState() {
             error: '',
         },
         settingsSnapshots: {
+            loaded: false,
             loading: false,
             creating: false,
             restoring: false,

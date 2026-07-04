@@ -100,6 +100,21 @@ async function mockModernSettingsWorkspace(page) {
 }
 
 test.describe('Modern settings page', () => {
+    test('loads settings snapshots when the snapshots section is opened directly', async ({ page }) => {
+        const fixture = await mockModernSettingsWorkspace(page);
+        const requests = fixture.requests.settingsSnapshots;
+
+        await page.addInitScript(() => {
+            window.localStorage.setItem('st-modern-settings-section', 'snapshots');
+        });
+        await gotoModern(page, 'settings', '设置中心');
+
+        await expect.poll(() => requests.lists.length).toBe(1);
+        await expect(page.locator('.metric-card', { hasText: '设置快照' })).toContainText('1');
+        await expect(page.locator('.backup-row', { hasText: 'settings-older.json' })).toBeVisible();
+        await expect(page.locator('.backup-list')).not.toContainText('暂无设置快照');
+    });
+
     test('creates, previews, and restores settings snapshots', async ({ page }) => {
         const fixture = await mockModernSettingsWorkspace(page);
         const requests = fixture.requests.settingsSnapshots;

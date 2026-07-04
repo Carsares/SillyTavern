@@ -13,22 +13,31 @@ export function createSettingsEvents(ctx) {
         confirmSettingsSnapshotRestore,
     } = ctx;
 
-    function setSettingsSection(section) {
+    async function setSettingsSection(section, { loadSnapshots = true } = {}) {
         state.settingsSection = ['preferences', 'status', 'snapshots', 'diagnostics'].includes(section) ? section : 'preferences';
         localStorage.setItem('st-modern-settings-section', state.settingsSection);
+        if (loadSnapshots && state.settingsSection === 'snapshots' && !state.settingsSnapshots.loaded && !state.settingsSnapshots.loading) {
+            await loadSettingsSnapshots();
+        }
     }
 
     async function handleSettingsClick(event) {
         const settingsSectionButton = event.target.closest('[data-settings-section]');
         if (settingsSectionButton) {
-            setSettingsSection(settingsSectionButton.dataset.settingsSection);
-            render();
+            try {
+                await setSettingsSection(settingsSectionButton.dataset.settingsSection);
+                render();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshots', message: error.message });
+                showToast('设置快照读取失败', error.message);
+                render();
+            }
             return true;
         }
 
         if (event.target.closest('[data-load-settings-snapshots]')) {
             try {
-                setSettingsSection('snapshots');
+                await setSettingsSection('snapshots', { loadSnapshots: false });
                 await loadSettingsSnapshots({ force: true });
                 render();
             } catch (error) {
@@ -41,7 +50,7 @@ export function createSettingsEvents(ctx) {
 
         if (event.target.closest('[data-create-settings-snapshot]')) {
             try {
-                setSettingsSection('snapshots');
+                await setSettingsSection('snapshots', { loadSnapshots: false });
                 await createSettingsSnapshot();
             } catch (error) {
                 state.errors.push({ key: 'settings-snapshot-create', message: error.message });

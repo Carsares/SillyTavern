@@ -9,7 +9,11 @@ export function createSettingsComponents(ctx) {
         metricCard,
         pageHead,
         getRequestCompressionSettings,
+        loadSettingsSnapshots,
+        showToast,
+        render,
     } = ctx;
+    let settingsSnapshotAutoLoadPending = false;
     const {
         renderSettingsSnapshots,
     } = createSettingsSnapshotComponents(ctx);
@@ -25,10 +29,11 @@ export function createSettingsComponents(ctx) {
         const bundle = state.settingsBundle || {};
         const requestCompression = getRequestCompressionSettings();
         const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
-        const snapshotCount = state.settingsSnapshots.items.length;
+        const snapshotCount = state.settingsSnapshots.loaded ? formatNumber(state.settingsSnapshots.items.length) : '—';
         const compressionEnabled = Boolean(requestCompression.enabled);
         const dataStatus = state.errors.length ? '需要处理' : '正常';
         const activeSection = getSettingsSection();
+        ensureSettingsSnapshotsLoaded(activeSection);
 
         return `
         ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
@@ -45,7 +50,7 @@ export function createSettingsComponents(ctx) {
             ${metricCard('数据状态', dataStatus, state.errors.length ? `${formatNumber(state.errors.length)} 个读取错误` : '读取正常', 'fa-heart-pulse')}
             ${metricCard('扩展', formatNumber(state.extensions.length), bundle.enable_extensions ? '扩展系统开启' : '扩展系统关闭', 'fa-cubes')}
             ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
-            ${metricCard('设置快照', formatNumber(snapshotCount), state.settingsSnapshots.loading ? '读取中' : '本地备份', 'fa-clock-rotate-left')}
+            ${metricCard('设置快照', snapshotCount, getSettingsSnapshotMetricDetail(), 'fa-clock-rotate-left')}
         </div>
         ${renderSettingsTabs(activeSection)}
         ${activeSection === 'preferences' ? renderSettingsPreferencesSection(requestCompression, compressionEnabled) : ''}
@@ -78,6 +83,33 @@ export function createSettingsComponents(ctx) {
             `).join('')}
         </div>
     `;
+    }
+
+    function getSettingsSnapshotMetricDetail() {
+        if (state.settingsSnapshots.loading) {
+            return '读取中';
+        }
+        return state.settingsSnapshots.loaded ? '本地备份' : '尚未读取';
+    }
+
+    function ensureSettingsSnapshotsLoaded(activeSection) {
+        if (activeSection !== 'snapshots' || state.settingsSnapshots.loaded || state.settingsSnapshots.loading || settingsSnapshotAutoLoadPending) {
+            return;
+        }
+
+        settingsSnapshotAutoLoadPending = true;
+        window.setTimeout(async () => {
+            try {
+                await loadSettingsSnapshots();
+                render();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshots', message: error.message });
+                showToast('设置快照读取失败', error.message);
+                render();
+            } finally {
+                settingsSnapshotAutoLoadPending = false;
+            }
+        }, 0);
     }
 
     return {
