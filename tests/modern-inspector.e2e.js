@@ -17,9 +17,6 @@ async function mockModernInspectorWorkspace(page) {
         settings: JSON.stringify({
             main_api: 'openai',
             chat_completion_source: 'siliconflow',
-            request_compression: {
-                enabled: true,
-            },
             power_user: {
                 personas: {
                     'inspector-persona.png': 'Inspector Persona',
@@ -42,6 +39,9 @@ async function mockModernInspectorWorkspace(page) {
         openai_settings: [JSON.stringify({ chat_completion_source: 'siliconflow' })],
         textgenerationwebui_preset_names: [],
         textgenerationwebui_presets: [],
+        request_compression: {
+            enabled: true,
+        },
     }));
     await page.route('**/api/characters/all', route => fulfillJson(route, [{
         avatar: 'mock.png',

@@ -260,7 +260,7 @@ export function createCharacterActions({
             throw new Error('角色卡导入失败。');
         }
 
-        const avatar = result?.file_name || '';
+        const avatar = result?.file_name ? String(result.file_name).replace(/\.png$/i, '') + '.png' : '';
         if (avatar) {
             state.selected.character = avatar;
             state.selected.chat = '';

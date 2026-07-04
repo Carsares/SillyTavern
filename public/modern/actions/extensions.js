@@ -62,15 +62,15 @@ export function createExtensionActions({
                     global: Boolean(state.extensionInstall.global && state.me?.admin),
                 },
             });
+            state.extensionInstall = { active: false, url: '', branch: '', global: false, running: false };
+            resetExtensionDetails();
+            await loadData({ silent: true });
+            showToast('扩展已安装', result?.display_name || result?.folderName || parsedUrl.pathname.split('/').pop());
             try {
                 await callLegacyBridge('extensionInstalled', { response: result }, 60000);
             } catch (error) {
                 showToast('扩展已安装，请刷新页面完成初始化', error.message);
             }
-            state.extensionInstall = { active: false, url: '', branch: '', global: false, running: false };
-            resetExtensionDetails();
-            await loadData({ silent: true });
-            showToast('扩展已安装', result?.display_name || result?.folderName || parsedUrl.pathname.split('/').pop());
         } finally {
             state.extensionInstall.running = false;
             render();

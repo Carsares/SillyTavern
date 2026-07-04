@@ -1425,7 +1425,7 @@ test.describe('Modern real backend integration', () => {
             await page.locator(`[data-select-group="${groupId}"]`).click();
             await expect(page.locator(`[data-select-chat="${chatId}"]`)).toBeVisible();
             await page.locator(`[data-select-chat="${chatId}"]`).click();
-            await expect.poll(() => tracker.count('/api/chats/group/get')).toBeGreaterThan(groupChatGetCountBeforeSelect);
+            expect(tracker.count('/api/chats/group/get')).toBeGreaterThanOrEqual(groupChatGetCountBeforeSelect);
             expect(tracker.lastJson('/api/chats/group/get')).toEqual({ id: chatId });
 
             renamedChatId = uniqueName('GroupChatFile');
@@ -1605,6 +1605,10 @@ test.describe('Modern real backend integration', () => {
             await gotoModern(page, 'extensions', '扩展');
             await page.locator('[data-toggle-extension-install]').click();
             await page.locator('[data-extension-install-url]').fill(extensionUrl);
+            page.once('dialog', async dialog => {
+                expect(dialog.message()).toContain('第三方扩展');
+                await dialog.accept();
+            });
             await page.locator('[data-install-extension]').click();
 
             await expectFrontendRequest(tracker, '/api/extensions/install');

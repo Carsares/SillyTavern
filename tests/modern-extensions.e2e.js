@@ -167,6 +167,10 @@ test.describe('Modern extensions page', () => {
         await page.locator('[data-extension-install-url]').fill('https://github.com/example/new-ext.git');
         await page.locator('[data-extension-install-branch]').fill('develop');
         await page.locator('[data-extension-install-global]').check();
+        page.once('dialog', async dialog => {
+            expect(dialog.message()).toContain('第三方扩展');
+            await dialog.accept();
+        });
         await page.locator('[data-install-extension]').click();
 
         await expect.poll(() => requests.installs.length).toBe(1);
