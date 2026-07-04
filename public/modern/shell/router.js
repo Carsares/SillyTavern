@@ -58,6 +58,22 @@ export function createRouter({
         }
     }
 
+    function getChatResourceListScrollTop() {
+        const list = elements.content.querySelector('.chat-browser .chat-browser-panel:first-child .resource-list');
+        return list instanceof HTMLElement ? list.scrollTop : null;
+    }
+
+    function restoreChatResourceListScrollTop(scrollTop) {
+        if (scrollTop === null) {
+            return;
+        }
+
+        const list = elements.content.querySelector('.chat-browser .chat-browser-panel:first-child .resource-list');
+        if (list instanceof HTMLElement) {
+            list.scrollTop = scrollTop;
+        }
+    }
+
     async function handleClick(event) {
         if (event.target.closest('[data-toggle-inspector]')) {
             toggleInspector();
@@ -94,6 +110,7 @@ export function createRouter({
 
         const characterButton = event.target.closest('[data-select-character]');
         if (characterButton) {
+            const resourceListScrollTop = state.route === 'chat' ? getChatResourceListScrollTop() : null;
             state.chatMode = 'character';
             localStorage.setItem('st-modern-chat-mode', 'character');
             state.selected.character = characterButton.dataset.selectCharacter;
@@ -108,11 +125,13 @@ export function createRouter({
                 return;
             }
             render();
+            restoreChatResourceListScrollTop(resourceListScrollTop);
             return;
         }
 
         const groupButton = event.target.closest('[data-select-group]');
         if (groupButton) {
+            const resourceListScrollTop = state.route === 'chat' ? getChatResourceListScrollTop() : null;
             state.chatMode = 'group';
             localStorage.setItem('st-modern-chat-mode', 'group');
             state.selected.group = groupButton.dataset.selectGroup;
@@ -124,6 +143,7 @@ export function createRouter({
                 closeChatSidebarForMobileSelection();
             }
             render();
+            restoreChatResourceListScrollTop(resourceListScrollTop);
             return;
         }
 
