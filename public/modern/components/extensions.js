@@ -7,6 +7,7 @@ export function createExtensionsComponents(ctx) {
         formatNumber,
         metricCard,
         pageHead,
+        renderRouteFilter,
         renderKeyValue,
         matchesQuery,
         getExtensionFolderName,
@@ -37,6 +38,9 @@ export function createExtensionsComponents(ctx) {
             </button>
         `)}
         ${state.extensionInstall.active ? renderExtensionInstallPanel() : ''}
+        <div class="route-filter-strip">
+            ${renderRouteFilter('筛选扩展', '扩展名称或类型')}
+        </div>
         <div class="metrics-grid">
             ${metricCard('全部扩展', formatNumber(matchingExtensions.length), '当前匹配项', 'fa-cubes')}
             ${metricCard('内置保护', formatNumber(systemCount), '随应用提供，不做删除更新', 'fa-shield-halved')}

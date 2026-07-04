@@ -3,7 +3,6 @@ export function bindShellEvents({
     elements,
     routeModules,
     backgroundPageSize,
-    normalizeText,
     loadData,
     setTheme,
     render,
@@ -19,16 +18,26 @@ export function bindShellEvents({
     elements.mobileMenuButton.addEventListener('click', () => elements.app.querySelector('.sidebar')?.classList.toggle('open'));
     elements.search.addEventListener('input', event => {
         const query = event.target.value.trim();
-        state.query = normalizeText(query);
-        if (state.route === 'assets') {
-            state.backgroundVisibleCount = backgroundPageSize;
-        }
-        render();
         if (query) {
             openPalette(query);
         }
     });
     elements.content.addEventListener('input', event => {
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-route-filter]')) {
+            state.query = event.target.value;
+            if (state.route === 'assets') {
+                state.backgroundVisibleCount = backgroundPageSize;
+            }
+            render();
+            const nextInput = elements.content.querySelector('[data-route-filter]');
+            if (nextInput instanceof HTMLInputElement) {
+                nextInput.focus();
+                const cursor = nextInput.value.length;
+                nextInput.setSelectionRange(cursor, cursor);
+            }
+            return;
+        }
+
         const routeInputHandler = routeModules[state.route]?.handleInput;
         if (routeInputHandler && routeInputHandler(event) !== false) {
             return;

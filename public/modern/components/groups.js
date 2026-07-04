@@ -13,6 +13,7 @@ export function createGroupsComponents(ctx) {
         renderEmptyState,
         renderGroupRow,
         renderInlineEmpty,
+        renderRouteFilter,
         matchesQuery,
         getGroupAvatarUrl,
         getCharacterByAvatar,
@@ -44,6 +45,7 @@ export function createGroupsComponents(ctx) {
                         <h2 class="panel-title">群组列表</h2>
                         <p class="panel-subtitle">${formatNumber(groups.length)} 个匹配项</p>
                     </div>
+                    ${renderRouteFilter('筛选群组', '群组名称、ID 或成员文件名')}
                 </div>
                 ${state.groupCreating.active ? renderGroupCreatePanel() : ''}
                 <div class="resource-list">

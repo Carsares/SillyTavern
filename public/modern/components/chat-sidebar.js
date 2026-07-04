@@ -4,6 +4,7 @@ export function createChatSidebarComponents({
     formatDate,
     formatNumber,
     renderInlineEmpty,
+    renderRouteFilter,
     getChatModeLabel,
     getChatEntityListEmptyText,
     getChatId,
@@ -35,6 +36,7 @@ export function createChatSidebarComponents({
                             <h2 class="panel-title">${getChatModeLabel()}</h2>
                             <p class="panel-subtitle">${formatNumber(resourceCount)} 个匹配项</p>
                         </div>
+                        ${renderRouteFilter(isGroupMode() ? '筛选群聊' : '筛选角色', isGroupMode() ? '群组名称、ID 或成员文件名' : '角色名称、文件名或作者')}
                     </div>
                     <div class="segmented-control chat-mode-switch" role="tablist" aria-label="聊天类型">
                         <button class="${state.chatMode === 'character' ? 'active' : ''}" type="button" data-chat-mode="character" aria-selected="${state.chatMode === 'character'}">
@@ -104,6 +106,10 @@ export function createChatSidebarComponents({
             ${renderUnreadBadge(unreadCount)}
         </button>
     `;
+    }
+
+    function isGroupMode() {
+        return state.chatMode === 'group';
     }
 
     return {

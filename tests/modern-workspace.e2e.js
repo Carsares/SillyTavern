@@ -216,6 +216,45 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.detail-title')).toHaveText('Atlas Fixture');
     });
 
+    test('keeps topbar command search separate from page filters', async ({ page }) => {
+        await page.route('**/api/characters/all', route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+                {
+                    avatar: 'atlas.png',
+                    name: 'Atlas Fixture',
+                    data: { name: 'Atlas Fixture', creator: 'Modern E2E' },
+                },
+                {
+                    avatar: 'beta.png',
+                    name: 'Beta Fixture',
+                    data: { name: 'Beta Fixture', creator: 'Modern E2E' },
+                },
+            ]),
+        }));
+
+        await page.goto('/modern/?view=characters');
+
+        await expect(page.locator('[data-select-character="atlas.png"]')).toBeVisible();
+        await expect(page.locator('[data-select-character="beta.png"]')).toBeVisible();
+
+        await page.locator('#globalSearch').fill('atlas');
+
+        await expect(page.locator('#commandPalette')).toBeVisible();
+        await expect(page.locator('#paletteSearch')).toHaveValue('atlas');
+        await expect(page.locator('[data-select-character="beta.png"]')).toBeVisible();
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#commandPalette')).toBeHidden();
+
+        await page.locator('[data-route-filter]').fill('atlas');
+
+        await expect(page.locator('[data-select-character="atlas.png"]')).toBeVisible();
+        await expect(page.locator('[data-select-character="beta.png"]')).toHaveCount(0);
+        await expect(page.locator('[data-character-list-panel] .panel-subtitle')).toHaveText('1 个匹配项');
+    });
+
     test('opens a specific preset from the command palette', async ({ page }) => {
         await page.route('**/api/settings/get', route => route.fulfill({
             status: 200,

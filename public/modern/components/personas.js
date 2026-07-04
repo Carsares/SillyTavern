@@ -5,6 +5,7 @@ export function createPersonasComponents(ctx) {
         state,
         pageHead,
         renderEmptyState,
+        renderRouteFilter,
         matchesQuery,
         getPersonas,
     } = ctx;
@@ -27,6 +28,9 @@ export function createPersonasComponents(ctx) {
             </button>
         `)}
         ${state.personaCreating.active ? renderPersonaCreatePanel() : ''}
+        <div class="route-filter-strip">
+            ${renderRouteFilter('筛选人设', '名称、标题、描述或头像 ID')}
+        </div>
         <div class="grid-list">
             ${personas.map(persona => renderPersonaCard(persona, selectedPersonaId)).join('') || renderEmptyState('fa-user-gear', '暂无用户人设', '当前目录没有用户人设。')}
         </div>

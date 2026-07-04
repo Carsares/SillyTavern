@@ -304,7 +304,6 @@ bindShellEvents({
     elements,
     routeModules,
     backgroundPageSize,
-    normalizeText,
     loadData,
     setTheme,
     render,

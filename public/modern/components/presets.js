@@ -8,6 +8,7 @@ export function createPresetsComponents(ctx) {
         pageHead,
         renderEmptyState,
         renderInlineEmpty,
+        renderRouteFilter,
         getPresetCount,
         getVisiblePresetGroups,
         getSelectedPresetRecord,
@@ -34,6 +35,7 @@ export function createPresetsComponents(ctx) {
                         <h2 class="panel-title">预设库</h2>
                         <p class="panel-subtitle">显示 ${formatNumber(visibleCount)} / ${formatNumber(getPresetCount())} 个预设。</p>
                     </div>
+                    ${renderRouteFilter('筛选预设', '预设名称、类型或 API')}
                     <span class="badge">${groups.length ? `${formatNumber(groups.length)} 类` : '无结果'}</span>
                 </div>
                 <div class="preset-group-list">

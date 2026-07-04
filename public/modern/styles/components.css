@@ -41,6 +41,21 @@
     gap: 8px;
 }
 
+.route-filter {
+    min-width: min(100%, 220px);
+}
+
+.panel-header > .route-filter {
+    flex: 1 1 220px;
+    max-width: 320px;
+    margin-left: auto;
+}
+
+.route-filter-strip {
+    max-width: 360px;
+    margin: 0 0 16px;
+}
+
 .metrics-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -248,6 +263,7 @@ textarea[aria-invalid="true"]:focus {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 12px;
 }

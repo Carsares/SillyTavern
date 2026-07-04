@@ -3,11 +3,12 @@ export function createQueryMatcher({
     formatText,
 }) {
     function matchesQuery(...values) {
-        if (!state.query) {
+        const query = formatText(state.query);
+        if (!query) {
             return true;
         }
 
-        return values.some(value => formatText(value).includes(state.query));
+        return values.some(value => formatText(value).includes(query));
     }
 
     return { matchesQuery };

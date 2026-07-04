@@ -7,6 +7,7 @@ export function createComponentRouteContext(components) {
         renderGroupRow,
         renderInlineEmpty,
         renderKeyValue,
+        renderRouteFilter,
     } = components;
 
     return {
@@ -17,6 +18,7 @@ export function createComponentRouteContext(components) {
         renderGroupRow,
         renderInlineEmpty,
         renderKeyValue,
+        renderRouteFilter,
     };
 }
 

@@ -12,6 +12,7 @@ export function createCharactersComponents(ctx) {
         renderEmptyState,
         renderInlineEmpty,
         renderKeyValue,
+        renderRouteFilter,
         matchesQuery,
         getCharacterAvatarUrl,
         getCharacterTags,
@@ -46,6 +47,7 @@ export function createCharactersComponents(ctx) {
                         <h2 class="panel-title">角色列表</h2>
                         <p class="panel-subtitle">${formatNumber(characters.length)} 个匹配项</p>
                     </div>
+                    ${renderRouteFilter('筛选角色', '名称、文件名、作者或标签')}
                 </div>
                 ${state.characterCreating.active ? renderCharacterCreatePanel() : ''}
                 <div class="resource-list" data-character-list>

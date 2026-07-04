@@ -7,6 +7,7 @@ export function createAssetsComponents(ctx) {
         formatNumber,
         metricCard,
         pageHead,
+        renderRouteFilter,
         matchesQuery,
         getAssetCount,
         getBackgroundFilename,
@@ -69,6 +70,9 @@ export function createAssetsComponents(ctx) {
             ` : ''}
         `)}
         ${state.assetDownload.active ? renderAssetDownloadPanel() : ''}
+        <div class="route-filter-strip">
+            ${renderRouteFilter('筛选素材', assetTab === 'backgrounds' ? '背景文件名' : '资产分类名')}
+        </div>
         <div class="metrics-grid">
             ${metricCard('背景', formatNumber(allBackgrounds.length), '背景图片', 'fa-image')}
             ${metricCard('资产文件', formatNumber(getAssetCount()), 'assets 目录', 'fa-folder-tree')}

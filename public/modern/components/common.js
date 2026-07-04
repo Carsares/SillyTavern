@@ -29,6 +29,15 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         return `<div class="muted">${escapeHtml(text)}</div>`;
     }
 
+    function renderRouteFilter(label = '筛选当前页', placeholder = '输入关键词筛选当前列表') {
+        return `
+            <label class="field-label route-filter">
+                <span>${escapeHtml(label)}</span>
+                <input class="text-input" type="search" data-route-filter value="${escapeHtml(state.query)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
+            </label>
+        `;
+    }
+
     function renderUnreadBadge(count, label) {
         if (!count) {
             return '';
@@ -123,5 +132,6 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         renderInlineEmpty,
         renderKeyValue,
         renderLoading,
+        renderRouteFilter,
     };
 }

@@ -11,6 +11,7 @@ export function createWorldbooksComponents(ctx) {
         pageHead,
         renderEmptyState,
         renderInlineEmpty,
+        renderRouteFilter,
         matchesQuery,
         isGlobalWorldEnabled,
         getWorldEntryListState,
@@ -55,6 +56,7 @@ export function createWorldbooksComponents(ctx) {
                         <h2 class="panel-title">世界书列表</h2>
                         <p class="panel-subtitle">${formatNumber(worldbooks.length)} 个匹配项</p>
                     </div>
+                    ${renderRouteFilter('筛选世界书', '名称或文件 ID')}
                 </div>
                 ${state.worldbookCreating.active ? renderWorldbookCreatePanel() : ''}
                 <div class="resource-list">
