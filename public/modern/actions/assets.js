@@ -136,8 +136,19 @@ export function createAssetActions({
 
         state.backgroundSelection.deleting = true;
         render();
-        for (const filename of filenames) {
-            await apiFetch('/api/backgrounds/delete', { body: { bg: filename } });
+        let deletedCount = 0;
+        try {
+            for (const filename of filenames) {
+                await apiFetch('/api/backgrounds/delete', { body: { bg: filename } });
+                deletedCount += 1;
+            }
+        } catch (error) {
+            state.backgroundSelection.deleting = false;
+            if (deletedCount) {
+                await loadData({ silent: true });
+            }
+            render();
+            throw error;
         }
         state.backgroundSelection = { active: false, filenames: [], deleteConfirm: false, deleting: false };
         await loadData({ silent: true });

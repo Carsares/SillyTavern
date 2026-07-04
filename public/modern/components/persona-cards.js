@@ -6,10 +6,12 @@ export function createPersonaCardComponents(ctx) {
     } = ctx;
 
     function renderPersonaCard(persona, selectedPersonaId) {
+        const cacheBust = state.avatarCacheBust[persona.avatarId];
+        const avatarUrl = `${getPersonaUrl(persona.avatarId)}${cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : ''}`;
         return `
         <article class="resource-card persona-card ${persona.avatarId === selectedPersonaId ? 'selected' : ''}" data-persona-card="${escapeHtml(persona.avatarId)}">
             <div class="detail-hero compact-hero">
-                <img class="avatar large" src="${getPersonaUrl(persona.avatarId)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
+                <img class="avatar large" src="${avatarUrl}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
                 <div>
                     <h2 class="card-title">${escapeHtml(persona.name || '未命名人设')}</h2>
                     <div class="card-meta">${escapeHtml(persona.title || persona.avatarId)}</div>

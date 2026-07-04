@@ -161,6 +161,7 @@ export function createPersonaActions({
         await apiFetch('/api/avatars/delete', { body: { avatar: avatarId } });
         delete powerUser.personas[avatarId];
         delete powerUser.persona_descriptions[avatarId];
+        delete state.avatarCacheBust[avatarId];
         if (powerUser.default_persona === avatarId) {
             powerUser.default_persona = null;
         }
@@ -177,6 +178,7 @@ export function createPersonaActions({
             throw new Error('请选择要替换头像的用户人设。');
         }
         await uploadPersonaAvatarFile(file, avatarId);
+        state.avatarCacheBust[avatarId] = String(Date.now());
         await loadData({ silent: true });
         showToast('头像已替换', avatarId);
         render();
