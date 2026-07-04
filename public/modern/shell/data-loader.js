@@ -75,7 +75,7 @@ export function createDataLoader({
         render();
 
         if (notify) {
-            const summary = state.errors.length ? '部分数据读取失败，详情见右侧检查器。' : '已同步当前用户数据。';
+            const summary = state.errors.length ? '部分数据读取失败，详情见页面顶部和右侧检查器。' : '已同步当前用户数据。';
             showToast('刷新完成', summary);
         }
     }

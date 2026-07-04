@@ -507,6 +507,35 @@ textarea[aria-invalid="true"]:focus {
     margin-top: 14px;
 }
 
+.route-error-banner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+    color: var(--text);
+}
+
+.route-error-banner > i {
+    color: var(--warning);
+}
+
+.route-error-content {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.route-error-content span {
+    overflow-wrap: anywhere;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .table-wrap {
     overflow: auto;
     border: 1px solid var(--border);

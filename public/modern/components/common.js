@@ -123,6 +123,29 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         `;
     }
 
+    function renderRouteErrorBanner(errors) {
+        if (!errors.length) {
+            return '';
+        }
+
+        const visibleErrors = errors.slice(0, 3);
+        const hiddenCount = errors.length - visibleErrors.length;
+
+        return `
+            <section class="route-error-banner" role="alert">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <div class="route-error-content">
+                    <strong>部分数据读取失败</strong>
+                    <span>${visibleErrors.map(error => `${escapeHtml(error.key)}：${escapeHtml(error.message)}`).join('；')}${hiddenCount > 0 ? `；另有 ${formatNumber(hiddenCount)} 个错误` : ''}</span>
+                </div>
+                <button class="secondary-button" type="button" data-refresh>
+                    <i class="fa-solid fa-rotate"></i>
+                    重试读取
+                </button>
+            </section>
+        `;
+    }
+
     return {
         metricCard,
         pageHead,
@@ -132,6 +155,7 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         renderInlineEmpty,
         renderKeyValue,
         renderLoading,
+        renderRouteErrorBanner,
         renderRouteFilter,
     };
 }

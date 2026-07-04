@@ -145,6 +145,7 @@ const {
     renderInlineEmpty,
     renderKeyValue,
     renderLoading,
+    renderRouteErrorBanner,
 } = commonComponents;
 
 const { getProviderInfo, getRouteCount, getRouteUnreadCount } = createShellMetadata({
@@ -238,6 +239,7 @@ shellRenderer = createRenderer({
     elements,
     routeRenderers,
     renderLoading,
+    renderRouteErrorBanner,
     renderNav,
     renderStatus,
     renderInspector,

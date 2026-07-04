@@ -3,11 +3,33 @@ export function createRenderer({
     elements,
     routeRenderers,
     renderLoading,
+    renderRouteErrorBanner,
     renderNav,
     renderStatus,
     renderInspector,
     renderPalette,
 }) {
+    const routeLoadErrorKeys = {
+        dashboard: ['settingsBundle', 'characters', 'groups', 'worldbooks', 'backgrounds', 'backgroundFolders', 'assets', 'extensions', 'stats'],
+        chat: ['settingsBundle', 'characters', 'groups', 'worldbooks'],
+        characters: ['characters', 'worldbooks', 'settingsBundle'],
+        groups: ['groups', 'characters'],
+        worldbooks: ['worldbooks'],
+        presets: ['settingsBundle'],
+        personas: ['settingsBundle'],
+        assets: ['backgrounds', 'backgroundFolders', 'assets'],
+        api: ['settingsBundle', 'secrets', 'secretState'],
+        extensions: ['extensions'],
+        activity: ['stats', 'characters', 'groups'],
+        settings: ['settingsBundle', 'extensions'],
+    };
+    const globalLoadErrorKeys = ['me', 'settings'];
+
+    function getRouteLoadErrors() {
+        const routeKeys = new Set([...globalLoadErrorKeys, ...(routeLoadErrorKeys[state.route] || [])]);
+        return state.errors.filter(error => routeKeys.has(error.key));
+    }
+
     function renderContent() {
         if (state.loading && !state.loaded) {
             elements.content.innerHTML = renderLoading();
@@ -15,7 +37,7 @@ export function createRenderer({
         }
 
         const renderRoute = routeRenderers[state.route] || routeRenderers.dashboard;
-        elements.content.innerHTML = renderRoute();
+        elements.content.innerHTML = `${renderRouteErrorBanner(getRouteLoadErrors())}${renderRoute()}`;
     }
 
     function render() {

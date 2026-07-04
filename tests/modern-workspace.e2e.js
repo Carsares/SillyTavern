@@ -172,6 +172,27 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.toast', { hasText: '刷新完成' })).toHaveCount(0);
     });
 
+    test('shows route load errors in the main content area', async ({ page }) => {
+        await page.route('**/api/characters/all', route => route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'mock characters unavailable' }),
+        }));
+
+        await page.goto('/modern/?view=characters');
+
+        const banner = page.locator('.route-error-banner');
+        await expect(banner).toContainText('部分数据读取失败');
+        await expect(banner).toContainText('characters');
+        await expect(banner).toContainText('/api/characters/all failed: 500');
+        await expect(banner.locator('[data-refresh]')).toBeVisible();
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await expect(page.locator('.route-error-banner')).toHaveCount(0);
+    });
+
     test('opens command palette and selects a modern route from the keyboard', async ({ page }) => {
         await page.goto('/modern/?view=dashboard');
 
