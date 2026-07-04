@@ -16,6 +16,7 @@
 - 预设管理：预设浏览、使用、导入、复制、导出、恢复和删除。
 - 用户人设：人设创建、头像上传、默认人设切换和删除。
 - 素材库：背景上传、重命名、删除、文件夹管理、资产下载和删除。
+- 远程资源：独立聚合官方内容索引、GitHub 扩展搜索、RisuRealm 搜索和 Chub/CharacterHub URL 导入，支持远程搜索、下载/导入、扩展安装、导入记录和资源站凭据保存状态。
 - API 连接管理：聊天补全和文本补全配置、密钥写入、模型刷新、连接测试、请求压缩配置。
 - 扩展：本地扩展查看、安装、更新、分支切换、移动和删除。
 - 活动与统计：近期资源活动、对象跳转和统计状态。
@@ -39,6 +40,13 @@
 - `/`：登录校验后重定向到 `/modern/`。
 - `/modern`、`/modern/`、`/modern/index.html`：返回新版界面。
 - `/callback/:source?`：OAuth 回调后继续回到根入口，最终进入新版。
+
+远程资源后端集中在 `src/remote-resources/` 和 `src/endpoints/remote-resources.js`：
+
+- provider 只接入固定资源站，不提供任意 URL 代理；外部下载由 provider 校验资源 ID 后执行。
+- 匿名 provider 默认可用；GitHub token、Chub cookie、RisuRealm token 通过现有 `secrets.json` 保存，前端只显示遮罩状态。
+- 导入后的来源关系写入用户目录下的 `remote-resources/imports.json`，不污染角色卡、世界书或扩展自身文件。
+- Chub 搜索当前未接入：浏览器探测到的搜索接口服务端直连会被 Cloudflare 拦截，第一版仅支持 Chub/CharacterHub URL 导入。
 
 ## 后端契约
 
@@ -96,6 +104,8 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 nice -n 19 ./tests/node_modules/.bin/playwright test modern-real-backend-integration.e2e.js --config=tests/playwright.config.js --workers=1 --reporter=list ; echo EXIT=$?
 ```
 
+远程资源的默认真实后端集成覆盖 provider/记录/凭据和官方索引搜索。涉及公网下载或第三方安装的链路需要在外部依赖回归中显式执行，避免普通本地回归误依赖公网状态。
+
 外部依赖真实回归默认跳过，避免普通本地回归误打公网、真实 GitHub 仓库或供应商 API。需要验证公网资产下载、真实扩展安装/更新、真实 OpenRouter 供应商调用时，显式开启：
 
 ```bash
@@ -112,6 +122,12 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 - `MODERN_EXTERNAL_EXTENSION_URL`：外部扩展 Git URL，默认使用公开 SillyTavern 扩展仓库。
 - `MODERN_EXTERNAL_EXTENSION_BRANCH`：外部扩展分支，默认 `main`。
 - `MODERN_EXTERNAL_EXTENSION_NAME`：扩展目录名，默认从 Git URL 推导。
+
+远程资源手工外部回归建议覆盖：
+
+- RisuRealm：`/modern/?view=remoteResources` 搜索 `tag:lorebookincluded`，类型选择角色卡，导入一张公开角色后清理本地角色和导入记录。
+- Chub/CharacterHub：URL 导入 `https://chub.ai/lorebooks/bartleby/toaru-sillytavern`，确认世界书导入成功后清理本地世界书和导入记录。
+- 凭据槽位：资源站账号页保存一个临时 GitHub token 后立即删除，确认只显示遮罩状态。
 
 ## 新版开发规则
 
