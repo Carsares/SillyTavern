@@ -95,8 +95,7 @@ export function createChatContextSelectorHelpers({
         return !!state.chatReadState?.contexts?.[contextKey];
     }
 
-    function getChatUnreadCount(chat, entity = getSelectedChatEntity()) {
-        const contextKey = getChatContextKey(entity);
+    function getChatUnreadCountForContext(contextKey, chat) {
         const chatId = getChatId(chat);
         if (!contextKey || !chatId) {
             return 0;
@@ -113,10 +112,14 @@ export function createChatContextSelectorHelpers({
         return Math.max(0, messageCount - readCount);
     }
 
+    function getChatUnreadCount(chat, entity = getSelectedChatEntity()) {
+        return getChatUnreadCountForContext(getChatContextKey(entity), chat);
+    }
+
     function getEntityUnreadCount(entity = getSelectedChatEntity()) {
         const contextKey = getChatContextKey(entity);
         const chats = state.chatLists[contextKey] || [];
-        return chats.reduce((total, chat) => total + getChatUnreadCount(chat, entity), 0);
+        return chats.reduce((total, chat) => total + getChatUnreadCountForContext(contextKey, chat), 0);
     }
 
     function getTotalChatUnreadCount() {
@@ -128,7 +131,7 @@ export function createChatContextSelectorHelpers({
                 return total;
             }
 
-            return total + chats.reduce((chatTotal, chat) => chatTotal + getChatUnreadCount(chat, entity), 0);
+            return total + chats.reduce((chatTotal, chat) => chatTotal + getChatUnreadCountForContext(contextKey, chat), 0);
         }, 0);
     }
 

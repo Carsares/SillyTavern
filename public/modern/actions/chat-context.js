@@ -183,6 +183,7 @@ export function createChatContextActions({
         loadChatMessages,
         loadGroupChats,
         prepareChatForSelectedContext,
+        refreshCachedChatLists,
         refreshSelectedChatList,
         searchSelectedChats,
     } = createChatContextLoaderActions({
@@ -255,12 +256,7 @@ export function createChatContextActions({
     }
 
     async function refreshSelectedChatUnreadState() {
-        const entity = getSelectedChatEntity();
-        if (!entity) {
-            return;
-        }
-
-        await refreshSelectedChatList(entity, { quiet: true });
+        await refreshCachedChatLists({ quiet: true });
     }
 
     async function saveModernChat(entity, chatId, messages) {

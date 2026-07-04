@@ -417,6 +417,75 @@ test.describe('Modern chat files', () => {
         await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}')?.cursors?.['mock.png::unread-chat']?.messageCount)).toBe(3);
     });
 
+    test('keeps total unread count across character and group chat modes', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.groups = [{
+            id: 'group-alpha',
+            name: 'Mock Group',
+            members: ['mock.png'],
+            chats: ['group-chat', 'group-unread'],
+            chat_id: 'group-chat',
+        }];
+        fixture.chats = [
+            { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 3000 },
+            { file_id: 'character-unread', file_name: 'character-unread.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 2000 },
+        ];
+        fixture.groupChats = [
+            { file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 3000 },
+            { file_id: 'group-unread', file_name: 'group-unread.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'existing-chat': [
+                { name: 'Modern User', is_user: true, mes: 'hello', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'reply', send_date: now - 2000 },
+            ],
+            'character-unread': [
+                { name: 'Modern User', is_user: true, mes: 'older character context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'first character unread', send_date: now - 1000 },
+                { name: 'Mock Character', is_user: false, mes: 'second character unread', send_date: now },
+            ],
+            'group-chat': [
+                { name: 'Modern User', is_user: true, mes: 'group hello', send_date: now - 3000 },
+                { name: 'Mock Group', is_user: false, mes: 'group reply', send_date: now - 2000 },
+            ],
+            'group-unread': [
+                { name: 'Modern User', is_user: true, mes: 'older group context', send_date: now - 3000 },
+                { name: 'Mock Group', is_user: false, mes: 'group unread reply', send_date: now },
+            ],
+        };
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::existing-chat': { messageCount: 2, lastMes: now - 2000 },
+                    'mock.png::character-unread': { messageCount: 1, lastMes: now - 3000 },
+                    'group:group-alpha::group-chat': { messageCount: 2, lastMes: now - 2000 },
+                    'group:group-alpha::group-unread': { messageCount: 0, lastMes: now - 3000 },
+                },
+                contexts: { 'mock.png': true, 'group:group-alpha': true },
+            },
+        });
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
+
+        await page.locator('[data-chat-mode="group"]').click();
+
+        await expect(page.locator('[data-select-group="group-alpha"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-select-chat="group-unread"] .unread-badge')).toHaveText('2');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('4');
+
+        await page.locator('[data-select-chat="group-unread"]').click();
+
+        await expect(page.locator('.chat-thread')).toContainText('group unread reply');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
+    });
+
     test('refreshes unread counts without reloading the page', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();
@@ -437,6 +506,8 @@ test.describe('Modern chat files', () => {
 
         await page.goto('/modern/?view=chat');
 
+        await expect(page.locator('[data-select-chat="later-chat"]')).toBeVisible();
+        await expect.poll(() => fixture.requests.characterChats.length).toBe(1);
         await expect(page.locator('[data-select-chat="later-chat"] .unread-badge')).toHaveCount(0);
 
         fixture.messagesByChat['later-chat'].push(
@@ -449,6 +520,7 @@ test.describe('Modern chat files', () => {
 
         await page.locator('[data-refresh-chat-list]').click();
 
+        await expect.poll(() => fixture.requests.characterChats.length).toBe(2);
         await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('2');
         await expect(page.locator('[data-select-chat="later-chat"] .unread-badge')).toHaveText('2');
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
@@ -479,6 +551,8 @@ test.describe('Modern chat files', () => {
 
         await page.goto('/modern/?view=chat');
 
+        await expect(page.locator('[data-select-chat="watched-chat"]')).toBeVisible();
+        await expect.poll(() => fixture.requests.characterChats.length).toBe(1);
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveCount(0);
         fixture.messagesByChat['watched-chat'].push(
             { name: 'Mock Character', is_user: false, mes: 'polled reply', send_date: now + 3000 },
@@ -488,9 +562,77 @@ test.describe('Modern chat files', () => {
             ? { ...chat, chat_items: 3, file_size: '3 KB', last_mes: now + 4000 }
             : chat);
 
+        await expect.poll(() => fixture.requests.characterChats.length, { timeout: 7000 }).toBe(2);
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2', { timeout: 7000 });
         await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('2');
         await expect(page.locator('[data-select-chat="watched-chat"] .unread-badge')).toHaveText('2');
+    });
+
+    test('selects the first available chat when refreshed list removes the selected chat', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'removed-chat', file_name: 'removed-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 2000 },
+            { file_id: 'remaining-chat', file_name: 'remaining-chat.jsonl', chat_items: 1, file_size: '1 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'removed-chat': [
+                { name: 'Modern User', is_user: true, mes: 'removed hello', send_date: now - 1000 },
+                { name: 'Mock Character', is_user: false, mes: 'removed reply', send_date: now },
+            ],
+            'remaining-chat': [
+                { name: 'Mock Character', is_user: false, mes: 'remaining reply', send_date: now },
+            ],
+        };
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="removed-chat"]')).toBeVisible();
+        await expect(page.locator('.chat-thread')).toContainText('removed reply');
+
+        fixture.chats = fixture.chats.filter(chat => chat.file_id !== 'removed-chat');
+        delete fixture.messagesByChat['removed-chat'];
+
+        await page.locator('[data-refresh-chat-list]').click();
+
+        await expect(page.locator('[data-select-chat="removed-chat"]')).toHaveCount(0);
+        await expect(page.locator('[data-select-chat="remaining-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('remaining reply');
+    });
+
+    test('does not reuse stale chat list when non-quiet refresh fails after delete', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'deleted-chat', file_name: 'deleted-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 2000 },
+            { file_id: 'next-chat', file_name: 'next-chat.jsonl', chat_items: 1, file_size: '1 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'deleted-chat': [
+                { name: 'Modern User', is_user: true, mes: 'deleted hello', send_date: now - 1000 },
+                { name: 'Mock Character', is_user: false, mes: 'deleted reply', send_date: now },
+            ],
+            'next-chat': [
+                { name: 'Mock Character', is_user: false, mes: 'next reply', send_date: now },
+            ],
+        };
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="deleted-chat"]')).toBeVisible();
+        await expect(page.locator('.chat-thread')).toContainText('deleted reply');
+        await expect.poll(() => fixture.requests.characterChats.length).toBe(1);
+
+        fixture.failCharacterChats = true;
+        await page.locator('[data-delete-chat]').click();
+        await page.locator('[data-confirm-chat-delete]').click();
+
+        await expect.poll(() => fixture.requests.deletes.length).toBe(1);
+        await expect.poll(() => fixture.requests.characterChats.filter(request => request.failed).length).toBe(1);
+        await expect(page.locator('[data-select-chat="deleted-chat"]')).toHaveCount(0);
+        await expect(page.locator('.chat-thread')).not.toContainText('deleted reply');
     });
 
     test('keeps cached chat list when quiet unread refresh fails', async ({ page }) => {

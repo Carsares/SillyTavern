@@ -37,6 +37,8 @@ export function createChatContextLoaderActions({
             if (!quiet) {
                 state.errors.push({ key: 'chats', message: error.message });
                 showToast('聊天列表读取失败', error.message);
+                state.chatLists[character.avatar] = [];
+                return [];
             }
             return state.chatLists[character.avatar] || [];
         } finally {
@@ -71,6 +73,8 @@ export function createChatContextLoaderActions({
             if (!quiet) {
                 state.errors.push({ key: 'group-chats', message: error.message });
                 showToast('群聊列表读取失败', error.message);
+                state.chatLists[contextKey] = [];
+                return [];
             }
             return state.chatLists[contextKey] || [];
         } finally {
@@ -178,13 +182,21 @@ export function createChatContextLoaderActions({
         }
     }
 
+    function useFirstAvailableChat(chats) {
+        const selectedChatId = getChatId({ file_id: state.selected.chat, file_name: state.selected.chat });
+        if (selectedChatId && chats.some(chat => getChatId(chat) === selectedChatId)) {
+            state.selected.chat = selectedChatId;
+            return;
+        }
+
+        state.selected.chat = getChatId(chats[0]) || '';
+    }
+
     async function prepareChatForSelectedContext({ forceList = false, quiet = false } = {}) {
         const entity = getSelectedChatEntity();
         const chats = isGroupChatMode() ? await loadGroupChats(entity, { force: forceList, quiet }) : await loadCharacterChats(entity, { force: forceList, quiet });
 
-        if (!state.selected.chat && chats[0]?.file_id) {
-            state.selected.chat = chats[0].file_id;
-        }
+        useFirstAvailableChat(chats);
 
         await loadChatMessages(entity, state.selected.chat);
     }
@@ -197,12 +209,34 @@ export function createChatContextLoaderActions({
         }
     }
 
+    async function refreshCachedChatLists({ quiet = false } = {}) {
+        const contextKeys = Object.keys(state.chatLists);
+        if (!contextKeys.length) {
+            const entity = getSelectedChatEntity();
+            if (entity) {
+                await refreshSelectedChatList(entity, { quiet });
+            }
+            return;
+        }
+
+        await Promise.all(contextKeys.map(contextKey => {
+            if (contextKey.startsWith('group:')) {
+                const group = state.groups.find(item => `group:${item.id}` === contextKey);
+                return group ? loadGroupChats(group, { force: true, quiet }) : Promise.resolve([]);
+            }
+
+            const character = state.characters.find(item => item.avatar === contextKey);
+            return character ? loadCharacterChats(character, { force: true, quiet }) : Promise.resolve([]);
+        }));
+    }
+
     return {
         clearChatSearch,
         loadCharacterChats,
         loadChatMessages,
         loadGroupChats,
         prepareChatForSelectedContext,
+        refreshCachedChatLists,
         refreshSelectedChatList,
         searchSelectedChats,
     };
