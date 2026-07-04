@@ -255,6 +255,24 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('[data-character-list-panel] .panel-subtitle')).toHaveText('1 个匹配项');
     });
 
+    test('keeps mobile topbar search and status readable', async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 780 });
+
+        await page.goto('/modern/?view=dashboard');
+
+        await expect(page.locator('.page-title')).toHaveText('工作台');
+        await expect(page.locator('#connectionStatus span').last()).toBeVisible();
+
+        const topbarBox = await page.locator('.topbar').boundingBox();
+        const searchBox = await page.locator('.command-input').boundingBox();
+        const actionsBox = await page.locator('.topbar-actions').boundingBox();
+        const contentBox = await page.locator('.content').boundingBox();
+
+        expect(searchBox?.width).toBeGreaterThan(340);
+        expect(searchBox?.y).toBeGreaterThan(actionsBox?.y || 0);
+        expect(contentBox?.y).toBeGreaterThanOrEqual((topbarBox?.y || 0) + (topbarBox?.height || 0) - 1);
+    });
+
     test('opens a specific preset from the command palette', async ({ page }) => {
         await page.route('**/api/settings/get', route => route.fulfill({
             status: 200,

@@ -19,6 +19,10 @@
         grid-template-columns: 1fr;
     }
 
+    .workspace {
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
     .sidebar {
         position: fixed;
         z-index: 12;
@@ -33,10 +37,39 @@
 
     .mobile-menu {
         display: inline-flex;
+        grid-column: 1;
+        grid-row: 1;
     }
 
     .topbar {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
         padding: 10px 12px;
+    }
+
+    .command-input {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+    }
+
+    .topbar-actions {
+        grid-column: 2;
+        grid-row: 1;
+        justify-content: flex-end;
+        min-width: 0;
+    }
+
+    .status-pill {
+        max-width: min(36vw, 150px);
+    }
+
+    .status-pill span:last-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .content {
@@ -55,8 +88,7 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .command-input kbd,
-    .status-pill span:last-child {
+    .command-input kbd {
         display: none;
     }
 
@@ -176,6 +208,11 @@
 
     .topbar-actions {
         gap: 4px;
+    }
+
+    .status-pill {
+        max-width: 112px;
+        padding-inline: 7px;
     }
 
     .message {
