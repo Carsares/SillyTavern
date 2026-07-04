@@ -1,3 +1,4 @@
+/* global globalThis */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,6 +32,17 @@ function createTempRoot() {
 }
 
 describe('backend interface access log writer', () => {
+    test('defaults log root to data root', () => {
+        const previousDataRoot = globalThis.DATA_ROOT;
+        const root = createTempRoot();
+        globalThis.DATA_ROOT = root;
+        try {
+            expect(accessLogWriter.getLogRootPath()).toBe(path.join(root, 'backend-logs'));
+        } finally {
+            globalThis.DATA_ROOT = previousDataRoot;
+        }
+    });
+
     test('groups log paths by local date', () => {
         const date = new Date(2026, 6, 3, 23, 15, 0);
         expect(accessLogWriter.formatDateDirectory(date)).toBe('2026-07-03');

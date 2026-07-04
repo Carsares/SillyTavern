@@ -183,11 +183,13 @@ securityOverride: false
 # -- LOGGING CONFIGURATION --
 logging:
   # Enable backend interface access and error logging.
-  # Logs are grouped by date under /var/logs/SillyTavern/YYYY-MM-DD/.
+  # Logs are grouped by date under DATA_ROOT/backend-logs/YYYY-MM-DD/ by default.
+  # Set accessLogRoot to an absolute path to override the default log directory.
   # access.log records request ID, method, path, status, duration, IP, user agent and user.
   # error.log records request-scoped console warnings/errors, uncaught interface errors and 5xx interface responses.
   # Dated log directories older than one week are cleaned during server startup.
   enableAccessLog: true
+  accessLogRoot: ''
   # Minimum log level to display in the terminal (DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3)
   minLogLevel: 0
 # -- RATE LIMITING CONFIGURATION --

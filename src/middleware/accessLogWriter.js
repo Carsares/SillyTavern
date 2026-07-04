@@ -7,7 +7,8 @@ import { getIpAddress } from '../express-common.js';
 import { getConfigValue } from '../util.js';
 
 const enableAccessLog = getConfigValue('logging.enableAccessLog', true, 'boolean');
-const LOG_ROOT = '/var/logs/SillyTavern';
+const configuredLogRoot = getConfigValue('logging.accessLogRoot', '', 'string');
+const DEFAULT_LOG_DIRECTORY = 'backend-logs';
 const ACCESS_LOG_FILE = 'access.log';
 const ERROR_LOG_FILE = 'error.log';
 const LOG_RETENTION_DAYS = 7;
@@ -28,10 +29,10 @@ export function formatDateDirectory(date = new Date()) {
     return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 
-export const getLogRootPath = () => LOG_ROOT;
-export const getLogDirectory = (date = new Date(), logRoot = LOG_ROOT) => path.join(logRoot, formatDateDirectory(date));
-export const getAccessLogPath = (date = new Date(), logRoot = LOG_ROOT) => path.join(getLogDirectory(date, logRoot), ACCESS_LOG_FILE);
-export const getErrorLogPath = (date = new Date(), logRoot = LOG_ROOT) => path.join(getLogDirectory(date, logRoot), ERROR_LOG_FILE);
+export const getLogRootPath = () => configuredLogRoot ? path.resolve(configuredLogRoot) : path.join(globalThis.DATA_ROOT || process.cwd(), DEFAULT_LOG_DIRECTORY);
+export const getLogDirectory = (date = new Date(), logRoot = getLogRootPath()) => path.join(logRoot, formatDateDirectory(date));
+export const getAccessLogPath = (date = new Date(), logRoot = getLogRootPath()) => path.join(getLogDirectory(date, logRoot), ACCESS_LOG_FILE);
+export const getErrorLogPath = (date = new Date(), logRoot = getLogRootPath()) => path.join(getLogDirectory(date, logRoot), ERROR_LOG_FILE);
 
 function parseDateDirectory(directoryName) {
     if (!DATE_DIRECTORY_PATTERN.test(directoryName)) {
@@ -52,7 +53,7 @@ function stringifyLogEntry(entry) {
     return `${JSON.stringify(entry)}\n`;
 }
 
-function ensureLogDirectory(date = new Date(), logRoot = LOG_ROOT) {
+function ensureLogDirectory(date = new Date(), logRoot = getLogRootPath()) {
     const logDirectory = getLogDirectory(date, logRoot);
     fs.mkdirSync(logDirectory, { recursive: true });
     return logDirectory;
@@ -166,7 +167,7 @@ export function createConsoleErrorLogEntry(level, args, logContext) {
     };
 }
 
-export function cleanupOldLogDirectories(now = new Date(), logRoot = LOG_ROOT) {
+export function cleanupOldLogDirectories(now = new Date(), logRoot = getLogRootPath()) {
     try {
         if (!fs.existsSync(logRoot)) {
             return;
@@ -192,7 +193,7 @@ export function cleanupOldLogDirectories(now = new Date(), logRoot = LOG_ROOT) {
     }
 }
 
-export function prepareBackendLogStorage(now = new Date(), logRoot = LOG_ROOT) {
+export function prepareBackendLogStorage(now = new Date(), logRoot = getLogRootPath()) {
     try {
         ensureLogDirectory(now, logRoot);
         cleanupOldLogDirectories(now, logRoot);
@@ -201,7 +202,7 @@ export function prepareBackendLogStorage(now = new Date(), logRoot = LOG_ROOT) {
     }
 }
 
-export function migrateAccessLog(now = new Date(), logRoot = LOG_ROOT) {
+export function migrateAccessLog(now = new Date(), logRoot = getLogRootPath()) {
     try {
         if (!fs.existsSync('access.log')) {
             return;
@@ -225,7 +226,7 @@ export function migrateAccessLog(now = new Date(), logRoot = LOG_ROOT) {
  * Installs request-scoped console warning/error logging for backend interfaces.
  * @param {{ logRoot?: string }} [options] Logger options.
  */
-export function installBackendConsoleLogger({ logRoot = LOG_ROOT } = {}) {
+export function installBackendConsoleLogger({ logRoot = getLogRootPath() } = {}) {
     const wrapConsoleMethod = (level, originalMethod) => {
         const wrappedMethod = (...args) => {
             originalMethod(...args);
@@ -260,7 +261,7 @@ export function installBackendConsoleLogger({ logRoot = LOG_ROOT } = {}) {
  * @param {{ logRoot?: string }} [options] Logger options.
  * @returns {import('express').RequestHandler}
  */
-export default function accessLoggerMiddleware({ logRoot = LOG_ROOT } = {}) {
+export default function accessLoggerMiddleware({ logRoot = getLogRootPath() } = {}) {
     return function (req, res, next) {
         if (!enableAccessLog || !shouldLogBackendRequestPath(req.path)) {
             return next();
@@ -290,7 +291,7 @@ export default function accessLoggerMiddleware({ logRoot = LOG_ROOT } = {}) {
  * @param {{ logRoot?: string }} [options] Logger options.
  * @returns {import('express').ErrorRequestHandler}
  */
-export function backendErrorLoggerMiddleware({ logRoot = LOG_ROOT } = {}) {
+export function backendErrorLoggerMiddleware({ logRoot = getLogRootPath() } = {}) {
     return function (error, req, res, next) {
         if (enableAccessLog && shouldLogBackendRequestPath(req.path)) {
             res.locals[ERROR_LOGGED] = true;
