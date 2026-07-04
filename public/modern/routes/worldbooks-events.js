@@ -1,3 +1,7 @@
+import { getScrollTop, restoreScrollTop } from '../core/scroll-state.js';
+
+const worldbookListSelector = '.split-grid > .panel:first-child .resource-list';
+
 export function createWorldbooksEvents(ctx) {
     const {
         state,
@@ -35,9 +39,11 @@ export function createWorldbooksEvents(ctx) {
     async function handleWorldbooksClick(event) {
         const worldbookButton = event.target.closest('[data-select-worldbook]');
         if (worldbookButton) {
+            const worldbookListScrollTop = getScrollTop(worldbookListSelector);
             state.selected.worldbook = worldbookButton.dataset.selectWorldbook;
             await loadWorldDetail(state.selected.worldbook);
             render();
+            restoreScrollTop(worldbookListSelector, worldbookListScrollTop);
             return;
         }
 

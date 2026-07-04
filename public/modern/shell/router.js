@@ -1,4 +1,8 @@
 import { routeLabels } from '../core/constants.js';
+import { getScrollTop, restoreScrollTop } from '../core/scroll-state.js';
+
+const chatResourceListSelector = '.chat-browser .chat-browser-panel:first-child .resource-list';
+const groupRouteListSelector = '.split-grid > .panel:first-child .resource-list';
 
 export function createRouter({
     state,
@@ -58,20 +62,30 @@ export function createRouter({
         }
     }
 
-    function getChatResourceListScrollTop() {
-        const list = elements.content.querySelector('.chat-browser .chat-browser-panel:first-child .resource-list');
-        return list instanceof HTMLElement ? list.scrollTop : null;
+    function getRouteListScrollState(selector) {
+        return {
+            selector,
+            scrollTop: getScrollTop(selector, elements.content),
+        };
     }
 
-    function restoreChatResourceListScrollTop(scrollTop) {
-        if (scrollTop === null) {
+    function restoreRouteListScrollState(scrollState) {
+        if (!scrollState) {
             return;
         }
 
-        const list = elements.content.querySelector('.chat-browser .chat-browser-panel:first-child .resource-list');
-        if (list instanceof HTMLElement) {
-            list.scrollTop = scrollTop;
+        restoreScrollTop(scrollState.selector, scrollState.scrollTop, elements.content);
+    }
+
+    function getGroupSelectionScrollState() {
+        if (state.route === 'chat') {
+            return getRouteListScrollState(chatResourceListSelector);
         }
+        if (state.route === 'groups') {
+            return getRouteListScrollState(groupRouteListSelector);
+        }
+
+        return null;
     }
 
     async function handleClick(event) {
@@ -110,7 +124,7 @@ export function createRouter({
 
         const characterButton = event.target.closest('[data-select-character]');
         if (characterButton) {
-            const resourceListScrollTop = state.route === 'chat' ? getChatResourceListScrollTop() : null;
+            const resourceListScrollState = state.route === 'chat' ? getRouteListScrollState(chatResourceListSelector) : null;
             state.chatMode = 'character';
             localStorage.setItem('st-modern-chat-mode', 'character');
             state.selected.character = characterButton.dataset.selectCharacter;
@@ -125,13 +139,13 @@ export function createRouter({
                 return;
             }
             render();
-            restoreChatResourceListScrollTop(resourceListScrollTop);
+            restoreRouteListScrollState(resourceListScrollState);
             return;
         }
 
         const groupButton = event.target.closest('[data-select-group]');
         if (groupButton) {
-            const resourceListScrollTop = state.route === 'chat' ? getChatResourceListScrollTop() : null;
+            const resourceListScrollState = getGroupSelectionScrollState();
             state.chatMode = 'group';
             localStorage.setItem('st-modern-chat-mode', 'group');
             state.selected.group = groupButton.dataset.selectGroup;
@@ -143,7 +157,7 @@ export function createRouter({
                 closeChatSidebarForMobileSelection();
             }
             render();
-            restoreChatResourceListScrollTop(resourceListScrollTop);
+            restoreRouteListScrollState(resourceListScrollState);
             return;
         }
 

@@ -51,7 +51,7 @@ export function createPresetsComponents(ctx) {
 
     function renderPresetGroup(group, selectedGroupId) {
         return `
-        <details class="preset-group" ${group.id === selectedGroupId ? 'open' : ''}>
+        <details class="preset-group" data-preset-group="${escapeHtml(group.id)}" ${group.id === selectedGroupId ? 'open' : ''}>
             <summary>
                 <span>
                     <strong>${escapeHtml(group.label)}</strong>

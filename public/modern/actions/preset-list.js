@@ -1,3 +1,5 @@
+import { getElementScrollTop, restoreElementScrollTop } from '../core/scroll-state.js';
+
 export function createPresetListHelpers({
     state,
     render,
@@ -62,11 +64,19 @@ export function createPresetListHelpers({
         return null;
     }
 
+    function getPresetList(apiId) {
+        return Array.from(document.querySelectorAll('[data-preset-group]'))
+            .find(group => group.dataset.presetGroup === apiId)
+            ?.querySelector('.preset-list') || null;
+    }
+
     function selectPreset(apiId, name) {
+        const presetListScrollTop = getElementScrollTop(getPresetList(apiId));
         state.presetSelection = { apiId, name };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         state.presetDeleteConfirm = { apiId: '', name: '' };
         render();
+        restoreElementScrollTop(getPresetList(apiId), presetListScrollTop);
     }
 
     return {

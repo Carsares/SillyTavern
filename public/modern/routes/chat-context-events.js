@@ -1,3 +1,8 @@
+import { getScrollTop, restoreScrollTop } from '../core/scroll-state.js';
+
+const chatResourceListSelector = '.chat-browser .chat-browser-panel:first-child .resource-list';
+const chatFileListSelector = '.chat-browser .chat-browser-panel:nth-child(2) .resource-list';
+
 export function createChatContextEvents(ctx) {
     const {
         state,
@@ -44,11 +49,15 @@ export function createChatContextEvents(ctx) {
 
         const chatButton = event.target.closest('[data-select-chat]');
         if (chatButton) {
+            const resourceListScrollTop = getScrollTop(chatResourceListSelector);
+            const chatFileListScrollTop = getScrollTop(chatFileListSelector);
             state.selected.chat = chatButton.dataset.selectChat;
             clearChatTransientState();
             await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
             closeChatSidebarForMobileSelection();
             render();
+            restoreScrollTop(chatResourceListSelector, resourceListScrollTop);
+            restoreScrollTop(chatFileListSelector, chatFileListScrollTop);
             return true;
         }
 
