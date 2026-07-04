@@ -110,6 +110,26 @@ export function createRemoteResourceEvents(ctx) {
         return false;
     }
 
+    function handleRemoteResourcesKeydown(event) {
+        if (event.key !== 'Enter') {
+            return false;
+        }
+
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-remote-resource-query]')) {
+            event.preventDefault();
+            runRemoteAction('remote-search', '远程搜索失败', () => searchRemoteResources());
+            return;
+        }
+
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-remote-url-import]')) {
+            event.preventDefault();
+            runRemoteAction('remote-url-import', '远程 URL 导入失败', () => importRemoteUrl());
+            return;
+        }
+
+        return false;
+    }
+
     async function runRemoteAction(key, title, action) {
         try {
             await action();
@@ -129,5 +149,6 @@ export function createRemoteResourceEvents(ctx) {
         handleRemoteResourcesChange,
         handleRemoteResourcesClick,
         handleRemoteResourcesInput,
+        handleRemoteResourcesKeydown,
     };
 }
