@@ -66,6 +66,40 @@
         grid-template-rows: auto;
     }
 
+    .chat-layout {
+        height: auto;
+        min-height: 0;
+    }
+
+    .chat-thread {
+        gap: 10px;
+    }
+
+    .detail-hero {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .detail-actions {
+        grid-column: 1 / -1;
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .detail-actions .secondary-button {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .message-list {
+        min-height: 0;
+        overflow: visible;
+    }
+
+    .composer {
+        position: static;
+    }
+
     .settings-tabs,
     .extension-tabs {
         grid-auto-flow: row;

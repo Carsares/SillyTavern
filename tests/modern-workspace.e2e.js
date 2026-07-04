@@ -507,6 +507,14 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.chat-browser')).toHaveCount(0);
         await expect(page.locator('.chat-sidebar-scrim')).toHaveCount(0);
         await expect(page.locator('.message', { hasText: 'mobile reply' })).toBeVisible();
+
+        const manageButtonBox = await page.locator('[data-delete-chat]').boundingBox();
+        expect(manageButtonBox?.width).toBeGreaterThan(280);
+        expect(manageButtonBox?.height).toBeLessThan(56);
+
+        const messageBox = await page.locator('.message', { hasText: 'mobile reply' }).boundingBox();
+        const composerBox = await page.locator('.composer').boundingBox();
+        expect(messageBox?.y).toBeLessThan(composerBox?.y || 0);
     });
 
     test('loads more backgrounds instead of hard truncating asset grid', async ({ page }) => {
