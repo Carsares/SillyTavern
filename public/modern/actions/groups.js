@@ -39,8 +39,13 @@ export function createGroupActions({
         const members = Array.isArray(form.members) ? form.members : [];
         const avatarUrl = form.avatar_url.trim();
         const previousAvatarUrl = previous.avatar_url || '';
+        const persistentPrevious = { ...previous };
+        delete persistentPrevious.date_added;
+        delete persistentPrevious.create_date;
+        delete persistentPrevious.date_last_chat;
+        delete persistentPrevious.chat_size;
         return {
-            ...previous,
+            ...persistentPrevious,
             name: form.name.trim() || `群组 ${formatNumber(state.groups.length + 1)}`,
             avatar_url: avatarUrl ? (isValidGroupAvatarUrl(avatarUrl) ? avatarUrl : '') : (isValidGroupAvatarUrl(previousAvatarUrl) ? previousAvatarUrl : ''),
             members,

@@ -108,6 +108,47 @@ export function createCharacterActions({
         render();
     }
 
+    function getCharacterFileName(avatar) {
+        return String(avatar || '').replace(/\.[^/.]+$/, '');
+    }
+
+    async function migrateCharacterReferences(oldAvatar, newAvatar) {
+        if (!oldAvatar || !newAvatar || oldAvatar === newAvatar) {
+            return;
+        }
+
+        let changed = false;
+        const settings = state.settings || {};
+        if (settings.tag_map && Object.prototype.hasOwnProperty.call(settings.tag_map, oldAvatar)) {
+            settings.tag_map[newAvatar] = settings.tag_map[oldAvatar] || [];
+            delete settings.tag_map[oldAvatar];
+            changed = true;
+        }
+
+        const oldName = getCharacterFileName(oldAvatar);
+        const newName = getCharacterFileName(newAvatar);
+        const charLore = settings.world_info?.charLore?.find(item => item?.name === oldName);
+        if (charLore) {
+            charLore.name = newName;
+            changed = true;
+        }
+
+        const charNote = settings.extension_settings?.note?.chara?.find(item => item?.name === oldName);
+        if (charNote) {
+            charNote.name = newName;
+            changed = true;
+        }
+
+        if (settings.active_character === oldAvatar) {
+            settings.active_character = newAvatar;
+            changed = true;
+        }
+
+        if (changed) {
+            await apiFetch('/api/settings/save', { body: settings });
+        }
+    }
+
     async function confirmCharacterRename() {
         const { avatar, name } = state.characterRenaming;
         const nextName = name.trim();
@@ -118,8 +159,16 @@ export function createCharacterActions({
             throw new Error('新名称不能为空。');
         }
 
+        const character = state.characters.find(item => item.avatar === avatar) || state.characterDetails[avatar];
+        const currentName = (character?.name || character?.data?.name || '').trim();
+        if (currentName && nextName === currentName) {
+            cancelCharacterRename();
+            return;
+        }
+
         const result = await apiFetch('/api/characters/rename', { body: { avatar_url: avatar, new_name: nextName } });
         const nextAvatar = result?.avatar || avatar;
+        await migrateCharacterReferences(avatar, nextAvatar);
         clearCharacterCache(avatar);
         state.characterRenaming = { avatar: '', name: '' };
         state.characterEditing = { avatar: '', form: {} };
