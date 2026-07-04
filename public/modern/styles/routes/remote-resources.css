@@ -1,0 +1,157 @@
+.remote-resource-tabs {
+    margin: 0 0 14px;
+}
+
+.remote-resource-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.remote-search-area,
+.remote-url-panel {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.remote-search-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto;
+    gap: 10px;
+    align-items: end;
+}
+
+.remote-search-button {
+    min-height: 42px;
+}
+
+.remote-provider-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.remote-provider-check {
+    width: auto;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+}
+
+.remote-resource-warning {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--danger);
+    font-size: 13px;
+}
+
+.remote-result-grid,
+.remote-provider-grid,
+.remote-account-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+}
+
+.remote-record-list {
+    display: grid;
+    gap: 10px;
+}
+
+.remote-resource-card {
+    grid-template-rows: auto auto 1fr auto auto;
+}
+
+.remote-card-head {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.remote-card-title {
+    min-width: 0;
+}
+
+.remote-card-title h2 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.remote-thumb {
+    width: 58px;
+    height: 76px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-muted);
+}
+
+.remote-thumb-fallback {
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    font-size: 22px;
+}
+
+.remote-description {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.remote-stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.remote-url-panel {
+    grid-template-columns: minmax(260px, 1fr) auto;
+    align-items: end;
+}
+
+.remote-provider-card,
+.remote-account-card,
+.remote-record-card {
+    align-content: start;
+}
+
+.remote-record-target {
+    color: var(--text-muted);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.remote-credential-row {
+    display: grid;
+    gap: 10px;
+}
+
+@media (max-width: 860px) {
+    .remote-resource-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .remote-search-grid,
+    .remote-url-panel {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 560px) {
+    .remote-resource-metrics,
+    .remote-result-grid,
+    .remote-provider-grid,
+    .remote-account-grid {
+        grid-template-columns: 1fr;
+    }
+}

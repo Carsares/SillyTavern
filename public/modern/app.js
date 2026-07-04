@@ -82,6 +82,7 @@ const {
     groupActions,
     personaActions,
     presetActions,
+    remoteResourceActions,
     settingsActions,
     worldbookActions,
     beginCharacterCreate,
@@ -111,6 +112,7 @@ const {
     getPresetCount,
     getPresetGroups,
     getPresetItems,
+    getRemoteResourceCount,
     getSelectedChatEntity,
     getSelectedChatList,
     isGroupChatMode,
@@ -154,6 +156,7 @@ const { getProviderInfo, getRouteCount, getRouteUnreadCount } = createShellMetad
     getPresetCount,
     getPersonas,
     getAssetCount,
+    getRemoteResourceCount,
     getTotalChatUnreadCount,
 });
 const { renderNav } = createNav({ state, elements, getRouteCount, getRouteUnreadCount });
@@ -228,6 +231,7 @@ const routeContext = createRouteContext({
     groups: groupActions,
     personas: personaActions,
     presets: presetActions,
+    remoteResources: remoteResourceActions,
     settings: settingsActions,
     worldbooks: worldbookActions,
 });

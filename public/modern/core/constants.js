@@ -7,6 +7,7 @@ export const routes = [
     { id: 'presets', label: '预设', icon: 'fa-sliders' },
     { id: 'personas', label: '用户人设', icon: 'fa-user-gear' },
     { id: 'assets', label: '素材', icon: 'fa-folder-tree' },
+    { id: 'remoteResources', label: '远程资源', icon: 'fa-cloud-arrow-down' },
     { id: 'api', label: 'API', icon: 'fa-plug' },
     { id: 'extensions', label: '扩展', icon: 'fa-cubes' },
     { id: 'activity', label: '活动', icon: 'fa-chart-line' },

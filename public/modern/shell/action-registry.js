@@ -24,6 +24,7 @@ import { createCharacterActions } from '../actions/characters.js';
 import { createExtensionActions } from '../actions/extensions.js';
 import { createPersonaActions } from '../actions/personas.js';
 import { createPresetActions } from '../actions/presets.js';
+import { createRemoteResourceActions } from '../actions/remote-resources.js';
 import { createSettingsActions } from '../actions/settings.js';
 import { createWorldbookActions } from '../actions/worldbooks.js';
 import { createChatActionRegistry } from './chat-action-registry.js';
@@ -178,6 +179,17 @@ export function createActionRegistry({
     });
     const { getPersonas } = personaActions;
 
+    const remoteResourceActions = createRemoteResourceActions({
+        state,
+        apiFetch,
+        apiFetchResponse,
+        loadData,
+        render,
+        showToast,
+        callLegacyBridge,
+        loadWorldDetail,
+    });
+
     return {
         activityActions,
         apiConnectionActions,
@@ -186,6 +198,7 @@ export function createActionRegistry({
         extensionActions,
         personaActions,
         presetActions,
+        remoteResourceActions,
         settingsActions,
         worldbookActions,
         beginCharacterCreate,
@@ -200,6 +213,7 @@ export function createActionRegistry({
         getPresetCount,
         getPresetGroups,
         getPresetItems,
+        getRemoteResourceCount: remoteResourceActions.getRemoteResourceCount,
         getExtensionFolderName,
         loadWorldDetail,
         selectPreset,

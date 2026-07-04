@@ -227,3 +227,41 @@ export function createPersonaRouteContext(personas) {
         replacePersonaAvatar,
     };
 }
+
+export function createRemoteResourceRouteContext(remoteResources) {
+    const {
+        deleteRemoteProviderCredential,
+        deleteRemoteRecord,
+        downloadRemoteResource,
+        importRemoteResource,
+        importRemoteUrl,
+        loadRemoteResources,
+        refreshRemoteResources,
+        saveRemoteProviderCredential,
+        searchRemoteResources,
+        setRemoteCredentialDraft,
+        setRemoteResourceQuery,
+        setRemoteResourceTab,
+        setRemoteResourceType,
+        setRemoteUrlImport,
+        toggleRemoteProvider,
+    } = remoteResources;
+
+    return {
+        deleteRemoteProviderCredential,
+        deleteRemoteRecord,
+        downloadRemoteResource,
+        importRemoteResource,
+        importRemoteUrl,
+        loadRemoteResources,
+        refreshRemoteResources,
+        saveRemoteProviderCredential,
+        searchRemoteResources,
+        setRemoteCredentialDraft,
+        setRemoteResourceQuery,
+        setRemoteResourceTab,
+        setRemoteResourceType,
+        setRemoteUrlImport,
+        toggleRemoteProvider,
+    };
+}

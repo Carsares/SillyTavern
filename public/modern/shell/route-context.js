@@ -12,6 +12,7 @@ import {
     createGroupRouteContext,
     createPersonaRouteContext,
     createPresetRouteContext,
+    createRemoteResourceRouteContext,
     createSettingsRouteContext,
     createWorldbookRouteContext,
 } from './route-context-parts.js';
@@ -32,6 +33,7 @@ export function createRouteContext({
     groups,
     personas,
     presets,
+    remoteResources,
     settings,
     shell,
     utils,
@@ -55,6 +57,7 @@ export function createRouteContext({
         ...createGroupRouteContext(groups),
         ...createPersonaRouteContext(personas),
         ...createPresetRouteContext(presets),
+        ...createRemoteResourceRouteContext(remoteResources),
         ...createSettingsRouteContext(settings),
         ...createWorldbookRouteContext(worldbooks),
     };

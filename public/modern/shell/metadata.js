@@ -20,6 +20,7 @@ export function createShellMetadata({
     getPresetCount,
     getPersonas,
     getAssetCount,
+    getRemoteResourceCount,
     getTotalChatUnreadCount,
 }) {
     function getProviderInfo() {
@@ -61,6 +62,8 @@ export function createShellMetadata({
                 return getPersonas().length;
             case 'assets':
                 return getAssetCount();
+            case 'remoteResources':
+                return getRemoteResourceCount();
             case 'extensions':
                 return state.extensions.length;
             default:

@@ -11,6 +11,7 @@ export {
     createExtensionRouteContext,
     createGroupRouteContext,
     createPersonaRouteContext,
+    createRemoteResourceRouteContext,
 } from './route-context-resources.js';
 export {
     createChatContextRouteContext,
