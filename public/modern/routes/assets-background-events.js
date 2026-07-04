@@ -15,6 +15,8 @@ export function createAssetsBackgroundEvents(ctx) {
         confirmBackgroundFolderDelete,
         assignSelectedBackgroundsToFolder,
         beginBackgroundBatchDelete,
+        selectVisibleBackgrounds,
+        clearBackgroundSelection,
         showMoreBackgrounds,
         cancelBackgroundDelete,
         confirmBackgroundDelete,
@@ -141,6 +143,18 @@ export function createAssetsBackgroundEvents(ctx) {
             } catch (error) {
                 showToast('请选择背景', error.message);
             }
+            return true;
+        }
+
+        if (event.target.closest('[data-select-visible-backgrounds]')) {
+            const filenames = [...document.querySelectorAll('[data-background-select]')]
+                .map(input => input.dataset.backgroundSelect || '');
+            selectVisibleBackgrounds(filenames);
+            return true;
+        }
+
+        if (event.target.closest('[data-clear-background-selection]')) {
+            clearBackgroundSelection();
             return true;
         }
 

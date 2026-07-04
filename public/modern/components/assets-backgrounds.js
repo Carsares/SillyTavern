@@ -19,13 +19,28 @@ export function createAssetBackgroundComponents(ctx) {
     });
 
     function renderBackgroundLibraryPanel(folderFilterName, visibleBackgrounds, totalBackgrounds, selectedCount, selection, hasMoreBackgrounds) {
+        const selectionText = selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : '';
+        const subtitle = `${folderFilterName} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(totalBackgrounds)} 个匹配项。${selectionText}`;
+
         return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景</h2>
-                    <p class="panel-subtitle">${escapeHtml(folderFilterName)} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(totalBackgrounds)} 个匹配项。${selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : ''}</p>
+                    <p class="panel-subtitle">${escapeHtml(subtitle)}</p>
                 </div>
+                ${selection.active ? `
+                    <div class="panel-actions">
+                        <button class="secondary-button" type="button" data-select-visible-backgrounds ${visibleBackgrounds.length ? '' : 'disabled'}>
+                            <i class="fa-solid fa-check-double"></i>
+                            选择当前显示
+                        </button>
+                        <button class="secondary-button" type="button" data-clear-background-selection ${selectedCount ? '' : 'disabled'}>
+                            <i class="fa-solid fa-xmark"></i>
+                            清空选择
+                        </button>
+                    </div>
+                ` : ''}
             </div>
             ${selection.deleteConfirm ? `
                 <div class="settings-form inline-form danger-panel">

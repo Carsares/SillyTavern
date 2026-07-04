@@ -115,6 +115,20 @@ export function createAssetActions({
         render();
     }
 
+    function selectVisibleBackgrounds(filenames) {
+        const names = new Set(state.backgroundSelection.filenames);
+        filenames.filter(Boolean).forEach(filename => names.add(filename));
+        state.backgroundSelection.filenames = [...names];
+        state.backgroundSelection.deleteConfirm = false;
+        render();
+    }
+
+    function clearBackgroundSelection() {
+        state.backgroundSelection.filenames = [];
+        state.backgroundSelection.deleteConfirm = false;
+        render();
+    }
+
     function beginBackgroundBatchDelete() {
         if (!state.backgroundSelection.filenames.length) {
             throw new Error('请选择要删除的背景。');
@@ -261,6 +275,8 @@ export function createAssetActions({
         confirmBackgroundRename,
         setBackgroundSelectionMode,
         toggleBackgroundSelection,
+        selectVisibleBackgrounds,
+        clearBackgroundSelection,
         beginBackgroundBatchDelete,
         cancelBackgroundDelete,
         confirmBackgroundDelete,

@@ -302,6 +302,25 @@ test.describe('Modern assets page', () => {
         await expect(page.locator('[data-background-select]')).toHaveCount(0);
     });
 
+    test('selects and clears visible backgrounds in batch', async ({ page }) => {
+        await mockModernAssetsWorkspace(page);
+
+        await gotoModern(page, 'assets', '素材库');
+
+        await page.locator('[data-toggle-background-selection]').click();
+        await page.locator('[data-select-visible-backgrounds]').click();
+
+        await expect(page.locator('[data-background-select]:checked')).toHaveCount(3);
+        await expect(page.locator('[data-delete-selected-backgrounds]')).toContainText('删除所选 3');
+        await expect(page.locator('[data-assign-selected-backgrounds]')).toContainText('加入文件夹 3');
+
+        await page.locator('[data-clear-background-selection]').click();
+
+        await expect(page.locator('[data-background-select]:checked')).toHaveCount(0);
+        await expect(page.locator('[data-delete-selected-backgrounds]')).toBeDisabled();
+        await expect(page.locator('[data-assign-selected-backgrounds]')).toBeDisabled();
+    });
+
     test('downloads and deletes managed asset files', async ({ page }) => {
         const fixture = await mockModernAssetsWorkspace(page);
         const requests = fixture.requests.assetWorkflows;
