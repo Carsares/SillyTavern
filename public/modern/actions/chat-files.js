@@ -63,8 +63,7 @@ export function createChatFileActions({
             throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
         }
 
-        const importedFileNames = [];
-        for (const file of Array.from(files || [])) {
+        const filesToImport = Array.from(files || []).map(file => {
             const format = file.name.split('.').pop()?.toLowerCase() || '';
             if (!['json', 'jsonl'].includes(format)) {
                 throw new Error('聊天导入仅支持 JSON 或 JSONL 文件。');
@@ -72,35 +71,51 @@ export function createChatFileActions({
             if (isGroupChatMode() && format !== 'jsonl') {
                 throw new Error('群聊导入仅支持 SillyTavern JSONL 文件。');
             }
+            return { file, format };
+        });
+        const importedFileNames = [];
 
-            const formData = new FormData();
-            formData.set('file_type', format);
-            formData.set('avatar', file, file.name);
-            formData.set('avatar_url', isGroupChatMode() ? '' : entity.avatar);
-            formData.set('user_name', getUserName());
-            formData.set('character_name', getChatEntityName(entity));
-            const result = await apiFetch(isGroupChatMode() ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
-            if (result?.error) {
-                throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
-            }
+        async function syncImportedFiles() {
             if (isGroupChatMode()) {
-                importedFileNames.push(result.res);
-            } else {
-                importedFileNames.push(...(result?.fileNames || []));
+                entity.chats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
+                entity.chat_id = stripJsonlExtension(importedFileNames[0]);
+                await saveGroupMetadata(entity);
             }
+            clearChatSearch();
+            await refreshSelectedChatList(entity);
+        }
+
+        try {
+            for (const { file, format } of filesToImport) {
+                const formData = new FormData();
+                formData.set('file_type', format);
+                formData.set('avatar', file, file.name);
+                formData.set('avatar_url', isGroupChatMode() ? '' : entity.avatar);
+                formData.set('user_name', getUserName());
+                formData.set('character_name', getChatEntityName(entity));
+                const result = await apiFetch(isGroupChatMode() ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
+                if (result?.error) {
+                    throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
+                }
+                if (isGroupChatMode()) {
+                    importedFileNames.push(result.res);
+                } else {
+                    importedFileNames.push(...(result?.fileNames || []));
+                }
+            }
+        } catch (error) {
+            if (importedFileNames.length) {
+                await syncImportedFiles();
+                render();
+            }
+            throw error;
         }
 
         if (!importedFileNames.length) {
             throw new Error('没有导入任何聊天文件。');
         }
 
-        if (isGroupChatMode()) {
-            entity.chats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
-            entity.chat_id = stripJsonlExtension(importedFileNames[0]);
-            await saveGroupMetadata(entity);
-        }
-        clearChatSearch();
-        await refreshSelectedChatList(entity);
+        await syncImportedFiles();
         state.selected.chat = getChatId({ file_name: importedFileNames[0] });
         await loadChatMessages(entity, state.selected.chat, { force: true });
         showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);

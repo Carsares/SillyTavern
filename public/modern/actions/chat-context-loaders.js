@@ -147,10 +147,16 @@ export function createChatContextLoaderActions({
         const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
         const cacheKey = getChatCacheKey(contextKey, normalizedChatId);
         if (!force && state.chatMessages[cacheKey]) {
+            const cachedMessages = state.chatMessages[cacheKey];
             const knownChat = (state.chatLists[contextKey] || []).find(chat => getChatId(chat) === normalizedChatId);
-            if (!knownChat || getChatMessageCount(knownChat) <= state.chatMessages[cacheKey].length) {
-                markChatRead(entity, normalizedChatId, state.chatMessages[cacheKey]);
-                return state.chatMessages[cacheKey];
+            const knownCount = getChatMessageCount(knownChat);
+            const knownLastMes = String(knownChat?.last_mes || '');
+            const cachedLastMes = String(cachedMessages.at(-1)?.send_date || '');
+            const countMatches = !knownChat || knownCount === cachedMessages.length;
+            const timestampMatches = !knownLastMes || !cachedLastMes || knownLastMes === cachedLastMes;
+            if (countMatches && timestampMatches) {
+                markChatRead(entity, normalizedChatId, cachedMessages);
+                return cachedMessages;
             }
         }
 

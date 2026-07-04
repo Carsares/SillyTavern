@@ -9,6 +9,7 @@ export function createRouter({
     loadWorldDetail,
     prepareChatForSelectedContext,
     clearChatSearch,
+    clearChatTransientState,
     beginCharacterCreate,
     beginGroupCreate,
     beginWorldbookCreate,
@@ -75,6 +76,7 @@ export function createRouter({
                 localStorage.setItem('st-modern-chat-mode', 'character');
                 state.selected.character = routeButton.dataset.openCharacterChat;
                 state.selected.chat = '';
+                clearChatTransientState();
                 clearChatSearch();
             }
             if (routeButton.dataset.openGroupChat) {
@@ -82,6 +84,7 @@ export function createRouter({
                 localStorage.setItem('st-modern-chat-mode', 'group');
                 state.selected.group = routeButton.dataset.openGroupChat;
                 state.selected.chat = '';
+                clearChatTransientState();
                 clearChatSearch();
             }
             await setRoute(routeButton.dataset.route);
@@ -95,6 +98,7 @@ export function createRouter({
             localStorage.setItem('st-modern-chat-mode', 'character');
             state.selected.character = characterButton.dataset.selectCharacter;
             state.selected.chat = '';
+            clearChatTransientState();
             clearChatSearch();
             if (state.route === 'chat') {
                 await prepareChatForSelectedContext({ forceList: true });
@@ -113,6 +117,7 @@ export function createRouter({
             localStorage.setItem('st-modern-chat-mode', 'group');
             state.selected.group = groupButton.dataset.selectGroup;
             state.selected.chat = '';
+            clearChatTransientState();
             clearChatSearch();
             if (state.route === 'chat') {
                 await prepareChatForSelectedContext({ forceList: true });

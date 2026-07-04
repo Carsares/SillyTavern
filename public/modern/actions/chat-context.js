@@ -178,6 +178,13 @@ export function createChatContextActions({
         }
     }
 
+    function clearChatTransientState() {
+        state.chatRenaming = { key: '', name: '' };
+        state.chatDeleteConfirm = { key: '', name: '' };
+        state.chatEditing = { key: '', index: -1, text: '' };
+        state.chatMessageDeleteConfirm = { key: '', index: -1 };
+    }
+
     const {
         clearChatSearch,
         loadCharacterChats,
@@ -213,10 +220,7 @@ export function createChatContextActions({
         localStorage.setItem('st-modern-chat-mode', nextMode);
         if (resetChat) {
             state.selected.chat = '';
-            state.chatRenaming = { key: '', name: '' };
-            state.chatDeleteConfirm = { key: '', name: '' };
-            state.chatEditing = { key: '', index: -1, text: '' };
-            state.chatMessageDeleteConfirm = { key: '', index: -1 };
+            clearChatTransientState();
             clearChatSearch();
         }
         return true;
@@ -376,6 +380,7 @@ export function createChatContextActions({
         loadCharacterChats,
         loadGroupChats,
         clearChatSearch,
+        clearChatTransientState,
         searchSelectedChats,
         loadChatMessages,
         prepareChatForSelectedContext,

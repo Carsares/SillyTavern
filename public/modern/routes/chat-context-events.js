@@ -5,6 +5,7 @@ export function createChatContextEvents(ctx) {
         showToast,
         getSelectedChatEntity,
         clearChatSearch,
+        clearChatTransientState,
         prepareChatForSelectedContext,
         closeChatSidebarForMobileSelection,
         loadChatMessages,
@@ -20,9 +21,7 @@ export function createChatContextEvents(ctx) {
                 state.chatMode = nextMode;
                 localStorage.setItem('st-modern-chat-mode', nextMode);
                 state.selected.chat = '';
-                state.chatRenaming = { key: '', name: '' };
-                state.chatDeleteConfirm = { key: '', name: '' };
-                state.chatEditing = { key: '', index: -1, text: '' };
+                clearChatTransientState();
                 clearChatSearch();
                 await prepareChatForSelectedContext({ forceList: true });
             }
@@ -46,6 +45,7 @@ export function createChatContextEvents(ctx) {
         const chatButton = event.target.closest('[data-select-chat]');
         if (chatButton) {
             state.selected.chat = chatButton.dataset.selectChat;
+            clearChatTransientState();
             await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
             closeChatSidebarForMobileSelection();
             render();
