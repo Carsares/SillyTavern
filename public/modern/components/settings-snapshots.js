@@ -9,7 +9,11 @@ export function createSettingsSnapshotComponents(ctx) {
     } = ctx;
 
     function renderSettingsSnapshots() {
-        const snapshots = state.settingsSnapshots.items;
+        const allSnapshots = state.settingsSnapshots.items;
+        const query = formatSettingsSnapshotQuery(state.settingsSnapshots.query);
+        const snapshots = query
+            ? allSnapshots.filter(snapshot => getSettingsSnapshotSearchText(snapshot).includes(query))
+            : allSnapshots;
         const selectedSnapshot = state.settingsSnapshots.previewName;
         const isLoading = state.settingsSnapshots.loading;
         const isLoaded = state.settingsSnapshots.loaded;
@@ -26,9 +30,16 @@ export function createSettingsSnapshotComponents(ctx) {
                     刷新
                 </button>
             </div>
+            <div class="list-toolbar">
+                <label class="field-label">
+                    <span>搜索快照</span>
+                    <input class="text-input" type="search" data-settings-snapshot-search value="${escapeHtml(state.settingsSnapshots.query)}" placeholder="文件名、日期或大小" autocomplete="off">
+                </label>
+                <span class="badge">显示 ${snapshots.length} / ${allSnapshots.length}</span>
+            </div>
             <div class="backup-layout">
                 <div class="resource-list backup-list">
-                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(getSettingsSnapshotEmptyText(isLoading, isLoaded))}
+                    ${snapshots.map(snapshot => renderSettingsSnapshotRow(snapshot)).join('') || renderInlineEmpty(getSettingsSnapshotEmptyText(isLoading, isLoaded, allSnapshots.length, query))}
                 </div>
                 <div class="backup-preview">
                     ${selectedSnapshot ? `
@@ -46,11 +57,26 @@ export function createSettingsSnapshotComponents(ctx) {
     `;
     }
 
-    function getSettingsSnapshotEmptyText(isLoading, isLoaded) {
+    function getSettingsSnapshotEmptyText(isLoading, isLoaded, snapshotCount, query) {
         if (isLoading) {
             return '正在读取设置快照';
         }
+        if (isLoaded && snapshotCount && query) {
+            return '没有匹配的设置快照';
+        }
         return isLoaded ? '暂无设置快照' : '正在准备读取设置快照';
+    }
+
+    function formatSettingsSnapshotQuery(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function getSettingsSnapshotSearchText(snapshot) {
+        return formatSettingsSnapshotQuery([
+            snapshot.name,
+            formatDate(snapshot.date),
+            formatBytes(snapshot.size),
+        ].join(' '));
     }
 
     function renderSettingsSnapshotRow(snapshot) {

@@ -287,6 +287,7 @@ export function createModernState() {
             creating: false,
             restoring: false,
             items: [],
+            query: '',
             previewName: '',
             previewText: '',
             restoreConfirm: '',

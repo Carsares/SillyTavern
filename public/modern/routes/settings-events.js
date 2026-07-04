@@ -113,7 +113,24 @@ export function createSettingsEvents(ctx) {
         return false;
     }
 
+    function handleSettingsInput(event) {
+        if (!(event.target instanceof HTMLInputElement) || !event.target.matches('[data-settings-snapshot-search]')) {
+            return false;
+        }
+
+        const cursor = event.target.selectionStart ?? event.target.value.length;
+        state.settingsSnapshots.query = event.target.value;
+        render();
+        const input = document.querySelector('[data-settings-snapshot-search]');
+        if (input instanceof HTMLInputElement) {
+            input.focus();
+            input.setSelectionRange(cursor, cursor);
+        }
+        return true;
+    }
+
     return {
         handleSettingsClick,
+        handleSettingsInput,
     };
 }

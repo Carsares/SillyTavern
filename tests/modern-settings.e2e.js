@@ -158,4 +158,27 @@ test.describe('Modern settings page', () => {
         await expect(page.locator('[data-request-compression-max]')).toHaveValue('1024');
         await expect(page.locator('[data-request-compression-max]')).toBeDisabled();
     });
+
+    test('filters settings snapshots by local query', async ({ page }) => {
+        const fixture = await mockModernSettingsWorkspace(page);
+        fixture.snapshots.push({ name: 'settings-recent.json', date: 1720000000000, size: 1024 });
+
+        await gotoModern(page, 'settings', '设置中心');
+        await page.locator('[data-load-settings-snapshots]').click();
+
+        await expect(page.locator('.backup-row')).toHaveCount(2);
+        await expect(page.locator('.list-toolbar .badge')).toHaveText('显示 2 / 2');
+
+        await page.locator('[data-settings-snapshot-search]').fill('older');
+
+        await expect(page.locator('.backup-row')).toHaveCount(1);
+        await expect(page.locator('.backup-row', { hasText: 'settings-older.json' })).toBeVisible();
+        await expect(page.locator('.backup-row', { hasText: 'settings-recent.json' })).toHaveCount(0);
+        await expect(page.locator('.list-toolbar .badge')).toHaveText('显示 1 / 2');
+
+        await page.locator('[data-settings-snapshot-search]').fill('missing');
+
+        await expect(page.locator('.backup-row')).toHaveCount(0);
+        await expect(page.locator('.backup-list')).toContainText('没有匹配的设置快照');
+    });
 });
