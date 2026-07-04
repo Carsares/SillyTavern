@@ -26,7 +26,7 @@ export function createApiTextCompletionEditorComponents(ctx) {
         const typeOptions = getTextCompletionTypeOptions(profile.source);
 
         return `
-        <div class="settings-form">
+        <form class="settings-form" data-api-connection-form autocomplete="off">
             <section class="form-section">
                 <div>
                     <h3 class="form-section-title">连接</h3>
@@ -81,7 +81,9 @@ export function createApiTextCompletionEditorComponents(ctx) {
                 </div>
                 <label class="field-label" data-textgen-field="api-key" ${secretUiState.hasSecretMapping ? '' : 'hidden'}>
                     <span>API Key</span>
-                    <input class="text-input" type="password" data-textgen-api-key value="" autocomplete="new-password" placeholder="${secretUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
+                    <input class="text-input" type="password" name="text_completion_api_key" data-textgen-api-key
+                        value="" autocomplete="new-password"
+                        placeholder="${secretUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
                 </label>
             </div>
             <div class="connection-test">
@@ -89,12 +91,12 @@ export function createApiTextCompletionEditorComponents(ctx) {
                 <span data-textgen-secret-key>${escapeHtml(secretUiState.secretKey)}</span>
             </div>
             <div class="message-edit-actions">
-                <button class="secondary-button" type="button" data-save-api-connection>
+                <button class="secondary-button" type="submit" data-save-api-connection>
                     <i class="fa-solid fa-floppy-disk"></i>
                     保存连接字段
                 </button>
             </div>
-        </div>
+        </form>
     `;
     }
 

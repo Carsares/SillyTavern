@@ -23,7 +23,7 @@ export function createApiChatCompletionComponents(ctx) {
         const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
 
         return `
-        <div class="settings-form">
+        <form class="settings-form" data-api-connection-form autocomplete="off">
             <section class="form-section">
                 <div>
                     <h3 class="form-section-title">连接</h3>
@@ -110,7 +110,9 @@ export function createApiChatCompletionComponents(ctx) {
                 </div>
                 <label class="field-label" data-api-field="api-key" ${apiUiState.hasSecretMapping ? '' : 'hidden'}>
                     <span>API Key</span>
-                    <input class="text-input" type="password" data-api-key value="" autocomplete="new-password" placeholder="${apiUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
+                    <input class="text-input" type="password" name="chat_completion_api_key" data-api-key
+                        value="" autocomplete="new-password"
+                        placeholder="${apiUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
                 </label>
             </div>
             <div class="connection-test">
@@ -118,12 +120,12 @@ export function createApiChatCompletionComponents(ctx) {
                 <span data-api-secret-key>${escapeHtml(apiUiState.secretKey)}</span>
             </div>
             <div class="message-edit-actions">
-                <button class="secondary-button" type="button" data-save-api-connection>
+                <button class="secondary-button" type="submit" data-save-api-connection>
                     <i class="fa-solid fa-floppy-disk"></i>
                     保存连接字段
                 </button>
             </div>
-        </div>
+        </form>
     `;
     }
 

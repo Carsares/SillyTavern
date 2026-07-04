@@ -36,6 +36,7 @@ export function createApiEvents(ctx) {
         }
 
         if (event.target.closest('[data-save-api-connection]')) {
+            event.preventDefault();
             try {
                 await saveApiConnectionFromForm();
             } catch (error) {
@@ -69,8 +70,25 @@ export function createApiEvents(ctx) {
         return false;
     }
 
+    async function handleApiSubmit(event) {
+        if (!(event.target instanceof HTMLFormElement) || !event.target.matches('[data-api-connection-form]')) {
+            return false;
+        }
+
+        event.preventDefault();
+        try {
+            await saveApiConnectionFromForm();
+        } catch (error) {
+            state.errors.push({ key: 'api-save', message: error.message });
+            showToast('连接配置保存失败', error.message);
+            render();
+        }
+        return true;
+    }
+
     return {
         handleApiClick,
         handleApiChange,
+        handleApiSubmit,
     };
 }

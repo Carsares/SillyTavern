@@ -3,7 +3,7 @@ import { createApiEvents } from './api-events.js';
 
 export function createApiRoute(ctx) {
     const { renderApi } = createApiComponents(ctx);
-    const { handleApiClick, handleApiChange } = createApiEvents(ctx);
+    const { handleApiClick, handleApiChange, handleApiSubmit } = createApiEvents(ctx);
 
     async function handleClick(event) {
         return handleApiClick(event);
@@ -13,9 +13,14 @@ export function createApiRoute(ctx) {
         return handleApiChange(event);
     }
 
+    async function handleSubmit(event) {
+        return handleApiSubmit(event);
+    }
+
     return {
         render: renderApi,
         handleClick,
         handleChange,
+        handleSubmit,
     };
 }

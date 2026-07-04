@@ -49,6 +49,12 @@ export function bindShellEvents({
             return;
         }
     });
+    elements.content.addEventListener('submit', async event => {
+        const routeSubmitHandler = routeModules[state.route]?.handleSubmit;
+        if (routeSubmitHandler && await routeSubmitHandler(event) !== false) {
+            return;
+        }
+    });
     elements.paletteSearch.addEventListener('input', event => {
         state.paletteQuery = event.target.value.trim();
         renderPalette();

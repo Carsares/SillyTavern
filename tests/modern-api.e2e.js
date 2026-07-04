@@ -228,6 +228,10 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-api-reverse-proxy]')).toHaveValue('https://proxy.saved/v1');
         await expect(page.locator('[data-api-secret-status]')).toHaveText('密钥已保存');
         await expect(page.locator('body')).not.toContainText('sk-chat-secret');
+        await expect(page.locator('form[data-api-connection-form] [data-api-key]')).toHaveCount(1);
+        await expect(page.locator('[data-api-key]')).toHaveAttribute('name', 'chat_completion_api_key');
+        await expect(page.locator('[data-api-key]')).toHaveAttribute('autocomplete', 'new-password');
+        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
 
         await page.locator('[data-api-model]').fill('custom/new-model');
         await page.locator('[data-api-custom-url]').fill('https://custom.example/v1');
@@ -239,7 +243,7 @@ test.describe('Modern API page', () => {
         await page.locator('[data-api-frequency-penalty]').fill('0.12');
         await page.locator('[data-api-presence-penalty]').fill('0.34');
         await page.locator('[data-api-key]').fill('sk-chat-secret');
-        await page.locator('[data-save-api-connection]').click();
+        await page.locator('[data-api-key]').press('Enter');
 
         await expect.poll(() => savedSettings?.oai_settings?.custom_model).toBe('custom/new-model');
         expect(savedSettings.main_api).toBe('openai');
@@ -395,6 +399,10 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-textgen-sampling="rep_pen_range"]')).toHaveValue('0');
         await expect(page.locator('[data-textgen-secret-status]')).toHaveText('密钥已保存');
         await expect(page.locator('body')).not.toContainText('sk-secret');
+        await expect(page.locator('form[data-api-connection-form] [data-textgen-api-key]')).toHaveCount(1);
+        await expect(page.locator('[data-textgen-api-key]')).toHaveAttribute('name', 'text_completion_api_key');
+        await expect(page.locator('[data-textgen-api-key]')).toHaveAttribute('autocomplete', 'new-password');
+        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
 
         await page.locator('[data-textgen-endpoint]').fill('https://openrouter.ai/api/v1');
         await page.locator('[data-textgen-model]').fill('openrouter/new-model');
