@@ -16,7 +16,7 @@
 - 预设管理：预设浏览、使用、导入、复制、导出、恢复和删除。
 - 用户人设：人设创建、头像上传、默认人设切换和删除。
 - 素材库：背景上传、重命名、删除、文件夹管理、资产下载和删除。
-- 远程资源：独立聚合官方内容索引、GitHub 扩展搜索、RisuRealm 搜索和 Chub/CharacterHub 搜索，支持远程搜索、下载/导入、扩展安装、URL 导入、导入记录和资源站凭据保存状态。
+- 远程资源：独立聚合官方内容索引、GitHub/GitLab 扩展搜索、RisuRealm、Chub/CharacterHub、Character Tavern、AICharacterCards 和 LoreBary 搜索，支持远程搜索、下载/导入、扩展安装、URL 导入、导入记录和资源站凭据保存状态。
 - API 连接管理：聊天补全和文本补全配置、密钥写入、模型刷新、连接测试、请求压缩配置。
 - 扩展：本地扩展查看、安装、更新、分支切换、移动和删除。
 - 活动与统计：近期资源活动、对象跳转和统计状态。
@@ -47,6 +47,10 @@
 - 匿名 provider 默认可用；GitHub token、Chub cookie、RisuRealm token 通过现有 `secrets.json` 保存，前端只显示遮罩状态。
 - 导入后的来源关系写入用户目录下的 `remote-resources/imports.json`，不污染角色卡、世界书或扩展自身文件。
 - Chub 搜索不直接从 Node 请求 `ro.chub.ai/search`，而是每次自动拉起独立的后台 headless Chrome/CDP 打开 Chub 搜索页，读取前端实际消费的 JSON 响应，并在调用完成后关闭进程；也可通过 `SILLYTAVERN_CHUB_CDP_URL` 显式连接已登录 Chrome 用于调试或手动登录态。
+- Character Tavern 搜索使用 `character-tavern.com/api/search/cards`，下载时读取 `api/character/:author/:name` 并转换为 SillyTavern 角色 JSON。
+- AICharacterCards 搜索使用 `api.aicharactercards.com/api/cards`，下载通过 `/cards/:id/versions` 获取当前 PNG 角色卡。
+- LoreBary 搜索使用 `/api/lorebook/public` 和 `/api/plugin`，世界书可导入，LoreBary plugin 作为 `preset` 类型下载，不当作 SillyTavern 扩展安装。
+- GitLab 扩展搜索使用 GitLab 公开 Projects API，只返回可安装 Git URL。
 
 Chub CDP 搜索可选环境变量：
 

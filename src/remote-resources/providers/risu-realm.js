@@ -6,9 +6,13 @@ import {
     formatRemoteResource,
     getPageOffset,
     stripHtml,
+    truncateText,
 } from './shared.js';
 
+import fetch from 'node-fetch';
+
 const BASE_URL = 'https://realm.risuai.net';
+const DOWNLOAD_PROBE_TIMEOUT_MS = 8000;
 const DOWNLOAD_FORMATS = Object.freeze({
     [REMOTE_RESOURCE_TYPES.CHARACTER]: { format: 'json-v3', extension: 'json', contentType: 'application/json' },
     [REMOTE_RESOURCE_TYPES.WORLDBOOK]: { format: 'lorebook-v3', extension: 'json', contentType: 'application/json' },
@@ -36,10 +40,14 @@ export const risuRealmProvider = {
         const { text } = await fetchText(url.toString());
         const items = parseSearchResults(text)
             .filter(item => !params.resourceType || item.resourceType === params.resourceType);
+        const candidates = items.slice(offset, Math.min(items.length, offset + Math.max(limit * 10, limit)));
+        const availableItems = (await Promise.all(candidates.map(probeDownloadAvailability)))
+            .filter(item => item.capabilities.download)
+            .slice(0, limit);
 
         return {
-            items: items.slice(offset, offset + limit).map(item => formatRemoteResource(this, item)),
-            total: items.length,
+            items: availableItems.map(item => formatRemoteResource(this, item)),
+            total: availableItems.length,
         };
     },
 
@@ -94,7 +102,7 @@ function parseSearchResults(html) {
             id,
             resourceType,
             title: stripHtml(title),
-            description: stripHtml(description),
+            description: truncateText(stripHtml(description)),
             author: stripHtml(authorText),
             sourceUrl: `${BASE_URL}/${sourceKind}/${id}`,
             thumbnailUrl: thumbnailUrl || '',
@@ -110,4 +118,34 @@ function parseSearchResults(html) {
 function getFirstMatch(text, pattern) {
     const match = pattern.exec(text || '');
     return match ? match[1] : '';
+}
+
+async function probeDownloadAvailability(item) {
+    if (!item.capabilities.download || !item.downloadUrl) {
+        return item;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DOWNLOAD_PROBE_TIMEOUT_MS);
+    try {
+        const response = await fetch(item.downloadUrl, {
+            method: 'HEAD',
+            signal: controller.signal,
+            headers: {
+                'Accept': '*/*',
+                'User-Agent': 'SillyTavern Remote Resources',
+            },
+        });
+        return {
+            ...item,
+            capabilities: { ...item.capabilities, download: response.ok },
+        };
+    } catch {
+        return {
+            ...item,
+            capabilities: { ...item.capabilities, download: false },
+        };
+    } finally {
+        clearTimeout(timer);
+    }
 }

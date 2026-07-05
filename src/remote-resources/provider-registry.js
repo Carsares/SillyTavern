@@ -1,14 +1,22 @@
 import { officialContentProvider } from './providers/official-content.js';
 import { githubExtensionsProvider } from './providers/github-extensions.js';
+import { gitLabExtensionsProvider } from './providers/gitlab-extensions.js';
 import { risuRealmProvider } from './providers/risu-realm.js';
 import { chubDirectProvider } from './providers/chub-direct.js';
+import { characterTavernProvider } from './providers/character-tavern.js';
+import { aiCharacterCardsProvider } from './providers/ai-character-cards.js';
+import { loreBaryProvider } from './providers/lorebary.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
     officialContentProvider,
     githubExtensionsProvider,
+    gitLabExtensionsProvider,
     risuRealmProvider,
     chubDirectProvider,
+    characterTavernProvider,
+    aiCharacterCardsProvider,
+    loreBaryProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {

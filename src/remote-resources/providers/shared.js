@@ -77,6 +77,14 @@ export function stripHtml(html) {
     return decode(String(html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
+export function truncateText(value, maxLength = 520) {
+    const text = String(value || '').trim();
+    if (text.length <= maxLength) {
+        return text;
+    }
+    return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
 export function getFilenameFromUrl(url, fallback) {
     try {
         const parsed = new URL(url);
