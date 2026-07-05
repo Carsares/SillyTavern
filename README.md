@@ -16,7 +16,7 @@
 - 预设管理：预设浏览、使用、导入、复制、导出、恢复和删除。
 - 用户人设：人设创建、头像上传、默认人设切换和删除。
 - 素材库：背景上传、重命名、删除、文件夹管理、资产下载和删除。
-- 远程资源：独立聚合官方内容索引、GitHub 扩展搜索、RisuRealm 搜索和 Chub/CharacterHub URL 导入，支持远程搜索、下载/导入、扩展安装、导入记录和资源站凭据保存状态。
+- 远程资源：独立聚合官方内容索引、GitHub 扩展搜索、RisuRealm 搜索和 Chub/CharacterHub 搜索，支持远程搜索、下载/导入、扩展安装、URL 导入、导入记录和资源站凭据保存状态。
 - API 连接管理：聊天补全和文本补全配置、密钥写入、模型刷新、连接测试、请求压缩配置。
 - 扩展：本地扩展查看、安装、更新、分支切换、移动和删除。
 - 活动与统计：近期资源活动、对象跳转和统计状态。
@@ -46,7 +46,15 @@
 - provider 只接入固定资源站，不提供任意 URL 代理；外部下载由 provider 校验资源 ID 后执行。
 - 匿名 provider 默认可用；GitHub token、Chub cookie、RisuRealm token 通过现有 `secrets.json` 保存，前端只显示遮罩状态。
 - 导入后的来源关系写入用户目录下的 `remote-resources/imports.json`，不污染角色卡、世界书或扩展自身文件。
-- Chub 搜索当前未接入：浏览器探测到的搜索接口服务端直连会被 Cloudflare 拦截，第一版仅支持 Chub/CharacterHub URL 导入。
+- Chub 搜索不直接从 Node 请求 `ro.chub.ai/search`，而是使用本机 Chrome/CDP 打开 Chub 搜索页并读取前端实际消费的 JSON 响应；默认自动拉起独立 profile，也可通过 `SILLYTAVERN_CHUB_CDP_URL` 连接已登录 Chrome。
+
+Chub CDP 搜索可选环境变量：
+
+- `SILLYTAVERN_CHUB_CDP_URL`：连接已启动的 Chrome DevTools endpoint，例如 `http://127.0.0.1:9222`。
+- `SILLYTAVERN_CHUB_CDP_PORT`：自动拉起 Chrome 时使用的端口，默认 `9223`。
+- `SILLYTAVERN_CHUB_CHROME_PATH`：Chrome/Chromium 可执行文件路径，未配置时按平台默认路径查找。
+- `SILLYTAVERN_CHUB_CDP_PROFILE`：自动拉起 Chrome 使用的持久 profile 目录，默认在用户数据目录的 `remote-resources/chub-browser-profile`。
+- `SILLYTAVERN_CHUB_CDP_HEADLESS`：自动拉起 Chrome 时是否 headless，默认 `true`，设置为 `false` 可打开可见窗口以便人工登录。
 
 ## 后端契约
 
@@ -126,7 +134,7 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 远程资源手工外部回归建议覆盖：
 
 - RisuRealm：`/modern/?view=remoteResources` 搜索 `tag:lorebookincluded`，类型选择角色卡，导入一张公开角色后清理本地角色和导入记录。
-- Chub/CharacterHub：URL 导入 `https://chub.ai/lorebooks/bartleby/toaru-sillytavern`，确认世界书导入成功后清理本地世界书和导入记录。
+- Chub/CharacterHub：远程资源搜索 `cat` 且类型选择角色卡，确认出现 Chub 结果并可导入；URL 导入 `https://chub.ai/lorebooks/bartleby/toaru-sillytavern`，确认世界书导入成功后清理本地世界书和导入记录。
 - 凭据槽位：资源站账号页保存一个临时 GitHub token 后立即删除，确认只显示遮罩状态。
 
 ## 新版开发规则
