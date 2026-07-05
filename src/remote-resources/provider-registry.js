@@ -9,6 +9,7 @@ import { loreBaryProvider } from './providers/lorebary.js';
 import { bronyaRandArchiveProvider } from './providers/bronya-rand-archive.js';
 import { jannyAiProvider } from './providers/jannyai.js';
 import { huggingFaceSillyTavernProvider } from './providers/huggingface-sillytavern.js';
+import { chatbotsWebringProvider } from './providers/chatbots-webring.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -23,6 +24,7 @@ const PROVIDERS = [
     bronyaRandArchiveProvider,
     jannyAiProvider,
     huggingFaceSillyTavernProvider,
+    chatbotsWebringProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {
