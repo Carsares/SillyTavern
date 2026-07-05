@@ -83,10 +83,13 @@ async function searchChubViaFreshBrowser(params, context) {
 
         return { items: results, total };
     } finally {
-        if (browserConnection) {
-            browserConnection.close();
+        try {
+            await browser.close(browserConnection);
+        } finally {
+            if (browserConnection) {
+                browserConnection.close();
+            }
         }
-        await browser.close();
     }
 }
 
@@ -192,7 +195,7 @@ async function openChubBrowser(directories) {
 
     return {
         baseUrl,
-        close: async () => closeLaunchedBrowser(baseUrl, child, profile),
+        close: async browserConnection => closeLaunchedBrowser(baseUrl, child, profile, browserConnection),
     };
 }
 
@@ -254,9 +257,13 @@ async function getFreePort() {
     });
 }
 
-async function closeLaunchedBrowser(baseUrl, child, profile) {
+async function closeLaunchedBrowser(baseUrl, child, profile, browserConnection) {
     try {
-        await closeBrowserViaCdp(baseUrl);
+        if (browserConnection) {
+            await closeBrowserViaCdpConnection(browserConnection);
+        } else {
+            await closeBrowserViaCdp(baseUrl);
+        }
     } catch {
         // Browser.close can fail if Chrome exits first; the child pid is the final authority.
     }
@@ -278,8 +285,12 @@ async function closeBrowserViaCdp(baseUrl) {
 
     const connection = new CdpConnection(version.webSocketDebuggerUrl);
     await connection.ready;
-    await connection.send('Browser.close').catch(() => {});
+    await closeBrowserViaCdpConnection(connection);
     connection.close();
+}
+
+async function closeBrowserViaCdpConnection(connection) {
+    await connection.send('Browser.close').catch(() => {});
 }
 
 function cleanupProfile(profile) {

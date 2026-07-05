@@ -21,9 +21,12 @@ const MEMBER_FETCH_CONCURRENCY = 8;
 const NEOCITIES_HOST_SUFFIX = '.neocities.org';
 const CATBOX_FILE_HOST = 'files.catbox.moe';
 const CATBOX_CARD_PATH_PATTERN = /^\/[a-z0-9]+\.png$/iu;
-const JSON_PRESET_PATH_PATTERN = /\/(prompts?|presets?|novelrp|settings?)\//iu;
+const CHARHUB_AVATAR_HOST = 'avatars.charhub.io';
+const CHARHUB_CARD_PATH_PATTERN = /^\/avatars\/.+\/chara_card_v[23]\.png$/iu;
+const JSON_PRESET_PATH_PATTERN = /\/(prompts?|presets?|novelrp|settings?|jsons)\//iu;
+const JSON_WORLDBOOK_PATH_PATTERN = /\/(?:lorebooks?|worldbooks?|world[-_]?info|wi)\//iu;
 const CARD_PATH_PATTERN = /\/(cards?|characters?|bots?)\//iu;
-const MEMBER_SUBPAGE_PATH_PATTERN = /\/[^?#]*(?:cards?|characters?|bots?|mybots)[^/?#]*(?:$|[?#])/iu;
+const MEMBER_SUBPAGE_PATH_PATTERN = /\/[^?#]*(?:cards?|characters?|bots?|mybots|prompts?|presets?|novelrp|settings?|lorebooks?|worldbooks?|world[-_]?info)[^/?#]*(?:$|[?#])/iu;
 
 let cachedResources = null;
 let cachedAt = 0;
@@ -31,7 +34,7 @@ let cachedAt = 0;
 export const chatbotsWebringProvider = {
     id: 'chatbots-webring',
     name: 'Chatbots Webring',
-    description: 'Chatbots Webring 静态创作者站点索引，匿名抓取同源角色卡 PNG 与预设 JSON。',
+    description: 'Chatbots Webring 静态创作者站点索引，匿名抓取成员页和资源子页里的角色卡、世界书、预设文件与外链角色卡。',
     authMode: 'none',
     supportsSearch: true,
     supportsDownload: true,
@@ -156,7 +159,7 @@ function convertLinkToResource(reference, fileUrl, pageUrl, siteTitle) {
         sourceUrl: pageUrl.toString(),
         downloadUrl: fileUrl.toString(),
         thumbnailUrl: resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? fileUrl.toString() : '',
-        tags: ['Chatbots Webring', author, isCatboxFileUrl(fileUrl) ? 'Catbox card' : resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? 'PNG card' : 'JSON preset'],
+        tags: ['Chatbots Webring', author, getResourceSourceTag(fileUrl, resourceType)],
         capabilities: { download: true },
         metadata: {
             pageUrl: pageUrl.toString(),
@@ -222,7 +225,7 @@ function isMemberHost(url) {
 }
 
 function isAllowedFileUrl(fileUrl, pageUrl) {
-    return fileUrl.origin === pageUrl.origin || isCatboxFileUrl(fileUrl);
+    return fileUrl.origin === pageUrl.origin || isExternalCardFileUrl(fileUrl);
 }
 
 function isHtmlLikePath(pathname) {
@@ -233,17 +236,17 @@ function isHtmlLikePath(pathname) {
 function isSupportedFilePath(fileUrl) {
     const ext = path.extname(fileUrl.pathname).toLowerCase();
     if (ext === '.png') {
-        return CARD_PATH_PATTERN.test(fileUrl.pathname) || isCatboxFileUrl(fileUrl);
+        return CARD_PATH_PATTERN.test(fileUrl.pathname) || isExternalCardFileUrl(fileUrl);
     }
     if (ext === '.json') {
-        return CARD_PATH_PATTERN.test(fileUrl.pathname) || JSON_PRESET_PATH_PATTERN.test(fileUrl.pathname);
+        return CARD_PATH_PATTERN.test(fileUrl.pathname) || JSON_PRESET_PATH_PATTERN.test(fileUrl.pathname) || JSON_WORLDBOOK_PATH_PATTERN.test(fileUrl.pathname);
     }
     return false;
 }
 
 function getResourceTypeFromPath(fileUrl) {
     const ext = path.extname(fileUrl.pathname).toLowerCase();
-    if (ext === '.png' && (CARD_PATH_PATTERN.test(fileUrl.pathname) || isCatboxFileUrl(fileUrl))) {
+    if (ext === '.png' && (CARD_PATH_PATTERN.test(fileUrl.pathname) || isExternalCardFileUrl(fileUrl))) {
         return REMOTE_RESOURCE_TYPES.CHARACTER;
     }
     if (ext === '.json' && CARD_PATH_PATTERN.test(fileUrl.pathname)) {
@@ -251,6 +254,9 @@ function getResourceTypeFromPath(fileUrl) {
     }
     if (ext === '.json' && JSON_PRESET_PATH_PATTERN.test(fileUrl.pathname)) {
         return REMOTE_RESOURCE_TYPES.PRESET;
+    }
+    if (ext === '.json' && JSON_WORLDBOOK_PATH_PATTERN.test(fileUrl.pathname)) {
+        return REMOTE_RESOURCE_TYPES.WORLDBOOK;
     }
     return '';
 }
@@ -278,7 +284,7 @@ function validateResourceUrls(resource) {
     if (!pageUrl || !fileUrl || !isMemberHost(pageUrl) || !isAllowedFileUrl(fileUrl, pageUrl) || !isSupportedFilePath(fileUrl)) {
         throw new Error('Chatbots Webring resource URL is not allowed.');
     }
-    if (![REMOTE_RESOURCE_TYPES.CHARACTER, REMOTE_RESOURCE_TYPES.PRESET].includes(resource.resourceType)) {
+    if (![REMOTE_RESOURCE_TYPES.CHARACTER, REMOTE_RESOURCE_TYPES.WORLDBOOK, REMOTE_RESOURCE_TYPES.PRESET].includes(resource.resourceType)) {
         throw new Error('Chatbots Webring resource type is invalid.');
     }
 }
@@ -286,7 +292,7 @@ function validateResourceUrls(resource) {
 async function verifyExternalResourceLink(resource) {
     const pageUrl = parseAbsoluteUrl(resource.pageUrl, INDEX_URL);
     const fileUrl = parseAbsoluteUrl(resource.fileUrl, INDEX_URL);
-    if (!pageUrl || !fileUrl || !isCatboxFileUrl(fileUrl)) {
+    if (!pageUrl || !fileUrl || fileUrl.origin === pageUrl.origin || !isExternalCardFileUrl(fileUrl)) {
         return;
     }
 
@@ -307,20 +313,34 @@ function validateDownloadedBuffer(buffer, resourceType, fileUrl) {
         if (!isPng || resourceType !== REMOTE_RESOURCE_TYPES.CHARACTER) {
             throw new Error('Chatbots Webring character card is not a PNG file.');
         }
-        if (isCatboxFileUrl(parsedUrl) && !hasCharacterCardText(buffer)) {
-            throw new Error('Chatbots Webring Catbox PNG does not contain character card metadata.');
+        if (isExternalCardFileUrl(parsedUrl) && !hasCharacterCardText(buffer)) {
+            throw new Error('Chatbots Webring external PNG does not contain character card metadata.');
         }
         return;
     }
 
+    const json = parseJsonBuffer(buffer);
+    if (resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK && !isWorldbookJson(json)) {
+        throw new Error('Chatbots Webring JSON does not contain SillyTavern worldbook entries.');
+    }
+}
+
+function parseJsonBuffer(buffer) {
     try {
         const json = JSON.parse(buffer.toString('utf8'));
         if (!json || typeof json !== 'object' || Array.isArray(json)) {
             throw new Error('root is not an object');
         }
+        return json;
     } catch (error) {
         throw new Error(`Chatbots Webring JSON is invalid: ${error.message}`);
     }
+}
+
+function isWorldbookJson(json) {
+    const entries = json?.entries;
+    const values = Array.isArray(entries) ? entries : entries && typeof entries === 'object' ? Object.values(entries) : [];
+    return values.some(entry => entry && typeof entry === 'object' && Array.isArray(entry.key) && entry.key.length && typeof entry.content === 'string' && entry.content.trim());
 }
 
 function hasCharacterCardText(buffer) {
@@ -338,9 +358,30 @@ function isCatboxFileUrl(url) {
     return url.protocol === 'https:' && url.hostname === CATBOX_FILE_HOST && CATBOX_CARD_PATH_PATTERN.test(url.pathname);
 }
 
+function isCharHubCardUrl(url) {
+    return url.protocol === 'https:' && url.hostname === CHARHUB_AVATAR_HOST && CHARHUB_CARD_PATH_PATTERN.test(url.pathname);
+}
+
+function isExternalCardFileUrl(url) {
+    return isCatboxFileUrl(url) || isCharHubCardUrl(url);
+}
+
+function getResourceSourceTag(fileUrl, resourceType) {
+    if (isCatboxFileUrl(fileUrl)) {
+        return 'Catbox card';
+    }
+    if (isCharHubCardUrl(fileUrl)) {
+        return 'Chub CDN card';
+    }
+    if (resourceType === REMOTE_RESOURCE_TYPES.CHARACTER) {
+        return 'PNG card';
+    }
+    return resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK ? 'JSON worldbook' : 'JSON preset';
+}
+
 function getDownloadFileName(fileUrl, resourceType) {
     const parsed = new URL(fileUrl);
-    const fallback = resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? 'webring-character.png' : 'webring-preset.json';
+    const fallback = resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? 'webring-character.png' : resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK ? 'webring-worldbook.json' : 'webring-preset.json';
     return safeDecode(path.basename(parsed.pathname)) || fallback;
 }
 

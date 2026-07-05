@@ -28,6 +28,15 @@ export const REMOTE_PROVIDER_CREDENTIALS = Object.freeze({
             description: '预留给后续需要账号权限的 RisuRealm 资源。',
         },
     ],
+    'botbooru': [
+        {
+            id: 'token',
+            key: SECRET_KEYS.REMOTE_RESOURCES_BOTBOORU_TOKEN,
+            label: 'Botbooru token',
+            inputType: 'password',
+            description: '可选。粘贴 Botbooru localStorage token，后续用于登录态资源。',
+        },
+    ],
 });
 
 export function getRemoteCredentialValue(directories, providerId, credentialId) {

@@ -37,6 +37,23 @@ const REPOSITORIES = Object.freeze([
         resourceType: REMOTE_RESOURCE_TYPES.PRESET,
         maxBytes: 100_000,
     },
+    {
+        repoType: 'model',
+        apiPath: 'models',
+        slug: 'sphiratrioth666/Lorebooks_as_ACTIVE_scenario_and_character_guidance_tool',
+        label: 'Active Scenario Lorebooks',
+        resourceType: REMOTE_RESOURCE_TYPES.WORLDBOOK,
+        maxBytes: 100_000,
+    },
+    {
+        repoType: 'model',
+        apiPath: 'models',
+        slug: 'sphiratrioth666/GM-5_Game_Mistress_Roleplaying_System',
+        label: 'GM-5 World Lorebooks',
+        resourceType: REMOTE_RESOURCE_TYPES.WORLDBOOK,
+        pathPrefix: '01. WORLD LOREBOOKS/',
+        maxBytes: 200_000,
+    },
 ]);
 
 export const huggingFaceSillyTavernProvider = {
@@ -134,7 +151,7 @@ function convertFile(repo, item) {
 
 function validateJsonPath(filePath, repo, throwOnError = true) {
     const value = String(filePath || '').trim();
-    const valid = value.endsWith('.json') && !value.startsWith('/') && !value.includes('..') && value.split('/').every(Boolean);
+    const valid = value.endsWith('.json') && !value.startsWith('/') && !value.includes('..') && value.split('/').every(Boolean) && matchesRepoPathPrefix(value, repo);
     if (valid) {
         return true;
     }
@@ -142,6 +159,11 @@ function validateJsonPath(filePath, repo, throwOnError = true) {
         throw new Error('Hugging Face resource path is invalid.');
     }
     return false;
+}
+
+function matchesRepoPathPrefix(filePath, repo) {
+    const prefix = String(repo.pathPrefix || '').trim();
+    return !prefix || filePath.startsWith(prefix);
 }
 
 function validateJsonFile(item, repo) {
@@ -159,6 +181,9 @@ function validateResourceJson(buffer, resourceType) {
 
     if (resourceType === REMOTE_RESOURCE_TYPES.CHARACTER && !isCharacterJson(json)) {
         throw new Error('Hugging Face character JSON is not a SillyTavern character card.');
+    }
+    if (resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK && !isWorldbookJson(json)) {
+        throw new Error('Hugging Face worldbook JSON is not a SillyTavern worldbook.');
     }
     if (resourceType === REMOTE_RESOURCE_TYPES.PRESET && (!json || typeof json !== 'object' || Array.isArray(json))) {
         throw new Error('Hugging Face preset JSON is invalid.');
@@ -193,6 +218,24 @@ function isCharacterJson(json) {
         return true;
     }
     return Boolean(json.name && json.description && (json.first_mes || json.data?.first_mes));
+}
+
+function isWorldbookJson(json) {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        return false;
+    }
+
+    if (Array.isArray(json.entries)) {
+        return json.entries.some(isWorldbookEntry);
+    }
+    if (json.entries && typeof json.entries === 'object') {
+        return Object.values(json.entries).some(isWorldbookEntry);
+    }
+    return false;
+}
+
+function isWorldbookEntry(entry) {
+    return Boolean(entry && typeof entry === 'object' && (Array.isArray(entry.key) || typeof entry.key === 'string') && typeof entry.content === 'string');
 }
 
 function formatResourceId(repo, filePath) {

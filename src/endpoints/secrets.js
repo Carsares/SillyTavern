@@ -73,6 +73,7 @@ export const SECRET_KEYS = {
     REMOTE_RESOURCES_GITHUB: 'remote_resources_github_token',
     REMOTE_RESOURCES_CHUB_COOKIE: 'remote_resources_chub_cookie',
     REMOTE_RESOURCES_RISU_TOKEN: 'remote_resources_risu_token',
+    REMOTE_RESOURCES_BOTBOORU_TOKEN: 'remote_resources_botbooru_token',
 };
 
 /**

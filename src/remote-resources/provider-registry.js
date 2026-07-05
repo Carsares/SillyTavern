@@ -8,11 +8,28 @@ import { aiCharacterCardsProvider } from './providers/ai-character-cards.js';
 import { loreBaryProvider } from './providers/lorebary.js';
 import { bronyaRandArchiveProvider } from './providers/bronya-rand-archive.js';
 import { jannyAiProvider } from './providers/jannyai.js';
+import { wyvernChatProvider } from './providers/wyvern-chat.js';
+import { mnemoProvider } from './providers/mnemo.js';
+import { spicyChatProvider } from './providers/spicychat.js';
+import { backyardAiProvider } from './providers/backyard-ai.js';
+import { datacatProvider } from './providers/datacat.js';
+import { botbooruProvider } from './providers/botbooru.js';
 import { huggingFaceSillyTavernProvider } from './providers/huggingface-sillytavern.js';
 import { chatbotsWebringProvider } from './providers/chatbots-webring.js';
 import { muahAiCardsProvider } from './providers/muah-ai-cards.js';
 import { charaCardsProvider } from './providers/chara-cards.js';
 import { pygmalionChatProvider } from './providers/pygmalion-chat.js';
+import { sillyTavernAiChatProvider } from './providers/sillytavernai-chat.js';
+import { characterCardComProvider } from './providers/character-card-com.js';
+import { neocitiesCreatorsProvider } from './providers/neocities-creators.js';
+import { mlpchagPonydexProvider } from './providers/mlpchag-ponydex.js';
+import { anchorholdAicgProvider } from './providers/anchorhold-aicg.js';
+import { cardboxArchiveProvider } from './providers/cardbox-archive.js';
+import { aicgRentryEventsProvider } from './providers/aicg-rentry-events.js';
+import { rentryTavernExportProvider } from './providers/rentry-tavern-export.js';
+import { aicgRentryDirectoryProvider } from './providers/aicg-rentry-directory.js';
+import { characterArchiveCatboxProvider } from './providers/character-archive-catbox.js';
+import { blobfish23NeocitiesProvider } from './providers/blobfish23-neocities.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -26,11 +43,28 @@ const PROVIDERS = [
     loreBaryProvider,
     bronyaRandArchiveProvider,
     jannyAiProvider,
+    wyvernChatProvider,
+    mnemoProvider,
+    spicyChatProvider,
+    backyardAiProvider,
+    datacatProvider,
+    botbooruProvider,
     huggingFaceSillyTavernProvider,
     chatbotsWebringProvider,
     muahAiCardsProvider,
     charaCardsProvider,
     pygmalionChatProvider,
+    sillyTavernAiChatProvider,
+    characterCardComProvider,
+    neocitiesCreatorsProvider,
+    mlpchagPonydexProvider,
+    anchorholdAicgProvider,
+    cardboxArchiveProvider,
+    aicgRentryEventsProvider,
+    rentryTavernExportProvider,
+    aicgRentryDirectoryProvider,
+    characterArchiveCatboxProvider,
+    blobfish23NeocitiesProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {

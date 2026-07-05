@@ -143,6 +143,33 @@ async function deleteNewSecrets(page, key, beforeIds) {
     }
 }
 
+async function deleteCharacterByAvatar(page, avatar) {
+    if (avatar) {
+        await safeApiFetch(page, '/api/characters/delete', { avatar_url: avatar, delete_chats: true });
+    }
+}
+
+async function deleteWorldbookByName(page, name) {
+    if (name) {
+        await safeApiFetch(page, '/api/worldinfo/delete', { name });
+    }
+}
+
+async function cleanupNewRemoteRecords(page, beforeIds, providerId) {
+    const records = await safeApiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+    for (const record of records || []) {
+        if (record.providerId !== providerId || beforeIds.has(record.id)) {
+            continue;
+        }
+        if (record.localType === 'character') {
+            await deleteCharacterByAvatar(page, record.localId);
+        } else if (record.localType === 'worldbook') {
+            await deleteWorldbookByName(page, record.localId);
+        }
+        await safeApiFetch(page, `/api/remote-resources/records/${record.id}`, undefined, 'DELETE');
+    }
+}
+
 test.describe('Modern external dependency integration', () => {
     test.describe.configure({ mode: 'serial' });
     test.skip(!externalEnabled, 'Set MODERN_EXTERNAL_E2E=1 to run tests that call external networks and vendors.');
@@ -170,6 +197,388 @@ test.describe('Modern external dependency integration', () => {
         } finally {
             await safeApiFetch(page, '/api/assets/delete', { category, filename });
             fs.rmSync(assetPath, { force: true });
+        }
+    });
+
+    test('imports a Cardbox Archive character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="cardbox-archive"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'cardbox-archive';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('cat');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Cardbox Archive' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('角色卡');
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'cardbox-archive' && !recordIdsBefore.has(record.id) && record.action === 'import');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'cardbox-archive');
+        }
+    });
+
+    test('imports an AICG Rentry Events character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="aicg-rentry-events"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'aicg-rentry-events';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('Celeste');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'AICG Rentry Events' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Celeste');
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'aicg-rentry-events' && !recordIdsBefore.has(record.id) && record.action === 'import');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'aicg-rentry-events');
+        }
+    });
+
+    test('imports a Rentry Tavern Export character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="rentry-tavern-export"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'rentry-tavern-export';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('Loopi');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Rentry Tavern Export' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Loopi');
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'rentry-tavern-export' && !recordIdsBefore.has(record.id) && record.action === 'import');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'rentry-tavern-export');
+        }
+    });
+
+    test('imports an AICG Rentry Directory character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="aicg-rentry-directory"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'aicg-rentry-directory';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('Drasna');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'AICG Rentry Directory' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Drasna');
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'aicg-rentry-directory' && !recordIdsBefore.has(record.id) && record.action === 'import');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'aicg-rentry-directory');
+        }
+    });
+
+    test('imports a Character Archive Catbox character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="character-archive-catbox"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'character-archive-catbox';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('Drasna');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Character Archive Catbox' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Drasna');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'character-archive-catbox-character-drasna.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'character-archive-catbox-character-drasna-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'character-archive-catbox' && !recordIdsBefore.has(record.id) && record.action === 'import');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'character-archive-catbox');
+        }
+    });
+
+    test('imports a Blobfish23 Neocities character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="blobfish23-neocities"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'blobfish23-neocities';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('character');
+            await page.locator('[data-remote-resource-query]').fill('Alyona');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Blobfish23 Neocities' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Alyona');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'blobfish23-neocities-character-alyona.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'blobfish23-neocities-character-alyona-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'blobfish23-neocities' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'character');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'blobfish23-neocities');
+        }
+    });
+
+    test('imports a Blobfish23 Neocities worldbook from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="blobfish23-neocities"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'blobfish23-neocities';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('worldbook');
+            await page.locator('[data-remote-resource-query]').fill('Tarkov');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Blobfish23 Neocities' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Escape from Tarkov');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'blobfish23-neocities-worldbook-tarkov.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/worldinfo/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/worldinfo/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '世界书已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'blobfish23-neocities-worldbook-tarkov-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'blobfish23-neocities' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'worldbook');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'blobfish23-neocities');
         }
     });
 
