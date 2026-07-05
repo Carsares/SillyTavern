@@ -30,6 +30,7 @@ import { rentryTavernExportProvider } from './providers/rentry-tavern-export.js'
 import { aicgRentryDirectoryProvider } from './providers/aicg-rentry-directory.js';
 import { characterArchiveCatboxProvider } from './providers/character-archive-catbox.js';
 import { blobfish23NeocitiesProvider } from './providers/blobfish23-neocities.js';
+import { malliebotsProvider } from './providers/malliebots.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -65,6 +66,7 @@ const PROVIDERS = [
     aicgRentryDirectoryProvider,
     characterArchiveCatboxProvider,
     blobfish23NeocitiesProvider,
+    malliebotsProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {
