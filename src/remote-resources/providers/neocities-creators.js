@@ -90,6 +90,25 @@ const SOURCES = Object.freeze([
         tag: 'JSON preset',
         jsonPathPattern: /^\/prompt\/kintsugi-v[\w-]+\.json$/iu,
     },
+    {
+        id: 'momoura-presets',
+        name: 'Momoura Presets',
+        author: 'momoura',
+        pageUrl: 'https://momoura.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.PRESET,
+        tag: 'JSON preset',
+        jsonPathPattern: /^\/preset\/.+\.json$/iu,
+        excludePathPattern: /^\/preset\/(?:Trim%20Last|momoMORI)\.json$/iu,
+    },
+    {
+        id: 'momoura-lorebook',
+        name: 'Momoura Lorebooks',
+        author: 'momoura',
+        pageUrl: 'https://momoura.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.WORLDBOOK,
+        tag: 'JSON worldbook',
+        jsonPathPattern: /^\/lorebooks\/japari-library\.json$/iu,
+    },
 ]);
 
 let cache = {

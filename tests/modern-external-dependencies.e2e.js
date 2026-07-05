@@ -795,6 +795,91 @@ test.describe('Modern external dependency integration', () => {
         }
     });
 
+    test('downloads a Momoura Neocities preset from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'neocities-creators', 'preset', 'neoVORPUS');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'neoVORPUS' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Momoura Presets');
+            await expect(card).toContainText('预设');
+            await expect(card.locator('[data-download-remote-resource]')).toHaveCount(0);
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-momoura-preset-neovor.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '下载已开始' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-momoura-preset-neovor-downloaded.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => (
+                    record.providerId === 'neocities-creators'
+                    && !recordIdsBefore.has(record.id)
+                    && record.action === 'download'
+                    && record.resourceType === 'preset'
+                    && record.localId === 'neoVORPUS.json'
+                ));
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
+    test('imports a Momoura Neocities worldbook from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'neocities-creators', 'worldbook', 'Japari');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'japari library' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Momoura Lorebooks');
+            await expect(card).toContainText('世界书');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-momoura-worldbook-japari.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/worldinfo/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/worldinfo/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '世界书已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-momoura-worldbook-japari-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'neocities-creators' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'worldbook');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
     test('installs, updates, and deletes a public git extension from the modern UI through the real backend', async ({ page }) => {
         test.skip(!externalExtensionName, 'MODERN_EXTERNAL_EXTENSION_URL must resolve to a repository folder name.');
 
