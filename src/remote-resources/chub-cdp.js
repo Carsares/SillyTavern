@@ -10,6 +10,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const CHUB_BASE_URL = 'https://chub.ai';
 const RO_BASE_URL = 'https://ro.chub.ai';
 const CHUB_SEARCH_API = `${RO_BASE_URL}/search`;
+let chubCdpSearchQueue = Promise.resolve();
 const CHROME_CANDIDATES = Object.freeze({
     darwin: [
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -32,6 +33,25 @@ const CHROME_CANDIDATES = Object.freeze({
 });
 
 export async function searchChubViaCdp(params, context = {}) {
+    return await enqueueChubCdpSearch(() => searchChubViaFreshBrowser(params, context));
+}
+
+async function enqueueChubCdpSearch(task) {
+    const previous = chubCdpSearchQueue;
+    let releaseQueue;
+    chubCdpSearchQueue = new Promise(resolve => {
+        releaseQueue = resolve;
+    });
+
+    await previous.catch(() => {});
+    try {
+        return await task();
+    } finally {
+        releaseQueue();
+    }
+}
+
+async function searchChubViaFreshBrowser(params, context) {
     const namespaces = namespacesForResourceType(params.resourceType);
     if (!namespaces.length) {
         return { items: [], total: 0 };
