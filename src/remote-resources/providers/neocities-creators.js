@@ -118,6 +118,24 @@ const SOURCES = Object.freeze([
         tag: 'PNG character card',
         filePathPattern: /^\/cards\/.+\.png$/iu,
     },
+    {
+        id: 'moxxie-cards',
+        name: 'Moxxie Cards',
+        author: 'Moxxie',
+        pageUrl: 'https://moxxie.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.CHARACTER,
+        tag: 'PNG character card',
+        filePathPattern: /^\/(?:Lith|Chloe|Aldemar|Angel%20Dust)\.png$/iu,
+    },
+    {
+        id: 'moxxie-lorebook',
+        name: 'Moxxie Lorebook',
+        author: 'Moxxie',
+        pageUrl: 'https://moxxie.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.WORLDBOOK,
+        tag: 'JSON worldbook',
+        jsonPathPattern: /^\/lorebook\.json$/iu,
+    },
 ]);
 
 let cache = {
@@ -242,7 +260,7 @@ function getResourceTitle(source, reference, fileUrl) {
         const parts = fileUrl.pathname.split('/').filter(Boolean);
         const parent = parts.at(-2) || '';
         const fileName = path.basename(fileUrl.pathname, path.extname(fileUrl.pathname));
-        return formatTitle(!/^(?:cards?|characters?|bots?)$/iu.test(parent) ? parent : label || fileName);
+        return formatTitle(parent && !/^(?:cards?|characters?|bots?)$/iu.test(parent) ? parent : label || fileName);
     }
     return formatTitle(path.basename(fileUrl.pathname, path.extname(fileUrl.pathname)) || label);
 }
