@@ -11,6 +11,7 @@ import { jannyAiProvider } from './providers/jannyai.js';
 import { huggingFaceSillyTavernProvider } from './providers/huggingface-sillytavern.js';
 import { chatbotsWebringProvider } from './providers/chatbots-webring.js';
 import { muahAiCardsProvider } from './providers/muah-ai-cards.js';
+import { charaCardsProvider } from './providers/chara-cards.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -27,6 +28,7 @@ const PROVIDERS = [
     huggingFaceSillyTavernProvider,
     chatbotsWebringProvider,
     muahAiCardsProvider,
+    charaCardsProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {

@@ -55,6 +55,7 @@
 - Hugging Face ST Repos 搜索已验证的公开 SillyTavern 资源仓库文件树，只返回角色卡和预设 JSON。
 - Chatbots Webring 搜索 `chatbots.neocities.org` 静态成员站点，只抓取成员同源的 `/cards/*.png` 角色卡和预设 JSON 文件。
 - Muah AI Cards 搜索 `card.muah.ai` WordPress REST 帖子接口，并下载帖子 featured media 的 PNG 角色卡。
+- Chara Cards 搜索 `edge-api.chara.cards/api/bot/search` 公开角色接口，下载时读取 `/bot/:id/public` 并转换为 SillyTavern 角色 JSON。
 - GitLab 扩展搜索使用 GitLab 公开 Projects API，只返回可安装 Git URL。
 
 Chub CDP 搜索可选环境变量：
