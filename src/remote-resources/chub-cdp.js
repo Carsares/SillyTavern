@@ -171,6 +171,7 @@ async function openChubBrowser(directories) {
 
     const ready = await waitForCdp(baseUrl, DEFAULT_TIMEOUT_MS);
     if (!ready) {
+        stopProcess(child.pid);
         throw new Error(`Chrome did not expose CDP at ${baseUrl}. Set SILLYTAVERN_CHUB_CDP_URL to a running Chrome endpoint if auto-launch is unavailable.`);
     }
 
@@ -184,11 +185,12 @@ async function openChubBrowser(directories) {
                     await connection.ready;
                     await connection.send('Browser.close').catch(() => {});
                     connection.close();
+                    if (!(await waitForCdpDown(baseUrl, 5000))) {
+                        stopProcess(child.pid);
+                    }
                 }
             } catch {
-                if (child.pid) {
-                    process.kill(child.pid, 'SIGTERM');
-                }
+                stopProcess(child.pid);
             }
         },
     };
@@ -408,6 +410,17 @@ async function waitForCdp(baseUrl, timeoutMs) {
     return false;
 }
 
+async function waitForCdpDown(baseUrl, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (!(await isCdpAlive(baseUrl))) {
+            return true;
+        }
+        await delay(250);
+    }
+    return false;
+}
+
 async function cdpJson(baseUrl, pathName, timeoutMs = 10000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -424,6 +437,17 @@ async function cdpJson(baseUrl, pathName, timeoutMs = 10000) {
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function stopProcess(pid) {
+    if (!pid) {
+        return;
+    }
+    try {
+        process.kill(pid, 'SIGTERM');
+    } catch {
+        // The Chrome process may already have exited after Browser.close.
+    }
 }
 
 class CdpConnection {

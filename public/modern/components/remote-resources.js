@@ -173,7 +173,7 @@ export function createRemoteResourceComponents(ctx) {
                     <div class="card-head">
                         <div>
                             <h2 class="card-title">${escapeHtml(provider.name)}</h2>
-                            <div class="card-meta">${escapeHtml(provider.authMode === 'none' ? '匿名' : provider.authMode)} · ${provider.supportsUrlImport ? '支持 URL 导入' : provider.supportsSearch ? '支持搜索' : '预留'}</div>
+                            <div class="card-meta">${escapeHtml(provider.authMode === 'none' ? '匿名' : provider.authMode)} · ${escapeHtml(getProviderCapabilityLabel(provider))}</div>
                         </div>
                         <i class="fa-solid ${provider.supportsSearch ? 'fa-magnifying-glass' : 'fa-link'}"></i>
                     </div>
@@ -304,4 +304,21 @@ function getTypeIcon(type) {
         asset: 'fa-folder-tree',
         preset: 'fa-sliders',
     }[type] || 'fa-cloud-arrow-down';
+}
+
+function getProviderCapabilityLabel(provider) {
+    const capabilities = [];
+    if (provider.supportsSearch) {
+        capabilities.push('支持搜索');
+    }
+    if (provider.supportsUrlImport) {
+        capabilities.push('URL 导入');
+    }
+    if (provider.supportsDownload) {
+        capabilities.push('下载');
+    }
+    if (provider.supportsInstall) {
+        capabilities.push('安装');
+    }
+    return capabilities.length ? capabilities.join(' / ') : '预留';
 }
