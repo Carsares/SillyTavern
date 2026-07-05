@@ -139,14 +139,6 @@ function waitForSearchPayload(page, namespace, timeoutMs) {
 }
 
 async function openChubBrowser(directories) {
-    const configuredUrl = String(process.env.SILLYTAVERN_CHUB_CDP_URL || '').trim();
-    if (configuredUrl) {
-        if (!(await isCdpAlive(configuredUrl))) {
-            throw new Error(`Chub CDP endpoint is unavailable: ${configuredUrl}`);
-        }
-        return { baseUrl: configuredUrl, close: async () => {} };
-    }
-
     const chromePath = resolveChromePath();
     const port = await resolveCdpPort();
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -175,7 +167,7 @@ async function openChubBrowser(directories) {
         await terminateChromeProcess(child, 3000);
         await waitForCdpDown(baseUrl, 3000);
         cleanupProfile(profile);
-        throw new Error(`Chrome did not expose CDP at ${baseUrl}. Set SILLYTAVERN_CHUB_CDP_URL to a running Chrome endpoint if auto-launch is unavailable.`);
+        throw new Error(`Chrome did not expose CDP at ${baseUrl}. Set SILLYTAVERN_CHUB_CHROME_PATH if the auto-detected Chrome executable is unavailable.`);
     }
 
     return {
@@ -211,7 +203,7 @@ function resolveChromePath() {
         }
     }
 
-    throw new Error('Chrome executable not found. Set SILLYTAVERN_CHUB_CHROME_PATH or SILLYTAVERN_CHUB_CDP_URL for Chub search.');
+    throw new Error('Chrome executable not found. Set SILLYTAVERN_CHUB_CHROME_PATH for Chub search.');
 }
 
 function resolveProfileDir(directories) {

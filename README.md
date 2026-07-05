@@ -46,7 +46,7 @@
 - provider 只接入固定资源站，不提供任意 URL 代理；外部下载由 provider 校验资源 ID 后执行。
 - 匿名 provider 默认可用；GitHub token、Chub cookie、RisuRealm token 通过现有 `secrets.json` 保存，前端只显示遮罩状态。
 - 导入后的来源关系写入用户目录下的 `remote-resources/imports.json`，不污染角色卡、世界书或扩展自身文件。
-- Chub 搜索不直接从 Node 请求 `ro.chub.ai/search`，而是每次自动拉起独立的后台 headless Chrome/CDP 打开 Chub 搜索页，读取前端实际消费的 JSON 响应，并在调用完成后关闭进程；也可通过 `SILLYTAVERN_CHUB_CDP_URL` 显式连接已登录 Chrome 用于调试或手动登录态。
+- Chub 搜索不直接从 Node 请求 `ro.chub.ai/search`，而是每次自动拉起独立的后台 headless Chrome/CDP 打开 Chub 搜索页，读取前端实际消费的 JSON 响应，并在调用完成后关闭进程；登录态通过 Chub cookie 或 `SILLYTAVERN_CHUB_CDP_PROFILE` 指向的持久 profile 目录保留。
 - JannyAI 搜索使用公开 Meilisearch 角色索引，下载时读取匿名详情页里的 SSR 角色字段并转换为 SillyTavern 角色 JSON。
 - Character Tavern 搜索使用 `character-tavern.com/api/search/cards`，下载时读取 `api/character/:author/:name` 并转换为 SillyTavern 角色 JSON。
 - AICharacterCards 搜索使用 `api.aicharactercards.com/api/cards`，下载通过 `/cards/:id/versions` 获取当前 PNG 角色卡。
@@ -56,7 +56,6 @@
 
 Chub CDP 搜索可选环境变量：
 
-- `SILLYTAVERN_CHUB_CDP_URL`：连接已启动的 Chrome DevTools endpoint，例如 `http://127.0.0.1:9222`；配置后不会自动拉起或关闭 Chrome。
 - `SILLYTAVERN_CHUB_CDP_PORT`：自动拉起 Chrome 时使用的固定端口；未配置时每次分配临时可用端口。
 - `SILLYTAVERN_CHUB_CHROME_PATH`：Chrome/Chromium 可执行文件路径，未配置时按平台默认路径查找。
 - `SILLYTAVERN_CHUB_CDP_PROFILE`：自动拉起 Chrome 使用的持久 profile 目录；未配置时每次使用临时 profile，并在调用结束后删除。
