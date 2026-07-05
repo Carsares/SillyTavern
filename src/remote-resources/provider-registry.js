@@ -10,6 +10,7 @@ import { bronyaRandArchiveProvider } from './providers/bronya-rand-archive.js';
 import { jannyAiProvider } from './providers/jannyai.js';
 import { huggingFaceSillyTavernProvider } from './providers/huggingface-sillytavern.js';
 import { chatbotsWebringProvider } from './providers/chatbots-webring.js';
+import { muahAiCardsProvider } from './providers/muah-ai-cards.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -25,6 +26,7 @@ const PROVIDERS = [
     jannyAiProvider,
     huggingFaceSillyTavernProvider,
     chatbotsWebringProvider,
+    muahAiCardsProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {

@@ -54,6 +54,7 @@
 - Bronya Rand Archive 搜索读取静态 `world-lore-books` 索引，只允许下载归档内 `world-info/**/*.json` 世界书。
 - Hugging Face ST Repos 搜索已验证的公开 SillyTavern 资源仓库文件树，只返回角色卡和预设 JSON。
 - Chatbots Webring 搜索 `chatbots.neocities.org` 静态成员站点，只抓取成员同源的 `/cards/*.png` 角色卡和预设 JSON 文件。
+- Muah AI Cards 搜索 `card.muah.ai` WordPress REST 帖子接口，并下载帖子 featured media 的 PNG 角色卡。
 - GitLab 扩展搜索使用 GitLab 公开 Projects API，只返回可安装 Git URL。
 
 Chub CDP 搜索可选环境变量：
