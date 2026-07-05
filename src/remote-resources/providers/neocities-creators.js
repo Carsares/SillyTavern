@@ -109,6 +109,15 @@ const SOURCES = Object.freeze([
         tag: 'JSON worldbook',
         jsonPathPattern: /^\/lorebooks\/japari-library\.json$/iu,
     },
+    {
+        id: 'ratlover-cards',
+        name: 'Ratlover Cards',
+        author: 'ratlover',
+        pageUrl: 'https://ratlover.neocities.org/cards',
+        resourceType: REMOTE_RESOURCE_TYPES.CHARACTER,
+        tag: 'PNG character card',
+        filePathPattern: /^\/cards\/.+\.png$/iu,
+    },
 ]);
 
 let cache = {
@@ -156,7 +165,7 @@ export const neocitiesCreatorsProvider = {
         }
 
         await verifySourcePageLink(source, fileUrl);
-        const { response, buffer } = await fetchBuffer(fileUrl.toString());
+        const { response, buffer } = await fetchBufferWithRetry(fileUrl.toString());
         validateDownloadedBuffer(buffer, resource.resourceType);
 
         return {
@@ -188,7 +197,7 @@ async function readResources() {
 
 async function readSourcePage(source) {
     try {
-        const { text } = await fetchText(source.pageUrl, { timeoutMs: 12000 });
+        const { text } = await fetchTextWithRetry(source.pageUrl);
         const items = extractResourceReferences(text)
             .map(reference => ({ reference, fileUrl: parseAbsoluteUrl(reference.href, source.pageUrl) }))
             .filter(item => item.fileUrl && isAllowedSourceFile(source, item.fileUrl))
@@ -259,7 +268,7 @@ function isAllowedSourceFile(source, fileUrl) {
 }
 
 async function verifySourcePageLink(source, fileUrl) {
-    const { text } = await fetchText(source.pageUrl, { timeoutMs: 12000 });
+    const { text } = await fetchTextWithRetry(source.pageUrl);
     const linked = extractResourceReferences(text)
         .map(reference => parseAbsoluteUrl(reference.href, source.pageUrl))
         .some(url => url?.toString() === fileUrl.toString());
@@ -286,6 +295,33 @@ function validateDownloadedBuffer(buffer, resourceType) {
     if (resourceType === REMOTE_RESOURCE_TYPES.PRESET && !isPresetJson(json)) {
         throw new Error('Neocities creator JSON does not contain SillyTavern preset fields.');
     }
+}
+
+async function fetchTextWithRetry(url) {
+    return fetchWithRetry(() => fetchText(url, { timeoutMs: 20000 }));
+}
+
+async function fetchBufferWithRetry(url) {
+    return fetchWithRetry(() => fetchBuffer(url, { timeoutMs: 20000 }));
+}
+
+async function fetchWithRetry(fetchResource) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            return await fetchResource();
+        } catch (error) {
+            lastError = error;
+            if (attempt < 3) {
+                await delay(350 * attempt);
+            }
+        }
+    }
+    throw lastError;
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function parseJsonBuffer(buffer) {
