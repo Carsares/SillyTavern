@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 
 import WebSocket from 'ws';
 
-const DEFAULT_CDP_PORT = 9223;
 const DEFAULT_TIMEOUT_MS = 30000;
 const CHUB_BASE_URL = 'https://chub.ai';
 const RO_BASE_URL = 'https://ro.chub.ai';
@@ -140,60 +140,60 @@ function waitForSearchPayload(page, namespace, timeoutMs) {
 
 async function openChubBrowser(directories) {
     const configuredUrl = String(process.env.SILLYTAVERN_CHUB_CDP_URL || '').trim();
-    const baseUrl = configuredUrl || `http://127.0.0.1:${process.env.SILLYTAVERN_CHUB_CDP_PORT || DEFAULT_CDP_PORT}`;
-
-    if (await isCdpAlive(baseUrl)) {
-        return { baseUrl, close: async () => {} };
-    }
-
     if (configuredUrl) {
-        throw new Error(`Chub CDP endpoint is unavailable: ${configuredUrl}`);
+        if (!(await isCdpAlive(configuredUrl))) {
+            throw new Error(`Chub CDP endpoint is unavailable: ${configuredUrl}`);
+        }
+        return { baseUrl: configuredUrl, close: async () => {} };
     }
 
     const chromePath = resolveChromePath();
-    const port = new URL(baseUrl).port || String(DEFAULT_CDP_PORT);
-    const userDataDir = resolveProfileDir(directories);
+    const port = await resolveCdpPort();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    if (await isCdpAlive(baseUrl)) {
+        throw new Error(`Chub CDP port ${port} is already occupied by another Chrome instance.`);
+    }
+
+    const profile = resolveProfileDir(directories);
     const args = [
+        '--headless=new',
+        '--remote-debugging-address=127.0.0.1',
         `--remote-debugging-port=${port}`,
-        `--user-data-dir=${userDataDir}`,
+        `--user-data-dir=${profile.path}`,
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-blink-features=AutomationControlled',
+        '--disable-extensions',
     ];
 
-    if (shouldLaunchHeadless()) {
-        args.push('--headless=new');
-    }
-
-    fs.mkdirSync(userDataDir, { recursive: true });
+    fs.mkdirSync(profile.path, { recursive: true });
     const child = spawn(chromePath, args, { stdio: 'ignore', detached: true });
     child.unref();
 
     const ready = await waitForCdp(baseUrl, DEFAULT_TIMEOUT_MS);
     if (!ready) {
         stopProcess(child.pid);
+        await waitForProcessExit(child, 3000);
+        cleanupProfile(profile);
         throw new Error(`Chrome did not expose CDP at ${baseUrl}. Set SILLYTAVERN_CHUB_CDP_URL to a running Chrome endpoint if auto-launch is unavailable.`);
     }
 
     return {
         baseUrl,
-        close: async () => {
-            try {
-                const version = await cdpJson(baseUrl, '/json/version');
-                if (version.webSocketDebuggerUrl) {
-                    const connection = new CdpConnection(version.webSocketDebuggerUrl);
-                    await connection.ready;
-                    await connection.send('Browser.close').catch(() => {});
-                    connection.close();
-                    if (!(await waitForCdpDown(baseUrl, 5000))) {
-                        stopProcess(child.pid);
-                    }
-                }
-            } catch {
-                stopProcess(child.pid);
-            }
-        },
+        close: async () => closeLaunchedBrowser(baseUrl, child, profile),
     };
+}
+
+async function resolveCdpPort() {
+    const configured = String(process.env.SILLYTAVERN_CHUB_CDP_PORT || '').trim();
+    if (configured) {
+        const port = Number(configured);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            throw new Error(`Invalid Chub CDP port: ${configured}`);
+        }
+        return port;
+    }
+    return await getFreePort();
 }
 
 function resolveChromePath() {
@@ -217,14 +217,58 @@ function resolveChromePath() {
 function resolveProfileDir(directories) {
     const configured = String(process.env.SILLYTAVERN_CHUB_CDP_PROFILE || '').trim();
     if (configured) {
-        return path.resolve(configured);
+        return { path: path.resolve(configured), temporary: false };
     }
     const root = directories?.root || path.join(os.tmpdir(), 'sillytavern');
-    return path.join(root, 'remote-resources', 'chub-browser-profile');
+    const parent = path.join(root, 'remote-resources');
+    fs.mkdirSync(parent, { recursive: true });
+    return { path: fs.mkdtempSync(path.join(parent, 'chub-headless-')), temporary: true };
 }
 
-function shouldLaunchHeadless() {
-    return !['0', 'false', 'no'].includes(String(process.env.SILLYTAVERN_CHUB_CDP_HEADLESS || 'true').trim().toLowerCase());
+async function getFreePort() {
+    return await new Promise((resolve, reject) => {
+        const server = createServer();
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+            const address = server.address();
+            server.close(error => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve(address.port);
+            });
+        });
+    });
+}
+
+async function closeLaunchedBrowser(baseUrl, child, profile) {
+    let closed = false;
+    try {
+        const version = await cdpJson(baseUrl, '/json/version');
+        if (version.webSocketDebuggerUrl) {
+            const connection = new CdpConnection(version.webSocketDebuggerUrl);
+            await connection.ready;
+            await connection.send('Browser.close').catch(() => {});
+            connection.close();
+            closed = await waitForCdpDown(baseUrl, 5000);
+        }
+    } catch {
+        // Browser.close can fail if Chrome exits first; the child pid is the final authority.
+    }
+
+    if (!closed) {
+        stopProcess(child.pid);
+        await waitForProcessExit(child, 3000);
+    }
+    cleanupProfile(profile);
+}
+
+function cleanupProfile(profile) {
+    if (!profile.temporary) {
+        return;
+    }
+    fs.rmSync(profile.path, { recursive: true, force: true });
 }
 
 async function createTarget(baseUrl, browserConnection, url) {
@@ -448,6 +492,24 @@ function stopProcess(pid) {
     } catch {
         // The Chrome process may already have exited after Browser.close.
     }
+}
+
+function waitForProcessExit(child, timeoutMs) {
+    if (!child || child.exitCode !== null || child.signalCode) {
+        return Promise.resolve(true);
+    }
+
+    return new Promise(resolve => {
+        const timer = setTimeout(() => {
+            child.off('exit', onExit);
+            resolve(false);
+        }, timeoutMs);
+        const onExit = () => {
+            clearTimeout(timer);
+            resolve(true);
+        };
+        child.once('exit', onExit);
+    });
 }
 
 class CdpConnection {
