@@ -172,8 +172,8 @@ async function openChubBrowser(directories) {
 
     const ready = await waitForCdp(baseUrl, DEFAULT_TIMEOUT_MS);
     if (!ready) {
-        stopProcess(child.pid);
-        await waitForProcessExit(child, 3000);
+        await terminateChromeProcess(child, 3000);
+        await waitForCdpDown(baseUrl, 3000);
         cleanupProfile(profile);
         throw new Error(`Chrome did not expose CDP at ${baseUrl}. Set SILLYTAVERN_CHUB_CDP_URL to a running Chrome endpoint if auto-launch is unavailable.`);
     }
@@ -243,25 +243,31 @@ async function getFreePort() {
 }
 
 async function closeLaunchedBrowser(baseUrl, child, profile) {
-    let closed = false;
     try {
-        const version = await cdpJson(baseUrl, '/json/version');
-        if (version.webSocketDebuggerUrl) {
-            const connection = new CdpConnection(version.webSocketDebuggerUrl);
-            await connection.ready;
-            await connection.send('Browser.close').catch(() => {});
-            connection.close();
-            closed = await waitForCdpDown(baseUrl, 5000);
-        }
+        await closeBrowserViaCdp(baseUrl);
     } catch {
         // Browser.close can fail if Chrome exits first; the child pid is the final authority.
     }
 
-    if (!closed) {
-        stopProcess(child.pid);
-        await waitForProcessExit(child, 3000);
+    const cdpDown = await waitForCdpDown(baseUrl, 5000);
+    const exited = await waitForProcessExit(child, 1000);
+    if (!cdpDown || !exited) {
+        await terminateChromeProcess(child, 3000);
+        await waitForCdpDown(baseUrl, 3000);
     }
     cleanupProfile(profile);
+}
+
+async function closeBrowserViaCdp(baseUrl) {
+    const version = await cdpJson(baseUrl, '/json/version');
+    if (!version.webSocketDebuggerUrl) {
+        return;
+    }
+
+    const connection = new CdpConnection(version.webSocketDebuggerUrl);
+    await connection.ready;
+    await connection.send('Browser.close').catch(() => {});
+    connection.close();
 }
 
 function cleanupProfile(profile) {
@@ -483,12 +489,29 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function stopProcess(pid) {
+async function terminateChromeProcess(child, timeoutMs) {
+    stopProcess(child?.pid, 'SIGTERM');
+    if (await waitForProcessExit(child, timeoutMs)) {
+        return;
+    }
+    stopProcess(child?.pid, 'SIGKILL');
+    await waitForProcessExit(child, 1000);
+}
+
+function stopProcess(pid, signal) {
     if (!pid) {
         return;
     }
     try {
-        process.kill(pid, 'SIGTERM');
+        if (process.platform !== 'win32') {
+            process.kill(-pid, signal);
+            return;
+        }
+    } catch {
+        // Fall back to the direct child pid if the process group is already gone.
+    }
+    try {
+        process.kill(pid, signal);
     } catch {
         // The Chrome process may already have exited after Browser.close.
     }
