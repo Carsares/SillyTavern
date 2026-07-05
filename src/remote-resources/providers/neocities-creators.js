@@ -53,6 +53,43 @@ const SOURCES = Object.freeze([
         tag: 'JSON preset',
         jsonPathPattern: /^\/ST_Settings\/.+\.json$/iu,
     },
+    {
+        id: 'luminarium-cards',
+        name: 'The Luminarium Cards',
+        author: 'illuminaryidiot',
+        pageUrl: 'https://illuminaryidiot.neocities.org/cardpage',
+        resourceType: REMOTE_RESOURCE_TYPES.CHARACTER,
+        tag: 'PNG character card',
+        filePathPattern: /^\/Cards\/.+\.png$/iu,
+    },
+    {
+        id: 'luminarium-lorebooks',
+        name: 'The Luminarium Lorebooks',
+        author: 'illuminaryidiot',
+        pageUrl: 'https://illuminaryidiot.neocities.org/lorebookpage',
+        resourceType: REMOTE_RESOURCE_TYPES.WORLDBOOK,
+        tag: 'JSON worldbook',
+        jsonPathPattern: /^\/JSONs\/(?:CometTL|Ultimate%20Stat%20Autism_1\.5|Animalian%20Parasite|Hagworld|Maidworld|Expanded%20Skreld%20Universe)\.json$/iu,
+    },
+    {
+        id: 'luminarium-presets',
+        name: 'The Luminarium Presets',
+        author: 'illuminaryidiot',
+        pageUrl: 'https://illuminaryidiot.neocities.org/presets',
+        resourceType: REMOTE_RESOURCE_TYPES.PRESET,
+        tag: 'JSON preset',
+        jsonPathPattern: /^\/JSONs\/.+\.json$/iu,
+        excludePathPattern: /^\/JSONs\/(?:thinking|secondary_cot|_del_|__del_)\.json$/iu,
+    },
+    {
+        id: 'kintsugi-preset',
+        name: 'The Kintsugi Preset',
+        author: 'Kintsugi',
+        pageUrl: 'https://kintsugi-w.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.PRESET,
+        tag: 'JSON preset',
+        jsonPathPattern: /^\/prompt\/kintsugi-v[\w-]+\.json$/iu,
+    },
 ]);
 
 let cache = {
@@ -118,9 +155,14 @@ async function readResources() {
     }
 
     const pages = await Promise.all(SOURCES.map(readSourcePage));
+    const items = uniqueById(pages.flatMap(page => page.items));
+    if (pages.some(page => page.failed)) {
+        return items;
+    }
+
     cache = {
         expiresAt: Date.now() + CACHE_TTL_MS,
-        items: uniqueById(pages.flat()),
+        items,
     };
     return cache.items;
 }
@@ -128,13 +170,14 @@ async function readResources() {
 async function readSourcePage(source) {
     try {
         const { text } = await fetchText(source.pageUrl, { timeoutMs: 12000 });
-        return extractResourceReferences(text)
+        const items = extractResourceReferences(text)
             .map(reference => ({ reference, fileUrl: parseAbsoluteUrl(reference.href, source.pageUrl) }))
             .filter(item => item.fileUrl && isAllowedSourceFile(source, item.fileUrl))
             .map(item => convertReferenceToResource(source, item.reference, item.fileUrl))
             .filter(Boolean);
+        return { items, failed: false };
     } catch {
-        return [];
+        return { items: [], failed: true };
     }
 }
 
@@ -169,14 +212,23 @@ function getResourceTitle(source, reference, fileUrl) {
     const label = stripHtml(reference.label);
     if (source.resourceType === REMOTE_RESOURCE_TYPES.CHARACTER) {
         const parts = fileUrl.pathname.split('/').filter(Boolean);
-        return formatTitle(parts.at(-2) || label || path.basename(fileUrl.pathname, path.extname(fileUrl.pathname)));
+        const parent = parts.at(-2) || '';
+        const fileName = path.basename(fileUrl.pathname, path.extname(fileUrl.pathname));
+        return formatTitle(!/^(?:cards?|characters?|bots?)$/iu.test(parent) ? parent : label || fileName);
     }
     return formatTitle(path.basename(fileUrl.pathname, path.extname(fileUrl.pathname)) || label);
 }
 
 function isAllowedSourceFile(source, fileUrl) {
+    if (source.excludePathPattern?.test(fileUrl.pathname)) {
+        return false;
+    }
     if (source.resourceType === REMOTE_RESOURCE_TYPES.CHARACTER) {
-        return isCharHubCardUrl(fileUrl);
+        return isCharHubCardUrl(fileUrl) || (
+            fileUrl.origin === new URL(source.pageUrl).origin
+            && path.extname(fileUrl.pathname).toLowerCase() === '.png'
+            && source.filePathPattern?.test(fileUrl.pathname)
+        );
     }
     if (source.resourceType === REMOTE_RESOURCE_TYPES.PRESET) {
         return fileUrl.origin === new URL(source.pageUrl).origin && path.extname(fileUrl.pathname).toLowerCase() === '.json' && (!source.jsonPathPattern || source.jsonPathPattern.test(fileUrl.pathname));
@@ -212,6 +264,9 @@ function validateDownloadedBuffer(buffer, resourceType) {
     if (resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK && !isWorldbookJson(json)) {
         throw new Error('Neocities creator JSON does not contain SillyTavern worldbook entries.');
     }
+    if (resourceType === REMOTE_RESOURCE_TYPES.PRESET && !isPresetJson(json)) {
+        throw new Error('Neocities creator JSON does not contain SillyTavern preset fields.');
+    }
 }
 
 function parseJsonBuffer(buffer) {
@@ -229,7 +284,12 @@ function parseJsonBuffer(buffer) {
 function isWorldbookJson(json) {
     const entries = json?.entries;
     const values = Array.isArray(entries) ? entries : entries && typeof entries === 'object' ? Object.values(entries) : [];
-    return values.some(entry => entry && typeof entry === 'object' && Array.isArray(entry.key) && entry.key.length && typeof entry.content === 'string' && entry.content.trim());
+    return values.some(entry => entry && typeof entry === 'object' && Array.isArray(entry.key) && typeof entry.content === 'string' && entry.content.trim());
+}
+
+function isPresetJson(json) {
+    return ['temperature', 'top_p', 'repetition_penalty', 'story_string', 'chat_start', 'prompt_order', 'system_prompt', 'chat_completion_source', 'openai_model', 'claude_model', 'order']
+        .some(key => Object.hasOwn(json, key));
 }
 
 function parseResourceId(value) {

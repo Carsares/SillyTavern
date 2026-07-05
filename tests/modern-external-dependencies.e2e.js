@@ -170,6 +170,30 @@ async function cleanupNewRemoteRecords(page, beforeIds, providerId) {
     }
 }
 
+async function searchOnlyRemoteProvider(page, tracker, providerId, resourceType, query) {
+    await gotoModern(page, 'remoteResources', '远程资源');
+    await expect(page.locator(`[data-remote-provider="${providerId}"]`)).toBeVisible({ timeout: 30_000 });
+
+    const providers = page.locator('[data-remote-provider]');
+    const providerCount = await providers.count();
+    for (let index = 0; index < providerCount; index++) {
+        const checkbox = providers.nth(index);
+        const currentProviderId = await checkbox.getAttribute('data-remote-provider');
+        const shouldCheck = currentProviderId === providerId;
+        if (shouldCheck && !(await checkbox.isChecked())) {
+            await checkbox.check();
+        } else if (!shouldCheck && await checkbox.isChecked()) {
+            await checkbox.uncheck();
+        }
+    }
+
+    const searchCountBefore = tracker.count('/api/remote-resources/search');
+    await page.locator('[data-remote-resource-type]').selectOption(resourceType);
+    await page.locator('[data-remote-resource-query]').fill(query);
+    await page.locator('[data-search-remote-resources]').click();
+    await expect.poll(() => tracker.count('/api/remote-resources/search'), { timeout: 120_000 }).toBeGreaterThan(searchCountBefore);
+}
+
 test.describe('Modern external dependency integration', () => {
     test.describe.configure({ mode: 'serial' });
     test.skip(!externalEnabled, 'Set MODERN_EXTERNAL_E2E=1 to run tests that call external networks and vendors.');
@@ -639,6 +663,131 @@ test.describe('Modern external dependency integration', () => {
                     && record.action === 'download'
                     && record.resourceType === 'preset'
                     && record.localId === 'kunaris_emerald_preset_for_erato.json'
+                ));
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
+    test('imports a Luminarium Neocities character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'neocities-creators', 'character', 'Rania');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'Rania' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('The Luminarium Cards');
+            await expect(card).toContainText('角色卡');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-luminarium-character-rania.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-luminarium-character-rania-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'neocities-creators' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'character');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
+    test('imports a Luminarium Neocities worldbook from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'neocities-creators', 'worldbook', 'Comet');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'CometTL' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('The Luminarium Lorebooks');
+            await expect(card).toContainText('世界书');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-luminarium-worldbook-comet.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/worldinfo/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/worldinfo/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '世界书已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-luminarium-worldbook-comet-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'neocities-creators' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'worldbook');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
+    test('downloads the Kintsugi Neocities preset from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'neocities-creators', 'preset', 'Kintsugi');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'kintsugi v4 5' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('The Kintsugi Preset');
+            await expect(card).toContainText('预设');
+            await expect(card.locator('[data-download-remote-resource]')).toHaveCount(0);
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-kintsugi-preset.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '下载已开始' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-kintsugi-preset-downloaded.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => (
+                    record.providerId === 'neocities-creators'
+                    && !recordIdsBefore.has(record.id)
+                    && record.action === 'download'
+                    && record.resourceType === 'preset'
+                    && record.localId === 'kintsugi-v4-5.json'
                 ));
             }, { timeout: 120_000 }).toBe(true);
         } finally {
