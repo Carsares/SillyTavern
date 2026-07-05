@@ -6,6 +6,8 @@ import { chubDirectProvider } from './providers/chub-direct.js';
 import { characterTavernProvider } from './providers/character-tavern.js';
 import { aiCharacterCardsProvider } from './providers/ai-character-cards.js';
 import { loreBaryProvider } from './providers/lorebary.js';
+import { bronyaRandArchiveProvider } from './providers/bronya-rand-archive.js';
+import { jannyAiProvider } from './providers/jannyai.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -17,6 +19,8 @@ const PROVIDERS = [
     characterTavernProvider,
     aiCharacterCardsProvider,
     loreBaryProvider,
+    bronyaRandArchiveProvider,
+    jannyAiProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {

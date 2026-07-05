@@ -47,9 +47,11 @@
 - 匿名 provider 默认可用；GitHub token、Chub cookie、RisuRealm token 通过现有 `secrets.json` 保存，前端只显示遮罩状态。
 - 导入后的来源关系写入用户目录下的 `remote-resources/imports.json`，不污染角色卡、世界书或扩展自身文件。
 - Chub 搜索不直接从 Node 请求 `ro.chub.ai/search`，而是每次自动拉起独立的后台 headless Chrome/CDP 打开 Chub 搜索页，读取前端实际消费的 JSON 响应，并在调用完成后关闭进程；也可通过 `SILLYTAVERN_CHUB_CDP_URL` 显式连接已登录 Chrome 用于调试或手动登录态。
+- JannyAI 搜索使用公开 Meilisearch 角色索引，下载时读取匿名详情页里的 SSR 角色字段并转换为 SillyTavern 角色 JSON。
 - Character Tavern 搜索使用 `character-tavern.com/api/search/cards`，下载时读取 `api/character/:author/:name` 并转换为 SillyTavern 角色 JSON。
 - AICharacterCards 搜索使用 `api.aicharactercards.com/api/cards`，下载通过 `/cards/:id/versions` 获取当前 PNG 角色卡。
 - LoreBary 搜索使用 `/api/lorebook/public` 和 `/api/plugin`，世界书可导入，LoreBary plugin 作为 `preset` 类型下载，不当作 SillyTavern 扩展安装。
+- Bronya Rand Archive 搜索读取静态 `world-lore-books` 索引，只允许下载归档内 `world-info/**/*.json` 世界书。
 - GitLab 扩展搜索使用 GitLab 公开 Projects API，只返回可安装 Git URL。
 
 Chub CDP 搜索可选环境变量：
