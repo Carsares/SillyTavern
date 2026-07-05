@@ -1,5 +1,8 @@
 import path from 'node:path';
 
+import extractChunks from 'png-chunks-extract';
+import PNGtext from 'png-chunk-text';
+
 import {
     REMOTE_RESOURCE_TYPES,
     clampLimit,
@@ -13,10 +16,14 @@ import {
 const INDEX_URL = 'https://chatbots.neocities.org/';
 const CACHE_MS = 10 * 60 * 1000;
 const MAX_MEMBER_PAGES = 60;
+const MAX_MEMBER_SUBPAGES = 4;
 const MEMBER_FETCH_CONCURRENCY = 8;
 const NEOCITIES_HOST_SUFFIX = '.neocities.org';
+const CATBOX_FILE_HOST = 'files.catbox.moe';
+const CATBOX_CARD_PATH_PATTERN = /^\/[a-z0-9]+\.png$/iu;
 const JSON_PRESET_PATH_PATTERN = /\/(prompts?|presets?|novelrp|settings?)\//iu;
 const CARD_PATH_PATTERN = /\/(cards?|characters?|bots?)\//iu;
+const MEMBER_SUBPAGE_PATH_PATTERN = /\/[^?#]*(?:cards?|characters?|bots?|mybots)[^/?#]*(?:$|[?#])/iu;
 
 let cachedResources = null;
 let cachedAt = 0;
@@ -50,6 +57,7 @@ export const chatbotsWebringProvider = {
             throw new Error(`Chatbots Webring resource type mismatch: expected ${resource.resourceType}.`);
         }
         validateResourceUrls(resource);
+        await verifyExternalResourceLink(resource);
 
         const { response, buffer } = await fetchBuffer(resource.fileUrl);
         validateDownloadedBuffer(buffer, resource.resourceType, resource.fileUrl);
@@ -80,6 +88,18 @@ async function readMemberPage(url) {
     try {
         const { text } = await fetchText(url, { timeoutMs: 12000 });
         const siteTitle = stripHtml(text.match(/<title[^>]*>([\s\S]*?)<\/title>/iu)?.[1] || getSiteAuthor(url));
+        const resources = extractDownloadLinks(text, url, siteTitle);
+        const subpageUrls = extractMemberSubpageUrls(text, url).slice(0, MAX_MEMBER_SUBPAGES);
+        const subpageResults = await Promise.all(subpageUrls.map(subpageUrl => readMemberSubpage(subpageUrl, siteTitle)));
+        return [...resources, ...subpageResults.flat()];
+    } catch {
+        return [];
+    }
+}
+
+async function readMemberSubpage(url, siteTitle) {
+    try {
+        const { text } = await fetchText(url, { timeoutMs: 12000 });
         return extractDownloadLinks(text, url, siteTitle);
     } catch {
         return [];
@@ -98,21 +118,34 @@ function extractMemberUrls(html) {
 
 function extractDownloadLinks(html, pageUrl, siteTitle) {
     const page = new URL(pageUrl);
-    return extractAnchors(html)
-        .map(anchor => ({ anchor, url: parseAbsoluteUrl(anchor.href, pageUrl) }))
-        .filter(({ url }) => url && url.origin === page.origin)
-        .filter(({ url }) => isSupportedFilePath(url.pathname))
-        .map(({ anchor, url }) => convertLinkToResource(anchor, url, page, siteTitle))
+    return extractResourceReferences(html)
+        .map(reference => ({ reference, url: parseAbsoluteUrl(reference.href, pageUrl) }))
+        .filter(({ url }) => url && isAllowedFileUrl(url, page))
+        .filter(({ url }) => isSupportedFilePath(url))
+        .map(({ reference, url }) => convertLinkToResource(reference, url, page, siteTitle))
         .filter(Boolean);
 }
 
-function convertLinkToResource(anchor, fileUrl, pageUrl, siteTitle) {
-    const resourceType = getResourceTypeFromPath(fileUrl.pathname);
+function extractMemberSubpageUrls(html, pageUrl) {
+    const page = new URL(pageUrl);
+    return uniqueValues(extractAnchors(html)
+        .map(anchor => parseAbsoluteUrl(anchor.href, pageUrl))
+        .filter(url => url && url.origin === page.origin)
+        .filter(url => isHtmlLikePath(url.pathname) && MEMBER_SUBPAGE_PATH_PATTERN.test(url.pathname))
+        .map(url => {
+            url.hash = '';
+            return url.toString();
+        })
+        .filter(url => url !== page.toString()));
+}
+
+function convertLinkToResource(reference, fileUrl, pageUrl, siteTitle) {
+    const resourceType = getResourceTypeFromPath(fileUrl);
     if (!resourceType) {
         return null;
     }
 
-    const title = formatTitle(stripHtml(anchor.label) || path.basename(fileUrl.pathname, path.extname(fileUrl.pathname)));
+    const title = formatTitle(stripHtml(reference.label) || path.basename(fileUrl.pathname, path.extname(fileUrl.pathname)));
     const author = getSiteAuthor(pageUrl.toString());
     return {
         id: formatResourceId(pageUrl.toString(), fileUrl.toString(), resourceType),
@@ -123,13 +156,20 @@ function convertLinkToResource(anchor, fileUrl, pageUrl, siteTitle) {
         sourceUrl: pageUrl.toString(),
         downloadUrl: fileUrl.toString(),
         thumbnailUrl: resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? fileUrl.toString() : '',
-        tags: ['Chatbots Webring', author, resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? 'PNG card' : 'JSON preset'],
+        tags: ['Chatbots Webring', author, isCatboxFileUrl(fileUrl) ? 'Catbox card' : resourceType === REMOTE_RESOURCE_TYPES.CHARACTER ? 'PNG card' : 'JSON preset'],
         capabilities: { download: true },
         metadata: {
             pageUrl: pageUrl.toString(),
             fileUrl: fileUrl.toString(),
         },
     };
+}
+
+function extractResourceReferences(html) {
+    return [
+        ...extractAnchors(html),
+        ...extractImages(html),
+    ];
 }
 
 function extractAnchors(html) {
@@ -142,6 +182,27 @@ function extractAnchors(html) {
         });
     }
     return anchors;
+}
+
+function extractImages(html) {
+    const images = [];
+    const pattern = /<img\b([^>]*)>/giu;
+    for (const match of html.matchAll(pattern)) {
+        const src = getAttribute(match[1], 'src');
+        if (!src) {
+            continue;
+        }
+        images.push({
+            href: src,
+            label: getAttribute(match[1], 'alt') || '',
+        });
+    }
+    return images;
+}
+
+function getAttribute(attrs, name) {
+    const pattern = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, 'iu');
+    return pattern.exec(attrs)?.[2] || '';
 }
 
 function parseAbsoluteUrl(value, baseUrl) {
@@ -160,26 +221,35 @@ function isMemberHost(url) {
     return url.hostname.endsWith(NEOCITIES_HOST_SUFFIX) && url.hostname !== new URL(INDEX_URL).hostname;
 }
 
-function isSupportedFilePath(pathname) {
+function isAllowedFileUrl(fileUrl, pageUrl) {
+    return fileUrl.origin === pageUrl.origin || isCatboxFileUrl(fileUrl);
+}
+
+function isHtmlLikePath(pathname) {
     const ext = path.extname(pathname).toLowerCase();
+    return !ext || ext === '.html' || ext === '.htm';
+}
+
+function isSupportedFilePath(fileUrl) {
+    const ext = path.extname(fileUrl.pathname).toLowerCase();
     if (ext === '.png') {
-        return CARD_PATH_PATTERN.test(pathname);
+        return CARD_PATH_PATTERN.test(fileUrl.pathname) || isCatboxFileUrl(fileUrl);
     }
     if (ext === '.json') {
-        return CARD_PATH_PATTERN.test(pathname) || JSON_PRESET_PATH_PATTERN.test(pathname);
+        return CARD_PATH_PATTERN.test(fileUrl.pathname) || JSON_PRESET_PATH_PATTERN.test(fileUrl.pathname);
     }
     return false;
 }
 
-function getResourceTypeFromPath(pathname) {
-    const ext = path.extname(pathname).toLowerCase();
-    if (ext === '.png' && CARD_PATH_PATTERN.test(pathname)) {
+function getResourceTypeFromPath(fileUrl) {
+    const ext = path.extname(fileUrl.pathname).toLowerCase();
+    if (ext === '.png' && (CARD_PATH_PATTERN.test(fileUrl.pathname) || isCatboxFileUrl(fileUrl))) {
         return REMOTE_RESOURCE_TYPES.CHARACTER;
     }
-    if (ext === '.json' && CARD_PATH_PATTERN.test(pathname)) {
+    if (ext === '.json' && CARD_PATH_PATTERN.test(fileUrl.pathname)) {
         return REMOTE_RESOURCE_TYPES.CHARACTER;
     }
-    if (ext === '.json' && JSON_PRESET_PATH_PATTERN.test(pathname)) {
+    if (ext === '.json' && JSON_PRESET_PATH_PATTERN.test(fileUrl.pathname)) {
         return REMOTE_RESOURCE_TYPES.PRESET;
     }
     return '';
@@ -205,7 +275,7 @@ function parseResourceId(value) {
 function validateResourceUrls(resource) {
     const pageUrl = parseAbsoluteUrl(resource.pageUrl, INDEX_URL);
     const fileUrl = parseAbsoluteUrl(resource.fileUrl, INDEX_URL);
-    if (!pageUrl || !fileUrl || !isMemberHost(pageUrl) || fileUrl.origin !== pageUrl.origin || !isSupportedFilePath(fileUrl.pathname)) {
+    if (!pageUrl || !fileUrl || !isMemberHost(pageUrl) || !isAllowedFileUrl(fileUrl, pageUrl) || !isSupportedFilePath(fileUrl)) {
         throw new Error('Chatbots Webring resource URL is not allowed.');
     }
     if (![REMOTE_RESOURCE_TYPES.CHARACTER, REMOTE_RESOURCE_TYPES.PRESET].includes(resource.resourceType)) {
@@ -213,12 +283,32 @@ function validateResourceUrls(resource) {
     }
 }
 
+async function verifyExternalResourceLink(resource) {
+    const pageUrl = parseAbsoluteUrl(resource.pageUrl, INDEX_URL);
+    const fileUrl = parseAbsoluteUrl(resource.fileUrl, INDEX_URL);
+    if (!pageUrl || !fileUrl || !isCatboxFileUrl(fileUrl)) {
+        return;
+    }
+
+    const { text } = await fetchText(pageUrl.toString(), { timeoutMs: 12000 });
+    const linked = extractResourceReferences(text)
+        .map(reference => parseAbsoluteUrl(reference.href, pageUrl.toString()))
+        .some(url => url?.toString() === fileUrl.toString());
+    if (!linked) {
+        throw new Error('Chatbots Webring external resource is not linked from the member page.');
+    }
+}
+
 function validateDownloadedBuffer(buffer, resourceType, fileUrl) {
-    const ext = path.extname(new URL(fileUrl).pathname).toLowerCase();
+    const parsedUrl = new URL(fileUrl);
+    const ext = path.extname(parsedUrl.pathname).toLowerCase();
     if (ext === '.png') {
         const isPng = buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
         if (!isPng || resourceType !== REMOTE_RESOURCE_TYPES.CHARACTER) {
             throw new Error('Chatbots Webring character card is not a PNG file.');
+        }
+        if (isCatboxFileUrl(parsedUrl) && !hasCharacterCardText(buffer)) {
+            throw new Error('Chatbots Webring Catbox PNG does not contain character card metadata.');
         }
         return;
     }
@@ -231,6 +321,21 @@ function validateDownloadedBuffer(buffer, resourceType, fileUrl) {
     } catch (error) {
         throw new Error(`Chatbots Webring JSON is invalid: ${error.message}`);
     }
+}
+
+function hasCharacterCardText(buffer) {
+    try {
+        const textChunks = extractChunks(new Uint8Array(buffer))
+            .filter(chunk => chunk.name === 'tEXt')
+            .map(chunk => PNGtext.decode(chunk.data));
+        return textChunks.some(chunk => ['chara', 'ccv3'].includes(String(chunk.keyword || '').toLowerCase()) && chunk.text);
+    } catch {
+        return false;
+    }
+}
+
+function isCatboxFileUrl(url) {
+    return url.protocol === 'https:' && url.hostname === CATBOX_FILE_HOST && CATBOX_CARD_PATH_PATTERN.test(url.pathname);
 }
 
 function getDownloadFileName(fileUrl, resourceType) {
