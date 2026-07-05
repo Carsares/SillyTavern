@@ -138,7 +138,7 @@ export function createRemoteResourceComponents(ctx) {
                     <i class="fa-solid ${running ? 'fa-circle-notch fa-spin' : item.resourceType === 'extension' ? 'fa-download' : 'fa-file-import'}"></i>
                     ${actionLabel}
                 </button>
-                ${item.capabilities?.download && !['asset', 'extension'].includes(item.resourceType) ? `
+                ${item.capabilities?.download && ['character', 'worldbook'].includes(item.resourceType) ? `
                     <button class="secondary-button" type="button" data-download-remote-resource="${index}" ${running ? 'disabled' : ''}>
                         <i class="fa-solid fa-cloud-arrow-down"></i>
                         下载

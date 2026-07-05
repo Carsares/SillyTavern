@@ -60,7 +60,7 @@
 - Botbooru 搜索使用匿名 `/posts/` 角色列表和 `/api/lorebooks` 世界书列表，默认附加 `sfw_only=true`；角色下载使用 `/download/png/:id` 保留 PNG 角色卡，世界书下载使用 `/api/lorebooks/:number/download.json`。Botbooru token 槽位仅预留给后续登录态扩展。
 - Hugging Face ST Repos 搜索已验证的公开 SillyTavern 资源仓库文件树，只返回角色卡、世界书和预设 JSON；世界书源包含 `sphiratrioth666/Lorebooks_as_ACTIVE_scenario_and_character_guidance_tool` 和 `sphiratrioth666/GM-5_Game_Mistress_Roleplaying_System` 的 `01. WORLD LOREBOOKS/` 目录。
 - Chatbots Webring 搜索 `chatbots.neocities.org` 静态成员站点，只抓取成员页和明确资源子页里的角色卡/世界书/预设文件、`/JSONs/` 预设 JSON、`/lorebooks/` 世界书 JSON，以及成员页明确引用的 Catbox / Chub CDN PNG 角色卡。
-- Neocities Creator Sources 只抓取固定验证过的独立创作者页：Kylaci 的 Chub CDN PNG 角色卡、Graystone Universe 的世界书 JSON、LeafCanFly 的同源 SillyTavern 预设 JSON；下载前会回读来源页确认直链仍公开存在。
+- Neocities Creator Sources 只抓取固定验证过的独立创作者页：Kylaci 的 Chub CDN PNG 角色卡、Graystone Universe 的世界书 JSON、LeafCanFly 的同源 SillyTavern 预设 JSON、Akiri 的 `ST_Settings/*.json` 上下文模板和采样预设；下载前会回读来源页确认直链仍公开存在。
 - Muah AI Cards 搜索 `card.muah.ai` WordPress REST 帖子接口，并下载帖子 featured media 的 PNG 角色卡。
 - Chara Cards 搜索 `edge-api.chara.cards/api/bot/search` 公开角色接口，下载时读取 `/bot/:id/public` 并转换为 SillyTavern 角色 JSON。
 - Pygmalion Chat 搜索公开 Connect JSON 角色卡接口，下载时读取公开详情并转换为 SillyTavern 角色 JSON。
@@ -187,6 +187,7 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 n
 - AICG Rentry Directory：只勾选 AICG Rentry Directory，角色卡搜索 `Drasna`，确认出现 Character Cards Rentry List 结果并可导入 Catbox PNG 角色卡。
 - Character Archive Catbox：只勾选 Character Archive Catbox，角色卡搜索 `Drasna`，确认出现 Character Card Archive 的 generic/catbox 结果并可导入原始 Catbox PNG 角色卡。
 - Blobfish23 Neocities：只勾选 Blobfish23 Neocities，角色卡搜索 `Alyona` 确认可导入 Catbox PNG；世界书搜索 `Tarkov` 确认可导入 Catbox JSON 世界书。
+- Neocities Creator Sources：只勾选 Neocities Creator Sources，预设搜索 `Erato`，确认出现 Akiri `ST_Settings` JSON 并可下载。
 - 凭据槽位：资源站账号页保存一个临时 GitHub token 后立即删除，确认只显示遮罩状态。
 
 ## 新版开发规则

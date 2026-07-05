@@ -582,6 +582,70 @@ test.describe('Modern external dependency integration', () => {
         }
     });
 
+    test('downloads an Akiri Neocities preset from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await expect(page.locator('[data-remote-provider="neocities-creators"]')).toBeVisible({ timeout: 30_000 });
+
+            const providers = page.locator('[data-remote-provider]');
+            const providerCount = await providers.count();
+            for (let index = 0; index < providerCount; index++) {
+                const checkbox = providers.nth(index);
+                const providerId = await checkbox.getAttribute('data-remote-provider');
+                const shouldCheck = providerId === 'neocities-creators';
+                if (shouldCheck && !(await checkbox.isChecked())) {
+                    await checkbox.check();
+                } else if (!shouldCheck && await checkbox.isChecked()) {
+                    await checkbox.uncheck();
+                }
+            }
+
+            await page.locator('[data-remote-resource-type]').selectOption('preset');
+            await page.locator('[data-remote-resource-query]').fill('Erato');
+            await page.locator('[data-search-remote-resources]').click();
+
+            await expectFrontendRequest(tracker, '/api/remote-resources/search');
+            const card = page.locator('.remote-resource-card', { hasText: 'Akiri' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('kunaris emerald preset for erato');
+            await expect(card).toContainText('预设');
+            await expect(card.locator('[data-download-remote-resource]')).toHaveCount(0);
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-akiri-erato.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '下载已开始' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'neocities-creators-akiri-erato-downloaded.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => (
+                    record.providerId === 'neocities-creators'
+                    && !recordIdsBefore.has(record.id)
+                    && record.action === 'download'
+                    && record.resourceType === 'preset'
+                    && record.localId === 'kunaris_emerald_preset_for_erato.json'
+                ));
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'neocities-creators');
+        }
+    });
+
     test('installs, updates, and deletes a public git extension from the modern UI through the real backend', async ({ page }) => {
         test.skip(!externalExtensionName, 'MODERN_EXTERNAL_EXTENSION_URL must resolve to a repository folder name.');
 

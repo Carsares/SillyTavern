@@ -44,6 +44,15 @@ const SOURCES = Object.freeze([
         tag: 'JSON worldbook',
         jsonPathPattern: /^\/lorebook\/.+\.json$/iu,
     },
+    {
+        id: 'akiri-settings',
+        name: 'Akiri ST Settings',
+        author: 'Akiri',
+        pageUrl: 'https://akiri11.neocities.org/',
+        resourceType: REMOTE_RESOURCE_TYPES.PRESET,
+        tag: 'JSON preset',
+        jsonPathPattern: /^\/ST_Settings\/.+\.json$/iu,
+    },
 ]);
 
 let cache = {
@@ -170,7 +179,7 @@ function isAllowedSourceFile(source, fileUrl) {
         return isCharHubCardUrl(fileUrl);
     }
     if (source.resourceType === REMOTE_RESOURCE_TYPES.PRESET) {
-        return fileUrl.origin === new URL(source.pageUrl).origin && path.extname(fileUrl.pathname).toLowerCase() === '.json';
+        return fileUrl.origin === new URL(source.pageUrl).origin && path.extname(fileUrl.pathname).toLowerCase() === '.json' && (!source.jsonPathPattern || source.jsonPathPattern.test(fileUrl.pathname));
     }
     if (source.resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK) {
         return fileUrl.origin === new URL(source.pageUrl).origin && path.extname(fileUrl.pathname).toLowerCase() === '.json' && (!source.jsonPathPattern || source.jsonPathPattern.test(fileUrl.pathname));
