@@ -52,6 +52,7 @@
 - AICharacterCards 搜索使用 `api.aicharactercards.com/api/cards`，下载通过 `/cards/:id/versions` 获取当前 PNG 角色卡。
 - LoreBary 搜索使用 `/api/lorebook/public` 和 `/api/plugin`，世界书可导入，LoreBary plugin 作为 `preset` 类型下载，不当作 SillyTavern 扩展安装。
 - Bronya Rand Archive 搜索读取静态 `world-lore-books` 索引，只允许下载归档内 `world-info/**/*.json` 世界书。
+- Hugging Face ST Repos 搜索已验证的公开 SillyTavern 资源仓库文件树，只返回角色卡和预设 JSON。
 - GitLab 扩展搜索使用 GitLab 公开 Projects API，只返回可安装 Git URL。
 
 Chub CDP 搜索可选环境变量：
