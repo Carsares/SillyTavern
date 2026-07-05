@@ -961,6 +961,46 @@ test.describe('Modern external dependency integration', () => {
         }
     });
 
+    test('imports a Snombler Neocities character from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+        const screenshotDir = path.resolve('tests/test-results/remote-resources-providers');
+
+        try {
+            await searchOnlyRemoteProvider(page, tracker, 'snombler-neocities', 'character', 'Bethel');
+
+            const card = page.locator('.remote-resource-card', { hasText: 'Bethel' }).first();
+            await expect(card).toBeVisible({ timeout: 120_000 });
+            await expect(card).toContainText('Snombler');
+            await expect(card).toContainText('角色卡');
+
+            fs.mkdirSync(screenshotDir, { recursive: true });
+            await page.screenshot({ path: path.join(screenshotDir, 'snombler-neocities-character-bethel.png'), fullPage: true });
+
+            const downloadCountBefore = tracker.count('/api/remote-resources/download');
+            const importCountBefore = tracker.count('/api/characters/import');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await card.locator('[data-import-remote-resource]').click();
+
+            await expect.poll(() => tracker.count('/api/remote-resources/download'), { timeout: 120_000 }).toBeGreaterThan(downloadCountBefore);
+            await expect.poll(() => tracker.count('/api/characters/import'), { timeout: 120_000 }).toBeGreaterThan(importCountBefore);
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+            await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible({ timeout: 120_000 });
+
+            await page.screenshot({ path: path.join(screenshotDir, 'snombler-neocities-character-bethel-imported.png'), fullPage: true });
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'snombler-neocities' && !recordIdsBefore.has(record.id) && record.action === 'import' && record.localType === 'character');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'snombler-neocities');
+        }
+    });
+
     test('installs, updates, and deletes a public git extension from the modern UI through the real backend', async ({ page }) => {
         test.skip(!externalExtensionName, 'MODERN_EXTERNAL_EXTENSION_URL must resolve to a repository folder name.');
 

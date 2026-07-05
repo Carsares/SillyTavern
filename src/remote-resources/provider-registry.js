@@ -31,6 +31,7 @@ import { aicgRentryDirectoryProvider } from './providers/aicg-rentry-directory.j
 import { characterArchiveCatboxProvider } from './providers/character-archive-catbox.js';
 import { blobfish23NeocitiesProvider } from './providers/blobfish23-neocities.js';
 import { malliebotsProvider } from './providers/malliebots.js';
+import { snomblerNeocitiesProvider } from './providers/snombler-neocities.js';
 import { getRemoteCredentialState } from './credentials.js';
 
 const PROVIDERS = [
@@ -67,6 +68,7 @@ const PROVIDERS = [
     characterArchiveCatboxProvider,
     blobfish23NeocitiesProvider,
     malliebotsProvider,
+    snomblerNeocitiesProvider,
 ];
 
 export function getRemoteResourceProviders(directories) {
