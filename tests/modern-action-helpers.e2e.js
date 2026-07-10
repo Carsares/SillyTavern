@@ -1,3 +1,4 @@
+/* global globalThis */
 import { test, expect } from '@playwright/test';
 import { createBackgroundFolderActions } from '../public/modern/actions/background-folders.js';
 import { createCharacterDataHelpers } from '../public/modern/actions/character-data.js';
@@ -5,6 +6,8 @@ import { createChatBackupActions } from '../public/modern/actions/chat-backups.j
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
 import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
+import { createWorldbookDetailActions } from '../public/modern/actions/worldbook-details.js';
+import { createWorldbookEntryBulkActions } from '../public/modern/actions/worldbook-entry-bulk.js';
 import { createWorldbookEntryListHelpers } from '../public/modern/actions/worldbook-entry-list.js';
 
 function sortChats(chats) {
@@ -45,6 +48,63 @@ test.describe('Modern action helpers', () => {
         helpers.toggleWorldEntrySelection(1, false);
         expect(state.worldEntryList.selectedKeys).toEqual([]);
         expect(renderCount).toBeGreaterThan(0);
+    });
+
+    test('serializes worldbook entry updates without dropping concurrent changes', async () => {
+        const state = {
+            worldDetails: {
+                Lore: {
+                    entries: {
+                        1: { uid: 1, comment: 'One', disable: false },
+                        2: { uid: 2, comment: 'Two', disable: false },
+                    },
+                },
+            },
+            worldEntryList: { selectedKeys: [] },
+            errors: [],
+        };
+        let releaseFirstSave;
+        const firstSaveBlocked = new Promise(resolve => {
+            releaseFirstSave = resolve;
+        });
+        const savedDetails = [];
+        const detailActions = createWorldbookDetailActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url !== '/api/worldinfo/edit') {
+                    throw new Error(`Unexpected URL ${url}`);
+                }
+                savedDetails.push(structuredClone(options.body.data));
+                if (savedDetails.length === 1) {
+                    await firstSaveBlocked;
+                }
+                return { ok: true };
+            },
+            loadData: async () => {},
+            showToast: () => {},
+        });
+        const bulkActions = createWorldbookEntryBulkActions({
+            state,
+            updateWorldbookDetail: detailActions.updateWorldbookDetail,
+            render: () => {},
+            showToast: () => {},
+            formatNumber: String,
+            syncWorldEntryOriginalData: () => {},
+            deleteWorldEntryOriginalData: () => {},
+        });
+
+        const firstUpdate = bulkActions.toggleWorldEntry('Lore', '1');
+        const secondUpdate = bulkActions.toggleWorldEntry('Lore', '2');
+        releaseFirstSave();
+        await Promise.all([firstUpdate, secondUpdate]);
+
+        expect(savedDetails).toHaveLength(2);
+        expect(savedDetails[0].entries['1'].disable).toBe(true);
+        expect(savedDetails[0].entries['2'].disable).toBe(false);
+        expect(savedDetails[1].entries['1'].disable).toBe(true);
+        expect(savedDetails[1].entries['2'].disable).toBe(true);
+        expect(state.worldDetails.Lore.entries['1'].disable).toBe(true);
+        expect(state.worldDetails.Lore.entries['2'].disable).toBe(true);
     });
 
     test('converts character forms and payloads without losing nested fields', () => {
@@ -240,6 +300,117 @@ test.describe('Modern action helpers', () => {
         expect(state.chatMessages['alice.png::beta'][0]).toMatchObject({ mes: 'hello' });
     });
 
+    test('does not let a stale chat context request replace the current selection', async () => {
+        const alice = { avatar: 'alice.png', name: 'Alice' };
+        const bob = { avatar: 'bob.png', name: 'Bob' };
+        let selectedEntity = alice;
+        let resolveAliceChats;
+        const aliceChats = new Promise(resolve => {
+            resolveAliceChats = resolve;
+        });
+        const state = {
+            selected: { character: 'alice.png', chat: '' },
+            chatLists: {},
+            loadingChats: {},
+            errors: [],
+            chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+            chatMessages: {},
+            chatMetadata: {},
+        };
+        const messageRequests = [];
+        const helpers = createChatContextLoaderActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url === '/api/characters/chats') {
+                    return options.body.avatar_url === 'alice.png'
+                        ? aliceChats
+                        : [{ file_name: 'bob-chat.jsonl', file_id: 'bob-chat', last_mes: 2 }];
+                }
+                if (url === '/api/chats/get') {
+                    messageRequests.push(options.body.avatar_url);
+                    return [{ chat_metadata: {} }, { name: 'Bob', mes: 'current' }];
+                }
+                throw new Error(`Unexpected URL ${url}`);
+            },
+            render: () => {},
+            showToast: () => {},
+            getChatCacheKey: (contextKey, chatId) => `${contextKey}::${chatId}`,
+            getChatContextKey: item => item?.avatar || '',
+            getSelectedChatEntity: () => selectedEntity,
+            isGroupChatMode: () => false,
+            sortChats,
+        });
+
+        const stalePreparation = helpers.prepareChatForSelectedContext({ forceList: true });
+        selectedEntity = bob;
+        state.selected.character = 'bob.png';
+        await helpers.prepareChatForSelectedContext({ forceList: true });
+        expect(state.selected.chat).toBe('bob-chat');
+
+        resolveAliceChats([{ file_name: 'alice-chat.jsonl', file_id: 'alice-chat', last_mes: 1 }]);
+        await stalePreparation;
+
+        expect(state.selected.chat).toBe('bob-chat');
+        expect(messageRequests).toEqual(['bob.png']);
+    });
+
+    test('keeps a saved group chat file when the metadata response is uncertain', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const group = { id: 'group-1', name: 'Group One', chats: ['old-chat'], chat_id: 'old-chat' };
+            const state = {
+                characters: [],
+                groups: [group],
+                chatMode: 'group',
+                selected: { character: '', group: 'group-1', chat: 'old-chat' },
+                chatLists: {},
+                loadingChats: {},
+                errors: [],
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: {},
+                chatMetadata: {},
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                settings: {},
+            };
+            const requests = [];
+            const actions = createChatContextActions({
+                state,
+                apiFetch: async (url) => {
+                    requests.push(url);
+                    if (url === '/api/chats/group/save') {
+                        return { ok: true };
+                    }
+                    if (url === '/api/groups/edit') {
+                        throw new Error('response lost');
+                    }
+                    throw new Error(`Unexpected URL ${url}`);
+                },
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+
+            await expect(actions.createModernChatFile(group)).rejects.toThrow('response lost');
+
+            expect(requests).toEqual(['/api/chats/group/save', '/api/groups/edit']);
+            expect(group.chats).toEqual(['old-chat']);
+            expect(group.chat_id).toBe('old-chat');
+            expect(state.selected.chat).toBe('old-chat');
+            expect(state.chatMessages).toEqual({});
+            expect(state.chatMetadata).toEqual({});
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
     test('imports remote characters without requesting a filename-preserving replacement', async () => {
         const importedBodies = [];
         const state = {
@@ -303,6 +474,69 @@ test.describe('Modern action helpers', () => {
         });
     });
 
+    test('confirms and retries a remote worldbook import after a server conflict', async () => {
+        const importedBodies = [];
+        const confirmations = [];
+        const state = {
+            selected: { worldbook: '' },
+            worldbooks: [],
+            settingsBundle: { world_names: [] },
+            worldDetails: { Lore: { entries: { old: {} } } },
+            remoteResources: {
+                results: [{
+                    providerId: 'fixture-provider',
+                    providerName: 'Fixture Provider',
+                    id: 'remote-lore',
+                    resourceType: 'worldbook',
+                    title: 'Lore',
+                    sourceUrl: 'https://example.invalid/remote-lore',
+                    metadata: {},
+                }],
+                records: [],
+                operation: { key: '', running: false },
+            },
+        };
+        const actions = createRemoteResourceActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url === '/api/worldinfo/import') {
+                    importedBodies.push(options.body);
+                    if (importedBodies.length === 1) {
+                        const error = new Error('conflict');
+                        error.status = 409;
+                        throw error;
+                    }
+                    return { name: 'Lore' };
+                }
+                if (url === '/api/remote-resources/records') {
+                    return { id: 'record-lore', ...options.body };
+                }
+                throw new Error(`Unexpected URL ${url}`);
+            },
+            apiFetchResponse: async () => new Response(JSON.stringify({ entries: {} }), {
+                headers: { 'content-disposition': 'attachment; filename="Lore.json"' },
+            }),
+            loadData: async () => {},
+            render: () => {},
+            showToast: () => {},
+            callLegacyBridge: async () => {},
+            loadWorldDetail: async () => {},
+            confirmAction: message => {
+                confirmations.push(message);
+                return true;
+            },
+        });
+
+        await actions.importRemoteResource(0);
+
+        expect(confirmations).toEqual(['同名世界书“Lore”已存在，继续导入将覆盖现有内容。是否继续？']);
+        expect(importedBodies).toHaveLength(2);
+        expect(importedBodies[0].has('overwrite')).toBe(false);
+        expect(importedBodies[1].get('overwrite')).toBe('true');
+        expect(state.selected.worldbook).toBe('Lore');
+        expect(state.worldDetails.Lore).toBeUndefined();
+    });
+
     test('previews, restores, and deletes chat backups through backup helper', async () => {
         const state = {
             chatBackups: {
@@ -361,6 +595,54 @@ test.describe('Modern action helpers', () => {
         await helpers.confirmChatBackupDelete();
         expect(requests).toContainEqual({ url: '/api/backups/chat/delete', body: { name: 'backup.jsonl' } });
         expect(state.chatBackups.items).toEqual([]);
+    });
+
+    test('cancels backup restore when the selected chat context changes during download', async () => {
+        const alice = { avatar: 'alice.png', name: 'Alice' };
+        const bob = { avatar: 'bob.png', name: 'Bob' };
+        let selectedEntity = alice;
+        let finishDownload;
+        const downloadReady = new Promise(resolve => {
+            finishDownload = resolve;
+        });
+        const importedFiles = [];
+        const state = {
+            chatBackups: {
+                items: [],
+                loading: false,
+                open: false,
+                previewName: '',
+                previewText: '',
+                restoring: '',
+                deleteConfirm: '',
+                deleting: false,
+            },
+        };
+        const helpers = createChatBackupActions({
+            state,
+            apiFetch: async () => ({}),
+            apiFetchResponse: async () => {
+                await downloadReady;
+                return new Response('{}');
+            },
+            render: () => {},
+            showToast: () => {},
+            formatDate: String,
+            getChatContextKey: entity => entity?.avatar || '',
+            getChatEntityName: entity => entity.name,
+            getSelectedChatEntity: () => selectedEntity,
+            importModernChatFiles: async files => importedFiles.push(...files),
+            isGroupChatMode: () => false,
+            sortChats,
+        });
+
+        const restoring = helpers.restoreChatBackup('backup.jsonl');
+        selectedEntity = bob;
+        finishDownload();
+
+        await expect(restoring).rejects.toThrow('恢复目标已变化');
+        expect(importedFiles).toEqual([]);
+        expect(state.chatBackups.restoring).toBe('');
     });
 
     test('creates, renames, deletes, and assigns background folders through folder helper', async () => {

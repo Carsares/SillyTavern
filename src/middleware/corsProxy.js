@@ -17,11 +17,15 @@ export default async function corsProxyMiddleware(req, res) {
 
     try {
         const headers = JSON.parse(JSON.stringify(req.headers));
+        const connectionHeaders = String(headers.connection ?? '').split(',').map(header => header.trim().toLowerCase()).filter(Boolean);
         const headersToRemove = [
+            'authorization', 'proxy-authorization', 'proxy-authenticate',
             'x-csrf-token', 'host', 'referer', 'origin', 'cookie',
             'x-forwarded-for', 'x-forwarded-protocol', 'x-forwarded-proto',
             'x-forwarded-host', 'x-real-ip', 'sec-fetch-mode',
-            'sec-fetch-site', 'sec-fetch-dest',
+            'sec-fetch-site', 'sec-fetch-dest', 'connection', 'keep-alive', 'proxy-connection',
+            'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length',
+            ...connectionHeaders,
         ];
 
         headersToRemove.forEach(header => delete headers[header]);

@@ -73,10 +73,10 @@ afterAll(() => {
     global.DATA_ROOT = previousDataRoot;
 });
 
-function getRenameHandler() {
-    const route = characterRouter.stack.find(layer => layer.route?.path === '/rename')?.route;
+function getRouteHandler(routePath) {
+    const route = characterRouter.stack.find(layer => layer.route?.path === routePath)?.route;
     if (!route) {
-        throw new Error('Character rename route not found');
+        throw new Error(`Character route not found: ${routePath}`);
     }
     return route.stack[route.stack.length - 1].handle;
 }
@@ -103,7 +103,7 @@ describe('character rename safety', () => {
         const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         try {
-            await getRenameHandler()({
+            await getRouteHandler('/rename')({
                 body: { avatar_url: 'Original.png', new_name: 'Renamed' },
                 user: { profile: { handle: 'test-user' }, directories: { characters, chats } },
             }, response);
@@ -128,7 +128,7 @@ describe('character rename safety', () => {
         writeCharacterCard.mockClear();
         const response = createResponse();
 
-        await getRenameHandler()({
+        await getRouteHandler('/rename')({
             body: { avatar_url: 'Original.png', new_name: 'a'.repeat(300) },
             user: { profile: { handle: 'test-user' }, directories: { characters, chats } },
         }, response);
@@ -136,5 +136,49 @@ describe('character rename safety', () => {
         expect(response.sendStatus).toHaveBeenCalledWith(400);
         expect(writeCharacterCard).not.toHaveBeenCalled();
         expect(fs.readFileSync(oldAvatarPath, 'utf8')).toBe('original');
+    });
+
+    test('does not report success or leave a chat directory when character creation fails', async () => {
+        const characters = path.join(root, 'create-characters');
+        const chats = path.join(root, 'create-chats');
+        fs.mkdirSync(characters, { recursive: true });
+        fs.mkdirSync(chats, { recursive: true });
+        writeCharacterCard.mockClear();
+        const response = createResponse();
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            await getRouteHandler('/create')({
+                body: { ch_name: 'Failed Character', user_name: 'User' },
+                user: { profile: { handle: 'test-user' }, directories: { characters, chats } },
+            }, response);
+        } finally {
+            consoleError.mockRestore();
+        }
+
+        expect(writeCharacterCard).toHaveBeenCalled();
+        expect(response.send).not.toHaveBeenCalled();
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+        expect(fs.existsSync(path.join(chats, 'Failed Character'))).toBe(false);
+        expect(fs.existsSync(path.join(characters, 'Failed Character.png'))).toBe(false);
+    });
+
+    test('rejects an overlong character file name before creating its chat directory', async () => {
+        const characters = path.join(root, 'long-create-characters');
+        const chats = path.join(root, 'long-create-chats');
+        fs.mkdirSync(characters, { recursive: true });
+        fs.mkdirSync(chats, { recursive: true });
+        writeCharacterCard.mockClear();
+        const response = createResponse();
+
+        await getRouteHandler('/create')({
+            body: { ch_name: 'a'.repeat(300), user_name: 'User' },
+            user: { profile: { handle: 'test-user' }, directories: { characters, chats } },
+        }, response);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(400);
+        expect(writeCharacterCard).not.toHaveBeenCalled();
+        expect(fs.readdirSync(chats)).toEqual([]);
+        expect(fs.readdirSync(characters)).toEqual([]);
     });
 });

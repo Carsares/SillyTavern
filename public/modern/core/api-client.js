@@ -69,7 +69,9 @@ export function createApiClient({ onTokenChange = () => {} } = {}) {
             throw new Error('当前会话没有访问权限，请先登录。');
         }
         if (!response.ok) {
-            throw new Error(`${path} failed: ${response.status}`);
+            const error = new Error(`${path} failed: ${response.status}`);
+            error.status = response.status;
+            throw error;
         }
         return response;
     }

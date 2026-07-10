@@ -44,20 +44,20 @@ const basicAuthMiddleware = async function (request, response, callback) {
             return unauthorizedResponse(response);
         }
 
-        const rateLimit = await basicAuthLimiter.get(ip);
-
-        if (rateLimit !== null && rateLimit.consumedPoints > basicAuthLimiter.points) {
-            throw rateLimit;
-        }
-
         const usePerUserAuth = PER_USER_BASIC_AUTH && ENABLE_ACCOUNTS;
         const [username, ...passwordParts] = Buffer.from(credentials, 'base64')
             .toString('utf8')
             .split(':');
         const password = passwordParts.join(':');
+        const rateLimitKey = usePerUserAuth ? JSON.stringify([ip, username]) : ip;
+        const rateLimit = await basicAuthLimiter.get(rateLimitKey);
+
+        if (rateLimit !== null && rateLimit.consumedPoints > basicAuthLimiter.points) {
+            throw rateLimit;
+        }
 
         if (!usePerUserAuth && username === basicAuthUserName && password === basicAuthUserPassword) {
-            await basicAuthLimiter.delete(ip);
+            await basicAuthLimiter.delete(rateLimitKey);
             return callback();
         } else if (usePerUserAuth) {
             const userHandles = await getAllUserHandles();
@@ -65,14 +65,14 @@ const basicAuthMiddleware = async function (request, response, callback) {
                 if (username === userHandle) {
                     const user = await storage.getItem(toKey(userHandle));
                     if (user && user.enabled && (user.password && user.password === getPasswordHash(password, user.salt))) {
-                        await basicAuthLimiter.delete(ip);
+                        await basicAuthLimiter.delete(rateLimitKey);
                         return callback();
                     }
                 }
             }
         }
 
-        await basicAuthLimiter.consume(ip);
+        await basicAuthLimiter.consume(rateLimitKey);
         return unauthorizedResponse(response);
     } catch (error) {
         if (error instanceof RateLimiterRes) {

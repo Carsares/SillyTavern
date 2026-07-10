@@ -560,11 +560,11 @@ comfy.post('/rename-workflow', getFileNameValidationFunction('old_name'), getFil
 });
 
 comfy.post('/generate', async (request, response) => {
+    const controller = new AbortController();
     try {
         let item;
         const url = new URL(urlJoin(request.body.url, '/prompt'));
 
-        const controller = new AbortController();
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded && !item) {
@@ -577,6 +577,7 @@ comfy.post('/generate', async (request, response) => {
         const promptResult = await fetch(url, {
             method: 'POST',
             body: request.body.prompt,
+            signal: controller.signal,
         });
         if (!promptResult.ok) {
             const text = await promptResult.text();
@@ -588,7 +589,7 @@ comfy.post('/generate', async (request, response) => {
         const id = data.prompt_id;
         const historyUrl = new URL(urlJoin(request.body.url, '/history'));
         while (true) {
-            const result = await fetch(historyUrl);
+            const result = await fetch(historyUrl, { signal: controller.signal });
             if (!result.ok) {
                 throw new Error('ComfyUI returned an error.');
             }
@@ -617,7 +618,7 @@ comfy.post('/generate', async (request, response) => {
         }
         const imgUrl = new URL(urlJoin(request.body.url, '/view'));
         imgUrl.search = `?filename=${imgInfo.filename}&subfolder=${imgInfo.subfolder}&type=${imgInfo.type}`;
-        const imgResponse = await fetch(imgUrl);
+        const imgResponse = await fetch(imgUrl, { signal: controller.signal });
         if (!imgResponse.ok) {
             throw new Error('ComfyUI returned an error.');
         }
@@ -625,6 +626,9 @@ comfy.post('/generate', async (request, response) => {
         const imgBuffer = await imgResponse.arrayBuffer();
         return response.send({ format: format, data: Buffer.from(imgBuffer).toString('base64') });
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error('ComfyUI error:', error);
         response.status(500).send(error.message);
         return response;
@@ -665,6 +669,7 @@ comfyRunPod.post('/ping', async (request, response) => {
 });
 
 comfyRunPod.post('/generate', async (request, response) => {
+    const controller = new AbortController();
     try {
         const key = readSecret(request.user.directories, SECRET_KEYS.COMFY_RUNPOD);
 
@@ -677,7 +682,6 @@ comfyRunPod.post('/generate', async (request, response) => {
         let item;
         const url = new URL(urlJoin(request.body.url, '/run'));
 
-        const controller = new AbortController();
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded && !item) {
@@ -696,6 +700,7 @@ comfyRunPod.post('/generate', async (request, response) => {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${key}` },
             body: runpodPrompt,
+            signal: controller.signal,
         });
         if (!promptResult.ok) {
             const text = await promptResult.text();
@@ -710,6 +715,7 @@ comfyRunPod.post('/generate', async (request, response) => {
             const result = await fetch(statusUrl, {
                 method: 'GET',
                 headers: { 'Authorization': `Bearer ${key}` },
+                signal: controller.signal,
             });
             if (!result.ok) {
                 throw new Error('ComfyUI returned an error.');
@@ -727,6 +733,9 @@ comfyRunPod.post('/generate', async (request, response) => {
         const format = path.extname(item.filename).slice(1).toLowerCase() || 'png';
         return response.send({ format: format, data: item.data });
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error('ComfyUI error:', error);
         response.status(500).send(error.message);
         return response;
@@ -1575,6 +1584,9 @@ bfl.post('/generate', async (request, response) => {
 
             throw new Error('BFL failed to generate image.', { cause: statusData });
         }
+
+        console.warn('BFL image generation timed out.');
+        return response.sendStatus(504);
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);
@@ -1720,6 +1732,9 @@ falai.post('/generate', async (request, response) => {
 
             throw new Error('FAL.AI failed to generate image.', { cause: statusData });
         }
+
+        console.warn('FAL.AI image generation timed out.');
+        return response.sendStatus(504);
     } catch (error) {
         console.error(error);
         return response.status(500).send(error.cause || error.message);

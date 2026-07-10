@@ -407,11 +407,22 @@ export function ensureDirectory(dirPath) {
 }
 
 /**
+ * Error thrown when an image ZIP exceeds the safe extraction limits.
+ */
+export class ImageZipLimitError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ImageZipLimitError';
+    }
+}
+
+/**
  * Extracts all images from a ZIP archive.
  * @param {string} zipFilePath Path to the ZIP archive
+ * @param {{maxEntries?: number, maxTotalSize?: number}} [options] Extraction limits
  * @returns {Promise<[string, Buffer][]>} Array of image buffers
  */
-export async function getImageBuffers(zipFilePath) {
+export async function getImageBuffers(zipFilePath, { maxEntries = 1000, maxTotalSize = 100 * 1024 * 1024 } = {}) {
     return new Promise((resolve, reject) => {
         // Check if the zip file exists
         if (!fs.existsSync(zipFilePath)) {
@@ -420,43 +431,85 @@ export async function getImageBuffers(zipFilePath) {
         }
 
         const imageBuffers = [];
+        let entryCount = 0;
+        let extractedSize = 0;
+        let settled = false;
+        let openedZipFile;
+
+        const fail = (error) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            openedZipFile?.close();
+            reject(error);
+        };
+
+        const failLimit = message => fail(new ImageZipLimitError(message));
 
         yauzl.open(zipFilePath, { lazyEntries: true }, (err, zipfile) => {
             if (err) {
-                reject(err);
-            } else {
-                zipfile.readEntry();
-                zipfile.on('entry', (entry) => {
-                    const mimeType = mime.lookup(entry.fileName);
-                    if (mimeType && mimeType.startsWith('image/') && !entry.fileName.startsWith('__MACOSX')) {
-                        zipfile.openReadStream(entry, (err, readStream) => {
-                            if (err) {
-                                reject(err);
-                            } else {
-                                const chunks = [];
-                                readStream.on('data', (chunk) => {
-                                    chunks.push(chunk);
-                                });
-
-                                readStream.on('end', () => {
-                                    imageBuffers.push([path.parse(entry.fileName).base, Buffer.concat(chunks)]);
-                                    zipfile.readEntry(); // Continue to the next entry
-                                });
-                            }
-                        });
-                    } else {
-                        zipfile.readEntry(); // Continue to the next entry
-                    }
-                });
-
-                zipfile.on('end', () => {
-                    resolve(imageBuffers);
-                });
-
-                zipfile.on('error', (err) => {
-                    reject(err);
-                });
+                fail(err);
+                return;
             }
+
+            openedZipFile = zipfile;
+            zipfile.readEntry();
+            zipfile.on('entry', (entry) => {
+                entryCount++;
+                if (entryCount > maxEntries) {
+                    failLimit(`ZIP archive contains more than ${maxEntries} entries`);
+                    return;
+                }
+
+                const mimeType = mime.lookup(entry.fileName);
+                if (!mimeType || !mimeType.startsWith('image/') || entry.fileName.startsWith('__MACOSX')) {
+                    zipfile.readEntry();
+                    return;
+                }
+
+                if (entry.uncompressedSize > maxTotalSize - extractedSize) {
+                    failLimit(`ZIP images exceed the ${maxTotalSize} byte extraction limit`);
+                    return;
+                }
+
+                zipfile.openReadStream(entry, (streamError, readStream) => {
+                    if (streamError) {
+                        fail(streamError);
+                        return;
+                    }
+
+                    const chunks = [];
+                    let entrySize = 0;
+                    readStream.on('data', (chunk) => {
+                        entrySize += chunk.length;
+                        if (entrySize > maxTotalSize - extractedSize) {
+                            readStream.destroy(new ImageZipLimitError(`ZIP images exceed the ${maxTotalSize} byte extraction limit`));
+                            return;
+                        }
+                        chunks.push(chunk);
+                    });
+                    readStream.once('error', fail);
+                    readStream.once('end', () => {
+                        if (settled) {
+                            return;
+                        }
+                        extractedSize += entrySize;
+                        imageBuffers.push([path.parse(entry.fileName).base, Buffer.concat(chunks, entrySize)]);
+                        zipfile.readEntry(); // Continue to the next entry
+                    });
+                });
+            });
+
+            zipfile.once('end', () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                resolve(imageBuffers);
+            });
+
+            zipfile.once('error', fail);
         });
     });
 }

@@ -24,8 +24,8 @@ export function createChatContextSelectorHelpers({
         return isGroupChatMode() ? getSelectedGroup() : getSelectedCharacter();
     }
 
-    function getChatContextKey(entity = getSelectedChatEntity()) {
-        if (isGroupChatMode()) {
+    function getChatContextKey(entity = getSelectedChatEntity(), groupMode = isGroupChatMode()) {
+        if (groupMode) {
             return entity?.id ? `group:${entity.id}` : 'group:';
         }
         return entity?.avatar || '';
@@ -198,8 +198,8 @@ export function createChatContextSelectorHelpers({
         return formatTemplate(character?.data?.first_mes || character?.first_mes || '', character);
     }
 
-    function getSelectedChatMetadata(entity, chatId) {
-        return state.chatMetadata[getChatCacheKey(getChatContextKey(entity), chatId)] || {};
+    function getSelectedChatMetadata(entity, chatId, groupMode = isGroupChatMode()) {
+        return state.chatMetadata[getChatCacheKey(getChatContextKey(entity, groupMode), chatId)] || {};
     }
 
     return {

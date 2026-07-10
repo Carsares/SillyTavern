@@ -38,6 +38,10 @@ if NOT "!AUTO_SWITCH!"=="" (
         :autoswitch-staging
         echo Auto-switching to staging branch
         git checkout staging
+        if errorlevel 1 (
+            echo [91mFailed to switch to staging. Update cancelled.[0m
+            goto end
+        )
         SET TARGET_BRANCH=staging
         goto update
     )
@@ -45,6 +49,10 @@ if NOT "!AUTO_SWITCH!"=="" (
         :autoswitch-release
         echo Auto-switching to release branch
         git checkout release
+        if errorlevel 1 (
+            echo [91mFailed to switch to release. Update cancelled.[0m
+            goto end
+        )
         SET TARGET_BRANCH=release
         goto update
     )
@@ -67,12 +75,20 @@ set /p "CHOICE=Do you want to switch to 'staging' (s), 'release' (r), or stay (a
 if /i "!CHOICE!"=="s" (
     echo Switching to staging branch
     git checkout staging
+    if errorlevel 1 (
+        echo [91mFailed to switch to staging. Update cancelled.[0m
+        goto end
+    )
     SET TARGET_BRANCH=staging
     goto update
 )
 if /i "!CHOICE!"=="r" (
     echo Switching to release branch
     git checkout release
+    if errorlevel 1 (
+        echo [91mFailed to switch to release. Update cancelled.[0m
+        goto end
+    )
     SET TARGET_BRANCH=release
     goto update
 )

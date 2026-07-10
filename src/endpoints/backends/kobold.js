@@ -8,12 +8,31 @@ import { TEXTGEN_TYPES } from '../../constants.js';
 
 export const router = express.Router();
 
-router.post('/generate', async function (request, response_generate) {
-    if (!request.body) return response_generate.sendStatus(400);
-
-    if (request.body.api_server.indexOf('localhost') != -1) {
-        request.body.api_server = request.body.api_server.replace('localhost', '127.0.0.1');
+/**
+ * Validates and formats a Kobold API server URL.
+ * @param {unknown} value API server URL
+ * @returns {string} Formatted URL, or an empty string when invalid
+ */
+function formatApiServer(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return '';
     }
+
+    const apiServer = value.replace('localhost', '127.0.0.1');
+    try {
+        const url = new URL(apiServer);
+        return ['http:', 'https:'].includes(url.protocol) ? apiServer : '';
+    } catch {
+        return '';
+    }
+}
+
+router.post('/generate', async function (request, response_generate) {
+    const apiServer = formatApiServer(request.body?.api_server);
+    if (!apiServer) {
+        return response_generate.sendStatus(400);
+    }
+    request.body.api_server = apiServer;
 
     const request_prompt = request.body.prompt;
     const controller = new AbortController();
@@ -141,10 +160,9 @@ router.post('/generate', async function (request, response_generate) {
 });
 
 router.post('/status', async function (request, response) {
-    if (!request.body) return response.sendStatus(400);
-    let api_server = request.body.api_server;
-    if (api_server.indexOf('localhost') != -1) {
-        api_server = api_server.replace('localhost', '127.0.0.1');
+    const api_server = formatApiServer(request.body?.api_server);
+    if (!api_server) {
+        return response.sendStatus(400);
     }
 
     const args = {

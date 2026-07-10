@@ -113,6 +113,18 @@ describe('private request filter', () => {
         expect(mockNetConnect).not.toHaveBeenCalled();
     });
 
+    test('blocks unspecified addresses that can resolve to the local host', async () => {
+        const agent = initAgent();
+
+        await expect(agent.connect({}, { host: '0.0.0.0', secureEndpoint: false }))
+            .rejects
+            .toThrow('Blocked request to private IP address: 0.0.0.0');
+        await expect(agent.connect({}, { host: '::', secureEndpoint: false }))
+            .rejects
+            .toThrow('Blocked request to private IP address: ::');
+        expect(mockNetConnect).not.toHaveBeenCalled();
+    });
+
     test('checks IPv4-mapped private addresses against the IPv4 whitelist', async () => {
         const agent = initAgent({ privateAddressWhitelist: ['127.0.0.0/8'] });
 

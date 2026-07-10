@@ -56,7 +56,7 @@ export function createWorldbookActions({
     });
     const {
         loadWorldDetail,
-        saveWorldbookDetail,
+        updateWorldbookDetail,
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
@@ -73,8 +73,7 @@ export function createWorldbookActions({
     });
     const entryBulkActions = createWorldbookEntryBulkActions({
         state,
-        loadWorldDetail,
-        saveWorldbookDetail,
+        updateWorldbookDetail,
         render,
         showToast,
         formatNumber,
@@ -84,7 +83,7 @@ export function createWorldbookActions({
     const entryCrudActions = createWorldbookEntryCrudActions({
         state,
         loadWorldDetail,
-        saveWorldbookDetail,
+        updateWorldbookDetail,
         render,
         showToast,
         createWorldEntry,

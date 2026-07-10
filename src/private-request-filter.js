@@ -14,6 +14,8 @@ const LOG_HEADER = '[Private Request Filter]';
 
 /** @type {import('ip-matching').IPMatch[]} */
 const privateIpRanges = [
+    // Current network / unspecified (IPv4)
+    ipMatch.getMatch('0.0.0.0/8'),
     // Loopback (IPv4)
     ipMatch.getMatch('127.0.0.0/8'),
     // Class A private network
@@ -26,6 +28,8 @@ const privateIpRanges = [
     ipMatch.getMatch('169.254.0.0/16'),
     // Loopback (IPv6)
     ipMatch.getMatch('::1/128'),
+    // Unspecified (IPv6)
+    ipMatch.getMatch('::/128'),
     // Unique local address (IPv6)
     ipMatch.getMatch('fc00::/7'),
     // Link-local address (IPv6)

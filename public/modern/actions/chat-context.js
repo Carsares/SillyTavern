@@ -142,8 +142,8 @@ export function createChatContextActions({
         }
     }
 
-    function markChatRead(entity, chatId, messages = null) {
-        const contextKey = getChatContextKey(entity);
+    function markChatRead(entity, chatId, messages = null, groupMode = isGroupChatMode()) {
+        const contextKey = getChatContextKey(entity, groupMode);
         const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
         const knownChat = getKnownChat(contextKey, normalizedChatId);
         const messageCount = Array.isArray(messages) ? messages.length : getChatMessageCount(knownChat);
@@ -264,18 +264,18 @@ export function createChatContextActions({
         await refreshCachedChatLists({ quiet: true });
     }
 
-    async function saveModernChat(entity, chatId, messages) {
-        const contextKey = getChatContextKey(entity);
+    async function saveModernChat(entity, chatId, messages, { groupMode = isGroupChatMode() } = {}) {
+        const contextKey = getChatContextKey(entity, groupMode);
         if (!contextKey || !chatId) {
-            throw new Error(isGroupChatMode() ? '缺少群聊或聊天文件' : '缺少角色或聊天文件');
+            throw new Error(groupMode ? '缺少群聊或聊天文件' : '缺少角色或聊天文件');
         }
 
-        const metadata = getSelectedChatMetadata(entity, chatId);
+        const metadata = getSelectedChatMetadata(entity, chatId, groupMode);
         const chat = [
             { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
             ...messages,
         ];
-        const result = isGroupChatMode()
+        const result = groupMode
             ? await apiFetch('/api/chats/group/save', { body: { id: chatId, chat } })
             : await apiFetch('/api/chats/save', {
                 body: {
@@ -291,31 +291,56 @@ export function createChatContextActions({
         }
 
         state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
-        markChatRead(entity, chatId, messages);
+        markChatRead(entity, chatId, messages, groupMode);
     }
 
     async function createModernChatFile(entity) {
-        const contextKey = getChatContextKey(entity);
-        if (!contextKey) {
-            throw new Error(isGroupChatMode() ? '请先选择群聊' : '请先选择角色');
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        if (!entity || !contextKey) {
+            throw new Error(groupMode ? '请先选择群聊' : '请先选择角色');
         }
 
         const chatId = createModernChatId();
-        const greeting = isGroupChatMode() ? '' : getCharacterGreeting(entity);
+        const greeting = groupMode ? '' : getCharacterGreeting(entity);
         const messages = greeting ? [createAssistantMessage(greeting, entity)] : [];
-        state.selected.chat = chatId;
-        state.chatMetadata[getChatCacheKey(contextKey, chatId)] = {};
-        state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
-        if (isGroupChatMode()) {
-            entity.chats = Array.isArray(entity.chats) ? entity.chats : [];
-            if (!entity.chats.includes(chatId)) {
-                entity.chats.push(chatId);
-            }
-            entity.chat_id = chatId;
-            await saveGroupMetadata(entity);
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        function clearCreatedChatState() {
+            delete state.chatMetadata[cacheKey];
+            delete state.chatMessages[cacheKey];
+            deleteChatReadState(contextKey, chatId);
         }
-        await saveModernChat(entity, chatId, messages);
-        await refreshSelectedChatList(entity);
+
+        state.chatMetadata[cacheKey] = {};
+
+        try {
+            await saveModernChat(entity, chatId, messages, { groupMode });
+        } catch (error) {
+            clearCreatedChatState();
+            throw error;
+        }
+
+        if (groupMode) {
+            const chats = Array.isArray(entity.chats) ? entity.chats : [];
+            const nextChats = chats.includes(chatId) ? [...chats] : [...chats, chatId];
+            // Persist the chat file before publishing its ID in group metadata.
+            try {
+                await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: chatId });
+            } catch (error) {
+                // Keep the file because the metadata write may have committed before its response failed.
+                clearCreatedChatState();
+                throw error;
+            }
+
+            entity.chats = nextChats;
+            entity.chat_id = chatId;
+        }
+
+        await refreshSelectedChatList(entity, { groupMode });
+        const isContextCurrent = isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
+        if (isContextCurrent) {
+            state.selected.chat = chatId;
+        }
         return chatId;
     }
 

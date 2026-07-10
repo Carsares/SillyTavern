@@ -755,6 +755,9 @@ router.post('/generate-video', async (request, response) => {
                 return response.send({ format: 'mp4', data: Buffer.from(contentBuffer).toString('base64') });
             }
         }
+
+        console.warn('OpenAI video generation timed out after multiple attempts');
+        return response.status(504).send('Video generation timed out');
     } catch (error) {
         console.error('OpenAI video generation failed', error);
         response.status(500).send('Internal server error');

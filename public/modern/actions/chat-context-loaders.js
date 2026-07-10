@@ -138,8 +138,8 @@ export function createChatContextLoaderActions({
         }
     }
 
-    async function loadChatMessages(entity, chatId, { force = false, isContextCurrent = () => true } = {}) {
-        const contextKey = getChatContextKey(entity);
+    async function loadChatMessages(entity, chatId, { force = false, groupMode = isGroupChatMode(), isContextCurrent = () => true } = {}) {
+        const contextKey = getChatContextKey(entity, groupMode);
         if (!contextKey || !chatId) {
             return [];
         }
@@ -168,7 +168,7 @@ export function createChatContextLoaderActions({
         }
 
         try {
-            const result = isGroupChatMode()
+            const result = groupMode
                 ? await apiFetch('/api/chats/group/get', { body: { id: normalizedChatId } })
                 : await apiFetch('/api/chats/get', {
                     body: {
@@ -205,16 +205,27 @@ export function createChatContextLoaderActions({
     }
 
     async function prepareChatForSelectedContext({ forceList = false, quiet = false } = {}) {
+        const groupMode = isGroupChatMode();
         const entity = getSelectedChatEntity();
-        const chats = isGroupChatMode() ? await loadGroupChats(entity, { force: forceList, quiet }) : await loadCharacterChats(entity, { force: forceList, quiet });
+        const contextKey = getChatContextKey(entity, groupMode);
+        if (!entity || !contextKey) {
+            return;
+        }
+
+        const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
+        const chats = groupMode ? await loadGroupChats(entity, { force: forceList, quiet }) : await loadCharacterChats(entity, { force: forceList, quiet });
+        // A slower request for an old context must not replace the newer selection.
+        if (!isContextCurrent()) {
+            return;
+        }
 
         useFirstAvailableChat(chats);
 
-        await loadChatMessages(entity, state.selected.chat);
+        await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
     }
 
-    async function refreshSelectedChatList(entity, { quiet = false } = {}) {
-        if (isGroupChatMode()) {
+    async function refreshSelectedChatList(entity, { quiet = false, groupMode = isGroupChatMode() } = {}) {
+        if (groupMode) {
             await loadGroupChats(entity, { force: true, quiet });
         } else {
             await loadCharacterChats(entity, { force: true, quiet });

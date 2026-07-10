@@ -1,7 +1,7 @@
 export function createWorldbookEntryCrudActions({
     state,
     loadWorldDetail,
-    saveWorldbookDetail,
+    updateWorldbookDetail,
     render,
     showToast,
     createWorldEntry,
@@ -56,45 +56,54 @@ export function createWorldbookEntryCrudActions({
     }
 
     async function saveWorldEntryEdit() {
-        const edit = state.worldEntryEditing;
+        const edit = structuredClone(state.worldEntryEditing);
         const form = edit.form || {};
         if (!edit.worldbookId || edit.entryKey === '') {
             throw new Error('世界书条目目标无效。');
         }
 
-        await loadWorldDetail(edit.worldbookId);
-        const detail = state.worldDetails[edit.worldbookId];
-        const nextDetail = structuredClone(detail);
-        const uid = Number(edit.entryKey);
-        const entry = nextDetail?.entries?.[edit.entryKey];
-        if (edit.mode !== 'create' && !entry) {
-            throw new Error('世界书条目不存在，请刷新后重试。');
-        }
+        const result = await updateWorldbookDetail(edit.worldbookId, nextDetail => {
+            nextDetail.entries = nextDetail.entries || {};
+            let entryKey = edit.entryKey;
+            let entry = nextDetail.entries[entryKey];
+            if (edit.mode !== 'create' && !entry) {
+                throw new Error('世界书条目不存在，请刷新后重试。');
+            }
+            if (edit.mode === 'create' && entry) {
+                const nextUid = getFreeWorldEntryUid(nextDetail);
+                if (!Number.isInteger(nextUid)) {
+                    throw new Error('无法分配世界书条目 UID。');
+                }
+                entryKey = String(nextUid);
+                entry = null;
+            }
 
-        nextDetail.entries = nextDetail.entries || {};
-        nextDetail.entries[edit.entryKey] = formToWorldEntry(form, uid, entry || createWorldEntry(uid));
-        syncWorldEntryOriginalData(nextDetail, uid, nextDetail.entries[edit.entryKey]);
-        await saveWorldbookDetail(edit.worldbookId, nextDetail);
-        state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
-        showToast(edit.mode === 'create' ? '条目已创建' : '条目已保存', getWorldEntryTitle(nextDetail.entries[edit.entryKey], edit.entryKey));
+            const uid = Number(entryKey);
+            nextDetail.entries[entryKey] = formToWorldEntry(form, uid, entry || createWorldEntry(uid));
+            syncWorldEntryOriginalData(nextDetail, uid, nextDetail.entries[entryKey]);
+            return { title: getWorldEntryTitle(nextDetail.entries[entryKey], entryKey) };
+        });
+        if (state.worldEntryEditing.worldbookId === edit.worldbookId && state.worldEntryEditing.entryKey === edit.entryKey && state.worldEntryEditing.mode === edit.mode) {
+            state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+        }
+        showToast(edit.mode === 'create' ? '条目已创建' : '条目已保存', result.title);
         render();
     }
 
     async function duplicateWorldEntry(worldbookId, entryKey) {
-        await loadWorldDetail(worldbookId);
-        const detail = state.worldDetails[worldbookId];
-        const source = detail?.entries?.[entryKey];
-        const uid = getFreeWorldEntryUid(detail);
-        if (!source || !Number.isInteger(uid)) {
-            throw new Error('无法复制这个世界书条目。');
-        }
+        const result = await updateWorldbookDetail(worldbookId, nextDetail => {
+            const source = nextDetail?.entries?.[entryKey];
+            const uid = getFreeWorldEntryUid(nextDetail);
+            if (!source || !Number.isInteger(uid)) {
+                throw new Error('无法复制这个世界书条目。');
+            }
 
-        const nextDetail = structuredClone(detail);
-        const copiedEntry = structuredClone(source);
-        copiedEntry.uid = uid;
-        nextDetail.entries[String(uid)] = copiedEntry;
-        await saveWorldbookDetail(worldbookId, nextDetail);
-        showToast('条目已复制', getWorldEntryTitle(copiedEntry, uid));
+            const copiedEntry = structuredClone(source);
+            copiedEntry.uid = uid;
+            nextDetail.entries[String(uid)] = copiedEntry;
+            return { title: getWorldEntryTitle(copiedEntry, uid) };
+        });
+        showToast('条目已复制', result.title);
         render();
     }
 
@@ -129,19 +138,18 @@ export function createWorldbookEntryCrudActions({
             throw new Error('删除目标已变化，请重新选择条目。');
         }
 
-        await loadWorldDetail(worldbookId);
-        const detail = state.worldDetails[worldbookId];
-        const entry = detail?.entries?.[entryKey];
-        if (!entry) {
-            throw new Error('世界书条目不存在，请刷新后重试。');
-        }
+        const result = await updateWorldbookDetail(worldbookId, nextDetail => {
+            const entry = nextDetail?.entries?.[entryKey];
+            if (!entry) {
+                throw new Error('世界书条目不存在，请刷新后重试。');
+            }
 
-        const nextDetail = structuredClone(detail);
-        delete nextDetail.entries[entryKey];
-        deleteWorldEntryOriginalData(nextDetail, entryKey);
-        await saveWorldbookDetail(worldbookId, nextDetail);
+            delete nextDetail.entries[entryKey];
+            deleteWorldEntryOriginalData(nextDetail, entryKey);
+            return { title: getWorldEntryTitle(entry, entryKey) };
+        });
         state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
-        showToast('条目已删除', getWorldEntryTitle(entry, entryKey));
+        showToast('条目已删除', result.title);
         render();
     }
 

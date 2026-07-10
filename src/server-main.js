@@ -65,6 +65,7 @@ import {
     getConfigValue,
 } from './util.js';
 import { UPLOADS_DIRECTORY } from './constants.js';
+import { createExitHandler } from './server-exit.js';
 
 // Routers
 import { router as usersPublicRouter } from './endpoints/users-public.js';
@@ -334,25 +335,20 @@ async function preSetupTasks() {
     const cleanupPlugins = await loadPlugins(app, pluginsDirectory);
     const consoleTitle = process.title;
 
-    let isExiting = false;
-    const exitProcess = async () => {
-        if (isExiting) return;
-        isExiting = true;
-        await statsOnExit();
-        if (typeof cleanupPlugins === 'function') {
-            await cleanupPlugins();
-        }
-        diskCache.dispose();
-        setWindowTitle(consoleTitle);
-        process.exit();
-    };
+    const exitProcess = createExitHandler({
+        saveStats: statsOnExit,
+        cleanupPlugins,
+        disposeCache: () => diskCache.dispose(),
+        restoreWindowTitle: () => setWindowTitle(consoleTitle),
+        exit: exitCode => process.exit(exitCode),
+    });
 
     // Set up event listeners for a graceful shutdown
-    process.on('SIGINT', exitProcess);
-    process.on('SIGTERM', exitProcess);
+    process.on('SIGINT', () => void exitProcess());
+    process.on('SIGTERM', () => void exitProcess());
     process.on('uncaughtException', (err) => {
         console.error('Uncaught exception:', err);
-        exitProcess();
+        void exitProcess(1);
     });
 
     // Add private request filter.

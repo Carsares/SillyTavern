@@ -78,8 +78,10 @@ export function createChatBackupActions({
 
     async function restoreChatBackup(name) {
         const entity = getSelectedChatEntity();
-        if (!getChatContextKey(entity)) {
-            throw new Error(isGroupChatMode() ? '请先选择要恢复到的群聊。' : '请先选择要恢复到的角色。');
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity);
+        if (!contextKey) {
+            throw new Error(groupMode ? '请先选择要恢复到的群聊。' : '请先选择要恢复到的角色。');
         }
 
         state.chatBackups.restoring = name;
@@ -87,6 +89,11 @@ export function createChatBackupActions({
         try {
             const response = await downloadChatBackup(name);
             const blob = await response.blob();
+            const selectedEntity = getSelectedChatEntity();
+            // Do not restore into a different context when the download finishes after a selection change.
+            if (isGroupChatMode() !== groupMode || getChatContextKey(selectedEntity) !== contextKey) {
+                throw new Error('恢复目标已变化，请重新选择备份。');
+            }
             const file = new File([blob], name, { type: 'application/octet-stream' });
             await importModernChatFiles([file]);
             state.chatBackups.restoring = '';

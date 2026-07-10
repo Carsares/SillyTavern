@@ -660,31 +660,60 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             }
         }
 
-        const readStream = fs.createReadStream(filename);
-        const rl = readline.createInterface({
-            input: readStream,
-        });
         let buffer = '';
-        rl.on('line', (line) => {
-            const data = JSON.parse(line);
-            // Skip non-printable/prompt-hidden messages
-            if (data.is_system) {
-                return;
-            }
-            if (data.mes) {
-                const name = data.name;
-                const message = (data?.extra?.display_text || data?.mes || '').replace(/\r?\n/g, '\n');
-                buffer += (`${name}: ${message}\n\n`);
-            }
-        });
-        rl.on('close', () => {
-            const successMessage = {
-                message: `Chat saved to ${exportfilename}`,
-                result: buffer,
+        await new Promise((resolve, reject) => {
+            const readStream = fs.createReadStream(filename);
+            const rl = readline.createInterface({ input: readStream });
+            let settled = false;
+
+            const fail = (error) => {
+                if (settled) {
+                    return;
+                }
+
+                settled = true;
+                rl.close();
+                readStream.destroy();
+                reject(error);
             };
-            console.info(`Chat exported as ${exportfilename}`);
-            return response.status(200).json(successMessage);
+
+            readStream.on('error', fail);
+            rl.on('line', (line) => {
+                if (settled) {
+                    return;
+                }
+
+                try {
+                    const data = JSON.parse(line);
+                    // Skip non-printable/prompt-hidden messages
+                    if (data.is_system) {
+                        return;
+                    }
+                    if (data.mes) {
+                        const name = data.name;
+                        const message = (data?.extra?.display_text || data?.mes || '').replace(/\r?\n/g, '\n');
+                        buffer += (`${name}: ${message}\n\n`);
+                    }
+                } catch (error) {
+                    fail(error);
+                }
+            });
+            rl.on('close', () => {
+                if (settled) {
+                    return;
+                }
+
+                settled = true;
+                resolve();
+            });
         });
+
+        const successMessage = {
+            message: `Chat saved to ${exportfilename}`,
+            result: buffer,
+        };
+        console.info(`Chat exported as ${exportfilename}`);
+        return response.status(200).json(successMessage);
     } catch (err) {
         console.error('chat export failed.', err);
         return response.sendStatus(400);

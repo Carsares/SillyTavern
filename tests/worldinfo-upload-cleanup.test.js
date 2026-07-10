@@ -17,7 +17,7 @@ afterEach(() => {
     }
 });
 
-function createRequest(convertedData) {
+function createRequest(convertedData, overwrite = undefined) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-worldinfo-upload-'));
     const uploads = path.join(root, 'uploads');
     const worlds = path.join(root, 'worlds');
@@ -30,7 +30,7 @@ function createRequest(convertedData) {
     return {
         root,
         request: {
-            body: { convertedData },
+            body: { convertedData, overwrite },
             file: {
                 destination: uploads,
                 filename: 'temporary',
@@ -77,6 +77,33 @@ describe('world info import upload cleanup', () => {
         importHandler(request, response);
 
         expect(response.statusCode).toBe(400);
+        expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
+    });
+
+    test('does not overwrite an existing world without explicit permission', () => {
+        const { root, request } = createRequest(JSON.stringify({ entries: { imported: true } }));
+        const worldPath = path.join(root, 'worlds', 'Imported.json');
+        fs.writeFileSync(worldPath, JSON.stringify({ entries: { original: true } }));
+        const response = createResponse();
+
+        importHandler(request, response);
+
+        expect(response.statusCode).toBe(409);
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual({ entries: { original: true } });
+        expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
+    });
+
+    test('overwrites an existing world only when explicitly requested', () => {
+        const imported = { entries: { imported: true } };
+        const { root, request } = createRequest(JSON.stringify(imported), 'true');
+        const worldPath = path.join(root, 'worlds', 'Imported.json');
+        fs.writeFileSync(worldPath, JSON.stringify({ entries: { original: true } }));
+        const response = createResponse();
+
+        importHandler(request, response);
+
+        expect(response.body).toEqual({ name: 'Imported' });
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(imported);
         expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
     });
 });

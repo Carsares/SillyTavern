@@ -37,14 +37,19 @@ export default function getWebpackServeMiddleware() {
         const publicLibConfig = getPublicLibConfig({ forceDist, pruneCache });
         const compiler = webpack(publicLibConfig);
 
-        return new Promise((resolve) => {
-            compiler.run((_error, stats) => {
+        return new Promise((resolve, reject) => {
+            compiler.run((error, stats) => {
                 const output = stats?.toString(publicLibConfig.stats);
                 if (output) {
                     console.log(output);
                     console.log();
                 }
-                compiler.close(() => {
+                const compilationError = error ?? (stats?.hasErrors() ? new Error('Webpack compilation failed. See the compiler output above.') : null);
+                compiler.close((closeError) => {
+                    if (compilationError || closeError) {
+                        reject(compilationError ?? closeError);
+                        return;
+                    }
                     resolve();
                 });
             });

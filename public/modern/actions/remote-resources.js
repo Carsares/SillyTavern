@@ -11,6 +11,7 @@ export function createRemoteResourceActions({
     showToast,
     callLegacyBridge,
     loadWorldDetail,
+    confirmAction = message => window.confirm(message),
 }) {
     function getRemoteResourceCount() {
         return state.remoteResources.records.length;
@@ -288,7 +289,7 @@ export function createRemoteResourceActions({
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             throw new Error('扩展 URL 只支持 HTTP 或 HTTPS。');
         }
-        if (!isOfficialExtensionUrl(parsedUrl.href) && !window.confirm('即将安装第三方扩展。第三方扩展可以运行前端代码，请确认你信任该来源。')) {
+        if (!isOfficialExtensionUrl(parsedUrl.href) && !confirmAction('即将安装第三方扩展。第三方扩展可以运行前端代码，请确认你信任该来源。')) {
             throw new Error('已取消扩展安装。');
         }
 
@@ -382,10 +383,45 @@ export function createRemoteResourceActions({
 
     async function importBlobAsLocalResource(blob, fileName, resourceType) {
         if (resourceType === 'worldbook') {
-            const formData = new FormData();
-            formData.append('avatar', new File([blob], ensureExtension(fileName, 'json'), { type: blob.type || 'application/json' }));
-            const result = await apiFetch('/api/worldinfo/import', { body: formData, omitContentType: true });
-            const importedName = result?.name || fileName.replace(/\.json$/i, '');
+            const importFileName = ensureExtension(fileName, 'json');
+            const worldName = importFileName.replace(/\.json$/i, '');
+            async function importWorldbook(shouldOverwrite) {
+                const formData = new FormData();
+                formData.append('avatar', new File([blob], importFileName, { type: blob.type || 'application/json' }));
+                if (shouldOverwrite) {
+                    formData.set('overwrite', 'true');
+                }
+                return apiFetch('/api/worldinfo/import', { body: formData, omitContentType: true });
+            }
+
+            function confirmWorldbookOverwrite(name) {
+                if (!confirmAction(`同名世界书“${name}”已存在，继续导入将覆盖现有内容。是否继续？`)) {
+                    throw new Error('已取消世界书覆盖。');
+                }
+                return true;
+            }
+
+            const knownWorldNames = new Set([
+                ...(state.worldbooks || []).map(worldbook => worldbook.file_id),
+                ...(state.settingsBundle?.world_names || []),
+            ]);
+            // Worldbook imports are non-destructive unless the user explicitly confirms replacement.
+            let overwrite = false;
+            if (knownWorldNames.has(worldName)) {
+                overwrite = confirmWorldbookOverwrite(worldName);
+            }
+
+            let result;
+            try {
+                result = await importWorldbook(overwrite);
+            } catch (error) {
+                if (error?.status !== 409 || overwrite) {
+                    throw error;
+                }
+                result = await importWorldbook(confirmWorldbookOverwrite(worldName));
+            }
+
+            const importedName = result?.name || worldName;
             state.selected.worldbook = importedName;
             delete state.worldDetails[importedName];
             await loadData({ silent: true });

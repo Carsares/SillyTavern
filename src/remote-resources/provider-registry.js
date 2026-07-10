@@ -89,7 +89,8 @@ export function getRemoteResourceProviders(directories) {
 export async function searchRemoteResources(params, directories) {
     const providerIds = Array.isArray(params.providers) && params.providers.length ? params.providers : PROVIDERS.filter(provider => provider.supportsSearch).map(provider => provider.id);
     const resourceType = params.resourceType || '';
-    const searches = providerIds
+    // A provider can only be searched once per request, even if a crafted client repeats its ID.
+    const searches = [...new Set(providerIds)]
         .map(id => PROVIDERS.find(provider => provider.id === id))
         .filter(provider => provider?.supportsSearch)
         .map(provider => searchProvider(provider, { ...params, resourceType }, directories));

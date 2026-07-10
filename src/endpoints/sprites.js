@@ -6,7 +6,7 @@ import mime from 'mime-types';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
-import { getImageBuffers } from '../util.js';
+import { getImageBuffers, ImageZipLimitError } from '../util.js';
 
 /**
  * Gets the path to the sprites folder for the provided character name
@@ -232,6 +232,9 @@ router.post('/upload-zip', async (request, response) => {
         return response.send({ ok: true, count: sprites.length });
     } catch (error) {
         console.error(error);
+        if (error instanceof ImageZipLimitError) {
+            return response.status(413).send({ error: error.message });
+        }
         return response.sendStatus(500);
     }
 });

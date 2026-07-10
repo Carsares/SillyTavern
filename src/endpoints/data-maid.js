@@ -11,6 +11,46 @@ import { SETTINGS_FILE } from '../constants.js';
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 
 /**
+ * Gets the stable file metadata used to ensure a cleanup token still refers to the scanned file.
+ * @param {string} filePath Path to the file.
+ * @returns {DataMaidFileIdentity|null} File identity, or null if the path is no longer a regular file.
+ */
+function getFileIdentity(filePath) {
+    try {
+        const stat = fs.lstatSync(filePath);
+        if (!stat.isFile()) {
+            return null;
+        }
+
+        return {
+            dev: stat.dev,
+            ino: stat.ino,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            ctimeMs: stat.ctimeMs,
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Checks whether a path still contains the file captured by a cleanup token.
+ * @param {string} filePath Path to the file.
+ * @param {DataMaidFileIdentity} expected Expected file identity.
+ * @returns {boolean} Whether the current file matches the token snapshot.
+ */
+function matchesFileIdentity(filePath, expected) {
+    const current = getFileIdentity(filePath);
+    return current !== null
+        && current.dev === expected.dev
+        && current.ino === expected.ino
+        && current.size === expected.size
+        && current.mtimeMs === expected.mtimeMs
+        && current.ctimeMs === expected.ctimeMs;
+}
+
+/**
  * @typedef {object} DataMaidRawReport
  * @property {string[]} images - List of loose user images
  * @property {string[]} files - List of loose user files
@@ -78,9 +118,18 @@ const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
  */
 
 /**
+ * @typedef {object} DataMaidFileIdentity
+ * @property {number} dev - Device identifier.
+ * @property {number} ino - File system inode identifier.
+ * @property {number} size - File size in bytes.
+ * @property {number} mtimeMs - Last modification time.
+ * @property {number} ctimeMs - Last metadata change time.
+ */
+
+/**
  * @typedef {object} DataMaidTokenEntry
  * @property {string} handle - The user's handle or identifier.
- * @property {{path: string, hash: string}[]} paths - The list of file paths and their hashes that can be cleaned up.
+ * @property {{path: string, hash: string, identity: DataMaidFileIdentity}[]} paths - The scanned files that can be cleaned up.
  */
 
 /**
@@ -661,7 +710,10 @@ export class DataMaidService {
         const token = crypto.randomBytes(32).toString('hex');
         const tokenEntry = {
             handle,
-            paths: Object.values(report).filter(v => Array.isArray(v)).flat().map(x => ({ path: x, hash: sha256(x) })),
+            paths: Object.values(report).filter(v => Array.isArray(v)).flat().map(filePath => {
+                const identity = getFileIdentity(filePath);
+                return identity ? { path: filePath, hash: sha256(filePath), identity } : null;
+            }).filter(Boolean),
         };
         this.TOKENS.set(token, tokenEntry);
         return token;
@@ -757,6 +809,10 @@ router.get('/view', async (req, res) => {
             return res.sendStatus(404);
         }
 
+        if (!matchesFileIdentity(pathToFile, fileEntry.identity)) {
+            return res.sendStatus(404);
+        }
+
         const fileBuffer = await fs.promises.readFile(pathToFile);
         const mimeType = mime.lookup(pathToFile) || 'text/plain';
         res.setHeader('Content-Type', mimeType);
@@ -787,6 +843,13 @@ router.post('/delete', async (req, res) => {
             return res.sendStatus(403);
         }
 
+        // Cleanup tokens are single-use. A failed or partial cleanup requires a fresh scan.
+        DataMaidService.TOKENS.delete(token);
+
+        const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
+        const currentReport = await dataMaid.generateReport();
+        const currentLoosePaths = new Set(Object.values(currentReport).filter(value => Array.isArray(value)).flat());
+
         for (const hash of hashes) {
             const fileEntry = tokenEntry.paths.find(entry => entry.hash === hash);
             if (!fileEntry) {
@@ -802,6 +865,10 @@ router.post('/delete', async (req, res) => {
             const fileExists = fs.existsSync(pathToFile);
 
             if (!fileExists) {
+                continue;
+            }
+
+            if (!currentLoosePaths.has(pathToFile) || !matchesFileIdentity(pathToFile, fileEntry.identity)) {
                 continue;
             }
 

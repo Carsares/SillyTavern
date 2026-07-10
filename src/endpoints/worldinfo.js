@@ -117,12 +117,25 @@ router.post('/import', (request, response) => {
 
         const pathToNewFile = path.join(request.user.directories.worlds, filename);
         const worldName = path.parse(pathToNewFile).name;
+        const overwrite = request.body?.overwrite === true || request.body?.overwrite === 'true';
 
         if (!worldName) {
             return response.status(400).send('World file must have a name');
         }
 
-        writeFileAtomicSync(pathToNewFile, fileContents);
+        try {
+            if (overwrite) {
+                writeFileAtomicSync(pathToNewFile, fileContents);
+            } else {
+                fs.writeFileSync(pathToNewFile, fileContents, { flag: 'wx' });
+            }
+        } catch (error) {
+            if (error?.code === 'EEXIST') {
+                return response.status(409).send('World info file already exists');
+            }
+            throw error;
+        }
+
         return response.send({ name: worldName });
     } finally {
         removeUploadedFile(request);

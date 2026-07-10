@@ -1127,7 +1127,12 @@ function createExtensionsRouteHandler(directoryFn) {
             }
             const existsLocal = fs.existsSync(localPath);
             if (existsLocal) {
-                return res.sendFile(filePath, { root: directory });
+                const realDirectory = fs.realpathSync(directory);
+                const realLocalPath = fs.realpathSync(localPath);
+                if (!isPathUnderParent(realDirectory, realLocalPath)) {
+                    return res.sendStatus(403);
+                }
+                return res.sendFile(realLocalPath);
             }
 
             const globalPath = path.join(PUBLIC_DIRECTORIES.globalExtensions, filePath);
@@ -1136,7 +1141,12 @@ function createExtensionsRouteHandler(directoryFn) {
             }
             const existsGlobal = fs.existsSync(globalPath);
             if (existsGlobal) {
-                return res.sendFile(filePath, { root: PUBLIC_DIRECTORIES.globalExtensions });
+                const realDirectory = fs.realpathSync(PUBLIC_DIRECTORIES.globalExtensions);
+                const realGlobalPath = fs.realpathSync(globalPath);
+                if (!isPathUnderParent(realDirectory, realGlobalPath)) {
+                    return res.sendStatus(403);
+                }
+                return res.sendFile(realGlobalPath);
             }
 
             return res.sendStatus(404);

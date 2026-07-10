@@ -72,6 +72,54 @@ describe('chat data safety', () => {
         await expect(getChatInfo(path.join(groupChats, 'missing.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
+    test('returns one controlled error when text export encounters malformed JSONL', async () => {
+        const chats = createTempDirectory();
+        const characterChats = path.join(chats, 'avatar');
+        fs.mkdirSync(characterChats, { recursive: true });
+        fs.writeFileSync(path.join(characterChats, 'broken.jsonl'), '{"name":"User","mes":"valid"}\n{invalid');
+        const response = createResponse();
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            await getRouteHandler(chatRouter, '/export')({
+                body: { file: 'broken.jsonl', avatar_url: 'avatar.png', is_group: false, format: 'txt', exportfilename: 'broken.txt' },
+                user: { directories: { chats } },
+            }, response);
+        } finally {
+            consoleError.mockRestore();
+        }
+
+        expect(response.sendStatus).toHaveBeenCalledTimes(1);
+        expect(response.sendStatus).toHaveBeenCalledWith(400);
+        expect(response.json).not.toHaveBeenCalled();
+    });
+
+    test('completes a valid text export exactly once', async () => {
+        const chats = createTempDirectory();
+        const characterChats = path.join(chats, 'avatar');
+        fs.mkdirSync(characterChats, { recursive: true });
+        fs.writeFileSync(path.join(characterChats, 'valid.jsonl'), [
+            JSON.stringify({ name: 'User', mes: 'Hello' }),
+            JSON.stringify({ name: 'System', mes: 'hidden', is_system: true }),
+            JSON.stringify({ name: 'Character', mes: 'Hi' }),
+        ].join('\n'));
+        const response = createResponse();
+
+        await getRouteHandler(chatRouter, '/export')({
+            body: { file: 'valid.jsonl', avatar_url: 'avatar.png', is_group: false, format: 'txt', exportfilename: 'valid.txt' },
+            user: { directories: { chats } },
+        }, response);
+
+        expect(response.status).toHaveBeenCalledTimes(1);
+        expect(response.status).toHaveBeenCalledWith(200);
+        expect(response.json).toHaveBeenCalledTimes(1);
+        expect(response.json).toHaveBeenCalledWith({
+            message: 'Chat saved to valid.txt',
+            result: 'User: Hello\n\nCharacter: Hi\n\n',
+        });
+        expect(response.sendStatus).not.toHaveBeenCalled();
+    });
+
     test('imports every non-empty CAI Tools history', () => {
         const root = createTempDirectory();
         const chats = path.join(root, 'chats');

@@ -276,6 +276,9 @@ router.post('/caption-image', async (request, response) => {
                 return response.sendStatus(503);
             }
         }
+
+        console.warn('Image interrogation request timed out.');
+        return response.sendStatus(504);
     } catch (error) {
         console.error(error);
         response.sendStatus(500);

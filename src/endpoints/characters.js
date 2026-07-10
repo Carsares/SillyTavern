@@ -1023,6 +1023,10 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
 export const router = express.Router();
 
 router.post('/create', getFileNameValidationFunction('file_name'), async function (request, response) {
+    let chatsPath;
+    let createdChatsDirectory = false;
+    let characterCreated = false;
+
     try {
         if (!request.body) return response.sendStatus(400);
 
@@ -1031,23 +1035,46 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
         const internalName = request.body.file_name || getPngName(request.body.ch_name, request.user.directories);
         const avatarName = `${internalName}.png`;
-        const chatsPath = path.join(request.user.directories.chats, internalName);
+        if (!internalName || Buffer.byteLength(avatarName) > MAX_FILENAME_BYTES) {
+            return response.sendStatus(400);
+        }
 
-        if (!fs.existsSync(chatsPath)) fs.mkdirSync(chatsPath);
+        chatsPath = path.join(request.user.directories.chats, internalName);
+
+        if (!fs.existsSync(chatsPath)) {
+            fs.mkdirSync(chatsPath);
+            createdChatsDirectory = true;
+        }
 
         if (!request.file) {
-            await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
+            const writeSucceeded = await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
+            if (!writeSucceeded) {
+                throw new Error(`Failed to write character file: ${avatarName}`);
+            }
+            characterCreated = true;
             return response.send(avatarName);
         } else {
             const crop = tryParse(request.query.crop);
             const uploadPath = path.join(request.file.destination, request.file.filename);
-            await writeCharacterData(uploadPath, char, internalName, request, crop);
+            const writeSucceeded = await writeCharacterData(uploadPath, char, internalName, request, crop);
+            if (!writeSucceeded) {
+                fs.unlinkSync(uploadPath);
+                throw new Error(`Failed to write character file: ${avatarName}`);
+            }
+            characterCreated = true;
             fs.unlinkSync(uploadPath);
             return response.send(avatarName);
         }
     } catch (err) {
         console.error(err);
-        response.sendStatus(500);
+        if (!characterCreated && createdChatsDirectory && chatsPath && fs.existsSync(chatsPath)) {
+            try {
+                fs.rmdirSync(chatsPath);
+            } catch (cleanupError) {
+                console.warn(`Failed to remove empty chat directory after character creation failed: ${chatsPath}`, cleanupError);
+            }
+        }
+        return response.sendStatus(500);
     }
 });
 

@@ -4,6 +4,8 @@ export function createWorldbookDetailActions({
     loadData,
     showToast,
 }) {
+    const worldbookUpdateQueues = new Map();
+
     async function loadWorldDetail(worldbookId, { force = false } = {}) {
         if (!worldbookId || (state.worldDetails[worldbookId] && !force)) {
             return state.worldDetails[worldbookId] || null;
@@ -22,6 +24,39 @@ export function createWorldbookDetailActions({
     async function saveWorldbookDetail(worldbookId, detail) {
         await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: detail } });
         state.worldDetails[worldbookId] = detail;
+    }
+
+    async function updateWorldbookDetail(worldbookId, updateDetail) {
+        if (!worldbookId || typeof updateDetail !== 'function') {
+            throw new Error('世界书更新目标无效。');
+        }
+
+        // Serialize each world's read-modify-save cycle so later edits clone the latest saved detail.
+        const previousUpdate = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
+        const currentUpdate = previousUpdate.catch(() => {}).then(async () => {
+            await loadWorldDetail(worldbookId);
+            const detail = state.worldDetails[worldbookId];
+            if (!detail) {
+                throw new Error('世界书内容读取失败。');
+            }
+
+            const nextDetail = structuredClone(detail);
+            const result = await updateDetail(nextDetail);
+            if (result?.save === false) {
+                return result;
+            }
+            await saveWorldbookDetail(worldbookId, nextDetail);
+            return result;
+        });
+        worldbookUpdateQueues.set(worldbookId, currentUpdate);
+
+        try {
+            return await currentUpdate;
+        } finally {
+            if (worldbookUpdateQueues.get(worldbookId) === currentUpdate) {
+                worldbookUpdateQueues.delete(worldbookId);
+            }
+        }
     }
 
     function getGlobalWorldNames() {
@@ -53,6 +88,7 @@ export function createWorldbookDetailActions({
     return {
         loadWorldDetail,
         saveWorldbookDetail,
+        updateWorldbookDetail,
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
