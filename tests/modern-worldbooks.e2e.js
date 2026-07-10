@@ -107,6 +107,7 @@ function createWorldbookFixture() {
         edits: [],
         imports: [],
         deletes: [],
+        sanitizes: [],
     };
 
     return fixture;
@@ -123,6 +124,12 @@ async function mockModernWorldbooksWorkspace(page) {
     const fixture = createWorldbookFixture();
     const requests = fixture.requests.worldbookWorkflows;
     await mockModernWorkspace(page, fixture);
+
+    await page.route('**/api/files/sanitize-filename', route => {
+        const payload = route.request().postDataJSON();
+        requests.sanitizes.push(clone(payload));
+        return fulfillJson(route, { fileName: String(payload.fileName || '').replaceAll(':', '') });
+    });
 
     await page.route('**/api/worldinfo/get', route => {
         const payload = route.request().postDataJSON();
@@ -194,13 +201,15 @@ test.describe('Modern worldbooks page', () => {
         await expect(page.locator('[data-select-worldbook="Lore"]')).toContainText('全局启用');
 
         await page.locator('[data-create-worldbook]').click();
-        await page.locator('[data-worldbook-create-name]').fill('CreatedWorld');
+        await page.locator('[data-worldbook-create-name]').fill('Created:World');
         await page.locator('[data-save-worldbook-create]').click();
 
         await expect.poll(() => requests.edits.length).toBe(1);
+        expect(requests.sanitizes).toEqual([{ fileName: 'Created:World' }]);
         expect(requests.edits[0]).toMatchObject({
             name: 'CreatedWorld',
             data: { name: 'CreatedWorld', entries: {}, extensions: {} },
+            overwrite: false,
         });
         await expect(page.locator('[data-select-worldbook="CreatedWorld"]')).toBeVisible();
 

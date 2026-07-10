@@ -129,6 +129,8 @@ export function createActionRegistry({
     });
     const {
         loadWorldDetail,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
         beginWorldbookCreate,
     } = worldbookActions;
 
@@ -188,6 +190,8 @@ export function createActionRegistry({
         showToast,
         callLegacyBridge,
         loadWorldDetail,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
     });
 
     return {

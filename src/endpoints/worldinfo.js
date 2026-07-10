@@ -166,8 +166,20 @@ router.post('/edit', (request, response) => {
 
     const filename = sanitize(`${request.body.name}.json`);
     const pathToFile = path.join(request.user.directories.worlds, filename);
+    const overwrite = request.body.overwrite !== false && request.body.overwrite !== 'false';
 
-    writeFileAtomicSync(pathToFile, JSON.stringify(request.body.data, null, 4));
+    try {
+        if (overwrite) {
+            writeFileAtomicSync(pathToFile, JSON.stringify(request.body.data, null, 4));
+        } else {
+            fs.writeFileSync(pathToFile, JSON.stringify(request.body.data, null, 4), { flag: 'wx' });
+        }
+    } catch (error) {
+        if (error?.code === 'EEXIST') {
+            return response.status(409).send('World info file already exists');
+        }
+        throw error;
+    }
 
     return response.send({ ok: true });
 });

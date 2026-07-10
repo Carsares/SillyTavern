@@ -6,8 +6,16 @@ export function createWorldbookFileActions({
     showToast,
     downloadFile,
     loadWorldDetail,
+    deleteWorldbookFile,
+    ensureWorldbookFileWriteAllowed,
+    restoreWorldbookFile,
     getGlobalWorldNames,
 }) {
+    async function getSanitizedFileName(fileName) {
+        const result = await apiFetch('/api/files/sanitize-filename', { body: { fileName } });
+        return typeof result?.fileName === 'string' ? result.fileName : '';
+    }
+
     function beginWorldbookCreate() {
         state.worldbookCreating = { active: true, name: '' };
         render();
@@ -19,9 +27,13 @@ export function createWorldbookFileActions({
     }
 
     async function saveWorldbookCreate() {
-        const name = state.worldbookCreating.name.trim();
-        if (!name) {
+        const requestedName = state.worldbookCreating.name.trim();
+        if (!requestedName) {
             throw new Error('世界书名称不能为空。');
+        }
+        const name = await getSanitizedFileName(requestedName);
+        if (!name) {
+            throw new Error('世界书名称清理后为空，请使用其他名称。');
         }
         const exists = state.worldbooks.some(worldbook => worldbook.file_id === name) || (state.settingsBundle.world_names || []).includes(name);
         if (exists) {
@@ -29,7 +41,9 @@ export function createWorldbookFileActions({
         }
 
         const detail = { name, entries: {}, extensions: {} };
-        await apiFetch('/api/worldinfo/edit', { body: { name, data: detail } });
+        ensureWorldbookFileWriteAllowed(name);
+        await apiFetch('/api/worldinfo/edit', { body: { name, data: detail, overwrite: false } });
+        restoreWorldbookFile(name);
         delete state.worldDetails[name];
         state.worldbookCreating = { active: false, name: '' };
         state.selected.worldbook = name;
@@ -47,15 +61,21 @@ export function createWorldbookFileActions({
             throw new Error('现代页暂只支持导入标准 JSON 世界书。');
         }
 
-        const worldName = file.name.replace(/\.json$/i, '');
+        const sanitizedFileName = await getSanitizedFileName(file.name);
+        const worldName = sanitizedFileName.replace(/\.json$/i, '');
+        if (!worldName) {
+            throw new Error('世界书文件名清理后为空，请使用其他文件名。');
+        }
         if (state.worldbooks.some(worldbook => worldbook.file_id === worldName)) {
             throw new Error('同名世界书已存在，请先重命名文件或删除旧世界书。');
         }
 
         const formData = new FormData();
         formData.append('avatar', file);
+        ensureWorldbookFileWriteAllowed(worldName);
         const result = await apiFetch('/api/worldinfo/import', { body: formData, omitContentType: true });
         const importedName = result?.name || worldName;
+        restoreWorldbookFile(importedName);
         state.selected.worldbook = importedName;
         delete state.worldDetails[importedName];
         await loadData({ silent: true });
@@ -127,7 +147,7 @@ export function createWorldbookFileActions({
             throw new Error('删除目标已变化，请重新选择世界书。');
         }
 
-        await apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } });
+        await deleteWorldbookFile(worldbookId);
         const globalWorlds = getGlobalWorldNames();
         const removeGlobal = globalWorlds.includes(worldbookId);
         clearDeletedWorldbookState(worldbookId, removeGlobal);

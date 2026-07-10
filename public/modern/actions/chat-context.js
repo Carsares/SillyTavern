@@ -262,6 +262,21 @@ export function createChatContextActions({
 
     const groupMetadataUpdateQueues = new Map();
     const groupMetadataReloadRequired = new Set();
+    const groupMetadataDeleteBarriers = new Set();
+
+    async function queueGroupMetadataOperation(groupId, operation) {
+        const previousOperation = groupMetadataUpdateQueues.get(groupId) || Promise.resolve();
+        const currentOperation = previousOperation.catch(() => {}).then(operation);
+        groupMetadataUpdateQueues.set(groupId, currentOperation);
+
+        try {
+            return await currentOperation;
+        } finally {
+            if (groupMetadataUpdateQueues.get(groupId) === currentOperation) {
+                groupMetadataUpdateQueues.delete(groupId);
+            }
+        }
+    }
 
     function useGroupMetadata(group, metadata) {
         Object.assign(group, metadata);
@@ -281,14 +296,26 @@ export function createChatContextActions({
         groupMetadataReloadRequired.delete(group.id);
     }
 
+    async function getGroupMetadataExistence(groupId) {
+        try {
+            const groups = await apiFetch('/api/groups/all');
+            return Array.isArray(groups) ? groups.some(item => item.id === groupId) : null;
+        } catch {
+            return null;
+        }
+    }
+
     async function updateGroupMetadata(group, updateMetadata) {
         if (!group?.id || typeof updateMetadata !== 'function') {
             throw new Error('群聊元数据更新目标无效。');
         }
 
         const groupId = group.id;
-        const previousUpdate = groupMetadataUpdateQueues.get(groupId) || Promise.resolve();
-        const currentUpdate = previousUpdate.catch(() => {}).then(async () => {
+        if (groupMetadataDeleteBarriers.has(groupId)) {
+            throw new Error('群聊已删除或正在删除，无法继续更新。');
+        }
+
+        return queueGroupMetadataOperation(groupId, async () => {
             if (groupMetadataReloadRequired.has(groupId)) {
                 await reloadGroupMetadata(group);
             }
@@ -319,14 +346,33 @@ export function createChatContextActions({
             groupMetadataReloadRequired.delete(groupId);
             return nextMetadata;
         });
-        groupMetadataUpdateQueues.set(groupId, currentUpdate);
+    }
 
+    async function deleteGroupMetadata(groupId) {
+        if (!groupId) {
+            throw new Error('缺少待删除群聊。');
+        }
+        if (groupMetadataDeleteBarriers.has(groupId)) {
+            throw new Error('群聊已删除或正在删除。');
+        }
+
+        // Mark deletion before waiting so operations that have not entered the queue cannot recreate the group.
+        groupMetadataDeleteBarriers.add(groupId);
         try {
-            return await currentUpdate;
-        } finally {
-            if (groupMetadataUpdateQueues.get(groupId) === currentUpdate) {
-                groupMetadataUpdateQueues.delete(groupId);
+            await queueGroupMetadataOperation(groupId, async () => {
+                await apiFetch('/api/groups/delete', { body: { id: groupId } });
+                groupMetadataReloadRequired.delete(groupId);
+            });
+        } catch (error) {
+            const groupExists = await getGroupMetadataExistence(groupId);
+            if (groupExists === true) {
+                groupMetadataDeleteBarriers.delete(groupId);
+                throw error;
             }
+            if (groupExists === null) {
+                throw error;
+            }
+            groupMetadataReloadRequired.delete(groupId);
         }
     }
 
@@ -502,6 +548,7 @@ export function createChatContextActions({
         getUserName,
         saveGroupMetadata,
         updateGroupMetadata,
+        deleteGroupMetadata,
         saveModernChat,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,

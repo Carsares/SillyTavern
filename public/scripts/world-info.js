@@ -1,7 +1,7 @@
 import { Fuse } from '../lib.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -23,7 +23,7 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
-import { needsEmbeddedWorldInfoConfirmation, removeWorldInfoFromCharLore } from './world-info-file-helpers.js';
+import { createKeyedDebouncer, createWorldInfoDeleteBarrier, needsEmbeddedWorldInfoConfirmation, removeWorldInfoFromCharLore, replaceWorldInfoInPersonaDescriptions, replaceWorldInfoInSelectedWorlds, tryCreateWorldInfo } from './world-info-file-helpers.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -81,7 +81,14 @@ export let world_info_use_group_scoring = false;
 export let world_info_character_strategy = world_info_insertion_strategy.character_first;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-const saveWorldDebounced = debounce(async (name, data) => await _save(name, data), debounce_timeout.relaxed);
+const worldInfoSaveQueues = new Map();
+const worldInfoSaveVersions = new Map();
+const worldInfoDeleteBarrier = createWorldInfoDeleteBarrier();
+const saveWorldDebounced = createKeyedDebouncer(
+    (name, data, overwrite, version, recreate) => queueWorldInfoSave(name, data, overwrite, version, false, recreate),
+    handleDebouncedWorldInfoSaveError,
+    debounce_timeout.relaxed,
+);
 const saveSettingsDebounced = debounce(() => {
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
@@ -2582,7 +2589,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 return;
             }
 
-            await saveWorldInfo(resolvedName.targetName, data, true);
+            const saved = await saveCreatedWorldInfo(resolvedName.targetName, data, Boolean(resolvedName.existingName));
+            if (!saved) {
+                return;
+            }
             await updateWorldInfoList();
 
             const selectedIndex = world_names.indexOf(resolvedName.targetName);
@@ -4095,20 +4105,73 @@ export function createWorldInfoEntry(_name, data) {
     return newEntry;
 }
 
-async function _save(name, data) {
-    // Prevent double saving if both immediate and debounced save are called
-    cancelDebounce(saveWorldDebounced);
-
+async function _save(name, data, overwrite, version, updateCache, recreate) {
     const response = await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name, data: data }),
+        body: JSON.stringify({ name: name, data: data, overwrite }),
     });
     if (!response.ok) {
-        throw new Error(`Failed to save World Info: ${response.statusText}`);
+        const error = new Error(`Failed to save World Info: ${response.statusText}`);
+        error.status = response.status;
+        throw error;
     }
-    worldInfoCache.set(name, data);
+    if (recreate) {
+        worldInfoDeleteBarrier.restore(name);
+    }
+    if (updateCache && worldInfoSaveVersions.get(name) === version) {
+        worldInfoCache.set(name, data);
+    }
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+}
+
+function queueWorldInfoSave(name, data, overwrite, version, updateCache, recreate) {
+    const previousSave = worldInfoSaveQueues.get(name) ?? Promise.resolve();
+    const savePromise = previousSave.catch(() => {}).then(() => _save(name, data, overwrite, version, updateCache, recreate));
+    worldInfoSaveQueues.set(name, savePromise);
+
+    const removeCompletedSave = () => {
+        if (worldInfoSaveQueues.get(name) === savePromise) {
+            worldInfoSaveQueues.delete(name);
+        }
+    };
+    savePromise.then(removeCompletedSave, removeCompletedSave);
+    return savePromise;
+}
+
+function handleDebouncedWorldInfoSaveError(error, name, _data, _overwrite, version) {
+    console.error(`Failed to save World Info "${name}":`, error);
+    if (worldInfoSaveVersions.get(name) !== version) {
+        return;
+    }
+
+    worldInfoCache.delete(name);
+    toastr.error(t`Failed to save World Info "${name}". Reload it before continuing.`);
+}
+
+async function finishPendingWorldInfoSave(name) {
+    await saveWorldDebounced.flush(name);
+    const queuedSave = worldInfoSaveQueues.get(name);
+    if (queuedSave) {
+        // A failed edit is reported by its save path, but must not block an explicit delete.
+        await queuedSave.catch(() => {});
+    }
+}
+
+async function saveCreatedWorldInfo(name, data, overwrite) {
+    return tryCreateWorldInfo(
+        () => saveWorldInfo(name, data, true, { overwrite, recreate: true }),
+        async () => {
+            // A backend conflict proves that another client recreated this deleted name.
+            worldInfoDeleteBarrier.restore(name);
+            try {
+                await updateWorldInfoList();
+            } catch (error) {
+                console.error('Failed to refresh World Info list after a create conflict:', error);
+            }
+            toastr.error(t`World Info "${name}" already exists. Refresh the list and try again.`, t`World Info conflict`);
+        },
+    );
 }
 
 
@@ -4123,20 +4186,46 @@ async function _save(name, data) {
  * @param {string} name - The name of the world info
  * @param {any} data - The data to be saved
  * @param {boolean} [immediately=false] - Whether to save immediately or use debouncing
+ * @param {object} [options] Save options.
+ * @param {boolean} [options.overwrite=true] Whether an existing file may be overwritten.
+ * @param {boolean} [options.recreate=false] Whether this is an explicit create that may restore a deleted name.
  * @return {Promise<void>} A promise that resolves when the world info is saved
  */
-export async function saveWorldInfo(name, data, immediately = false) {
+export async function saveWorldInfo(name, data, immediately = false, { overwrite = true, recreate = false } = {}) {
     if (!name || !data) {
         return;
     }
 
+    if (!worldInfoDeleteBarrier.canSave(name, recreate)) {
+        if (!immediately) {
+            console.warn(`Ignored save for World Info "${name}" because it is being deleted or was deleted.`);
+            return;
+        }
+
+        const error = new Error(`World Info "${name}" is being deleted or was deleted.`);
+        error.status = 409;
+        throw error;
+    }
+
+    const version = (worldInfoSaveVersions.get(name) ?? 0) + 1;
+    worldInfoSaveVersions.set(name, version);
+
     if (immediately) {
-        return await _save(name, data);
+        saveWorldDebounced.cancel(name);
+        try {
+            await queueWorldInfoSave(name, data, overwrite, version, true, recreate);
+            return;
+        } catch (error) {
+            if (worldInfoSaveVersions.get(name) === version) {
+                worldInfoCache.delete(name);
+            }
+            throw error;
+        }
     }
 
     // Update cache immediately while the backend save is debounced.
     worldInfoCache.set(name, data);
-    saveWorldDebounced(name, data);
+    saveWorldDebounced.schedule(name, data, overwrite, version, recreate);
 }
 
 async function renameWorldInfo(name, data) {
@@ -4164,19 +4253,23 @@ async function renameWorldInfo(name, data) {
 
     const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
 
-    await saveWorldInfo(resolvedName.targetName, data, true);
-    const deleted = await deleteWorldInfo(oldName);
+    const saved = await saveCreatedWorldInfo(resolvedName.targetName, data, Boolean(resolvedName.existingName));
+    if (!saved) {
+        return;
+    }
+    const deleted = await deleteWorldInfo(oldName, { unlinkConsumers: false });
     if (!deleted) {
         throw new Error(`Failed to delete old World Info: ${oldName}`);
     }
 
-    await updateWorldInfoLinks(oldName, resolvedName.targetName);
-
     if (entryPreviouslySelected !== -1) {
+        selected_world_info = replaceWorldInfoInSelectedWorlds(selected_world_info, oldName, resolvedName.targetName);
         const wiElement = getWIElement(resolvedName.targetName);
         wiElement.prop('selected', true);
         $('#world_info').trigger('change');
     }
+
+    await updateWorldInfoLinks(oldName, resolvedName.targetName);
 
     const selectedIndex = world_names.indexOf(resolvedName.targetName);
     if (selectedIndex !== -1) {
@@ -4185,7 +4278,7 @@ async function renameWorldInfo(name, data) {
 }
 
 /**
- * Retargets all character lore links from an old world info name to a new one, with an optional confirmation for primary lorebook links
+ * Retargets character and persona lore links, with an optional confirmation for primary character links.
  * @param {string} oldName Previous WI file name
  * @param {string} newName New WI file name
  * @returns {Promise<void>}
@@ -4199,6 +4292,29 @@ async function updateWorldInfoLinks(oldName, newName) {
             charLore.extraBooks = tempCharLore;
         });
         saveSettingsDebounced();
+    }
+
+    const updatedPersonaIds = replaceWorldInfoInPersonaDescriptions(power_user.persona_descriptions, oldName, newName);
+    let activePersonaUpdated = false;
+    if (power_user.persona_description_lorebook === oldName) {
+        power_user.persona_description_lorebook = newName;
+        activePersonaUpdated = true;
+        if (power_user.personas[user_avatar]) {
+            const descriptor = getOrCreatePersonaDescriptor();
+            descriptor.lorebook = newName;
+            if (!updatedPersonaIds.includes(user_avatar)) {
+                updatedPersonaIds.push(user_avatar);
+            }
+        }
+        $('#persona_lore_button').toggleClass('world_set', true);
+    }
+
+    if (updatedPersonaIds.length > 0 || activePersonaUpdated) {
+        saveSettingsDebounced();
+    }
+
+    for (const avatarId of updatedPersonaIds) {
+        await eventSource.emit(event_types.PERSONA_UPDATED, avatarId);
     }
 
     // find all characters using the old lorebook name as their primary world
@@ -4272,55 +4388,70 @@ async function updateWorldInfoLinks(oldName, newName) {
  * Deletes a world info with the given name
  *
  * @param {string} worldInfoName - The name of the world info to delete
+ * @param {object} [options] Delete options.
+ * @param {boolean} [options.unlinkConsumers=true] Whether global, character, and persona links should be removed.
  * @returns {Promise<boolean>} A promise that resolves to true if the world info was successfully deleted, false otherwise
  */
-export async function deleteWorldInfo(worldInfoName) {
+export async function deleteWorldInfo(worldInfoName, { unlinkConsumers = true } = {}) {
     if (!world_names.includes(worldInfoName)) {
         return false;
     }
-
-    const response = await fetch('/api/worldinfo/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: worldInfoName }),
-    });
-
-    if (!response.ok) {
+    if (!worldInfoDeleteBarrier.beginDelete(worldInfoName)) {
         return false;
     }
 
-    if (worldInfoCache.has(worldInfoName)) {
-        worldInfoCache.delete(worldInfoName);
-    }
+    try {
+        // Finish older edits after blocking new ones so a delayed save cannot recreate the file.
+        await finishPendingWorldInfoSave(worldInfoName);
 
-    const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
-    if (existingWorldIndex !== -1) {
-        selected_world_info.splice(existingWorldIndex, 1);
-        saveSettingsDebounced();
-    }
+        const response = await fetch('/api/worldinfo/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: worldInfoName }),
+        });
 
-    await updateWorldInfoList();
-    $('#world_editor_select').trigger('change');
-
-    if ($('#character_world').val() === worldInfoName) {
-        $('#character_world').val('').trigger('change');
-        setWorldInfoButtonClass(undefined, false);
-        if (menu_type != 'create') {
-            saveCharacterDebounced();
+        if (!response.ok) {
+            worldInfoDeleteBarrier.cancelDelete(worldInfoName);
+            return false;
         }
-    }
+        worldInfoDeleteBarrier.markDeleted(worldInfoName);
 
-    if (power_user.persona_description_lorebook === worldInfoName) {
-        power_user.persona_description_lorebook = '';
-        if (power_user.personas[user_avatar]) {
-            const object = getOrCreatePersonaDescriptor();
-            object.lorebook = '';
+        if (worldInfoCache.has(worldInfoName)) {
+            worldInfoCache.delete(worldInfoName);
         }
-        $('#persona_lore_button').toggleClass('world_set', false);
-        saveSettingsDebounced();
-    }
 
-    return true;
+        const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
+        if (unlinkConsumers && existingWorldIndex !== -1) {
+            selected_world_info.splice(existingWorldIndex, 1);
+            saveSettingsDebounced();
+        }
+
+        await updateWorldInfoList();
+        $('#world_editor_select').trigger('change');
+
+        if (unlinkConsumers && $('#character_world').val() === worldInfoName) {
+            $('#character_world').val('').trigger('change');
+            setWorldInfoButtonClass(undefined, false);
+            if (menu_type != 'create') {
+                saveCharacterDebounced();
+            }
+        }
+
+        if (unlinkConsumers && power_user.persona_description_lorebook === worldInfoName) {
+            power_user.persona_description_lorebook = '';
+            if (power_user.personas[user_avatar]) {
+                const object = getOrCreatePersonaDescriptor();
+                object.lorebook = '';
+            }
+            $('#persona_lore_button').toggleClass('world_set', false);
+            saveSettingsDebounced();
+        }
+
+        return true;
+    } catch (error) {
+        worldInfoDeleteBarrier.cancelDelete(worldInfoName);
+        throw error;
+    }
 }
 
 export function getFreeWorldEntryUid(data) {
@@ -4393,7 +4524,10 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
         return false;
     }
 
-    await saveWorldInfo(resolvedName.targetName, worldInfoTemplate, true);
+    const saved = await saveCreatedWorldInfo(resolvedName.targetName, worldInfoTemplate, Boolean(resolvedName.existingName));
+    if (!saved) {
+        return false;
+    }
     await updateWorldInfoList();
 
     const selectedIndex = world_names.indexOf(resolvedName.targetName);
@@ -5686,7 +5820,10 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
 
     const convertedBook = convertCharacterBook(characters[chid].data.character_book);
 
-    await saveWorldInfo(resolvedName.targetName, convertedBook, true);
+    const saved = await saveCreatedWorldInfo(resolvedName.targetName, convertedBook, Boolean(resolvedName.existingName));
+    if (!saved) {
+        return;
+    }
     await updateWorldInfoList();
     $('#character_world').val(resolvedName.targetName).trigger('change');
 
@@ -5859,6 +5996,7 @@ export async function importWorldInfo(file) {
         const data = await result.json();
 
         if (data.name) {
+            worldInfoDeleteBarrier.restore(data.name);
             worldInfoCache.delete(data.name);
             await updateWorldInfoList();
 

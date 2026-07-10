@@ -842,6 +842,7 @@ test.describe('Modern real backend integration', () => {
             await page.locator('[data-worldbook-create-name]').fill(worldbookName);
             await page.locator('[data-save-worldbook-create]').click();
 
+            await expectFrontendRequest(tracker, '/api/files/sanitize-filename');
             await expectFrontendRequest(tracker, '/api/worldinfo/edit');
             await expect(page.locator(`[data-select-worldbook="${worldbookName}"]`)).toBeVisible();
 

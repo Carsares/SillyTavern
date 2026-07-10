@@ -57,6 +57,9 @@ export function createWorldbookActions({
     const {
         loadWorldDetail,
         updateWorldbookDetail,
+        deleteWorldbookFile,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
@@ -69,6 +72,9 @@ export function createWorldbookActions({
         showToast,
         downloadFile,
         loadWorldDetail,
+        deleteWorldbookFile,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
         getGlobalWorldNames,
     });
     const entryBulkActions = createWorldbookEntryBulkActions({
@@ -97,6 +103,8 @@ export function createWorldbookActions({
 
     return {
         loadWorldDetail,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
         getWorldEntryListState,

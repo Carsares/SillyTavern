@@ -60,7 +60,7 @@ function createResponse() {
     };
 }
 
-function createEditRequest(data) {
+function createEditRequest(data, overwrite = undefined) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-worldinfo-edit-'));
     const worlds = path.join(root, 'worlds');
     fs.mkdirSync(worlds);
@@ -68,7 +68,7 @@ function createEditRequest(data) {
     return {
         root,
         request: {
-            body: { name: 'Existing', data },
+            body: { name: 'Existing', data, overwrite },
             user: { directories: { worlds } },
         },
     };
@@ -176,5 +176,44 @@ describe('world info import upload cleanup', () => {
 
         expect(response.body).toEqual({ ok: true });
         expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(updated);
+    });
+
+    test('overwrites an existing World Info when explicitly requested', () => {
+        const updated = { entries: { updated: true } };
+        const { root, request } = createEditRequest(updated, true);
+        const worldPath = path.join(root, 'worlds', 'Existing.json');
+        fs.writeFileSync(worldPath, JSON.stringify({ entries: { original: true } }));
+        const response = createResponse();
+
+        editHandler(request, response);
+
+        expect(response.body).toEqual({ ok: true });
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(updated);
+    });
+
+    test('creates a new World Info when overwrite is explicitly disabled', () => {
+        const created = { entries: { created: true } };
+        const { root, request } = createEditRequest(created, false);
+        const worldPath = path.join(root, 'worlds', 'Existing.json');
+        const response = createResponse();
+
+        editHandler(request, response);
+
+        expect(response.body).toEqual({ ok: true });
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(created);
+    });
+
+    test('does not overwrite a concurrently created World Info when overwrite is explicitly disabled', () => {
+        const updated = { entries: { updated: true } };
+        const original = { entries: { original: true } };
+        const { root, request } = createEditRequest(updated, false);
+        const worldPath = path.join(root, 'worlds', 'Existing.json');
+        fs.writeFileSync(worldPath, JSON.stringify(original));
+        const response = createResponse();
+
+        editHandler(request, response);
+
+        expect(response.statusCode).toBe(409);
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(original);
     });
 });

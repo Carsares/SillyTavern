@@ -304,11 +304,34 @@ router.post('/set-model', async (request, response) => {
 });
 
 router.post('/generate', async (request, response) => {
+    const controller = new AbortController();
+    let generationInProgress = false;
+    response.once('close', function () {
+        if (response.writableEnded) {
+            return;
+        }
+
+        controller.abort();
+        if (generationInProgress) {
+            startBackgroundRequest(
+                () => {
+                    const interruptUrl = new URL(request.body.url);
+                    interruptUrl.pathname = '/sdapi/v1/interrupt';
+                    return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                },
+                'Failed to interrupt SD WebUI generation:',
+            );
+        }
+    });
+
     try {
         try {
             const optionsUrl = new URL(request.body.url);
             optionsUrl.pathname = '/sdapi/v1/options';
-            const optionsResult = await fetch(optionsUrl, { headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+            const optionsResult = await fetch(optionsUrl, {
+                headers: { 'Authorization': getBasicAuthHeader(request.body.auth) },
+                signal: controller.signal,
+            });
             if (optionsResult.ok) {
                 const optionsData = /** @type {any} */ (await optionsResult.json());
                 const isForge = 'forge_preset' in optionsData;
@@ -318,38 +341,30 @@ router.post('/generate', async (request, response) => {
                 }
             }
         } catch (error) {
+            if (controller.signal.aborted) {
+                return response;
+            }
             console.error('SD WebUI failed to get options:', error);
         }
-
-        const controller = new AbortController();
-        response.once('close', function () {
-            if (response.writableEnded) {
-                return;
-            }
-
-            controller.abort();
-            startBackgroundRequest(
-                () => {
-                    const interruptUrl = new URL(request.body.url);
-                    interruptUrl.pathname = '/sdapi/v1/interrupt';
-                    return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
-                },
-                'Failed to interrupt SD WebUI generation:',
-            );
-        });
 
         console.debug('SD WebUI request:', request.body);
         const txt2imgUrl = new URL(request.body.url);
         txt2imgUrl.pathname = '/sdapi/v1/txt2img';
-        const result = await fetch(txt2imgUrl, {
-            method: 'POST',
-            body: JSON.stringify(request.body),
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': getBasicAuthHeader(request.body.auth),
-            },
-            signal: controller.signal,
-        });
+        let result;
+        generationInProgress = true;
+        try {
+            result = await fetch(txt2imgUrl, {
+                method: 'POST',
+                body: JSON.stringify(request.body),
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': getBasicAuthHeader(request.body.auth),
+                },
+                signal: controller.signal,
+            });
+        } finally {
+            generationInProgress = false;
+        }
 
         if (!result.ok) {
             const text = await result.text();
@@ -359,6 +374,9 @@ router.post('/generate', async (request, response) => {
         const data = await result.json();
         return response.send(data);
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error(error);
         return response.sendStatus(500);
     }

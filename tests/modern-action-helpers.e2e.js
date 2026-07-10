@@ -7,6 +7,7 @@ import { createChatFileActions } from '../public/modern/actions/chat-files.js';
 import { createChatFileManagementActions } from '../public/modern/actions/chat-file-management.js';
 import { createChatGenerationActions } from '../public/modern/actions/chat-generation.js';
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
+import { createGroupActions } from '../public/modern/actions/groups.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
 import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
 import { createWorldbookDetailActions } from '../public/modern/actions/worldbook-details.js';
@@ -109,6 +110,113 @@ test.describe('Modern action helpers', () => {
         expect(savedDetails[1].entries['2'].disable).toBe(true);
         expect(state.worldDetails.Lore.entries['1'].disable).toBe(true);
         expect(state.worldDetails.Lore.entries['2'].disable).toBe(true);
+    });
+
+    test('waits for queued worldbook edits before deletion and blocks later edits', async () => {
+        const state = {
+            selected: { worldbook: 'Lore' },
+            worldbooks: [{ file_id: 'Lore' }],
+            worldDetails: { Lore: { entries: { 1: { uid: 1, disable: false } } } },
+            settingsBundle: { world_names: ['Lore'] },
+            settings: { world_info_settings: { world_info: { globalSelect: [] } } },
+            worldbookDeleteConfirm: { worldbookId: 'Lore' },
+            worldEntryEditing: { worldbookId: '', entryKey: '', mode: '', form: {} },
+            worldEntryDeleteConfirm: { worldbookId: '', entryKey: '' },
+            worldEntryBulkDeleteConfirm: { worldbookId: '' },
+            worldEntryList: { worldbookId: 'Lore', query: '', sort: 'order', page: 1, selectedKeys: [] },
+            worldbookCreating: { active: false, name: '' },
+            errors: [],
+        };
+        let releaseEdit;
+        const editBlocked = new Promise(resolve => {
+            releaseEdit = resolve;
+        });
+        let markEditStarted;
+        const editStarted = new Promise(resolve => {
+            markEditStarted = resolve;
+        });
+        const requests = [];
+        const apiHandlers = {
+            '/api/worldinfo/edit': async () => {
+                markEditStarted();
+                await editBlocked;
+                return { ok: true };
+            },
+            '/api/worldinfo/delete': async () => {
+                throw new Error('delete response lost');
+            },
+            '/api/worldinfo/list': async () => [],
+            '/api/files/sanitize-filename': async () => ({ fileName: 'Lore' }),
+        };
+        const apiFetch = async (url, options = {}) => {
+            requests.push({ url, body: structuredClone(options.body) });
+            expect(apiHandlers[url]).toBeDefined();
+            return apiHandlers[url]();
+        };
+        const detailActions = createWorldbookDetailActions({
+            state,
+            apiFetch,
+            loadData: async () => {},
+            showToast: () => {},
+        });
+        const fileActions = createWorldbookFileActions({
+            state,
+            apiFetch,
+            loadData: async () => {},
+            render: () => {},
+            showToast: () => {},
+            downloadFile: () => {},
+            loadWorldDetail: async () => {},
+            deleteWorldbookFile: detailActions.deleteWorldbookFile,
+            ensureWorldbookFileWriteAllowed: detailActions.ensureWorldbookFileWriteAllowed,
+            restoreWorldbookFile: detailActions.restoreWorldbookFile,
+            getGlobalWorldNames: () => [],
+        });
+
+        const firstEdit = detailActions.updateWorldbookDetail('Lore', detail => {
+            detail.entries['1'].disable = true;
+        });
+        await editStarted;
+        const deletion = fileActions.confirmWorldbookDelete();
+
+        await expect(detailActions.updateWorldbookDetail('Lore', detail => {
+            detail.entries['1'].comment = 'late edit';
+        })).rejects.toThrow('世界书已删除或正在删除');
+        expect(requests.map(request => request.url)).toEqual(['/api/worldinfo/edit']);
+
+        state.worldbooks = [];
+        state.settingsBundle.world_names = [];
+        state.worldbookCreating = { active: true, name: 'Lore' };
+        await expect(fileActions.saveWorldbookCreate()).rejects.toThrow('世界书正在删除');
+        expect(requests.map(request => request.url)).toEqual(['/api/worldinfo/edit', '/api/files/sanitize-filename']);
+
+        releaseEdit();
+        await Promise.all([firstEdit, deletion]);
+
+        expect(requests.map(request => request.url)).toEqual(['/api/worldinfo/edit', '/api/files/sanitize-filename', '/api/worldinfo/delete', '/api/worldinfo/list']);
+        await expect(detailActions.updateWorldbookDetail('Lore', () => {})).rejects.toThrow('世界书已删除或正在删除');
+        expect(requests.map(request => request.url)).toEqual(['/api/worldinfo/edit', '/api/files/sanitize-filename', '/api/worldinfo/delete', '/api/worldinfo/list']);
+        expect(state.worldDetails.Lore).toBeUndefined();
+        expect(state.worldbooks).toEqual([]);
+
+        await fileActions.saveWorldbookCreate();
+        expect(requests.at(-1)).toEqual({
+            url: '/api/worldinfo/edit',
+            body: { name: 'Lore', data: { name: 'Lore', entries: {}, extensions: {} }, overwrite: false },
+        });
+        state.worldDetails.Lore = { entries: {} };
+        await detailActions.updateWorldbookDetail('Lore', detail => {
+            detail.entries['2'] = { uid: 2, disable: false };
+        });
+        expect(requests.map(request => request.url)).toEqual([
+            '/api/worldinfo/edit',
+            '/api/files/sanitize-filename',
+            '/api/worldinfo/delete',
+            '/api/worldinfo/list',
+            '/api/files/sanitize-filename',
+            '/api/worldinfo/edit',
+            '/api/worldinfo/edit',
+        ]);
     });
 
     test('reloads authoritative worldbook data after an uncertain save failure', async () => {
@@ -700,6 +808,290 @@ test.describe('Modern action helpers', () => {
         }
     });
 
+    test('serializes group settings edits with chat metadata updates', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const group = {
+                id: 'group-1',
+                name: 'Group One',
+                avatar_url: '',
+                members: ['alice.png'],
+                disabled_members: [],
+                chats: ['old-chat'],
+                chat_id: 'old-chat',
+                date_added: 123,
+            };
+            const secondGroup = { id: 'group-2', name: 'Group Two', members: ['bob.png'], chats: ['second-chat'], chat_id: 'second-chat' };
+            const state = {
+                characters: [],
+                groups: [group, secondGroup],
+                chatMode: 'group',
+                selected: { character: '', group: 'group-1', chat: 'old-chat' },
+                chatLists: {},
+                loadingChats: {},
+                errors: [],
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: {},
+                chatMetadata: {},
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                settings: {},
+                groupEditing: {
+                    id: 'group-1',
+                    form: {
+                        name: 'Edited Group',
+                        avatar_url: '',
+                        members: ['alice.png'],
+                        allow_self_responses: true,
+                        activation_strategy: '1',
+                        generation_mode: '2',
+                        auto_mode_delay: '7',
+                        fav: true,
+                    },
+                },
+                groupDeleteConfirm: { id: '', name: '' },
+            };
+            let releaseFirstSave;
+            const firstSaveBlocked = new Promise(resolve => {
+                releaseFirstSave = resolve;
+            });
+            let markFirstSaveStarted;
+            const firstSaveStarted = new Promise(resolve => {
+                markFirstSaveStarted = resolve;
+            });
+            const savedMetadata = [];
+            const saveHandlers = [
+                async () => {
+                    markFirstSaveStarted();
+                    await firstSaveBlocked;
+                    return { ok: true };
+                },
+                async () => ({ ok: true }),
+            ];
+            const apiFetch = async (url, options = {}) => {
+                expect(url).toBe('/api/groups/edit');
+                savedMetadata.push(structuredClone(options.body));
+                const save = saveHandlers.shift();
+                expect(save).toBeDefined();
+                return save();
+            };
+            const chatActions = createChatContextActions({
+                state,
+                apiFetch,
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+            const groupActions = createGroupActions({
+                state,
+                apiFetch,
+                loadData: async () => {},
+                render: () => {},
+                showToast: () => {},
+                ensureAvailableChatMode: () => {},
+                updateGroupMetadata: chatActions.updateGroupMetadata,
+                deleteGroupMetadata: chatActions.deleteGroupMetadata,
+            });
+
+            const chatUpdate = chatActions.updateGroupMetadata(group, metadata => {
+                metadata.chats.push('new-chat');
+                metadata.chat_id = 'new-chat';
+            });
+            await firstSaveStarted;
+            const settingsUpdate = groupActions.saveGroupEdit();
+            expect(savedMetadata).toHaveLength(1);
+            const newerEditing = { id: 'group-2', form: { name: 'Unsaved Group Two' } };
+            state.groupEditing = newerEditing;
+            state.selected.group = 'group-2';
+            state.selected.chat = 'second-chat';
+
+            releaseFirstSave();
+            await Promise.all([chatUpdate, settingsUpdate]);
+
+            expect(savedMetadata).toHaveLength(2);
+            expect(savedMetadata[1]).toMatchObject({
+                name: 'Edited Group',
+                chats: ['old-chat', 'new-chat'],
+                chat_id: 'new-chat',
+                allow_self_responses: true,
+                activation_strategy: 1,
+                generation_mode: 2,
+            });
+            expect(savedMetadata[1].date_added).toBeUndefined();
+            expect(group).toMatchObject(savedMetadata[1]);
+            expect(state.groupEditing).toBe(newerEditing);
+            expect(state.selected).toMatchObject({ group: 'group-2', chat: 'second-chat' });
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
+    test('waits for group metadata updates before deletion and blocks later writes', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const group = { id: 'group-1', name: 'Group One', chats: ['old-chat'], chat_id: 'old-chat' };
+            const secondGroup = { id: 'group-2', name: 'Group Two', chats: ['second-chat'], chat_id: 'second-chat' };
+            const state = {
+                characters: [],
+                groups: [group, secondGroup],
+                chatMode: 'group',
+                selected: { character: '', group: 'group-1', chat: 'old-chat' },
+                chatLists: {},
+                loadingChats: {},
+                errors: [],
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: {},
+                chatMetadata: {},
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                settings: {},
+                groupEditing: { id: '', form: {} },
+                groupDeleteConfirm: { id: 'group-1', name: 'Group One' },
+            };
+            let releaseMetadataSave;
+            const metadataSaveBlocked = new Promise(resolve => {
+                releaseMetadataSave = resolve;
+            });
+            let markMetadataSaveStarted;
+            const metadataSaveStarted = new Promise(resolve => {
+                markMetadataSaveStarted = resolve;
+            });
+            const requests = [];
+            const apiHandlers = {
+                '/api/groups/edit': async () => {
+                    markMetadataSaveStarted();
+                    await metadataSaveBlocked;
+                    return { ok: true };
+                },
+                '/api/groups/delete': async () => {
+                    throw new Error('delete response lost');
+                },
+                '/api/groups/all': async () => [],
+            };
+            const apiFetch = async (url, options = {}) => {
+                requests.push({ url, body: structuredClone(options.body) });
+                expect(apiHandlers[url]).toBeDefined();
+                return apiHandlers[url]();
+            };
+            const chatActions = createChatContextActions({
+                state,
+                apiFetch,
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+            let ensureModeCount = 0;
+            const toasts = [];
+            const groupActions = createGroupActions({
+                state,
+                apiFetch,
+                loadData: async () => {
+                    state.groups = [group, secondGroup];
+                    throw new Error('refresh unavailable');
+                },
+                render: () => {},
+                showToast: (...args) => toasts.push(args),
+                ensureAvailableChatMode: () => ensureModeCount++,
+                updateGroupMetadata: chatActions.updateGroupMetadata,
+                deleteGroupMetadata: chatActions.deleteGroupMetadata,
+            });
+
+            const metadataUpdate = chatActions.updateGroupMetadata(group, metadata => {
+                metadata.chats.push('new-chat');
+            });
+            await metadataSaveStarted;
+            const deletion = groupActions.confirmGroupDelete();
+            const newerDeleteConfirm = { id: 'group-2', name: 'Group Two' };
+            const newerEditing = { id: 'group-2', form: { name: 'Unsaved Group Two' } };
+            state.groupDeleteConfirm = newerDeleteConfirm;
+            state.groupEditing = newerEditing;
+            state.selected.group = 'group-2';
+            state.selected.chat = 'second-chat';
+
+            await expect(chatActions.updateGroupMetadata(group, metadata => {
+                metadata.chats.push('late-chat');
+            })).rejects.toThrow('群聊已删除或正在删除');
+            expect(requests.map(request => request.url)).toEqual(['/api/groups/edit']);
+
+            releaseMetadataSave();
+            await Promise.all([metadataUpdate, deletion]);
+
+            expect(requests.map(request => request.url)).toEqual(['/api/groups/edit', '/api/groups/delete', '/api/groups/all']);
+            expect(state.groups).toEqual([secondGroup]);
+            expect(state.groupDeleteConfirm).toBe(newerDeleteConfirm);
+            expect(state.groupEditing).toBe(newerEditing);
+            expect(state.selected).toMatchObject({ group: 'group-2', chat: 'second-chat' });
+            expect(ensureModeCount).toBe(1);
+            expect(state.errors).toContainEqual({ key: 'group-delete-refresh', message: '群组 group-1 已删除，但列表刷新失败：refresh unavailable' });
+            expect(toasts).toEqual([['群组已删除，但列表刷新失败', 'group-1：refresh unavailable']]);
+            await expect(chatActions.updateGroupMetadata(group, () => {})).rejects.toThrow('群聊已删除或正在删除');
+            expect(requests.map(request => request.url)).toEqual(['/api/groups/edit', '/api/groups/delete', '/api/groups/all']);
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
+    test('clears a newer chat selection that still belongs to a deleted group', async () => {
+        const group = { id: 'group-1', name: 'Group One', chats: ['old-chat', 'new-chat'], chat_id: 'old-chat' };
+        const state = {
+            groups: [group],
+            selected: { group: 'group-1', chat: 'old-chat' },
+            groupEditing: { id: '', form: {} },
+            groupDeleteConfirm: { id: 'group-1', name: 'Group One' },
+            chatLists: {},
+            chatMessages: {},
+            chatMessageLimits: {},
+            chatMetadata: {},
+            chatDrafts: {},
+            errors: [],
+        };
+        let releaseDelete;
+        const deleteBlocked = new Promise(resolve => {
+            releaseDelete = resolve;
+        });
+        let markDeleteStarted;
+        const deleteStarted = new Promise(resolve => {
+            markDeleteStarted = resolve;
+        });
+        const actions = createGroupActions({
+            state,
+            apiFetch: async () => ({}),
+            loadData: async () => {},
+            render: () => {},
+            showToast: () => {},
+            ensureAvailableChatMode: () => {},
+            updateGroupMetadata: async () => ({}),
+            deleteGroupMetadata: async groupId => {
+                expect(groupId).toBe('group-1');
+                markDeleteStarted();
+                await deleteBlocked;
+            },
+        });
+
+        const deletion = actions.confirmGroupDelete();
+        await deleteStarted;
+        state.selected.chat = 'new-chat';
+        releaseDelete();
+        await deletion;
+
+        expect(state.selected).toMatchObject({ group: '', chat: '' });
+        expect(state.groups).toEqual([]);
+    });
+
     test('keeps a newer chat context while a group rename reports partial success', async () => {
         const firstGroup = { id: 'group-1', chats: ['old-chat'], chat_id: 'old-chat' };
         const secondGroup = { id: 'group-2', chats: ['second-chat'], chat_id: 'second-chat' };
@@ -911,14 +1303,9 @@ test.describe('Modern action helpers', () => {
         const actions = createWorldbookFileActions({
             state,
             apiFetch: async (url, options = {}) => {
+                expect(url).toBe('/api/settings/save');
                 requests.push({ url, body: structuredClone(options.body) });
-                if (url === '/api/worldinfo/delete') {
-                    return { ok: true };
-                }
-                if (url === '/api/settings/save') {
-                    throw new Error('settings unavailable');
-                }
-                throw new Error(`Unexpected URL ${url}`);
+                throw new Error('settings unavailable');
             },
             loadData: async () => {
                 loadCount++;
@@ -932,6 +1319,12 @@ test.describe('Modern action helpers', () => {
             showToast: () => {},
             downloadFile: () => {},
             loadWorldDetail: async () => {},
+            deleteWorldbookFile: async worldbookId => {
+                requests.push({ url: '/api/worldinfo/delete', body: { name: worldbookId } });
+                return { ok: true };
+            },
+            ensureWorldbookFileWriteAllowed: () => {},
+            restoreWorldbookFile: () => {},
             getGlobalWorldNames: () => state.settings.world_info_settings?.world_info?.globalSelect || [],
         });
 
@@ -993,6 +1386,8 @@ test.describe('Modern action helpers', () => {
             showToast: () => {},
             callLegacyBridge: async () => {},
             loadWorldDetail: async () => {},
+            ensureWorldbookFileWriteAllowed: () => {},
+            restoreWorldbookFile: () => {},
         });
 
         await actions.importRemoteResource(0);
@@ -1014,6 +1409,9 @@ test.describe('Modern action helpers', () => {
     test('confirms and retries a remote worldbook import after a server conflict', async () => {
         const importedBodies = [];
         const confirmations = [];
+        const checkedWorldbooks = [];
+        const restoredWorldbooks = [];
+        const sanitizedFileNames = [];
         const state = {
             selected: { worldbook: '' },
             worldbooks: [],
@@ -1036,6 +1434,10 @@ test.describe('Modern action helpers', () => {
         const actions = createRemoteResourceActions({
             state,
             apiFetch: async (url, options = {}) => {
+                if (url === '/api/files/sanitize-filename') {
+                    sanitizedFileNames.push(options.body.fileName);
+                    return { fileName: 'Lore.json' };
+                }
                 if (url === '/api/worldinfo/import') {
                     importedBodies.push(options.body);
                     if (importedBodies.length === 1) {
@@ -1058,6 +1460,8 @@ test.describe('Modern action helpers', () => {
             showToast: () => {},
             callLegacyBridge: async () => {},
             loadWorldDetail: async () => {},
+            ensureWorldbookFileWriteAllowed: worldbookId => checkedWorldbooks.push(worldbookId),
+            restoreWorldbookFile: worldbookId => restoredWorldbooks.push(worldbookId),
             confirmAction: message => {
                 confirmations.push(message);
                 return true;
@@ -1070,6 +1474,9 @@ test.describe('Modern action helpers', () => {
         expect(importedBodies).toHaveLength(2);
         expect(importedBodies[0].has('overwrite')).toBe(false);
         expect(importedBodies[1].get('overwrite')).toBe('true');
+        expect(sanitizedFileNames).toEqual(['Lore.json']);
+        expect(checkedWorldbooks).toEqual(['Lore', 'Lore']);
+        expect(restoredWorldbooks).toEqual(['Lore']);
         expect(state.selected.worldbook).toBe('Lore');
         expect(state.worldDetails.Lore).toBeUndefined();
     });

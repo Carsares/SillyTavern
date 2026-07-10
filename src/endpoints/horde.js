@@ -317,6 +317,32 @@ router.post('/generate-image', async (request, response) => {
     const MAX_ATTEMPTS = 200;
     const CHECK_INTERVAL = 3000;
     const PROMPT_THRESHOLD = 5000;
+    const controller = new AbortController();
+    let aiHorde;
+    let generationId;
+    let generationCompleted = false;
+    let cancellationStarted = false;
+
+    const cancelGeneration = () => {
+        if (!aiHorde || !generationId || cancellationStarted) {
+            return;
+        }
+
+        cancellationStarted = true;
+        void Promise.resolve()
+            .then(() => aiHorde.deleteImageGenerationRequest(generationId))
+            .catch(error => console.warn('Failed to cancel Horde image generation:', error));
+    };
+
+    response.once('close', function () {
+        if (response.writableEnded) {
+            return;
+        }
+
+        console.warn('Horde image generation request aborted.');
+        controller.abort();
+        cancelGeneration();
+    });
 
     try {
         const maxLength = PROMPT_THRESHOLD - String(request.body.negative_prompt).length - 5;
@@ -339,9 +365,10 @@ router.post('/generate-image', async (request, response) => {
         const api_key_horde = readSecret(request.user.directories, SECRET_KEYS.HORDE) || ANONYMOUS_KEY;
         console.debug('Stable Horde request:', request.body);
 
-        const ai_horde = await getHordeClient();
+        aiHorde = await getHordeClient();
+        controller.signal.throwIfAborted();
         // noinspection JSCheckFunctionSignatures -- see @ts-ignore - use_gfpgan
-        const generation = await ai_horde.postAsyncImageGenerate(
+        const generation = await aiHorde.postAsyncImageGenerate(
             {
                 prompt: `${request.body.prompt} ### ${request.body.negative_prompt}`,
                 params:
@@ -364,39 +391,34 @@ router.post('/generate-image', async (request, response) => {
                 models: [request.body.model],
             },
             { token: api_key_horde });
+        generationId = generation.id;
 
-        if (!generation.id) {
+        if (controller.signal.aborted) {
+            return response;
+        }
+
+        if (!generationId) {
             console.warn('Image generation request is not satisfyable:', generation.message || 'unknown error');
             return response.sendStatus(400);
         }
 
         console.info('Horde image generation request:', generation);
 
-        const controller = new AbortController();
-        response.once('close', function () {
-            if (response.writableEnded) {
-                return;
-            }
-
-            console.warn('Horde image generation request aborted.');
-            controller.abort();
-            if (generation.id) {
-                void Promise.resolve()
-                    .then(() => ai_horde.deleteImageGenerationRequest(generation.id))
-                    .catch(error => console.warn('Failed to cancel Horde image generation:', error));
-            }
-        });
-
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             controller.signal.throwIfAborted();
             await delay(CHECK_INTERVAL);
-            const check = await ai_horde.getImageGenerationCheck(generation.id);
+            controller.signal.throwIfAborted();
+            const check = await aiHorde.getImageGenerationCheck(generationId);
+            controller.signal.throwIfAborted();
             console.info(check);
 
             if (check.done) {
-                const result = await ai_horde.getImageGenerationStatus(generation.id);
+                const result = await aiHorde.getImageGenerationStatus(generationId);
+                controller.signal.throwIfAborted();
                 if (result.generations === undefined) return response.sendStatus(500);
-                return response.send(result.generations[0].img);
+                const sentResponse = response.send(result.generations[0].img);
+                generationCompleted = true;
+                return sentResponse;
             }
 
             /*
@@ -412,7 +434,14 @@ router.post('/generate-image', async (request, response) => {
 
         return response.sendStatus(504);
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error(error);
         return response.sendStatus(500);
+    } finally {
+        if (!generationCompleted) {
+            cancelGeneration();
+        }
     }
 });

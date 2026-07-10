@@ -11,6 +11,8 @@ export function createRemoteResourceActions({
     showToast,
     callLegacyBridge,
     loadWorldDetail,
+    ensureWorldbookFileWriteAllowed,
+    restoreWorldbookFile,
     confirmAction = message => window.confirm(message),
 }) {
     function getRemoteResourceCount() {
@@ -384,8 +386,13 @@ export function createRemoteResourceActions({
     async function importBlobAsLocalResource(blob, fileName, resourceType) {
         if (resourceType === 'worldbook') {
             const importFileName = ensureExtension(fileName, 'json');
-            const worldName = importFileName.replace(/\.json$/i, '');
+            const sanitizedFileName = await apiFetch('/api/files/sanitize-filename', { body: { fileName: importFileName } });
+            const worldName = typeof sanitizedFileName?.fileName === 'string' ? sanitizedFileName.fileName.replace(/\.json$/i, '') : '';
+            if (!worldName) {
+                throw new Error('世界书文件名清理后为空，请使用其他文件名。');
+            }
             async function importWorldbook(shouldOverwrite) {
+                ensureWorldbookFileWriteAllowed(worldName);
                 const formData = new FormData();
                 formData.append('avatar', new File([blob], importFileName, { type: blob.type || 'application/json' }));
                 if (shouldOverwrite) {
@@ -422,6 +429,7 @@ export function createRemoteResourceActions({
             }
 
             const importedName = result?.name || worldName;
+            restoreWorldbookFile(importedName);
             state.selected.worldbook = importedName;
             delete state.worldDetails[importedName];
             await loadData({ silent: true });

@@ -48,6 +48,7 @@ export function createChatActionRegistry({
         sortChats,
         saveGroupMetadata,
         updateGroupMetadata,
+        deleteGroupMetadata,
         saveModernChat,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
@@ -125,6 +126,8 @@ export function createChatActionRegistry({
         render,
         showToast,
         ensureAvailableChatMode,
+        updateGroupMetadata,
+        deleteGroupMetadata,
     });
     const { beginGroupCreate } = groupActions;
 

@@ -117,18 +117,28 @@ const openRouterCacheableModels = [];
  * Checks if an OpenRouter model supports prompt cache writing.
  * Uses a cache to avoid repeated API calls.
  * @param {string} modelId - The OpenRouter model ID
+ * @param {AbortSignal} [signal] - Signal used to cancel the model lookup
  * @returns {Promise<boolean>} `true` if the model supports writing cache
  */
-async function isOpenRouterModelCacheable(modelId) {
+async function isOpenRouterModelCacheable(modelId, signal) {
     if (openRouterCacheableModels.includes(modelId)) {
         return true;
+    }
+
+    const lookupController = new AbortController();
+    const abortLookup = () => lookupController.abort(signal?.reason);
+    const timeout = setTimeout(() => lookupController.abort(), 5000);
+    if (signal?.aborted) {
+        abortLookup();
+    } else {
+        signal?.addEventListener('abort', abortLookup, { once: true });
     }
 
     try {
         const response = await fetch(`${API_OPENROUTER}/models`, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(5000),
+            signal: lookupController.signal,
         });
 
         if (!response.ok) {
@@ -153,8 +163,14 @@ async function isOpenRouterModelCacheable(modelId) {
 
         return supportsCache;
     } catch (error) {
+        if (signal?.aborted) {
+            throw error;
+        }
         console.warn(`Failed to check OpenRouter cache support for ${modelId}:`, error.message);
         return false;
+    } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abortLookup);
     }
 }
 
@@ -416,6 +432,8 @@ async function sendClaudeRequest(request, response) {
  * @param {express.Response} response Express response
  */
 async function sendMakerSuiteRequest(request, response) {
+    const controller = new AbortController();
+    abortControllerOnClientClose(response, controller);
     const useVertexAi = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.VERTEXAI;
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
     let apiUrl;
@@ -428,11 +446,14 @@ async function sendMakerSuiteRequest(request, response) {
         apiUrl = new URL(request.body.reverse_proxy || API_VERTEX_AI);
 
         try {
-            const auth = await getVertexAIAuth(request);
+            const auth = await getVertexAIAuth(request, controller.signal);
             authHeader = auth.authHeader;
             authType = auth.authType;
             console.debug(`Using Vertex AI authentication type: ${authType}`);
         } catch (error) {
+            if (controller.signal.aborted) {
+                return response;
+            }
             console.warn(`${apiName} authentication failed: ${error.message}`);
             return response.status(400).send({ error: true, message: error.message });
         }
@@ -625,9 +646,6 @@ async function sendMakerSuiteRequest(request, response) {
     console.debug(`${apiName} request:`, body);
 
     try {
-        const controller = new AbortController();
-        abortControllerOnClientClose(response, controller);
-
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
         const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
 
@@ -694,6 +712,9 @@ async function sendMakerSuiteRequest(request, response) {
                 // Pipe remote SSE stream to Express response
                 await forwardFetchResponse(generateResponse, response);
             } catch (error) {
+                if (controller.signal.aborted) {
+                    return response;
+                }
                 console.error('Error forwarding streaming response:', error);
                 if (!response.headersSent) {
                     return response.status(500).send({ error: true });
@@ -737,6 +758,9 @@ async function sendMakerSuiteRequest(request, response) {
             return response.send(reply);
         }
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error(`Error communicating with ${apiName} API:`, error);
         if (!response.headersSent) {
             return response.status(500).send({ error: true });
@@ -2122,6 +2146,7 @@ router.post('/bias', async function (request, response) {
 });
 
 router.post('/generate', async function (request, response) {
+    let controller;
     try {
         if (!request.body) return response.status(400).send({ error: true });
 
@@ -2153,6 +2178,9 @@ router.post('/generate', async function (request, response) {
             case CHAT_COMPLETION_SOURCES.ELECTRONHUB: return await sendElectronHubRequest(request, response);
             case CHAT_COMPLETION_SOURCES.AZURE_OPENAI: return await sendAzureOpenAIRequest(request, response);
         }
+
+        controller = new AbortController();
+        abortControllerOnClientClose(response, controller);
 
         let apiUrl;
         let apiKey;
@@ -2243,7 +2271,7 @@ router.post('/generate', async function (request, response) {
 
             const isClaude = /^anthropic\/claude/.test(request.body.model);
             const isGemini = /google\/gemini/.test(request.body.model);
-            const isCacheableGemini = isGemini && await isOpenRouterModelCacheable(request.body.model);
+            const isCacheableGemini = isGemini && await isOpenRouterModelCacheable(request.body.model, controller.signal);
             const enableGeminiSystemPromptCache = getConfigValue('gemini.enableSystemPromptCache', false, 'boolean');
 
             if (Array.isArray(request.body.messages)) {
@@ -2495,9 +2523,6 @@ router.post('/generate', async function (request, response) {
             `${apiUrl}/completions` :
             `${apiUrl}/chat/completions`;
 
-        const controller = new AbortController();
-        abortControllerOnClientClose(response, controller);
-
         if (!isTextCompletion && Array.isArray(request.body.tools) && request.body.tools.length > 0) {
             bodyParams['tools'] = request.body.tools;
             bodyParams['tool_choice'] = request.body.tool_choice;
@@ -2580,6 +2605,9 @@ router.post('/generate', async function (request, response) {
             }
         }
     } catch (error) {
+        if (controller?.signal.aborted) {
+            return response;
+        }
         console.error('Generation failed', error);
         const message = error.code === 'ECONNREFUSED'
             ? `Connection refused: ${error.message}`

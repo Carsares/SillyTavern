@@ -38,7 +38,13 @@ function createCompleteWavFile(pcmData, sampleRate) {
 }
 
 // Vertex AI authentication helper functions
-export async function getVertexAIAuth(request) {
+/**
+ * Gets Vertex AI authentication details.
+ * @param {express.Request} request Express request object
+ * @param {AbortSignal} [signal] Signal used to cancel service-account token requests
+ * @returns {Promise<{authHeader: string, authType: string}>} Authentication details
+ */
+export async function getVertexAIAuth(request, signal) {
     const authMode = request.body.vertexai_auth_mode || 'express';
 
     if (request.body.reverse_proxy) {
@@ -65,12 +71,15 @@ export async function getVertexAIAuth(request) {
             try {
                 const serviceAccount = JSON.parse(serviceAccountJson);
                 const jwtToken = await generateJWTToken(serviceAccount);
-                const accessToken = await getAccessToken(jwtToken);
+                const accessToken = await getAccessToken(jwtToken, signal);
                 return {
                     authHeader: `Bearer ${accessToken}`,
                     authType: 'full',
                 };
             } catch (error) {
+                if (signal?.aborted) {
+                    throw error;
+                }
                 console.error('Failed to authenticate with service account:', error);
                 throw new Error(`Service account authentication failed: ${error.message}`);
             }
@@ -115,7 +124,13 @@ export async function generateJWTToken(serviceAccount) {
     return `${signatureInput}.${signature}`;
 }
 
-export async function getAccessToken(jwtToken) {
+/**
+ * Exchanges a service-account JWT for a Google access token.
+ * @param {string} jwtToken Signed service-account JWT
+ * @param {AbortSignal} [signal] Signal used to cancel the token request
+ * @returns {Promise<string>} Google access token
+ */
+export async function getAccessToken(jwtToken, signal) {
     const response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -123,6 +138,7 @@ export async function getAccessToken(jwtToken) {
             grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
             assertion: jwtToken,
         }),
+        signal,
     });
 
     if (!response.ok) {
@@ -159,9 +175,10 @@ export function getProjectIdFromServiceAccount(serviceAccount) {
  * @param {express.Request} request Express request object
  * @param {string} model Model name to use
  * @param {string} endpoint API endpoint (default: 'generateContent')
+ * @param {AbortSignal} [signal] Signal used to cancel authentication requests
  * @returns {Promise<{url: string, headers: object, apiName: string, baseUrl: string, safetySettings: object[]}>} URL, headers, and API name
  */
-export async function getGoogleApiConfig(request, model, endpoint = 'generateContent') {
+export async function getGoogleApiConfig(request, model, endpoint = 'generateContent', signal) {
     const useVertexAi = request.body.api === 'vertexai';
     const region = request.body.vertexai_region || 'us-central1';
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
@@ -175,7 +192,7 @@ export async function getGoogleApiConfig(request, model, endpoint = 'generateCon
 
     if (useVertexAi) {
         // Get authentication for Vertex AI
-        const { authHeader, authType } = await getVertexAIAuth(request);
+        const { authHeader, authType } = await getVertexAIAuth(request, signal);
 
         if (authType === 'express') {
             // Express mode: use API key parameter
@@ -501,7 +518,7 @@ router.post('/generate-video', async (request, response) => {
         abortControllerOnClientClose(response, controller);
 
         const model = request.body.model || 'veo-3.1-generate-preview';
-        const { url, headers, apiName, baseUrl } = await getGoogleApiConfig(request, model, 'predictLongRunning');
+        const { url, headers, apiName, baseUrl } = await getGoogleApiConfig(request, model, 'predictLongRunning', controller.signal);
         const useVertexAi = request.body.api === 'vertexai';
 
         const isVeo3 = /veo-3/.test(model);
@@ -553,9 +570,10 @@ router.post('/generate-video', async (request, response) => {
             }
 
             await delay(5000 + attempt * 1000);
+            controller.signal.throwIfAborted();
 
             if (useVertexAi) {
-                const { url: pollUrl, headers: pollHeaders } = await getGoogleApiConfig(request, model, 'fetchPredictOperation');
+                const { url: pollUrl, headers: pollHeaders } = await getGoogleApiConfig(request, model, 'fetchPredictOperation', controller.signal);
 
                 const pollResponse = await fetch(pollUrl, {
                     method: 'POST',

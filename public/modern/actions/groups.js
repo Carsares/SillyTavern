@@ -7,6 +7,8 @@ export function createGroupActions({
     render,
     showToast,
     ensureAvailableChatMode,
+    updateGroupMetadata,
+    deleteGroupMetadata,
 }) {
     function defaultGroupForm() {
         return {
@@ -134,7 +136,8 @@ export function createGroupActions({
     }
 
     async function saveGroupEdit() {
-        const { id, form } = state.groupEditing;
+        const editingState = state.groupEditing;
+        const { id, form } = editingState;
         const group = state.groups.find(item => item.id === id);
         if (!id || !group || state.selected.group !== id) {
             throw new Error('编辑目标已变化，请重新选择群组。');
@@ -143,12 +146,18 @@ export function createGroupActions({
             throw new Error('群组至少需要一个角色成员。');
         }
 
-        const payload = groupFormToPayload(form, group);
-        await apiFetch('/api/groups/edit', { body: payload });
+        const formSnapshot = structuredClone(form);
+        const updatedGroup = await updateGroupMetadata(group, nextMetadata => {
+            const payload = groupFormToPayload(formSnapshot, nextMetadata);
+            Object.keys(nextMetadata).forEach(key => delete nextMetadata[key]);
+            Object.assign(nextMetadata, payload);
+        });
         clearGroupCache(id);
-        state.groupEditing = { id: '', form: {} };
+        if (state.groupEditing === editingState) {
+            state.groupEditing = { id: '', form: {} };
+        }
         await loadData({ silent: true });
-        showToast('群组已保存', payload.name);
+        showToast('群组已保存', updatedGroup.name);
         render();
     }
 
@@ -167,19 +176,42 @@ export function createGroupActions({
     }
 
     async function confirmGroupDelete() {
-        const { id } = state.groupDeleteConfirm;
+        const deleteConfirm = state.groupDeleteConfirm;
+        const { id } = deleteConfirm;
         if (!id || state.selected.group !== id) {
             throw new Error('删除目标已变化，请重新选择群组。');
         }
 
-        await apiFetch('/api/groups/delete', { body: { id } });
+        await deleteGroupMetadata(id);
+        state.groups = state.groups.filter(group => group.id !== id);
         clearGroupCache(id);
-        state.groupDeleteConfirm = { id: '', name: '' };
-        state.groupEditing = { id: '', form: {} };
-        state.selected.group = '';
-        state.selected.chat = '';
-        await loadData({ silent: true });
+        if (state.groupDeleteConfirm === deleteConfirm) {
+            state.groupDeleteConfirm = { id: '', name: '' };
+        }
+        if (state.groupEditing.id === id) {
+            state.groupEditing = { id: '', form: {} };
+        }
+        if (state.selected.group === id) {
+            state.selected.group = '';
+            state.selected.chat = '';
+        }
+
+        let refreshError = null;
+        try {
+            await loadData({ silent: true });
+        } catch (error) {
+            refreshError = error;
+        }
+        // Keep the confirmed deletion reflected even if a partial refresh restored stale group data.
+        state.groups = state.groups.filter(group => group.id !== id);
         ensureAvailableChatMode();
+        if (refreshError) {
+            const message = `群组 ${id} 已删除，但列表刷新失败：${refreshError.message}`;
+            state.errors.push({ key: 'group-delete-refresh', message });
+            showToast('群组已删除，但列表刷新失败', `${id}：${refreshError.message}`);
+            render();
+            return;
+        }
         showToast('群组已删除', id);
         render();
     }

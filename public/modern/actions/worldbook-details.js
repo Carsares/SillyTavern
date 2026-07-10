@@ -5,6 +5,21 @@ export function createWorldbookDetailActions({
     showToast,
 }) {
     const worldbookUpdateQueues = new Map();
+    const worldbookDeleteBarriers = new Map();
+
+    async function queueWorldbookOperation(worldbookId, operation) {
+        const previousOperation = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
+        const currentOperation = previousOperation.catch(() => {}).then(operation);
+        worldbookUpdateQueues.set(worldbookId, currentOperation);
+
+        try {
+            return await currentOperation;
+        } finally {
+            if (worldbookUpdateQueues.get(worldbookId) === currentOperation) {
+                worldbookUpdateQueues.delete(worldbookId);
+            }
+        }
+    }
 
     async function loadWorldDetail(worldbookId, { force = false } = {}) {
         if (!worldbookId || (state.worldDetails[worldbookId] && !force)) {
@@ -32,14 +47,25 @@ export function createWorldbookDetailActions({
         }
     }
 
+    async function getWorldbookExistence(worldbookId) {
+        try {
+            const worldbooks = await apiFetch('/api/worldinfo/list');
+            return Array.isArray(worldbooks) ? worldbooks.some(item => item.file_id === worldbookId) : null;
+        } catch {
+            return null;
+        }
+    }
+
     async function updateWorldbookDetail(worldbookId, updateDetail) {
         if (!worldbookId || typeof updateDetail !== 'function') {
             throw new Error('世界书更新目标无效。');
         }
+        if (worldbookDeleteBarriers.has(worldbookId)) {
+            throw new Error('世界书已删除或正在删除，无法继续更新。');
+        }
 
         // Serialize each world's read-modify-save cycle so later edits clone the latest saved detail.
-        const previousUpdate = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
-        const currentUpdate = previousUpdate.catch(() => {}).then(async () => {
+        return queueWorldbookOperation(worldbookId, async () => {
             await loadWorldDetail(worldbookId, { force: !state.worldDetails[worldbookId] });
             const detail = state.worldDetails[worldbookId];
             if (!detail) {
@@ -54,14 +80,46 @@ export function createWorldbookDetailActions({
             await saveWorldbookDetail(worldbookId, nextDetail);
             return result;
         });
-        worldbookUpdateQueues.set(worldbookId, currentUpdate);
+    }
 
+    async function deleteWorldbookFile(worldbookId) {
+        if (!worldbookId) {
+            throw new Error('缺少待删除世界书。');
+        }
+        if (worldbookDeleteBarriers.has(worldbookId)) {
+            throw new Error('世界书已删除或正在删除。');
+        }
+
+        // Block newly started edits immediately, while allowing already queued edits to finish before deletion.
+        worldbookDeleteBarriers.set(worldbookId, 'deleting');
         try {
-            return await currentUpdate;
-        } finally {
-            if (worldbookUpdateQueues.get(worldbookId) === currentUpdate) {
-                worldbookUpdateQueues.delete(worldbookId);
+            await queueWorldbookOperation(worldbookId, () => apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } }));
+            worldbookDeleteBarriers.set(worldbookId, 'deleted');
+        } catch (error) {
+            const worldbookExists = await getWorldbookExistence(worldbookId);
+            if (worldbookExists === true) {
+                worldbookDeleteBarriers.delete(worldbookId);
+                throw error;
             }
+            if (worldbookExists === null) {
+                throw error;
+            }
+            worldbookDeleteBarriers.set(worldbookId, 'deleted');
+        }
+    }
+
+    function restoreWorldbookFile(worldbookId) {
+        if (worldbookDeleteBarriers.get(worldbookId) === 'deleted') {
+            worldbookDeleteBarriers.delete(worldbookId);
+        }
+    }
+
+    function ensureWorldbookFileWriteAllowed(worldbookId) {
+        if (!worldbookId) {
+            throw new Error('世界书写入目标无效。');
+        }
+        if (worldbookDeleteBarriers.get(worldbookId) === 'deleting') {
+            throw new Error('世界书正在删除，无法创建或导入同名文件。');
         }
     }
 
@@ -95,6 +153,9 @@ export function createWorldbookDetailActions({
         loadWorldDetail,
         saveWorldbookDetail,
         updateWorldbookDetail,
+        deleteWorldbookFile,
+        restoreWorldbookFile,
+        ensureWorldbookFileWriteAllowed,
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
