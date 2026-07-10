@@ -843,19 +843,17 @@ router.post('/delete', async (req, res) => {
             return res.sendStatus(403);
         }
 
-        // Cleanup tokens are single-use. A failed or partial cleanup requires a fresh scan.
-        DataMaidService.TOKENS.delete(token);
+        const requestedHashes = new Set(hashes);
+        const fileEntries = tokenEntry.paths.filter(entry => requestedHashes.has(entry.hash));
+
+        // Consume only the authenticated paths before doing any asynchronous work so a hash cannot be replayed.
+        tokenEntry.paths = tokenEntry.paths.filter(entry => !requestedHashes.has(entry.hash));
 
         const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
         const currentReport = await dataMaid.generateReport();
         const currentLoosePaths = new Set(Object.values(currentReport).filter(value => Array.isArray(value)).flat());
 
-        for (const hash of hashes) {
-            const fileEntry = tokenEntry.paths.find(entry => entry.hash === hash);
-            if (!fileEntry) {
-                continue;
-            }
-
+        for (const fileEntry of fileEntries) {
             if (!isPathUnderParent(req.user.directories.root, fileEntry.path)) {
                 console.warn('[Data Maid] Attempted deletion of a file outside of the user directory:', fileEntry.path);
                 continue;

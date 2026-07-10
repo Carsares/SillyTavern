@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 import { createBackgroundFolderActions } from '../public/modern/actions/background-folders.js';
 import { createCharacterDataHelpers } from '../public/modern/actions/character-data.js';
 import { createChatBackupActions } from '../public/modern/actions/chat-backups.js';
+import { createChatFileActions } from '../public/modern/actions/chat-files.js';
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
 import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
@@ -105,6 +106,61 @@ test.describe('Modern action helpers', () => {
         expect(savedDetails[1].entries['2'].disable).toBe(true);
         expect(state.worldDetails.Lore.entries['1'].disable).toBe(true);
         expect(state.worldDetails.Lore.entries['2'].disable).toBe(true);
+    });
+
+    test('reloads authoritative worldbook data after an uncertain save failure', async () => {
+        const state = {
+            worldDetails: {
+                Lore: {
+                    entries: {
+                        1: { uid: 1, disable: false },
+                        2: { uid: 2, disable: false },
+                    },
+                },
+            },
+            errors: [],
+        };
+        let authoritativeDetail = structuredClone(state.worldDetails.Lore);
+        let editCount = 0;
+        let getCount = 0;
+        const editPayloads = [];
+        const detailActions = createWorldbookDetailActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url === '/api/worldinfo/get') {
+                    getCount++;
+                    return structuredClone(authoritativeDetail);
+                }
+                if (url === '/api/worldinfo/edit') {
+                    editCount++;
+                    editPayloads.push(structuredClone(options.body.data));
+                    authoritativeDetail = structuredClone(options.body.data);
+                    if (editCount === 1) {
+                        throw new Error('response lost');
+                    }
+                    return { ok: true };
+                }
+                throw new Error(`Unexpected URL ${url}`);
+            },
+            loadData: async () => {},
+            showToast: () => {},
+        });
+
+        const firstUpdate = detailActions.updateWorldbookDetail('Lore', detail => {
+            detail.entries['1'].disable = true;
+        });
+        const secondUpdate = detailActions.updateWorldbookDetail('Lore', detail => {
+            detail.entries['2'].disable = true;
+        });
+        const [firstResult, secondResult] = await Promise.allSettled([firstUpdate, secondUpdate]);
+
+        expect(firstResult.status).toBe('rejected');
+        expect(secondResult.status).toBe('fulfilled');
+        expect(getCount).toBe(1);
+        expect(editPayloads).toHaveLength(2);
+        expect(editPayloads[1].entries['1'].disable).toBe(true);
+        expect(editPayloads[1].entries['2'].disable).toBe(true);
+        expect(state.worldDetails.Lore).toEqual(authoritativeDetail);
     });
 
     test('converts character forms and payloads without losing nested fields', () => {
@@ -354,6 +410,85 @@ test.describe('Modern action helpers', () => {
         expect(messageRequests).toEqual(['bob.png']);
     });
 
+    test('imports uploaded group chats into the captured context without replacing a newer selection', async () => {
+        const firstGroup = { id: 'group-1', name: 'Group One', chats: ['old-chat'], chat_id: 'old-chat' };
+        const secondGroup = { id: 'group-2', name: 'Group Two', chats: ['second-chat'], chat_id: 'second-chat' };
+        let selectedEntity = firstGroup;
+        let finishImport;
+        const importReady = new Promise(resolve => {
+            finishImport = resolve;
+        });
+        let finishMetadataSave;
+        const metadataSaveReady = new Promise(resolve => {
+            finishMetadataSave = resolve;
+        });
+        let metadataSaveStarted;
+        const metadataSaveStartedPromise = new Promise(resolve => {
+            metadataSaveStarted = resolve;
+        });
+        const state = {
+            selected: { group: 'group-1', chat: 'old-chat' },
+        };
+        const importedTargets = [];
+        const savedGroups = [];
+        const refreshedEntities = [];
+        const loadedChats = [];
+        let clearedSearch = 0;
+        const actions = createChatFileActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                expect(url).toBe('/api/chats/group/import');
+                importedTargets.push(options.body.get('avatar_url'));
+                await importReady;
+                return { res: 'group-import.jsonl' };
+            },
+            apiFetchResponse: async () => new Response(''),
+            render: () => {},
+            showToast: () => {},
+            formatDate: String,
+            formatNumber: String,
+            getSelectedChatEntity: () => selectedEntity,
+            getChatContextKey: (entity, groupMode = false) => groupMode ? `group:${entity?.id || ''}` : entity?.avatar || '',
+            getChatEntityName: entity => entity?.name || '',
+            isGroupChatMode: () => true,
+            getSelectedChatList: () => [],
+            getChatId: chat => String(chat?.file_id || chat?.file_name || '').replace(/\.jsonl$/i, ''),
+            getChatCacheKey: (contextKey, chatId) => `${contextKey}::${chatId}`,
+            getUserName: () => 'User',
+            sortChats,
+            clearChatSearch: () => clearedSearch++,
+            loadChatMessages: async (entity, chatId) => loadedChats.push([entity, chatId]),
+            refreshSelectedChatList: async (entity, options) => refreshedEntities.push([entity, options]),
+            createModernChatFile: async () => '',
+            saveGroupMetadata: async group => {
+                savedGroups.push(group);
+                metadataSaveStarted();
+                await metadataSaveReady;
+            },
+            moveChatReadState: () => {},
+            deleteChatReadState: () => {},
+        });
+
+        const importing = actions.importModernChatFiles([new File(['{}'], 'group.jsonl')]);
+        selectedEntity = secondGroup;
+        state.selected.group = 'group-2';
+        state.selected.chat = 'second-chat';
+        finishImport();
+        await metadataSaveStartedPromise;
+
+        expect(firstGroup).toMatchObject({ chats: ['old-chat'], chat_id: 'old-chat' });
+        finishMetadataSave();
+        await importing;
+
+        expect(importedTargets).toEqual(['']);
+        expect(savedGroups).toEqual([{ ...firstGroup, chats: ['old-chat', 'group-import'], chat_id: 'group-import' }]);
+        expect(firstGroup).toMatchObject({ chats: ['old-chat', 'group-import'], chat_id: 'group-import' });
+        expect(refreshedEntities).toEqual([[firstGroup, { groupMode: true }]]);
+        expect(state.selected.chat).toBe('second-chat');
+        expect(loadedChats).toEqual([]);
+        expect(clearedSearch).toBe(0);
+    });
+
     test('keeps a saved group chat file when the metadata response is uncertain', async () => {
         const previousLocalStorage = globalThis.localStorage;
         const previousWindow = globalThis.window;
@@ -405,6 +540,76 @@ test.describe('Modern action helpers', () => {
             expect(state.selected.chat).toBe('old-chat');
             expect(state.chatMessages).toEqual({});
             expect(state.chatMetadata).toEqual({});
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
+    test('reuses an in-flight group chat creation for repeated clicks', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const group = { id: 'group-1', name: 'Group One', chats: ['old-chat'], chat_id: 'old-chat' };
+            const state = {
+                characters: [],
+                groups: [group],
+                chatMode: 'group',
+                selected: { character: '', group: 'group-1', chat: 'old-chat' },
+                chatLists: {},
+                loadingChats: {},
+                errors: [],
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: {},
+                chatMetadata: {},
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                settings: {},
+            };
+            let finishChatSave;
+            const chatSaveReady = new Promise(resolve => {
+                finishChatSave = resolve;
+            });
+            const requests = [];
+            const actions = createChatContextActions({
+                state,
+                apiFetch: async (url, options = {}) => {
+                    requests.push({ url, body: options.body });
+                    if (url === '/api/chats/group/save') {
+                        await chatSaveReady;
+                        return { ok: true };
+                    }
+                    if (url === '/api/groups/edit') {
+                        return { ok: true };
+                    }
+                    if (url === '/api/chats/search') {
+                        return [];
+                    }
+                    throw new Error(`Unexpected URL ${url}`);
+                },
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+
+            const firstCreation = actions.createModernChatFile(group);
+            const secondCreation = actions.createModernChatFile(group);
+            expect(secondCreation).toBe(firstCreation);
+
+            finishChatSave();
+            const [firstChatId, secondChatId] = await Promise.all([firstCreation, secondCreation]);
+
+            expect(secondChatId).toBe(firstChatId);
+            expect(requests.filter(request => request.url === '/api/chats/group/save')).toHaveLength(1);
+            expect(requests.filter(request => request.url === '/api/groups/edit')).toHaveLength(1);
+            expect(requests.filter(request => request.url === '/api/chats/search')).toHaveLength(1);
+            expect(group.chats).toEqual(['old-chat', firstChatId]);
+            expect(group.chat_id).toBe(firstChatId);
         } finally {
             globalThis.localStorage = previousLocalStorage;
             globalThis.window = previousWindow;
@@ -597,7 +802,7 @@ test.describe('Modern action helpers', () => {
         expect(state.chatBackups.items).toEqual([]);
     });
 
-    test('cancels backup restore when the selected chat context changes during download', async () => {
+    test('restores a backup to the captured chat context after the selection changes', async () => {
         const alice = { avatar: 'alice.png', name: 'Alice' };
         const bob = { avatar: 'bob.png', name: 'Bob' };
         let selectedEntity = alice;
@@ -605,7 +810,7 @@ test.describe('Modern action helpers', () => {
         const downloadReady = new Promise(resolve => {
             finishDownload = resolve;
         });
-        const importedFiles = [];
+        const imports = [];
         const state = {
             chatBackups: {
                 items: [],
@@ -631,7 +836,7 @@ test.describe('Modern action helpers', () => {
             getChatContextKey: entity => entity?.avatar || '',
             getChatEntityName: entity => entity.name,
             getSelectedChatEntity: () => selectedEntity,
-            importModernChatFiles: async files => importedFiles.push(...files),
+            importModernChatFiles: async (files, target) => imports.push({ files, target }),
             isGroupChatMode: () => false,
             sortChats,
         });
@@ -640,8 +845,10 @@ test.describe('Modern action helpers', () => {
         selectedEntity = bob;
         finishDownload();
 
-        await expect(restoring).rejects.toThrow('恢复目标已变化');
-        expect(importedFiles).toEqual([]);
+        await restoring;
+        expect(imports).toHaveLength(1);
+        expect(imports[0].files[0].name).toBe('backup.jsonl');
+        expect(imports[0].target).toEqual({ entity: alice, entityName: 'Alice', groupMode: false, contextKey: 'alice.png' });
         expect(state.chatBackups.restoring).toBe('');
     });
 

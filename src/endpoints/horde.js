@@ -377,7 +377,11 @@ router.post('/generate-image', async (request, response) => {
         request.socket.on('close', function () {
             console.warn('Horde image generation request aborted.');
             controller.abort();
-            if (generation.id) ai_horde.deleteImageGenerationRequest(generation.id);
+            if (generation.id) {
+                void Promise.resolve()
+                    .then(() => ai_horde.deleteImageGenerationRequest(generation.id))
+                    .catch(error => console.warn('Failed to cancel Horde image generation:', error));
+            }
         });
 
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {

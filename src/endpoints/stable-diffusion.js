@@ -15,6 +15,15 @@ import { getFileNameValidationFunction } from '../middleware/validateFileName.js
 import { AIMLAPI_HEADERS } from '../constants.js';
 
 /**
+ * Starts a best-effort provider request without leaking a rejected promise.
+ * @param {() => Promise<unknown>} request Starts the provider request
+ * @param {string} errorMessage Error message used when the request fails
+ */
+function startBackgroundRequest(request, errorMessage) {
+    void Promise.resolve().then(request).catch(error => console.warn(errorMessage, error));
+}
+
+/**
  * Gets the comfy workflows.
  * @param {import('../users.js').UserDirectoryList} directories
  * @returns {string[]} List of comfy workflows
@@ -316,9 +325,14 @@ router.post('/generate', async (request, response) => {
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded) {
-                const interruptUrl = new URL(request.body.url);
-                interruptUrl.pathname = '/sdapi/v1/interrupt';
-                fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                startBackgroundRequest(
+                    () => {
+                        const interruptUrl = new URL(request.body.url);
+                        interruptUrl.pathname = '/sdapi/v1/interrupt';
+                        return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                    },
+                    'Failed to interrupt SD WebUI generation:',
+                );
             }
             controller.abort();
         });
@@ -568,8 +582,13 @@ comfy.post('/generate', async (request, response) => {
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded && !item) {
-                const interruptUrl = new URL(urlJoin(request.body.url, '/interrupt'));
-                fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                startBackgroundRequest(
+                    () => {
+                        const interruptUrl = new URL(urlJoin(request.body.url, '/interrupt'));
+                        return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                    },
+                    'Failed to interrupt ComfyUI generation:',
+                );
             }
             controller.abort();
         });
@@ -685,8 +704,13 @@ comfyRunPod.post('/generate', async (request, response) => {
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded && !item) {
-                const interruptUrl = new URL(urlJoin(request.body.url, `/cancel/${jobId}`));
-                fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': `Bearer ${key}` } });
+                startBackgroundRequest(
+                    () => {
+                        const interruptUrl = new URL(urlJoin(request.body.url, `/cancel/${jobId}`));
+                        return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': `Bearer ${key}` } });
+                    },
+                    'Failed to cancel ComfyUI RunPod generation:',
+                );
             }
             controller.abort();
         });

@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/global
 
 let DataMaidService;
 let deleteHandler;
+let finalizeHandler;
 const tempDirectories = [];
 
 beforeAll(async () => {
@@ -15,6 +16,7 @@ beforeAll(async () => {
     const dataMaid = await import('../src/endpoints/data-maid.js');
     DataMaidService = dataMaid.DataMaidService;
     deleteHandler = dataMaid.router.stack.find(layer => layer.route?.path === '/delete').route.stack[0].handle;
+    finalizeHandler = dataMaid.router.stack.find(layer => layer.route?.path === '/finalize').route.stack[0].handle;
 });
 
 afterEach(() => {
@@ -50,10 +52,10 @@ function createResponse() {
     return { sendStatus: jest.fn(value => value) };
 }
 
-function createToken(handle, filePath) {
-    const token = DataMaidService.generateToken(handle, { files: [filePath] });
-    const hash = DataMaidService.TOKENS.get(token).paths[0].hash;
-    return { token, hash };
+function createToken(handle, ...filePaths) {
+    const token = DataMaidService.generateToken(handle, { files: filePaths });
+    const hashes = DataMaidService.TOKENS.get(token).paths.map(entry => entry.hash);
+    return { token, hash: hashes[0], hashes };
 }
 
 async function deleteFiles(directories, handle, token, hashes) {
@@ -65,8 +67,17 @@ async function deleteFiles(directories, handle, token, hashes) {
     return response;
 }
 
+async function finalizeToken(directories, handle, token) {
+    const response = createResponse();
+    await finalizeHandler({
+        body: { token },
+        user: { profile: { handle }, directories },
+    }, response);
+    return response;
+}
+
 describe('data maid cleanup token safety', () => {
-    test('does not delete a different file recreated at the scanned path and consumes the token', async () => {
+    test('does not delete a different file recreated at the scanned path and consumes the hash', async () => {
         const directories = createDirectories();
         const filePath = path.join(directories.files, 'recreated.txt');
         fs.writeFileSync(filePath, 'original');
@@ -78,7 +89,7 @@ describe('data maid cleanup token safety', () => {
 
         expect(response.sendStatus).toHaveBeenCalledWith(204);
         expect(fs.readFileSync(filePath, 'utf8')).toBe('replacement');
-        expect(DataMaidService.TOKENS.has(token)).toBe(false);
+        expect(DataMaidService.TOKENS.get(token).paths).toHaveLength(0);
     });
 
     test('does not delete a file that became referenced after the scan', async () => {
@@ -94,20 +105,36 @@ describe('data maid cleanup token safety', () => {
 
         expect(response.sendStatus).toHaveBeenCalledWith(204);
         expect(fs.readFileSync(filePath, 'utf8')).toBe('keep me');
-        expect(DataMaidService.TOKENS.has(token)).toBe(false);
+        expect(DataMaidService.TOKENS.get(token).paths).toHaveLength(0);
     });
 
-    test('deletes an unchanged loose file and prevents token replay', async () => {
+    test('deletes two files separately, prevents hash replay, and keeps the token until finalization', async () => {
         const directories = createDirectories();
-        const filePath = path.join(directories.files, 'loose.txt');
-        fs.writeFileSync(filePath, 'delete me');
-        const { token, hash } = createToken('test-user', filePath);
+        const firstPath = path.join(directories.files, 'first.txt');
+        const secondPath = path.join(directories.files, 'second.txt');
+        fs.writeFileSync(firstPath, 'delete first');
+        fs.writeFileSync(secondPath, 'delete second');
+        const { token, hashes: [firstHash, secondHash] } = createToken('test-user', firstPath, secondPath);
 
-        const firstResponse = await deleteFiles(directories, 'test-user', token, [hash]);
-        const replayResponse = await deleteFiles(directories, 'test-user', token, [hash]);
+        const firstResponse = await deleteFiles(directories, 'test-user', token, [firstHash]);
+        fs.writeFileSync(firstPath, 'replacement');
+        const replayResponse = await deleteFiles(directories, 'test-user', token, [firstHash]);
 
         expect(firstResponse.sendStatus).toHaveBeenCalledWith(204);
-        expect(fs.existsSync(filePath)).toBe(false);
-        expect(replayResponse.sendStatus).toHaveBeenCalledWith(403);
+        expect(replayResponse.sendStatus).toHaveBeenCalledWith(204);
+        expect(fs.readFileSync(firstPath, 'utf8')).toBe('replacement');
+        expect(fs.existsSync(secondPath)).toBe(true);
+        expect(DataMaidService.TOKENS.get(token).paths.map(entry => entry.hash)).toEqual([secondHash]);
+
+        const secondResponse = await deleteFiles(directories, 'test-user', token, [secondHash]);
+
+        expect(secondResponse.sendStatus).toHaveBeenCalledWith(204);
+        expect(fs.existsSync(secondPath)).toBe(false);
+        expect(DataMaidService.TOKENS.get(token).paths).toHaveLength(0);
+
+        const finalizeResponse = await finalizeToken(directories, 'test-user', token);
+
+        expect(finalizeResponse.sendStatus).toHaveBeenCalledWith(204);
+        expect(DataMaidService.TOKENS.has(token)).toBe(false);
     });
 });

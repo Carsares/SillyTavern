@@ -56,19 +56,22 @@ export function createChatFileActions({
         return chatId;
     }
 
-    async function importModernChatFiles(files) {
-        const entity = getSelectedChatEntity();
-        const contextKey = getChatContextKey(entity);
+    async function importModernChatFiles(files, target = {}) {
+        const groupMode = target.groupMode ?? isGroupChatMode();
+        const entity = target.entity || getSelectedChatEntity();
+        const contextKey = target.contextKey || getChatContextKey(entity, groupMode);
         if (!contextKey) {
-            throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
+            throw new Error(groupMode ? '请先选择一个群聊。' : '请先选择一个角色。');
         }
+        const entityName = target.entityName ?? getChatEntityName(entity);
+        const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
         const filesToImport = Array.from(files || []).map(file => {
             const format = file.name.split('.').pop()?.toLowerCase() || '';
             if (!['json', 'jsonl'].includes(format)) {
                 throw new Error('聊天导入仅支持 JSON 或 JSONL 文件。');
             }
-            if (isGroupChatMode() && format !== 'jsonl') {
+            if (groupMode && format !== 'jsonl') {
                 throw new Error('群聊导入仅支持 SillyTavern JSONL 文件。');
             }
             return { file, format };
@@ -76,13 +79,17 @@ export function createChatFileActions({
         const importedFileNames = [];
 
         async function syncImportedFiles() {
-            if (isGroupChatMode()) {
-                entity.chats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
-                entity.chat_id = stripJsonlExtension(importedFileNames[0]);
-                await saveGroupMetadata(entity);
+            if (groupMode) {
+                const nextChats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
+                const nextChatId = stripJsonlExtension(importedFileNames[0]);
+                await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: nextChatId });
+                entity.chats = nextChats;
+                entity.chat_id = nextChatId;
             }
-            clearChatSearch();
-            await refreshSelectedChatList(entity);
+            await refreshSelectedChatList(entity, { groupMode });
+            if (isContextCurrent()) {
+                clearChatSearch();
+            }
         }
 
         try {
@@ -90,14 +97,14 @@ export function createChatFileActions({
                 const formData = new FormData();
                 formData.set('file_type', format);
                 formData.set('avatar', file, file.name);
-                formData.set('avatar_url', isGroupChatMode() ? '' : entity.avatar);
+                formData.set('avatar_url', groupMode ? '' : entity.avatar);
                 formData.set('user_name', getUserName());
-                formData.set('character_name', getChatEntityName(entity));
-                const result = await apiFetch(isGroupChatMode() ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
+                formData.set('character_name', entityName);
+                const result = await apiFetch(groupMode ? '/api/chats/group/import' : '/api/chats/import', { body: formData, omitContentType: true });
                 if (result?.error) {
                     throw new Error(`${file.name} 导入失败，文件格式可能不兼容。`);
                 }
-                if (isGroupChatMode()) {
+                if (groupMode) {
                     importedFileNames.push(result.res);
                 } else {
                     importedFileNames.push(...(result?.fileNames || []));
@@ -116,8 +123,11 @@ export function createChatFileActions({
         }
 
         await syncImportedFiles();
-        state.selected.chat = getChatId({ file_name: importedFileNames[0] });
-        await loadChatMessages(entity, state.selected.chat, { force: true });
+        const importedChatId = getChatId({ file_name: importedFileNames[0] });
+        if (isContextCurrent()) {
+            state.selected.chat = importedChatId;
+            await loadChatMessages(entity, importedChatId, { force: true, groupMode, isContextCurrent });
+        }
         showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);
         render();
     }

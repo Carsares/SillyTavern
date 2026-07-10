@@ -22,8 +22,14 @@ export function createWorldbookDetailActions({
     }
 
     async function saveWorldbookDetail(worldbookId, detail) {
-        await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: detail } });
-        state.worldDetails[worldbookId] = detail;
+        try {
+            await apiFetch('/api/worldinfo/edit', { body: { name: worldbookId, data: detail } });
+            state.worldDetails[worldbookId] = detail;
+        } catch (error) {
+            // The server may have committed the edit before its response failed, so cached data is no longer authoritative.
+            delete state.worldDetails[worldbookId];
+            throw error;
+        }
     }
 
     async function updateWorldbookDetail(worldbookId, updateDetail) {
@@ -34,7 +40,7 @@ export function createWorldbookDetailActions({
         // Serialize each world's read-modify-save cycle so later edits clone the latest saved detail.
         const previousUpdate = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
         const currentUpdate = previousUpdate.catch(() => {}).then(async () => {
-            await loadWorldDetail(worldbookId);
+            await loadWorldDetail(worldbookId, { force: !state.worldDetails[worldbookId] });
             const detail = state.worldDetails[worldbookId];
             if (!detail) {
                 throw new Error('世界书内容读取失败。');

@@ -294,54 +294,71 @@ export function createChatContextActions({
         markChatRead(entity, chatId, messages, groupMode);
     }
 
-    async function createModernChatFile(entity) {
+    const chatFileCreationPromises = new Map();
+
+    function createModernChatFile(entity) {
         const groupMode = isGroupChatMode();
         const contextKey = getChatContextKey(entity, groupMode);
         if (!entity || !contextKey) {
-            throw new Error(groupMode ? '请先选择群聊' : '请先选择角色');
+            return Promise.reject(new Error(groupMode ? '请先选择群聊' : '请先选择角色'));
         }
 
-        const chatId = createModernChatId();
-        const greeting = groupMode ? '' : getCharacterGreeting(entity);
-        const messages = greeting ? [createAssistantMessage(greeting, entity)] : [];
-        const cacheKey = getChatCacheKey(contextKey, chatId);
-        function clearCreatedChatState() {
-            delete state.chatMetadata[cacheKey];
-            delete state.chatMessages[cacheKey];
-            deleteChatReadState(contextKey, chatId);
+        const inFlightCreation = chatFileCreationPromises.get(contextKey);
+        if (inFlightCreation) {
+            return inFlightCreation;
         }
 
-        state.chatMetadata[cacheKey] = {};
+        const creation = (async () => {
+            const chatId = createModernChatId();
+            const greeting = groupMode ? '' : getCharacterGreeting(entity);
+            const messages = greeting ? [createAssistantMessage(greeting, entity)] : [];
+            const cacheKey = getChatCacheKey(contextKey, chatId);
+            function clearCreatedChatState() {
+                delete state.chatMetadata[cacheKey];
+                delete state.chatMessages[cacheKey];
+                deleteChatReadState(contextKey, chatId);
+            }
 
-        try {
-            await saveModernChat(entity, chatId, messages, { groupMode });
-        } catch (error) {
-            clearCreatedChatState();
-            throw error;
-        }
+            state.chatMetadata[cacheKey] = {};
 
-        if (groupMode) {
-            const chats = Array.isArray(entity.chats) ? entity.chats : [];
-            const nextChats = chats.includes(chatId) ? [...chats] : [...chats, chatId];
-            // Persist the chat file before publishing its ID in group metadata.
             try {
-                await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: chatId });
+                await saveModernChat(entity, chatId, messages, { groupMode });
             } catch (error) {
-                // Keep the file because the metadata write may have committed before its response failed.
                 clearCreatedChatState();
                 throw error;
             }
 
-            entity.chats = nextChats;
-            entity.chat_id = chatId;
-        }
+            if (groupMode) {
+                const chats = Array.isArray(entity.chats) ? entity.chats : [];
+                const nextChats = chats.includes(chatId) ? [...chats] : [...chats, chatId];
+                // Persist the chat file before publishing its ID in group metadata.
+                try {
+                    await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: chatId });
+                } catch (error) {
+                    // Keep the file because the metadata write may have committed before its response failed.
+                    clearCreatedChatState();
+                    throw error;
+                }
 
-        await refreshSelectedChatList(entity, { groupMode });
-        const isContextCurrent = isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
-        if (isContextCurrent) {
-            state.selected.chat = chatId;
-        }
-        return chatId;
+                entity.chats = nextChats;
+                entity.chat_id = chatId;
+            }
+
+            await refreshSelectedChatList(entity, { groupMode });
+            const isContextCurrent = isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
+            if (isContextCurrent) {
+                state.selected.chat = chatId;
+            }
+            return chatId;
+        })();
+        chatFileCreationPromises.set(contextKey, creation);
+        const clearCreation = () => {
+            if (chatFileCreationPromises.get(contextKey) === creation) {
+                chatFileCreationPromises.delete(contextKey);
+            }
+        };
+        creation.then(clearCreation, clearCreation);
+        return creation;
     }
 
     function toggleChatSidebar(open = !state.chatSidebarOpen) {

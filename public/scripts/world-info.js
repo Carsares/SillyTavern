@@ -4341,16 +4341,18 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
     }
 
     const sanitizedWorldName = await getSanitizedFilename(worldName);
+    const existingWorldName = world_names.find(name => equalsIgnoreCaseAndAccents(name, sanitizedWorldName));
 
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create', deleteAction: (existingName) => deleteWorldInfo(existingName) });
+    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create' });
     if (!allowed) {
         return false;
     }
 
-    await saveWorldInfo(worldName, worldInfoTemplate, true);
+    const targetWorldName = existingWorldName || worldName;
+    await saveWorldInfo(targetWorldName, worldInfoTemplate, true);
     await updateWorldInfoList();
 
-    const selectedIndex = world_names.indexOf(worldName);
+    const selectedIndex = world_names.indexOf(targetWorldName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     } else {
@@ -5734,7 +5736,6 @@ export async function importWorldInfo(file) {
     }
 
     const formData = new FormData();
-    formData.append('avatar', file);
 
     try {
         let jsonData;
@@ -5776,9 +5777,17 @@ export async function importWorldInfo(file) {
 
     const worldName = file.name.substr(0, file.name.lastIndexOf('.'));
     const sanitizedWorldName = await getSanitizedFilename(worldName);
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: (existingName) => deleteWorldInfo(existingName) });
+    const existingWorldName = world_names.find(name => equalsIgnoreCaseAndAccents(name, sanitizedWorldName));
+    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import' });
     if (!allowed) {
         return false;
+    }
+
+    const fileExtensionIndex = file.name.lastIndexOf('.');
+    const fileExtension = fileExtensionIndex === -1 ? '' : file.name.slice(fileExtensionIndex);
+    formData.append('avatar', file, existingWorldName ? `${existingWorldName}${fileExtension}` : file.name);
+    if (existingWorldName) {
+        formData.append('overwrite', 'true');
     }
 
     try {
@@ -5796,6 +5805,7 @@ export async function importWorldInfo(file) {
         const data = await result.json();
 
         if (data.name) {
+            worldInfoCache.delete(data.name);
             await updateWorldInfoList();
 
             const newIndex = world_names.indexOf(data.name);

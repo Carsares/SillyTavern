@@ -17,7 +17,7 @@ afterEach(() => {
     }
 });
 
-function createRequest(convertedData, overwrite = undefined) {
+function createRequest(convertedData, overwrite = undefined, originalname = 'Imported.json') {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-worldinfo-upload-'));
     const uploads = path.join(root, 'uploads');
     const worlds = path.join(root, 'worlds');
@@ -34,7 +34,7 @@ function createRequest(convertedData, overwrite = undefined) {
             file: {
                 destination: uploads,
                 filename: 'temporary',
-                originalname: 'Imported.json',
+                originalname,
                 path: uploadPath,
             },
             user: { directories: { worlds } },
@@ -105,5 +105,19 @@ describe('world info import upload cleanup', () => {
         expect(response.body).toEqual({ name: 'Imported' });
         expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(imported);
         expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
+    });
+
+    test('overwrites the exact existing name selected by the client without creating a case variant', () => {
+        const imported = { entries: { imported: true } };
+        const { root, request } = createRequest(JSON.stringify(imported), 'true', 'Résumé.json');
+        const worldPath = path.join(root, 'worlds', 'Résumé.json');
+        fs.writeFileSync(worldPath, JSON.stringify({ entries: { original: true } }));
+        const response = createResponse();
+
+        importHandler(request, response);
+
+        expect(response.body).toEqual({ name: 'Résumé' });
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(imported);
+        expect(fs.readdirSync(path.join(root, 'worlds'))).toEqual(['Résumé.json']);
     });
 });
