@@ -1,3 +1,4 @@
+/* global globalThis */
 import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
@@ -105,7 +106,7 @@ test.describe('Modern settings page', () => {
         const requests = fixture.requests.settingsSnapshots;
 
         await page.addInitScript(() => {
-            window.localStorage.setItem('st-modern-settings-section', 'snapshots');
+            globalThis.localStorage.setItem('st-modern-settings-section', 'snapshots');
         });
         await gotoModern(page, 'settings', '设置中心');
 
