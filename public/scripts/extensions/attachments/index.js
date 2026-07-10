@@ -1,5 +1,6 @@
 import { event_types, eventSource, saveSettingsDebounced } from '../../../script.js';
-import { deleteAttachment, getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment, uploadFileAttachmentToServer } from '../../chats.js';
+import { replaceAttachmentFile } from '../../attachment-file-helpers.js';
+import { captureAttachmentPersistenceTarget, deleteAttachment, getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment, uploadFileAttachmentToServer } from '../../chats.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
@@ -124,10 +125,16 @@ async function updateDataBankAttachment(args, value) {
         return '';
     }
 
-    await deleteAttachment(attachment, source, () => { }, false);
+    const persistenceTarget = captureAttachmentPersistenceTarget(source);
     const file = new File([value], attachment.name, { type: 'text/plain' });
-    const url = await uploadFileAttachmentToServer(file, source);
-    return url;
+    const replacement = await replaceAttachmentFile(
+        () => uploadFileAttachmentToServer(file, source, persistenceTarget),
+        () => deleteAttachment(attachment, source, () => { }, false, persistenceTarget),
+    );
+    if (replacement.url && !replacement.originalRemoved) {
+        toastr.warning('The attachment was updated, but the original could not be removed.');
+    }
+    return replacement.url;
 }
 
 /**

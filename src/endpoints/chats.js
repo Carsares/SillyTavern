@@ -579,9 +579,13 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         console.debug('Old chat name', pathToOriginalFile);
         console.debug('New chat name', pathToRenamedFile);
 
-        if (!fs.existsSync(pathToOriginalFile) || fs.existsSync(pathToRenamedFile)) {
-            console.error('Either Source or Destination files are not available');
-            return response.status(400).send({ error: true });
+        if (!fs.existsSync(pathToOriginalFile)) {
+            console.error('Source chat file is not available');
+            return response.status(404).send({ error: 'source_missing' });
+        }
+        if (fs.existsSync(pathToRenamedFile)) {
+            console.error('Destination chat file already exists');
+            return response.status(409).send({ error: 'destination_exists' });
         }
 
         fs.copyFileSync(pathToOriginalFile, pathToRenamedFile);
@@ -596,23 +600,29 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
 router.post('/delete', validateAvatarUrlMiddleware, function (request, response) {
     try {
-        if (!path.extname(request.body.chatfile)) {
-            request.body.chatfile += '.jsonl';
+        if (!request.body?.avatar_url || !request.body?.chatfile) {
+            return response.sendStatus(400);
         }
 
         const dirName = String(request.body.avatar_url).replace('.png', '');
-        const chatFileName = String(request.body.chatfile);
+        const requestedChatFile = String(request.body.chatfile);
+        const chatFileName = path.extname(requestedChatFile) ? requestedChatFile : `${requestedChatFile}.jsonl`;
         const chatFilePath = path.join(request.user.directories.chats, dirName, sanitize(chatFileName));
         if (!isPathUnderParent(request.user.directories.chats, chatFilePath)) {
             return response.sendStatus(400);
         }
+        if (!fs.existsSync(chatFilePath)) {
+            return response.send({ ok: true, missing: true });
+        }
         //Return success if the file was deleted.
         if (tryDeleteFile(chatFilePath)) {
             return response.send({ ok: true });
-        } else {
-            console.error('The chat file was not deleted.');
-            return response.sendStatus(400);
         }
+        if (!fs.existsSync(chatFilePath)) {
+            return response.send({ ok: true, missing: true });
+        }
+        console.error('The chat file was not deleted.');
+        return response.sendStatus(500);
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);
@@ -881,13 +891,18 @@ router.post('/group/delete', (request, response) => {
         const id = request.body.id;
         const chatFilePath = path.join(request.user.directories.groupChats, sanitize(`${id}.jsonl`));
 
+        if (!fs.existsSync(chatFilePath)) {
+            return response.send({ ok: true, missing: true });
+        }
         //Return success if the file was deleted.
         if (tryDeleteFile(chatFilePath)) {
             return response.send({ ok: true });
-        } else {
-            console.error('The group chat file was not deleted.');
-            return response.sendStatus(400);
         }
+        if (!fs.existsSync(chatFilePath)) {
+            return response.send({ ok: true, missing: true });
+        }
+        console.error('The group chat file was not deleted.');
+        return response.sendStatus(500);
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);

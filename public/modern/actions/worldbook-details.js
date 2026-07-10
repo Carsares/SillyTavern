@@ -6,6 +6,7 @@ export function createWorldbookDetailActions({
 }) {
     const worldbookUpdateQueues = new Map();
     const worldbookDeleteBarriers = new Map();
+    const worldbookLoadTokens = new Map();
 
     async function queueWorldbookOperation(worldbookId, operation) {
         const previousOperation = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
@@ -21,18 +22,30 @@ export function createWorldbookDetailActions({
         }
     }
 
-    async function loadWorldDetail(worldbookId, { force = false } = {}) {
+    async function loadWorldDetail(worldbookId, { force = false, isCurrent = () => true } = {}) {
         if (!worldbookId || (state.worldDetails[worldbookId] && !force)) {
             return state.worldDetails[worldbookId] || null;
         }
 
+        const loadToken = Symbol(worldbookId);
+        worldbookLoadTokens.set(worldbookId, loadToken);
         try {
-            state.worldDetails[worldbookId] = await apiFetch('/api/worldinfo/get', { body: { name: worldbookId } });
-            return state.worldDetails[worldbookId];
+            const detail = await apiFetch('/api/worldinfo/get', { body: { name: worldbookId } });
+            if (!isCurrent() || worldbookLoadTokens.get(worldbookId) !== loadToken) {
+                return state.worldDetails[worldbookId] || null;
+            }
+            state.worldDetails[worldbookId] = detail;
+            return detail;
         } catch (error) {
-            state.errors.push({ key: 'worldbook', message: error.message });
-            showToast('世界书读取失败', error.message);
+            if (isCurrent() && worldbookLoadTokens.get(worldbookId) === loadToken) {
+                state.errors.push({ key: 'worldbook', message: error.message });
+                showToast('世界书读取失败', error.message);
+            }
             return null;
+        } finally {
+            if (worldbookLoadTokens.get(worldbookId) === loadToken) {
+                worldbookLoadTokens.delete(worldbookId);
+            }
         }
     }
 

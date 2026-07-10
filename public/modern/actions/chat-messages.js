@@ -7,9 +7,20 @@ export function createChatMessageActions({
     getSelectedChatMessages,
     getCurrentDraftKey,
     getChatCacheKey,
-    saveModernChat,
+    isGroupChatMode,
+    updateModernChat,
     refreshSelectedChatList,
 }) {
+    function findQueuedMessageIndex(messages, originalMessage, originalIndex) {
+        if (!originalMessage?.send_date) {
+            return originalIndex < messages.length ? originalIndex : -1;
+        }
+
+        return messages.findIndex(message => message?.send_date === originalMessage.send_date
+            && message?.name === originalMessage.name
+            && !!message?.is_user === !!originalMessage.is_user);
+    }
+
     async function copyModernMessage(messageIndex) {
         const index = Number(messageIndex);
         const messages = getSelectedChatMessages();
@@ -44,19 +55,28 @@ export function createChatMessageActions({
         }
 
         const entity = getSelectedChatEntity();
-        if (!getChatContextKey(entity) || !state.selected.chat) {
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        const chatId = state.selected.chat;
+        if (!contextKey || !chatId) {
             throw new Error('请先选择一个聊天文件');
         }
 
         const index = Number(messageIndex);
-        const messages = [...getSelectedChatMessages()];
+        const messages = getSelectedChatMessages();
         if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
             throw new Error('消息位置无效，请刷新后重试。');
         }
+        const originalMessage = messages[index];
 
-        const [deletedMessage] = messages.splice(index, 1);
-        await saveModernChat(entity, state.selected.chat, messages);
-        await refreshSelectedChatList(entity);
+        const deletedMessage = await updateModernChat(entity, chatId, latestMessages => {
+            const latestIndex = findQueuedMessageIndex(latestMessages, originalMessage, index);
+            if (latestIndex < 0) {
+                throw new Error('删除目标已变化，请重新选择消息。');
+            }
+            return latestMessages.splice(latestIndex, 1)[0];
+        }, { groupMode });
+        await refreshSelectedChatList(entity, { groupMode });
         state.chatMessageDeleteConfirm = { key: '', index: -1 };
         showToast('消息已删除', deletedMessage?.name || '当前聊天');
         render();
@@ -169,23 +189,31 @@ export function createChatMessageActions({
         }
 
         const entity = getSelectedChatEntity();
-        const contextKey = getChatContextKey(entity);
-        const editKey = getChatCacheKey(contextKey, state.selected.chat);
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        const chatId = state.selected.chat;
+        const editKey = getChatCacheKey(contextKey, chatId);
         const edit = state.chatEditing;
         const text = edit.text.trim();
-        const messages = [...getSelectedChatMessages()];
-        if (!contextKey || !state.selected.chat || edit.key !== editKey || edit.index < 0 || edit.index >= messages.length) {
+        const messages = getSelectedChatMessages();
+        if (!contextKey || !chatId || edit.key !== editKey || edit.index < 0 || edit.index >= messages.length) {
             throw new Error('编辑目标已变化，请重新选择消息。');
         }
         if (!text) {
             throw new Error('消息内容不能为空。');
         }
+        const originalMessage = messages[edit.index];
 
-        const nextMessage = formatEditedModernMessage(messages[edit.index], text);
-        messages[edit.index] = nextMessage;
-
-        await saveModernChat(entity, state.selected.chat, messages);
-        await refreshSelectedChatList(entity);
+        const nextMessage = await updateModernChat(entity, chatId, latestMessages => {
+            const latestIndex = findQueuedMessageIndex(latestMessages, originalMessage, edit.index);
+            if (latestIndex < 0) {
+                throw new Error('编辑目标已变化，请重新选择消息。');
+            }
+            const message = formatEditedModernMessage(latestMessages[latestIndex], text);
+            latestMessages[latestIndex] = message;
+            return message;
+        }, { groupMode });
+        await refreshSelectedChatList(entity, { groupMode });
         state.chatEditing = { key: '', index: -1, text: '' };
         showToast('消息已保存', nextMessage.name || '当前聊天');
         render();

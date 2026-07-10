@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
+import sanitize from 'sanitize-filename';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 function clone(value) {
@@ -106,8 +107,14 @@ async function mockModernPresetsWorkspace(page) {
     await page.route('**/api/presets/save', route => {
         const payload = route.request().postDataJSON();
         requests.saves.push(clone(payload));
-        upsertPreset(fixture, payload.apiId, payload.name, payload.preset);
-        return fulfillJson(route, { ok: true });
+        const name = sanitize(payload.name);
+        const [namesKey] = getPresetBundleFields(payload.apiId);
+        const exists = (fixture.settingsBundle[namesKey] || []).includes(name);
+        if (payload.overwrite === false && exists) {
+            return route.fulfill({ status: 409, contentType: 'text/plain', body: 'Preset already exists' });
+        }
+        upsertPreset(fixture, payload.apiId, name, payload.preset);
+        return fulfillJson(route, { name });
     });
 
     await page.route('**/api/presets/restore', route => {
@@ -148,6 +155,7 @@ test.describe('Modern presets page', () => {
         expect(requests.saves[0]).toMatchObject({
             apiId: 'openai',
             name: 'Imported Preset',
+            overwrite: false,
             preset: {
                 siliconflow_model: 'imported-model',
                 temperature: 0.44,
@@ -162,6 +170,7 @@ test.describe('Modern presets page', () => {
         expect(requests.saves[1]).toMatchObject({
             apiId: 'openai',
             name: 'Preset B copy',
+            overwrite: false,
             preset: {
                 siliconflow_model: 'model-b',
                 temperature: 0.8,
@@ -183,6 +192,7 @@ test.describe('Modern presets page', () => {
         expect(requests.saves[2]).toMatchObject({
             apiId: 'openai',
             name: 'Preset B',
+            overwrite: true,
             preset: {
                 siliconflow_model: 'model-b-default',
                 temperature: 0.22,
@@ -215,5 +225,40 @@ test.describe('Modern presets page', () => {
         await expect.poll(() => requests.deletes.length).toBe(1);
         expect(requests.deletes[0]).toEqual({ apiId: 'openai', name: 'Preset B copy' });
         await expect(page.locator('[data-select-preset="Preset B copy"][data-preset-api="openai"]')).toHaveCount(0);
+    });
+
+    test('uses the server name and rejects a sanitized-name collision', async ({ page }) => {
+        const fixture = await mockModernPresetsWorkspace(page);
+        const requests = fixture.requests.presetWorkflows;
+
+        await gotoModern(page, 'presets', '预设管理');
+        await page.locator('[data-openai-preset-name]').fill('Preset /A');
+        await page.locator('[data-save-openai-preset]').click();
+
+        await expect.poll(() => requests.saves.length).toBe(1);
+        expect(requests.saves[0]).toMatchObject({ name: 'Preset /A', overwrite: false });
+        expect(fixture.requests.settingsSave).toHaveLength(0);
+        await expect(page.locator('.toast').filter({ hasText: /already exists|保存失败/ }).first()).toBeVisible();
+
+        await page.locator('[data-openai-preset-name]').fill('New/Name');
+        await page.locator('[data-save-openai-preset]').click();
+
+        await expect.poll(() => requests.saves.length).toBe(2);
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].oai_settings.preset_settings_openai).toBe('NewName');
+        await expect(page.locator('[data-select-preset="NewName"][data-preset-api="openai"]')).toBeVisible();
+    });
+
+    test('does not delete the active preset when switching settings fails', async ({ page }) => {
+        const fixture = await mockModernPresetsWorkspace(page);
+        await page.route('**/api/settings/save', route => route.fulfill({ status: 500, contentType: 'text/plain', body: 'settings failed' }));
+
+        await gotoModern(page, 'presets', '预设管理');
+        await page.locator('[data-delete-preset="Preset A"][data-preset-api="openai"]').click();
+        await page.locator('[data-confirm-preset-delete]').click();
+
+        await expect(page.locator('.toast').filter({ hasText: '/api/settings/save failed: 500' }).first()).toBeVisible();
+        expect(fixture.requests.presetWorkflows.deletes).toHaveLength(0);
+        await expect(page.locator('[data-select-preset="Preset A"][data-preset-api="openai"]')).toContainText('当前');
     });
 });

@@ -1,13 +1,12 @@
 import { Popper } from '../lib.js';
 
-import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
+import { cancelDebouncedChatSave, captureChatPersistenceContext, eventSource, event_types, flushPendingChatSave, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION, scheduleChatPersistenceSave } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
 import { delay, deleteValueByPath, equalsIgnoreCaseAndAccents, escapeHtml, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
 import { addLocaleData, getCurrentLocale, t } from './i18n.js';
-import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 
@@ -76,40 +75,20 @@ export const isOfficialExtension = (url) => {
 
 let requiresReload = false;
 let stateChanged = false;
-let saveMetadataTimeout = null;
-
 export function cancelDebouncedMetadataSave() {
-    if (saveMetadataTimeout) {
-        console.debug('Debounced metadata save cancelled');
-        clearTimeout(saveMetadataTimeout);
-        saveMetadataTimeout = null;
-    }
+    cancelDebouncedChatSave();
 }
 
 export function saveMetadataDebounced() {
-    const context = getContext();
-    const groupId = context.groupId;
-    const characterId = context.characterId;
+    scheduleChatPersistenceSave(captureChatPersistenceContext());
+}
 
-    cancelDebouncedMetadataSave();
-
-    saveMetadataTimeout = setTimeout(async () => {
-        const newContext = getContext();
-
-        if (groupId !== newContext.groupId) {
-            console.warn('Group changed, not saving metadata');
-            return;
-        }
-
-        if (characterId !== newContext.characterId) {
-            console.warn('Character changed, not saving metadata');
-            return;
-        }
-
-        console.debug('Saving metadata...');
-        await newContext.saveMetadata();
-        console.debug('Saved metadata...');
-    }, debounce_timeout.relaxed);
+/**
+ * Flushes metadata through the shared full-chat persistence queue.
+ * @returns {Promise<boolean>} Whether the latest snapshot was saved
+ */
+export function flushDebouncedMetadataSave() {
+    return flushPendingChatSave();
 }
 
 /**

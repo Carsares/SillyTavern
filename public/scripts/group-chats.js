@@ -16,7 +16,6 @@ import {
     localizePagination,
     renderPaginationDropdown,
     paginationDropdownChangeHandler,
-    waitUntilCondition,
     uuidv4,
 } from './utils.js';
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
@@ -60,6 +59,7 @@ import {
     sendMessageAsUser,
     getBiasStrings,
     saveChatConditional,
+    flushPendingCharacterSave,
     deactivateSendButtons,
     activateSendButtons,
     eventSource,
@@ -67,7 +67,6 @@ import {
     getCurrentChatId,
     setCharacterSettingsOverrides,
     system_avatar,
-    isChatSaving,
     setExternalAbortController,
     baseChatReplace,
     createLazyFields,
@@ -87,6 +86,7 @@ import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { compressRequest } from './request-compression.js';
+import { KeyedTaskCoordinator } from './save-coordinator.js';
 
 export {
     selected_group,
@@ -137,7 +137,10 @@ export const DEFAULT_AUTO_MODE_DELAY = 5;
 export const groupCandidatesFilter = new FilterHelper(debounce(printGroupCandidates, debounce_timeout.quick));
 export const groupMembersFilter = new FilterHelper(debounce(printGroupMembers, debounce_timeout.quick));
 let autoModeWorker = null;
-const saveGroupDebounced = debounce(async (group, reload) => await _save(group, reload), debounce_timeout.relaxed);
+const groupSaveCoordinator = new KeyedTaskCoordinator(debounce_timeout.relaxed, (error, groupId) => {
+    console.error(`Failed to save group ${groupId}`, error);
+    toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group could not be saved`);
+});
 /** @type {Map<string, number>} */
 let groupChatQueueOrder = new Map();
 
@@ -152,15 +155,19 @@ function setAutoModeWorker() {
  * @param {Group} group Group object to save
  * @param {boolean} reload Whether to reload characters after saving
  */
-async function _save(group, reload = true) {
-    await fetch('/api/groups/edit', {
+async function saveGroupSnapshot(group, reload = true) {
+    const response = await fetch('/api/groups/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify(group),
     });
+    if (!response.ok) {
+        throw new Error(`Group save failed with status ${response.status}`);
+    }
     if (reload) {
         await getCharacters();
     }
+    return true;
 }
 
 // Group chats
@@ -618,26 +625,27 @@ function resetSelectedGroup() {
  * @param {string} groupId Group ID
  * @param {boolean} shouldSaveGroup Whether to save the group after saving the chat
  * @param {boolean} force Force the saving on integrity error
- * @returns {Promise<void>} A promise that resolves when the group chat has been saved.
+ * @param {object} [persistenceContext] Explicit captured chat context
+ * @returns {Promise<boolean>} Whether the group chat was saved.
  */
-async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
+async function saveGroupChat(groupId, shouldSaveGroup, force = false, persistenceContext = undefined) {
     const group = groups.find(x => x.id == groupId);
     if (!group) {
         console.warn('Group not found', groupId);
-        return;
+        return false;
     }
-    const chatId = group.chat_id;
+    const chatId = persistenceContext?.chatId ?? group.chat_id;
     group.date_last_chat = Date.now();
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: { ...chat_metadata },
+        chat_metadata: { ...(persistenceContext?.metadata ?? chat_metadata) },
         user_name: 'unused',
         character_name: 'unused',
     };
     const saveGroupChatRequest = await compressRequest({
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId, chat: [chatHeader, ...chat], force: force }),
+        body: JSON.stringify({ id: chatId, chat: [chatHeader, ...(persistenceContext?.chatData ?? chat)], force: force }),
     });
     const response = await fetch('/api/chats/group/save', saveGroupChatRequest);
 
@@ -647,7 +655,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
         if (!isIntegrityError) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
             console.error('Group chat could not be saved', response);
-            return;
+            return false;
         }
 
         const popupResult = await Popup.show.input(
@@ -663,15 +671,18 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
         if (!forceSaveConfirmed) {
             console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
             window.location.reload();
-            return;
+            return false;
         }
 
-        await saveGroupChat(groupId, shouldSaveGroup, true);
+        return await saveGroupChat(groupId, shouldSaveGroup, true, persistenceContext);
     }
 
     if (shouldSaveGroup) {
-        await editGroup(groupId, false, false);
+        if (!await editGroup(groupId, false, false)) {
+            return false;
+        }
     }
+    return true;
 }
 
 /**
@@ -1318,25 +1329,33 @@ function activateNaturalOrder(members, input, lastMessage, allowSelfResponses, i
 /**
  * Deletes a group from the server by ID.
  * @param {string} id Group ID to delete
- * @returns {Promise<void>} Promise that resolves when the group is deleted
+ * @returns {Promise<boolean>} Whether the group was deleted
  */
 async function deleteGroup(id) {
     const group = groups.find((x) => x.id === id);
+    groupSaveCoordinator.block(id);
+    let deleted = false;
 
-    const response = await fetch('/api/groups/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: id }),
-    });
-
-    if (group && Array.isArray(group.chats)) {
-        for (const chatId of group.chats) {
-            await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
+    try {
+        // A delete is ordered after every edit accepted before the barrier.
+        await groupSaveCoordinator.flush(id);
+        const response = await fetch('/api/groups/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: id }),
+        });
+        if (!response.ok) {
+            throw new Error(`Group delete failed with status ${response.status}`);
         }
-    }
+        deleted = true;
 
-    if (response.ok) {
-        await clearChat();
+        if (group && Array.isArray(group.chats)) {
+            for (const chatId of group.chats) {
+                await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
+            }
+        }
+
+        await clearChat({ discardPendingSave: true });
         selected_group = null;
         delete tag_map[id];
         resetChatState();
@@ -1346,6 +1365,14 @@ async function deleteGroup(id) {
         select_rm_info('group_delete', id);
 
         $('#rm_button_selected_ch').children('h2').text('');
+        return true;
+    } catch (error) {
+        if (!deleted) {
+            groupSaveCoordinator.unblock(id);
+        }
+        console.error(`Failed to delete group ${id}`, error);
+        toastr.error(t`Check the server connection and try again.`, t`Group could not be deleted`);
+        return false;
     }
 }
 
@@ -1354,20 +1381,28 @@ async function deleteGroup(id) {
  * @param {string} id Group ID to edit
  * @param {boolean} immediately Whether to save immediately
  * @param {boolean} reload Whether to reload the groups after saving
- * @returns {Promise<void>} Promise that resolves when the group is edited
+ * @returns {Promise<boolean>} Whether the save was accepted or completed
  */
 export async function editGroup(id, immediately, reload = true) {
-    let group = groups.find((x) => x.id === id);
+    const group = groups.find((x) => x.id === id);
 
     if (!group) {
-        return;
+        return false;
     }
+    const groupSnapshot = structuredClone(group);
 
     if (immediately) {
-        return await _save(group, reload);
+        groupSaveCoordinator.cancel(id);
+        try {
+            return await groupSaveCoordinator.enqueue(id, () => saveGroupSnapshot(groupSnapshot, reload));
+        } catch (error) {
+            console.error(`Failed to save group ${id}`, error);
+            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group could not be saved`);
+            return false;
+        }
     }
 
-    saveGroupDebounced(group, reload);
+    return groupSaveCoordinator.schedule(id, () => saveGroupSnapshot(groupSnapshot, reload));
 }
 
 /**
@@ -1745,7 +1780,7 @@ async function onDeleteGroupClick() {
 
     const confirm = await Popup.show.confirm(t`Delete the group?`, '<p>' + t`This will also delete all your chats with that group. If you want to delete a single conversation, select a "View past chats" option in the lower left menu.` + '</p>');
     if (confirm) {
-        deleteGroup(openGroupId);
+        await deleteGroup(openGroupId);
     }
 }
 
@@ -2015,11 +2050,6 @@ function updateFavButtonState(state) {
  * @returns {Promise<boolean>} Whether the group was opened
  */
 export async function openGroupById(groupId) {
-    if (isChatSaving) {
-        toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
-        return false;
-    }
-
     if (!groups.find(x => x.id === groupId)) {
         console.log('Group not found', groupId);
         return false;
@@ -2064,6 +2094,7 @@ async function openCharacterDefinition(characterSelect) {
         return;
     }
 
+    await flushPendingCharacterSave();
     await unshallowCharacter(chid);
     setCharacterId(chid);
     select_selected_character(chid);
@@ -2192,7 +2223,6 @@ export async function getGroupPastChats(groupId) {
  * @returns {Promise<void>}
  */
 export async function openGroupChat(groupId, chatId) {
-    await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     const group = groups.find(x => x.id === groupId);
 
     if (!group || !group.chats.includes(chatId)) {

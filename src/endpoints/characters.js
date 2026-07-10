@@ -25,6 +25,7 @@ import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import { CharXParser, persistCharXAssets } from '../charx.js';
 import cacheBuster from '../middleware/cacheBuster.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -35,6 +36,7 @@ const isAndroid = process.platform === 'android';
 const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', false, 'boolean');
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
 const MAX_FILENAME_BYTES = 255;
+const CHARACTER_NAME_QUEUE = new KeyedPromiseQueue();
 
 class DiskCache {
     /**
@@ -735,7 +737,6 @@ async function importFromYaml(uploadPath, context, preservedFileName) {
     const yamlData = yaml.parse(fileText);
     console.info('Importing from YAML');
     yamlData.name = sanitize(yamlData.name);
-    const fileName = preservedFileName || getPngName(yamlData.name, context.request.user.directories);
     let char = convertToV2({
         'name': yamlData.name,
         'description': yamlData.context ?? '',
@@ -751,8 +752,10 @@ async function importFromYaml(uploadPath, context, preservedFileName) {
         'creator': '',
         'tags': '',
     }, context.request.user.directories);
-    const result = await writeCharacterData(DEFAULT_AVATAR_PATH, JSON.stringify(char), fileName, context.request);
-    return result ? fileName : '';
+    return await queueCharacterNameOperation(yamlData.name, context.request, preservedFileName, async (fileName) => {
+        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, JSON.stringify(char), fileName, context.request);
+        return result ? fileName : '';
+    });
 }
 
 /**
@@ -781,24 +784,25 @@ async function importFromCharX(uploadPath, { request }, preservedFileName) {
     unsetPrivateFields(processedCard);
     processedCard.create_date = new Date().toISOString();
 
-    const fileName = preservedFileName || getPngName(processedCard.name, request.user.directories);
-    // Use the actual character name for asset folders, not the unique filename
-    // ST's sprite system looks up by character name, not PNG filename
-    const characterFolder = processedCard.name;
+    return await queueCharacterNameOperation(processedCard.name, request, preservedFileName, async (fileName) => {
+        // Use the actual character name for asset folders, not the unique filename
+        // ST's sprite system looks up by character name, not PNG filename
+        const characterFolder = processedCard.name;
 
-    if (auxiliaryAssets.length > 0) {
-        try {
-            const summary = persistCharXAssets(auxiliaryAssets, extractedBuffers, request.user.directories, characterFolder);
-            if (summary.sprites || summary.backgrounds || summary.misc) {
-                console.log(`CharX: Imported ${summary.sprites} sprite(s), ${summary.backgrounds} background(s), ${summary.misc} misc asset(s) for ${characterFolder}`);
+        if (auxiliaryAssets.length > 0) {
+            try {
+                const summary = persistCharXAssets(auxiliaryAssets, extractedBuffers, request.user.directories, characterFolder);
+                if (summary.sprites || summary.backgrounds || summary.misc) {
+                    console.log(`CharX: Imported ${summary.sprites} sprite(s), ${summary.backgrounds} background(s), ${summary.misc} misc asset(s) for ${characterFolder}`);
+                }
+            } catch (error) {
+                console.warn(`CharX: Failed to persist auxiliary assets for ${characterFolder}`, error);
             }
-        } catch (error) {
-            console.warn(`CharX: Failed to persist auxiliary assets for ${characterFolder}`, error);
         }
-    }
 
-    const result = await writeCharacterData(avatar, JSON.stringify(processedCard), fileName, request);
-    return result ? fileName : '';
+        const result = await writeCharacterData(avatar, JSON.stringify(processedCard), fileName, request);
+        return result ? fileName : '';
+    });
 }
 
 async function importFromByaf(uploadPath, { request }, preservedFileName) {
@@ -808,70 +812,70 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
 
     const byafData = await new ByafParser(data).parse();
     const card = readFromV2(byafData.card);
-    const fileName = preservedFileName || getPngName(sanitize(byafData.character.displayName || card.name, { replacement: sanitizeSafeCharacterReplacements }), request.user.directories);
+    const baseName = sanitize(byafData.character.displayName || card.name, { replacement: sanitizeSafeCharacterReplacements });
+    return await queueCharacterNameOperation(baseName, request, preservedFileName, async (fileName) => {
+        // Don't import chats and images if the character is being replaced or updated, instead of newly imported.
+        if (!preservedFileName) {
+            /**
+             * @param {Partial<ByafScenario>} scenario
+            */
+            const createChatAsCurrentPersona = (scenario) => {
+                const chatName = sanitize(`${scenario.title || card.name} - ${humanizedDateTime()} imported.jsonl`, { replacement: sanitizeSafeCharacterReplacements });
+                const filePath = path.join(request.user.directories.chats, path.basename(fileName), chatName);
+                const dir = path.dirname(filePath);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                writeFileAtomicSync(filePath, ByafParser.getChatFromScenario(scenario, request.body.user_name, card.name, byafData.chatBackgrounds), 'utf8');
+                console.log(`Created ${chatName} chat from BYAF import`);
+                return chatName;
+            };
 
-    // Don't import chats and images if the character is being replaced or updated, instead of newly imported.
-    if (!preservedFileName) {
-        /**
-         * @param {Partial<ByafScenario>} scenario
-        */
-        const createChatAsCurrentPersona = (scenario) => {
-            const chatName = sanitize(`${scenario.title || card.name} - ${humanizedDateTime()} imported.jsonl`, { replacement: sanitizeSafeCharacterReplacements });
-            const filePath = path.join(request.user.directories.chats, path.basename(fileName), chatName);
-            const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            writeFileAtomicSync(filePath, ByafParser.getChatFromScenario(scenario, request.body.user_name, card.name, byafData.chatBackgrounds), 'utf8');
-            console.log(`Created ${chatName} chat from BYAF import`);
-            return chatName;
-        };
+            // Upload backgrounds
+            for (const bg of byafData.chatBackgrounds) {
+                const extension = path.extname(bg.paths?.[0]) || '.png';
+                const backgroundBaseName = `${path.basename(fileName)}_bg`;
+                const filePath = path.join(request.user.directories.userImages, fileName);
+                if (!fs.existsSync(filePath)) fs.mkdirSync(filePath, { recursive: true });
+                const file = getUniqueName(backgroundBaseName, (name) => fs.existsSync(path.join(filePath, `${name}${extension}`)));
+                if (Buffer.isBuffer(bg.data)) {
+                    const newFile = `${file}${extension}`;
+                    writeFileAtomicSync(path.join(filePath, newFile), bg.data);
+                    bg.name = clientRelativePath(request.user.directories.root, path.join(filePath, newFile)); // Update background name to the new file
+                    console.log(`Created ${newFile} background from BYAF import`);
+                }
+            }
 
-        // Upload backgrounds
-        for (const bg of byafData.chatBackgrounds) {
-            const extension = path.extname(bg.paths?.[0]) || '.png';
-            const baseName = `${path.basename(fileName)}_bg`;
-            const filePath = path.join(request.user.directories.userImages, fileName);
-            if (!fs.existsSync(filePath)) fs.mkdirSync(filePath, { recursive: true });
-            const file = getUniqueName(baseName, (name) => fs.existsSync(path.join(filePath, `${name}${extension}`)));
-            if (Buffer.isBuffer(bg.data)) {
-                const newFile = `${file}${extension}`;
-                writeFileAtomicSync(path.join(filePath, newFile), bg.data);
-                bg.name = clientRelativePath(request.user.directories.root, path.join(filePath, newFile)); // Update background name to the new file
-                console.log(`Created ${newFile} background from BYAF import`);
+            const chats = [];
+            // Create chats for each scenario
+            if (Array.isArray(byafData.scenarios)) {
+                for (const scenario of byafData.scenarios) {
+                    chats.push(createChatAsCurrentPersona(scenario));
+                }
+            }
+
+            // Update the default chat if there are any so we open to an existing chat instead of creating a new one and opening that.
+            if (chats.length > 0) {
+                card.chat = path.basename(chats[0], path.extname(chats[0]));
+            }
+
+            // Save alternate icons for the character.
+            for (const icon of byafData.images.slice(1)) {
+                // BYAF does not support character expressions, so using the same structure will not result in conflicts,
+                // even if the expression system did not tolerate additional icons that are not mapped to expressions.
+                // This will not yet allow changing icons within the UI but at least the icons will be available for manual selection, rather than being lost.
+                const altImagesFolder = path.join(request.user.directories.characters, sanitize(card.name));
+                if (!fs.existsSync(altImagesFolder)) fs.mkdirSync(altImagesFolder, { recursive: true });
+                const extension = path.extname(icon.filename) || '.png';
+                const file = getUniqueName(`${sanitize(icon.label, { replacement: sanitizeSafeCharacterReplacements }) || 'alt'}`, (name) => fs.existsSync(path.join(altImagesFolder, `${name}${extension}`)));
+                if (Buffer.isBuffer(icon.image)) {
+                    writeFileAtomicSync(path.join(altImagesFolder, `${file}${extension}`), icon.image);
+                    console.log(`Created ${file}${extension} alternate icon from BYAF import`);
+                }
             }
         }
 
-        const chats = [];
-        // Create chats for each scenario
-        if (Array.isArray(byafData.scenarios)) {
-            for (const scenario of byafData.scenarios) {
-                chats.push(createChatAsCurrentPersona(scenario));
-            }
-        }
-
-        // Update the default chat if there are any so we open to an existing chat instead of creating a new one and opening that.
-        if (chats.length > 0) {
-            card.chat = path.basename(chats[0], path.extname(chats[0]));
-        }
-
-        // Save alternate icons for the character.
-        for (const icon of byafData.images.slice(1)) {
-            // BYAF does not support character expressions, so using the same structure will not result in conflicts,
-            // even if the expression system did not tolerate additional icons that are not mapped to expressions.
-            // This will not yet allow changing icons within the UI but at least the icons will be available for manual selection, rather than being lost.
-            const altImagesFolder = path.join(request.user.directories.characters, sanitize(card.name));
-            if (!fs.existsSync(altImagesFolder)) fs.mkdirSync(altImagesFolder, { recursive: true });
-            const extension = path.extname(icon.filename) || '.png';
-            const file = getUniqueName(`${sanitize(icon.label, { replacement: sanitizeSafeCharacterReplacements }) || 'alt'}`, (name) => fs.existsSync(path.join(altImagesFolder, `${name}${extension}`)));
-            if (Buffer.isBuffer(icon.image)) {
-                writeFileAtomicSync(path.join(altImagesFolder, `${file}${extension}`), icon.image);
-                console.log(`Created ${file}${extension} alternate icon from BYAF import`);
-            }
-        }
-    }
-
-    const result = await writeCharacterData(byafData.images[0].image, JSON.stringify(card), fileName, request);
-
-    return result ? fileName : '';
+        const result = await writeCharacterData(byafData.images[0].image, JSON.stringify(card), fileName, request);
+        return result ? fileName : '';
+    });
 }
 
 /**
@@ -897,17 +901,17 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         jsonData.name = sanitize(jsonData.data?.name || jsonData.name);
         jsonData = readFromV2(jsonData);
         jsonData.create_date = new Date().toISOString();
-        const pngName = preservedFileName || getPngName(jsonData.name, request.user.directories);
         const char = JSON.stringify(jsonData);
-        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, char, pngName, request);
-        return result ? pngName : '';
+        return await queueCharacterNameOperation(jsonData.name, request, preservedFileName, async (pngName) => {
+            const result = await writeCharacterData(DEFAULT_AVATAR_PATH, char, pngName, request);
+            return result ? pngName : '';
+        });
     } else if (jsonData.name !== undefined) {
         console.info('Importing from v1 json');
         jsonData.name = sanitize(jsonData.name);
         if (jsonData.creator_notes) {
             jsonData.creator_notes = jsonData.creator_notes.replace('Creator\'s notes go here.', '');
         }
-        const pngName = preservedFileName || getPngName(jsonData.name, request.user.directories);
         let char = {
             'name': jsonData.name,
             'description': jsonData.description ?? '',
@@ -925,8 +929,10 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         };
         char = convertToV2(char, request.user.directories);
         let charJSON = JSON.stringify(char);
-        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
-        return result ? pngName : '';
+        return await queueCharacterNameOperation(jsonData.name, request, preservedFileName, async (pngName) => {
+            const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
+            return result ? pngName : '';
+        });
     } else if (jsonData.char_name !== undefined) {
         //json Pygmalion notepad
         console.info('Importing from gradio json');
@@ -934,7 +940,6 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         if (jsonData.creator_notes) {
             jsonData.creator_notes = jsonData.creator_notes.replace('Creator\'s notes go here.', '');
         }
-        const pngName = preservedFileName || getPngName(jsonData.char_name, request.user.directories);
         let char = {
             'name': jsonData.char_name,
             'description': jsonData.char_persona ?? '',
@@ -952,8 +957,10 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         };
         char = convertToV2(char, request.user.directories);
         const charJSON = JSON.stringify(char);
-        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
-        return result ? pngName : '';
+        return await queueCharacterNameOperation(jsonData.char_name, request, preservedFileName, async (pngName) => {
+            const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
+            return result ? pngName : '';
+        });
     }
 
     return '';
@@ -976,8 +983,6 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
         jsonData.data.name = sanitize(jsonData.data.name);
     }
     jsonData.name = sanitize(jsonData.data?.name || jsonData.name);
-    const pngName = preservedFileName || getPngName(jsonData.name, request.user.directories);
-
     if (jsonData.spec !== undefined) {
         console.info(`Found a ${jsonData.spec} character file.`);
         importRisuSprites(request.user.directories, jsonData);
@@ -985,9 +990,11 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
         jsonData = readFromV2(jsonData);
         jsonData.create_date = new Date().toISOString();
         const char = JSON.stringify(jsonData);
-        const result = await writeCharacterData(uploadPath, char, pngName, request);
-        fs.unlinkSync(uploadPath);
-        return result ? pngName : '';
+        return await queueCharacterNameOperation(jsonData.name, request, preservedFileName, async (pngName) => {
+            const result = await writeCharacterData(uploadPath, char, pngName, request);
+            fs.unlinkSync(uploadPath);
+            return result ? pngName : '';
+        });
     } else if (jsonData.name !== undefined) {
         console.info('Found a v1 character file.');
 
@@ -1012,9 +1019,11 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
         };
         char = convertToV2(char, request.user.directories);
         const charJSON = JSON.stringify(char);
-        const result = await writeCharacterData(uploadPath, charJSON, pngName, request);
-        fs.unlinkSync(uploadPath);
-        return result ? pngName : '';
+        return await queueCharacterNameOperation(jsonData.name, request, preservedFileName, async (pngName) => {
+            const result = await writeCharacterData(uploadPath, charJSON, pngName, request);
+            fs.unlinkSync(uploadPath);
+            return result ? pngName : '';
+        });
     }
 
     return '';
@@ -1023,57 +1032,62 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
 export const router = express.Router();
 
 router.post('/create', getFileNameValidationFunction('file_name'), async function (request, response) {
-    let chatsPath;
-    let createdChatsDirectory = false;
-    let characterCreated = false;
-
     try {
         if (!request.body) return response.sendStatus(400);
 
         request.body.ch_name = sanitize(request.body.ch_name);
 
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
-        const internalName = request.body.file_name || getPngName(request.body.ch_name, request.user.directories);
-        const avatarName = `${internalName}.png`;
-        if (!internalName || Buffer.byteLength(avatarName) > MAX_FILENAME_BYTES) {
-            return response.sendStatus(400);
-        }
+        return await queueCharacterNameOperation(request.body.ch_name, request, request.body.file_name, async (internalName) => {
+            let chatsPath;
+            let createdChatsDirectory = false;
+            let characterCreated = false;
 
-        chatsPath = path.join(request.user.directories.chats, internalName);
+            try {
+                const avatarName = `${internalName}.png`;
+                if (!internalName || Buffer.byteLength(avatarName) > MAX_FILENAME_BYTES) {
+                    return response.sendStatus(400);
+                }
 
-        if (!fs.existsSync(chatsPath)) {
-            fs.mkdirSync(chatsPath);
-            createdChatsDirectory = true;
-        }
+                chatsPath = path.join(request.user.directories.chats, internalName);
 
-        if (!request.file) {
-            const writeSucceeded = await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
-            if (!writeSucceeded) {
-                throw new Error(`Failed to write character file: ${avatarName}`);
+                if (!fs.existsSync(chatsPath)) {
+                    fs.mkdirSync(chatsPath);
+                    createdChatsDirectory = true;
+                }
+
+                if (!request.file) {
+                    const writeSucceeded = await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
+                    if (!writeSucceeded) {
+                        throw new Error(`Failed to write character file: ${avatarName}`);
+                    }
+                    characterCreated = true;
+                    return response.send(avatarName);
+                } else {
+                    const crop = tryParse(request.query.crop);
+                    const uploadPath = path.join(request.file.destination, request.file.filename);
+                    const writeSucceeded = await writeCharacterData(uploadPath, char, internalName, request, crop);
+                    if (!writeSucceeded) {
+                        fs.unlinkSync(uploadPath);
+                        throw new Error(`Failed to write character file: ${avatarName}`);
+                    }
+                    characterCreated = true;
+                    fs.unlinkSync(uploadPath);
+                    return response.send(avatarName);
+                }
+            } catch (error) {
+                if (!characterCreated && createdChatsDirectory && chatsPath && fs.existsSync(chatsPath)) {
+                    try {
+                        fs.rmdirSync(chatsPath);
+                    } catch (cleanupError) {
+                        console.warn(`Failed to remove empty chat directory after character creation failed: ${chatsPath}`, cleanupError);
+                    }
+                }
+                throw error;
             }
-            characterCreated = true;
-            return response.send(avatarName);
-        } else {
-            const crop = tryParse(request.query.crop);
-            const uploadPath = path.join(request.file.destination, request.file.filename);
-            const writeSucceeded = await writeCharacterData(uploadPath, char, internalName, request, crop);
-            if (!writeSucceeded) {
-                fs.unlinkSync(uploadPath);
-                throw new Error(`Failed to write character file: ${avatarName}`);
-            }
-            characterCreated = true;
-            fs.unlinkSync(uploadPath);
-            return response.send(avatarName);
-        }
+        });
     } catch (err) {
         console.error(err);
-        if (!characterCreated && createdChatsDirectory && chatsPath && fs.existsSync(chatsPath)) {
-            try {
-                fs.rmdirSync(chatsPath);
-            } catch (cleanupError) {
-                console.warn(`Failed to remove empty chat directory after character creation failed: ${chatsPath}`, cleanupError);
-            }
-        }
         return response.sendStatus(500);
     }
 });
@@ -1086,45 +1100,76 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     const oldAvatarName = request.body.avatar_url;
     const newName = sanitize(request.body.new_name);
     const oldInternalName = path.parse(request.body.avatar_url).name;
-    const newInternalName = getPngName(newName, request.user.directories);
-    const newAvatarName = `${newInternalName}.png`;
-
-    if (!newInternalName || Buffer.byteLength(newAvatarName) > MAX_FILENAME_BYTES) {
-        return response.sendStatus(400);
-    }
-
     const oldAvatarPath = path.join(request.user.directories.characters, oldAvatarName);
-
     const oldChatsPath = path.join(request.user.directories.chats, oldInternalName);
-    const newChatsPath = path.join(request.user.directories.chats, newInternalName);
 
     try {
-        // Read old file, replace name int it
-        const rawOldData = await readCharacterData(oldAvatarPath);
-        if (rawOldData === undefined) throw new Error('Failed to read character file');
+        return await queueCharacterNameOperation(newName, request, undefined, async (newInternalName) => {
+            const newAvatarName = `${newInternalName}.png`;
+            if (!newInternalName || Buffer.byteLength(newAvatarName) > MAX_FILENAME_BYTES) {
+                return response.sendStatus(400);
+            }
 
-        const oldData = getCharaCardV2(JSON.parse(rawOldData), request.user.directories);
-        _.set(oldData, 'data.name', newName);
-        _.set(oldData, 'name', newName);
-        const newData = JSON.stringify(oldData);
+            const newAvatarPath = path.join(request.user.directories.characters, newAvatarName);
+            const newChatsPath = path.join(request.user.directories.chats, newInternalName);
+            let newCharacterCreated = false;
+            let newChatsCreated = false;
 
-        // Write data to new location
-        const writeSucceeded = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
-        if (!writeSucceeded) {
-            throw new Error(`Failed to write renamed character file: ${newAvatarName}`);
-        }
+            try {
+                // Read old file, replace name in it
+                const rawOldData = await readCharacterData(oldAvatarPath);
+                if (rawOldData === undefined) throw new Error('Failed to read character file');
 
-        // Rename chats folder
-        if (fs.existsSync(oldChatsPath) && !fs.existsSync(newChatsPath)) {
-            fs.cpSync(oldChatsPath, newChatsPath, { recursive: true });
-            fs.rmSync(oldChatsPath, { recursive: true, force: true });
-        }
+                const oldData = getCharaCardV2(JSON.parse(rawOldData), request.user.directories);
+                _.set(oldData, 'data.name', newName);
+                _.set(oldData, 'name', newName);
+                const newData = JSON.stringify(oldData);
 
-        // Remove the old character file
-        fs.unlinkSync(oldAvatarPath);
+                const writeSucceeded = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
+                if (!writeSucceeded) {
+                    throw new Error(`Failed to write renamed character file: ${newAvatarName}`);
+                }
+                newCharacterCreated = true;
 
-        // Return new avatar name to ST
-        return response.send({ avatar: newAvatarName });
+                // Keep the source chats until the old character file is removed successfully.
+                if (fs.existsSync(oldChatsPath)) {
+                    fs.mkdirSync(newChatsPath);
+                    newChatsCreated = true;
+                    fs.cpSync(oldChatsPath, newChatsPath, { recursive: true });
+                }
+
+                fs.unlinkSync(oldAvatarPath);
+
+                if (fs.existsSync(oldChatsPath)) {
+                    try {
+                        fs.rmSync(oldChatsPath, { recursive: true, force: true });
+                    } catch (cleanupError) {
+                        console.warn(`Failed to remove old chats after character rename: ${oldChatsPath}`, cleanupError);
+                    }
+                }
+
+                return response.send({ avatar: newAvatarName });
+            } catch (error) {
+                // The original card and chats are still authoritative until oldAvatarPath is removed.
+                if (fs.existsSync(oldAvatarPath)) {
+                    if (newCharacterCreated && fs.existsSync(newAvatarPath)) {
+                        try {
+                            fs.unlinkSync(newAvatarPath);
+                        } catch (cleanupError) {
+                            console.warn(`Failed to remove renamed character after rename failure: ${newAvatarPath}`, cleanupError);
+                        }
+                    }
+                    if (newChatsCreated && fs.existsSync(newChatsPath)) {
+                        try {
+                            fs.rmSync(newChatsPath, { recursive: true, force: true });
+                        } catch (cleanupError) {
+                            console.warn(`Failed to remove copied chats after rename failure: ${newChatsPath}`, cleanupError);
+                        }
+                    }
+                }
+                throw error;
+            }
+        });
     } catch (err) {
         console.error(err);
         return response.sendStatus(500);
@@ -1575,8 +1620,26 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
  */
 function getPngName(file, directories) {
     file = sanitize(file);
-    return getUniqueName(file, (name) => fs.existsSync(path.join(directories.characters, `${name}.png`)),
+    return getUniqueName(file, (name) => fs.existsSync(path.join(directories.characters, `${name}.png`)) || fs.existsSync(path.join(directories.chats, name)),
         { nameBuilder: (base, i) => i === 0 ? base : `${base}${i}`, startIndex: 0, maxTries: 10000 }) ?? file;
+}
+
+/**
+ * Serializes name selection and the operation that creates or replaces a character file.
+ * Explicit names keep their existing overwrite semantics.
+ * @template T
+ * @param {string} baseName Character base name
+ * @param {import('express').Request} request Express request
+ * @param {string|undefined} explicitName Explicit internal name
+ * @param {(internalName: string) => Promise<T>} operation Character operation
+ * @returns {Promise<T>} Operation result
+ */
+async function queueCharacterNameOperation(baseName, request, explicitName, operation) {
+    const queueKey = path.resolve(request.user.directories.characters);
+    return await CHARACTER_NAME_QUEUE.run(queueKey, async () => {
+        const internalName = explicitName || getPngName(baseName, request.user.directories);
+        return await operation(internalName);
+    });
 }
 
 /**

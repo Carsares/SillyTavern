@@ -1,5 +1,9 @@
 import { stripJsonlExtension } from '../core/utils.js';
 
+function isConfirmedUnchangedChatFileError(error) {
+    return error?.status === 400 || error?.status === 409;
+}
+
 export function createChatFileManagementActions({
     state,
     apiFetch,
@@ -15,6 +19,8 @@ export function createChatFileManagementActions({
     loadChatMessages,
     moveChatReadState,
     deleteChatReadState,
+    renameModernChatFile,
+    deleteModernChatFile,
 }) {
     function getChatId(chat) {
         return stripJsonlExtension(chat?.file_id || chat?.file_name || '');
@@ -58,17 +64,29 @@ export function createChatFileManagementActions({
         }
         const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
-        const result = await apiFetch('/api/chats/rename', {
-            body: {
-                avatar_url: groupMode ? null : entity.avatar,
-                original_file: `${oldChatId}.jsonl`,
-                renamed_file: `${newChatId}.jsonl`,
-                is_group: groupMode,
-            },
+        const result = await renameModernChatFile(contextKey, oldChatId, async ({ confirmUnchanged } = {}) => {
+            let renameResult;
+            try {
+                renameResult = await apiFetch('/api/chats/rename', {
+                    body: {
+                        avatar_url: groupMode ? null : entity.avatar,
+                        original_file: `${oldChatId}.jsonl`,
+                        renamed_file: `${newChatId}.jsonl`,
+                        is_group: groupMode,
+                    },
+                });
+            } catch (error) {
+                if (isConfirmedUnchangedChatFileError(error)) {
+                    confirmUnchanged?.();
+                }
+                throw error;
+            }
+            if (renameResult?.error) {
+                confirmUnchanged?.();
+                throw new Error('聊天文件重命名失败，可能存在同名文件。');
+            }
+            return renameResult;
         });
-        if (result?.error) {
-            throw new Error('聊天文件重命名失败，可能存在同名文件。');
-        }
 
         const renamedChatId = stripJsonlExtension(result?.sanitizedFileName || newChatId);
         let metadataError = null;
@@ -155,17 +173,28 @@ export function createChatFileManagementActions({
         }
         const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
-        const result = groupMode
-            ? await apiFetch('/api/chats/group/delete', { body: { id: chatId } })
-            : await apiFetch('/api/chats/delete', {
-                body: {
-                    avatar_url: entity.avatar,
-                    chatfile: `${chatId}.jsonl`,
-                },
-            });
-        if (result?.error) {
-            throw new Error('聊天文件删除失败。');
-        }
+        await deleteModernChatFile(contextKey, chatId, async ({ confirmUnchanged } = {}) => {
+            let result;
+            try {
+                result = groupMode
+                    ? await apiFetch('/api/chats/group/delete', { body: { id: chatId } })
+                    : await apiFetch('/api/chats/delete', {
+                        body: {
+                            avatar_url: entity.avatar,
+                            chatfile: `${chatId}.jsonl`,
+                        },
+                    });
+            } catch (error) {
+                if (isConfirmedUnchangedChatFileError(error)) {
+                    confirmUnchanged?.();
+                }
+                throw error;
+            }
+            if (result?.error) {
+                confirmUnchanged?.();
+                throw new Error('聊天文件删除失败。');
+            }
+        });
 
         let metadataError = null;
         if (groupMode) {

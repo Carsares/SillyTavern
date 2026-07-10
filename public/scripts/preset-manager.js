@@ -462,8 +462,9 @@ class PresetManager {
      * @param {object} [settings] Settings to save as the preset. If not provided, uses the current preset settings.
      * @param {object} [options] Options for saving the preset
      * @param {boolean} [options.skipUpdate=false] If true, skips updating the preset list after saving.
+     * @param {boolean} [options.overwrite=true] Whether an existing preset may be overwritten.
      */
-    async savePreset(name, settings, { skipUpdate = false } = {}) {
+    async savePreset(name, settings, { skipUpdate = false, overwrite = true } = {}) {
         if (this.apiId === 'instruct' && settings) {
             await checkForSystemPromptInInstructTemplate(name, settings);
         }
@@ -477,7 +478,7 @@ class PresetManager {
         const response = await fetch('/api/presets/save', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ preset, name, apiId: this.apiId }),
+            body: JSON.stringify({ preset, name, apiId: this.apiId, overwrite }),
         });
 
         if (!response.ok) {
@@ -507,7 +508,7 @@ class PresetManager {
             throw new Error('New name must be different from old name');
         }
         try {
-            await this.savePreset(newName);
+            await this.savePreset(newName, undefined, { overwrite: false });
             await this.deletePreset(oldName);
         } catch (error) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be renamed`);

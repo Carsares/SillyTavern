@@ -213,6 +213,9 @@ router.post('/edit', getFileNameValidationFunction('id'), (request, response) =>
     warnOnGroupMetadata(request.body);
     const id = request.body.id;
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
+    if (!fs.existsSync(pathToFile)) {
+        return response.sendStatus(404);
+    }
     const fileData = JSON.stringify(request.body, null, 4);
 
     writeFileAtomicSync(pathToFile, fileData);

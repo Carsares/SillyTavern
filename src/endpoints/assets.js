@@ -9,9 +9,11 @@ import fetch from 'node-fetch';
 
 import { UNSAFE_EXTENSIONS } from '../constants.js';
 import { clientRelativePath, isValidUrl } from '../util.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 import { getHostFromUrl, isHostWhitelisted } from './content-manager.js';
 
 const VALID_CATEGORIES = ['bgm', 'ambient', 'blip', 'live2d', 'vrm', 'character', 'temp'];
+const ASSET_COMMIT_QUEUE = new KeyedPromiseQueue();
 
 /**
  * Validates the input filename for the asset.
@@ -188,6 +190,7 @@ router.post('/get', async (request, response) => {
  * @returns {void}
  */
 router.post('/download', async (request, response) => {
+    let temporaryDirectory;
     try {
         if (!isValidUrl(request.body.url)) {
             console.warn('Asset download failed: Must be a valid URL');
@@ -220,7 +223,8 @@ router.post('/download', async (request, response) => {
         if (validation.error)
             return response.status(400).send(validation.message);
 
-        const temp_path = path.join(request.user.directories.assets, 'temp', request.body.filename);
+        temporaryDirectory = await fs.promises.mkdtemp(path.join(request.user.directories.assets, 'temp', '.download-'));
+        const temp_path = path.join(temporaryDirectory, request.body.filename);
         const file_path = path.join(request.user.directories.assets, category, request.body.filename);
         console.info('Request received to download', url, 'to', file_path);
 
@@ -229,12 +233,7 @@ router.post('/download', async (request, response) => {
         if (!res.ok || res.body === null) {
             throw new Error(`Unexpected response ${res.statusText}`);
         }
-        const destination = path.resolve(temp_path);
-        // Delete if previous download failed
-        if (fs.existsSync(temp_path)) {
-            await fs.promises.unlink(temp_path);
-        }
-        const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
+        const fileStream = fs.createWriteStream(temp_path, { flags: 'wx' });
         // @ts-ignore
         await finished(res.body.pipe(fileStream));
 
@@ -243,18 +242,22 @@ router.post('/download', async (request, response) => {
             const contentType = mime.lookup(temp_path) || 'application/octet-stream';
             response.setHeader('Content-Type', contentType);
             response.send(fileContent);
-            fs.unlinkSync(temp_path);
             return;
         }
 
         // Move into asset place
         console.info('Download finished, moving file from', temp_path, 'to', file_path);
-        fs.copyFileSync(temp_path, file_path);
-        fs.unlinkSync(temp_path);
+        await ASSET_COMMIT_QUEUE.run(file_path, () => fs.promises.copyFile(temp_path, file_path));
         response.sendStatus(200);
     } catch (error) {
         console.error(error);
         response.sendStatus(500);
+    } finally {
+        if (temporaryDirectory) {
+            await fs.promises.rm(temporaryDirectory, { recursive: true, force: true }).catch(error => {
+                console.warn('Failed to clean up temporary asset download:', error);
+            });
+        }
     }
 });
 

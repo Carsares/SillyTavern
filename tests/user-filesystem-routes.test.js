@@ -8,6 +8,8 @@ const removeUser = jest.fn();
 const createBackupArchive = jest.fn();
 const getUserDirectories = jest.fn();
 const validateUserDataRoot = jest.fn();
+const getAllUserHandles = jest.fn();
+const setUser = jest.fn();
 const tempRoots = [];
 
 jest.unstable_mockModule('node-persist', () => ({
@@ -15,7 +17,7 @@ jest.unstable_mockModule('node-persist', () => ({
         getItem: getUser,
         removeItem: removeUser,
         values: jest.fn(),
-        setItem: jest.fn(),
+        setItem: setUser,
     },
 }));
 
@@ -24,7 +26,7 @@ jest.unstable_mockModule('../src/users.js', () => ({
     toKey: handle => `user:${handle}`,
     requireAdminMiddleware: (_request, _response, next) => next(),
     getUserAvatar: jest.fn(),
-    getAllUserHandles: jest.fn(),
+    getAllUserHandles,
     getPasswordSalt: jest.fn(),
     getPasswordHash: jest.fn(),
     getUserDirectories,
@@ -47,6 +49,7 @@ jest.unstable_mockModule('../src/util.js', () => ({
 }));
 
 let backupHandler;
+let createHandler;
 let deleteHandler;
 
 beforeAll(async () => {
@@ -55,6 +58,7 @@ beforeAll(async () => {
         import('../src/endpoints/users-admin.js'),
     ]);
     backupHandler = privateRouter.stack.find(layer => layer.route?.path === '/backup').route.stack.at(-1).handle;
+    createHandler = adminRouter.stack.find(layer => layer.route?.path === '/create').route.stack.at(-1).handle;
     deleteHandler = adminRouter.stack.find(layer => layer.route?.path === '/delete').route.stack.at(-1).handle;
 });
 
@@ -64,6 +68,8 @@ beforeEach(() => {
     createBackupArchive.mockReset();
     getUserDirectories.mockReset();
     validateUserDataRoot.mockReset();
+    getAllUserHandles.mockReset();
+    setUser.mockReset();
 });
 
 afterEach(() => {
@@ -88,6 +94,26 @@ function createResponse() {
 }
 
 describe('user filesystem routes', () => {
+    test('allows only one concurrent create for the same normalized handle', async () => {
+        const handles = new Set();
+        getAllUserHandles.mockImplementation(async () => [...handles]);
+        setUser.mockImplementation(async (_key, user) => {
+            handles.add(user.handle);
+        });
+        const firstResponse = createResponse();
+        const secondResponse = createResponse();
+        const firstRequest = { body: { handle: 'Same User', name: 'First' }, user: { profile: { handle: 'admin', admin: true } } };
+        const secondRequest = { body: { handle: 'same-user', name: 'Second' }, user: { profile: { handle: 'admin', admin: true } } };
+
+        await Promise.all([
+            createHandler(firstRequest, firstResponse),
+            createHandler(secondRequest, secondResponse),
+        ]);
+
+        expect(setUser).toHaveBeenCalledTimes(1);
+        expect([firstResponse.statusCode, secondResponse.statusCode].toSorted()).toEqual([200, 409]);
+    });
+
     test('backs up the canonical handle from the stored user record', async () => {
         getUser.mockResolvedValue({ handle: 'canonical-user' });
         const response = createResponse();

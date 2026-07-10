@@ -66,22 +66,32 @@ export function createPresetActions({
         return buildOpenAiPresetFromSettings({ settings, preset, chatCompletionModelFields });
     }
 
+    async function savePresetFile(apiId, name, preset, { overwrite = true } = {}) {
+        const result = await apiFetch('/api/presets/save', { body: { apiId, name, preset, overwrite } });
+        const savedName = typeof result?.name === 'string' ? result.name : '';
+        if (!savedName) {
+            throw new Error('服务端未返回有效的预设名称。');
+        }
+        return savedName;
+    }
+
     async function saveOpenAiPresetFromForm() {
         const name = (state.openAiPresetDraft.name || getOaiSettings().preset_settings_openai || '').trim();
         if (!name) {
             throw new Error('预设名称不能为空。');
         }
 
+        const currentName = getOaiSettings().preset_settings_openai || '';
         const preset = buildOpenAiPresetFromCurrentSettings();
+        const savedName = await savePresetFile('openai', name, preset, { overwrite: name === currentName });
         state.settings.oai_settings = state.settings.oai_settings || {};
-        state.settings.oai_settings.preset_settings_openai = name;
-        await apiFetch('/api/presets/save', { body: { apiId: 'openai', name, preset } });
+        state.settings.oai_settings.preset_settings_openai = savedName;
         await apiFetch('/api/settings/save', { body: state.settings });
         state.openAiPresetDraft = { name: '' };
-        state.presetSelection = { apiId: 'openai', name };
+        state.presetSelection = { apiId: 'openai', name: savedName };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
-        showToast('预设已保存', name);
+        showToast('预设已保存', savedName);
     }
 
     function getPresetGroup(apiId) {
@@ -118,11 +128,11 @@ export function createPresetActions({
         }
 
         const nextName = getUniquePresetName(apiId, name);
-        await apiFetch('/api/presets/save', { body: { apiId, name: nextName, preset } });
-        state.presetSelection = { apiId, name: nextName };
+        const savedName = await savePresetFile(apiId, nextName, preset, { overwrite: false });
+        state.presetSelection = { apiId, name: savedName };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
-        showToast('预设已复制', `${name} → ${nextName}`);
+        showToast('预设已复制', `${name} → ${savedName}`);
         render();
     }
 
@@ -141,11 +151,11 @@ export function createPresetActions({
 
         const rawName = file.name.replace(/\.json$/i, '').trim() || 'imported preset';
         const name = getAvailablePresetName(apiId, rawName);
-        await apiFetch('/api/presets/save', { body: { apiId, name, preset } });
-        state.presetSelection = { apiId, name };
+        const savedName = await savePresetFile(apiId, name, preset, { overwrite: false });
+        state.presetSelection = { apiId, name: savedName };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
-        showToast('预设已导入', `${getPresetGroup(apiId)?.label || apiId} / ${name}`);
+        showToast('预设已导入', `${getPresetGroup(apiId)?.label || apiId} / ${savedName}`);
         render();
     }
 
@@ -167,11 +177,11 @@ export function createPresetActions({
             throw new Error(`JSON 格式错误：${error.message}`);
         }
 
-        await apiFetch('/api/presets/save', { body: { apiId, name, preset } });
-        state.presetSelection = { apiId, name };
-        state.presetEditor = { apiId, name, json: JSON.stringify(preset, null, 2), error: '' };
+        const savedName = await savePresetFile(apiId, name, preset);
+        state.presetSelection = { apiId, name: savedName };
+        state.presetEditor = { apiId, name: savedName, json: JSON.stringify(preset, null, 2), error: '' };
         await loadData({ silent: true });
-        showToast('预设已保存', name);
+        showToast('预设已保存', savedName);
         render();
     }
 
@@ -191,7 +201,7 @@ export function createPresetActions({
             throw new Error('这个预设没有可恢复的内置默认版本。');
         }
 
-        await apiFetch('/api/presets/save', { body: { apiId, name, preset: result.preset } });
+        await savePresetFile(apiId, name, result.preset);
         await loadData({ silent: true });
         showToast('预设已恢复默认', name);
         render();
@@ -214,12 +224,18 @@ export function createPresetActions({
         }
 
         const nextName = (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
-        await apiFetch('/api/presets/delete', { body: { apiId, name } });
-        if (apiId === 'openai' && getOaiSettings().preset_settings_openai === name) {
+        const deletingCurrentOpenAiPreset = apiId === 'openai' && getOaiSettings().preset_settings_openai === name;
+        if (deletingCurrentOpenAiPreset) {
             state.settings.oai_settings = state.settings.oai_settings || {};
             state.settings.oai_settings.preset_settings_openai = nextName;
-            await apiFetch('/api/settings/save', { body: state.settings });
+            try {
+                await apiFetch('/api/settings/save', { body: state.settings });
+            } catch (error) {
+                state.settings.oai_settings.preset_settings_openai = name;
+                throw error;
+            }
         }
+        await apiFetch('/api/presets/delete', { body: { apiId, name } });
         state.presetDeleteConfirm = { apiId: '', name: '' };
         state.presetSelection = { apiId, name: nextName };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };

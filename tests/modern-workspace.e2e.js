@@ -688,7 +688,7 @@ test.describe('Modern workspace', () => {
             return route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
+                body: JSON.stringify({ name: savedPreset.name }),
             });
         });
 

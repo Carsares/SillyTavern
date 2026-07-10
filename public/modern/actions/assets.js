@@ -1,6 +1,10 @@
 import { createAssetDataHelpers } from './asset-data.js';
 import { createBackgroundFolderActions } from './background-folders.js';
 
+function getBackgroundSettingsUrl(filename) {
+    return `url("backgrounds/${encodeURIComponent(filename)}")`;
+}
+
 export function createAssetActions({
     state,
     apiFetch,
@@ -83,10 +87,24 @@ export function createAssetActions({
         state.backgroundRenaming.running = true;
         render();
         try {
-            await apiFetch('/api/backgrounds/rename', { body: { old_bg: oldName, new_bg: newName } });
+            const result = await apiFetch('/api/backgrounds/rename', { body: { old_bg: oldName, new_bg: newName } });
+            const savedName = typeof result?.name === 'string' ? result.name : '';
+            if (!savedName) {
+                throw new Error('服务端未返回重命名后的背景文件名。');
+            }
             state.backgroundRenaming = { filename: '', name: '', running: false };
+            const backgroundSettings = state.settings?.background;
+            const oldUrl = getBackgroundSettingsUrl(oldName);
+            if (backgroundSettings && (backgroundSettings.name === oldName || backgroundSettings.url === oldUrl)) {
+                state.settings.background = {
+                    ...backgroundSettings,
+                    name: savedName,
+                    url: getBackgroundSettingsUrl(savedName),
+                };
+                await apiFetch('/api/settings/save', { body: state.settings });
+            }
             await loadData({ silent: true });
-            showToast('背景已重命名', `${oldName} → ${newName}`);
+            showToast('背景已重命名', `${oldName} → ${savedName}`);
         } finally {
             state.backgroundRenaming.running = false;
             render();

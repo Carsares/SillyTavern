@@ -10,6 +10,7 @@ import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
 import { groups, selected_group } from './group-chats.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { deleteMediaFromServer } from './chats.js';
+import { replaceRenamedBackgroundReferences } from './background-file-helpers.js';
 
 const BG_METADATA_KEY = 'custom_background';
 const LIST_METADATA_KEY = 'chat_backgrounds';
@@ -516,12 +517,40 @@ async function onRenameBackgroundClick(e) {
         cache: 'no-cache',
     });
 
-    if (response.ok) {
-        await getBackgrounds();
-        highlightNewBackground(bgNames.newBg);
-    } else {
+    if (!response.ok) {
         toastr.warning('Failed to rename background');
+        return;
     }
+
+    const result = await response.json();
+    const newName = typeof result?.name === 'string' ? result.name : '';
+    if (!newName) {
+        toastr.warning('Background was renamed, but the server did not return its final name');
+        await getBackgrounds();
+        return;
+    }
+
+    const oldUrl = generateUrlParameter(bgNames.oldBg, false);
+    const newUrl = generateUrlParameter(newName, false);
+    const referenceChanges = replaceRenamedBackgroundReferences(background_settings, chat_metadata, BG_METADATA_KEY, bgNames.oldBg, newName, oldUrl, newUrl);
+    if (referenceChanges.globalChanged) {
+        if (!isChatBackgroundLocked()) {
+            $('#bg1').css('background-image', newUrl);
+        }
+        saveSettingsDebounced();
+    }
+    if (referenceChanges.chatChanged) {
+        $('#bg1').css('background-image', newUrl);
+        saveMetadataDebounced();
+    }
+
+    await THUMBNAIL_STORAGE.removeItem(bgNames.oldBg);
+    if (THUMBNAIL_BLOBS.has(bgNames.oldBg)) {
+        URL.revokeObjectURL(THUMBNAIL_BLOBS.get(bgNames.oldBg));
+        THUMBNAIL_BLOBS.delete(bgNames.oldBg);
+    }
+    await getBackgrounds();
+    highlightNewBackground(newName);
 }
 
 async function onDeleteBackgroundClick(e) {
@@ -551,7 +580,10 @@ async function onDeleteBackgroundClick(e) {
     if (confirm) {
         // If it's not custom, it's a built-in background. Delete it from the server
         if (!isCustom) {
-            await delBackground(bg);
+            const deleted = await delBackground(bg);
+            if (!deleted) {
+                return;
+            }
             // Remove from cache to prevent reappearing on sort change
             const cacheIndex = cachedSystemBackgrounds.findIndex(s => s.filename === bg);
             if (cacheIndex !== -1) {
@@ -1447,7 +1479,7 @@ async function setBackground(bg, url) {
 }
 
 async function delBackground(bg) {
-    await fetch('/api/backgrounds/delete', {
+    const response = await fetch('/api/backgrounds/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
@@ -1455,11 +1487,17 @@ async function delBackground(bg) {
         }),
     });
 
+    if (!response.ok) {
+        toastr.warning('Failed to delete background');
+        return false;
+    }
+
     await THUMBNAIL_STORAGE.removeItem(bg);
     if (THUMBNAIL_BLOBS.has(bg)) {
         URL.revokeObjectURL(THUMBNAIL_BLOBS.get(bg));
         THUMBNAIL_BLOBS.delete(bg);
     }
+    return true;
 }
 
 /**

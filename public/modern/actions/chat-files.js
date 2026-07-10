@@ -30,6 +30,8 @@ export function createChatFileActions({
     updateGroupMetadata,
     moveChatReadState,
     deleteChatReadState,
+    renameModernChatFile,
+    deleteModernChatFile,
 }) {
     const chatFileManagementActions = createChatFileManagementActions({
         state,
@@ -46,6 +48,8 @@ export function createChatFileActions({
         loadChatMessages,
         moveChatReadState,
         deleteChatReadState,
+        renameModernChatFile,
+        deleteModernChatFile,
     });
 
     async function startNewModernChat() {

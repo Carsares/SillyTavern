@@ -211,7 +211,7 @@ router.post('/save', function (request, response) {
         response.send({ result: 'ok' });
     } catch (err) {
         console.error(err);
-        response.send(err);
+        return response.sendStatus(500);
     }
 });
 

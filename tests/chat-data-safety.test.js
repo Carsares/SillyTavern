@@ -72,6 +72,79 @@ describe('chat data safety', () => {
         await expect(getChatInfo(path.join(groupChats, 'missing.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
+    test('chat rename distinguishes a missing source from an unchanged destination conflict', async () => {
+        const chats = createTempDirectory();
+        const characterChats = path.join(chats, 'avatar');
+        fs.mkdirSync(characterChats, { recursive: true });
+        const handler = getRouteHandler(chatRouter, '/rename');
+
+        const missingResponse = createResponse();
+        await handler({
+            body: { avatar_url: 'avatar.png', original_file: 'missing.jsonl', renamed_file: 'renamed.jsonl', is_group: false },
+            user: { directories: { chats } },
+        }, missingResponse);
+
+        expect(missingResponse.status).toHaveBeenCalledWith(404);
+        expect(missingResponse.send).toHaveBeenCalledWith({ error: 'source_missing' });
+
+        fs.writeFileSync(path.join(characterChats, 'source.jsonl'), 'source');
+        fs.writeFileSync(path.join(characterChats, 'destination.jsonl'), 'destination');
+        const conflictResponse = createResponse();
+        await handler({
+            body: { avatar_url: 'avatar.png', original_file: 'source.jsonl', renamed_file: 'destination.jsonl', is_group: false },
+            user: { directories: { chats } },
+        }, conflictResponse);
+
+        expect(conflictResponse.status).toHaveBeenCalledWith(409);
+        expect(conflictResponse.send).toHaveBeenCalledWith({ error: 'destination_exists' });
+        expect(fs.readFileSync(path.join(characterChats, 'source.jsonl'), 'utf8')).toBe('source');
+        expect(fs.readFileSync(path.join(characterChats, 'destination.jsonl'), 'utf8')).toBe('destination');
+    });
+
+    test('character and group chat deletion are idempotent when the file is already missing', () => {
+        const chats = createTempDirectory();
+        const groupChats = createTempDirectory();
+        const characterResponse = createResponse();
+        const groupResponse = createResponse();
+
+        getRouteHandler(chatRouter, '/delete')({
+            body: { avatar_url: 'avatar.png', chatfile: 'missing.jsonl' },
+            user: { directories: { chats } },
+        }, characterResponse);
+        getRouteHandler(chatRouter, '/group/delete')({
+            body: { id: 'missing' },
+            user: { directories: { groupChats } },
+        }, groupResponse);
+
+        expect(characterResponse.send).toHaveBeenCalledWith({ ok: true, missing: true });
+        expect(characterResponse.sendStatus).not.toHaveBeenCalled();
+        expect(groupResponse.send).toHaveBeenCalledWith({ ok: true, missing: true });
+        expect(groupResponse.sendStatus).not.toHaveBeenCalled();
+    });
+
+    test('chat deletion reports a server failure when a failed delete leaves the file present', () => {
+        const chats = createTempDirectory();
+        const response = createResponse();
+        const existsSync = jest.spyOn(fs, 'existsSync')
+            .mockReturnValueOnce(true)
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true);
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            getRouteHandler(chatRouter, '/delete')({
+                body: { avatar_url: 'avatar.png', chatfile: 'still-present.jsonl' },
+                user: { directories: { chats } },
+            }, response);
+        } finally {
+            existsSync.mockRestore();
+            consoleError.mockRestore();
+        }
+
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+        expect(response.send).not.toHaveBeenCalled();
+    });
+
     test('returns one controlled error when text export encounters malformed JSONL', async () => {
         const chats = createTempDirectory();
         const characterChats = path.join(chats, 'avatar');
@@ -187,6 +260,19 @@ describe('chat data safety', () => {
 
         expect(response.send).toHaveBeenCalledWith(expect.objectContaining({ chats: [chatId], chat_id: chatId }));
         expect(fs.readdirSync(groups)).toHaveLength(1);
+    });
+
+    test('group edit cannot recreate a group after deletion', () => {
+        const groups = createTempDirectory();
+        const response = createResponse();
+
+        getRouteHandler(groupRouter, '/edit')({
+            body: { id: 'deleted-group', name: 'stale edit' },
+            user: { directories: { groups } },
+        }, response);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(404);
+        expect(fs.readdirSync(groups)).toEqual([]);
     });
 
     test('search and recent ignore escaped paths in existing group data', async () => {

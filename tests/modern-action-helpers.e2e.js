@@ -14,6 +14,7 @@ import { createWorldbookDetailActions } from '../public/modern/actions/worldbook
 import { createWorldbookEntryBulkActions } from '../public/modern/actions/worldbook-entry-bulk.js';
 import { createWorldbookEntryListHelpers } from '../public/modern/actions/worldbook-entry-list.js';
 import { createWorldbookFileActions } from '../public/modern/actions/worldbook-files.js';
+import { createDataLoader } from '../public/modern/shell/data-loader.js';
 
 function sortChats(chats) {
     return [...chats].sort((left, right) => new Date(right.last_mes || 0).getTime() - new Date(left.last_mes || 0).getTime());
@@ -1092,6 +1093,352 @@ test.describe('Modern action helpers', () => {
         expect(state.groups).toEqual([]);
     });
 
+    test('serializes chat RMW operations and blocks saves behind file deletion', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const character = { avatar: 'alice.png', name: 'Alice' };
+            const contextKey = 'alice.png';
+            const chatId = 'chat-one';
+            const cacheKey = `${contextKey}::${chatId}`;
+            const state = {
+                characters: [character],
+                groups: [],
+                chatMode: 'character',
+                selected: { character: character.avatar, group: '', chat: chatId },
+                chatLists: { [contextKey]: [{ file_id: chatId, chat_items: 2 }] },
+                loadingChats: {},
+                errors: [],
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: { [cacheKey]: [{ mes: 'first' }, { mes: 'second' }] },
+                chatMetadata: { [cacheKey]: {} },
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                settings: {},
+            };
+            let releaseFirstSave;
+            const firstSaveBlocked = new Promise(resolve => {
+                releaseFirstSave = resolve;
+            });
+            let markFirstSaveStarted;
+            const firstSaveStarted = new Promise(resolve => {
+                markFirstSaveStarted = resolve;
+            });
+            const savedChats = [];
+            const events = [];
+            const actions = createChatContextActions({
+                state,
+                apiFetch: async (url, options = {}) => {
+                    expect(url).toBe('/api/chats/save');
+                    savedChats.push(structuredClone(options.body.chat.slice(1)));
+                    events.push(`save-${savedChats.length}`);
+                    if (savedChats.length === 1) {
+                        markFirstSaveStarted();
+                        await firstSaveBlocked;
+                    }
+                    return { ok: true };
+                },
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+
+            const firstUpdate = actions.updateModernChat(character, chatId, messages => {
+                messages[0].mes = 'edited';
+            });
+            await firstSaveStarted;
+            const secondUpdate = actions.updateModernChat(character, chatId, messages => {
+                messages.splice(1, 1);
+            });
+            const generation = actions.runModernChatFileOperation(character, chatId, async () => {
+                events.push('generation');
+            });
+            const deletion = actions.deleteModernChatFile(contextKey, chatId, async () => {
+                events.push('delete');
+            });
+
+            await expect(actions.updateModernChat(character, chatId, () => {})).rejects.toThrow('聊天文件已删除、重命名或正在变更');
+            releaseFirstSave();
+            await Promise.all([firstUpdate, secondUpdate, generation, deletion]);
+
+            expect(savedChats).toEqual([
+                [{ mes: 'edited' }, { mes: 'second' }],
+                [{ mes: 'edited' }],
+            ]);
+            expect(events).toEqual(['save-1', 'save-2', 'generation', 'delete']);
+            expect(state.chatMessages[cacheKey]).toEqual([{ mes: 'edited' }]);
+            await expect(actions.saveModernChat(character, chatId, [])).rejects.toThrow('聊天文件已删除、重命名或正在变更');
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
+    test('releases chat file barriers only for confirmed non-mutating HTTP failures', async () => {
+        const previousLocalStorage = globalThis.localStorage;
+        const previousWindow = globalThis.window;
+        globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+        globalThis.window = { matchMedia: () => ({ matches: false }) };
+
+        try {
+            const { createChatContextActions } = await import('../public/modern/actions/chat-context.js');
+            const character = { avatar: 'alice.png', name: 'Alice' };
+            const contextKey = character.avatar;
+            const chatIds = ['rename-conflict', 'rename-missing', 'delete-invalid', 'delete-unknown'];
+            const state = {
+                characters: [character],
+                groups: [],
+                chatMode: 'character',
+                selected: { character: character.avatar, group: '', chat: chatIds[0] },
+                chatLists: { [contextKey]: chatIds.map(file_id => ({ file_id })) },
+                loadingChats: {},
+                errors: [],
+                engine: { generating: false },
+                chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
+                chatMessages: Object.fromEntries(chatIds.map(chatId => [`${contextKey}::${chatId}`, [{ mes: chatId }]])),
+                chatMetadata: Object.fromEntries(chatIds.map(chatId => [`${contextKey}::${chatId}`, {}])),
+                chatReadState: { cursors: {}, contexts: {} },
+                chatMessageLimits: {},
+                chatDrafts: {},
+                chatRenaming: { key: '', name: '' },
+                chatDeleteConfirm: { key: '', name: '' },
+                settings: {},
+            };
+            const statusByChatId = {
+                'rename-conflict': 409,
+                'rename-missing': 404,
+                'delete-invalid': 400,
+                'delete-unknown': 500,
+            };
+            const throwStatus = status => {
+                const error = new Error(`request failed: ${status}`);
+                error.status = status;
+                throw error;
+            };
+            const apiFetch = async (url, options = {}) => ({
+                '/api/chats/save': () => ({ ok: true }),
+                '/api/chats/rename': () => throwStatus(statusByChatId[String(options.body.original_file).replace(/\.jsonl$/u, '')]),
+                '/api/chats/delete': () => throwStatus(statusByChatId[String(options.body.chatfile).replace(/\.jsonl$/u, '')]),
+            })[url]();
+            const contextActions = createChatContextActions({
+                state,
+                apiFetch,
+                render: () => {},
+                showToast: () => {},
+                getCharacterAvatarUrl: () => '',
+            });
+            const fileActions = createChatFileManagementActions({
+                state,
+                apiFetch,
+                render: () => {},
+                showToast: () => {},
+                getSelectedChatEntity: () => character,
+                getChatContextKey: () => contextKey,
+                isGroupChatMode: () => false,
+                getSelectedChatList: () => state.chatLists[contextKey],
+                getChatCacheKey: (key, chatId) => `${key}::${chatId}`,
+                updateGroupMetadata: async () => {},
+                refreshSelectedChatList: async () => {},
+                loadChatMessages: async () => {},
+                moveChatReadState: () => {},
+                deleteChatReadState: () => {},
+                renameModernChatFile: contextActions.renameModernChatFile,
+                deleteModernChatFile: contextActions.deleteModernChatFile,
+            });
+            const selectRename = chatId => {
+                state.selected.chat = chatId;
+                state.chatRenaming = { key: `${contextKey}::${chatId}`, name: `${chatId}-new` };
+            };
+            const selectDelete = chatId => {
+                state.selected.chat = chatId;
+                state.chatDeleteConfirm = { key: `${contextKey}::${chatId}`, name: chatId };
+            };
+
+            selectRename('rename-conflict');
+            await expect(fileActions.saveModernChatRename()).rejects.toMatchObject({ status: 409 });
+            await expect(contextActions.saveModernChat(character, 'rename-conflict', [])).resolves.toBeUndefined();
+
+            selectRename('rename-missing');
+            await expect(fileActions.saveModernChatRename()).rejects.toMatchObject({ status: 404 });
+            await expect(contextActions.saveModernChat(character, 'rename-missing', [])).rejects.toThrow('聊天文件已删除、重命名或正在变更');
+
+            selectDelete('delete-invalid');
+            await expect(fileActions.confirmModernChatDelete()).rejects.toMatchObject({ status: 400 });
+            await expect(contextActions.saveModernChat(character, 'delete-invalid', [])).resolves.toBeUndefined();
+
+            selectDelete('delete-unknown');
+            await expect(fileActions.confirmModernChatDelete()).rejects.toMatchObject({ status: 500 });
+            await expect(contextActions.saveModernChat(character, 'delete-unknown', [])).rejects.toThrow('聊天文件已删除、重命名或正在变更');
+        } finally {
+            globalThis.localStorage = previousLocalStorage;
+            globalThis.window = previousWindow;
+        }
+    });
+
+    test('keeps only the newest data load result and loading state', async () => {
+        const state = {
+            route: 'dashboard',
+            loading: false,
+            loaded: false,
+            errors: [{ key: 'old', message: 'old error' }],
+            settingsBundle: {},
+            settings: {},
+            characters: [],
+            groups: [],
+            worldbooks: [],
+            selected: { character: 'selected-character', group: 'selected-group', worldbook: 'selected-worldbook' },
+        };
+        let requestCount = 0;
+        let rejectOldStats;
+        const oldStatsBlocked = new Promise((_resolve, reject) => {
+            rejectOldStats = reject;
+        });
+        const valueFactories = {
+            '/api/settings/get': generation => ({ settings: JSON.stringify({ generation }) }),
+            '/api/characters/all': generation => [{ avatar: `${generation}.png` }],
+            '/api/groups/all': generation => [{ id: generation }],
+            '/api/worldinfo/list': generation => [{ file_id: generation }],
+        };
+        const values = (url, generation) => (valueFactories[url] || (value => ({ generation: value })))(generation);
+        const loader = createDataLoader({
+            state,
+            apiFetch: (url) => {
+                const generation = requestCount++ < 12 ? 'old' : 'new';
+                if (generation === 'old' && url === '/api/stats/get') {
+                    return oldStatsBlocked;
+                }
+                return Promise.resolve(values(url, generation));
+            },
+            render: () => {},
+            showToast: () => {},
+            ensureAvailableChatMode: () => {},
+            prepareChatForSelectedContext: async () => {},
+            loadWorldDetail: async () => {},
+        });
+
+        const oldLoad = loader.loadData({ silent: true });
+        const newLoad = loader.loadData({ silent: true });
+        await newLoad;
+
+        expect(state.loading).toBe(false);
+        expect(state.characters).toEqual([{ avatar: 'new.png' }]);
+        expect(state.settings).toEqual({ generation: 'new' });
+        expect(state.errors).toEqual([]);
+
+        rejectOldStats(new Error('old request failed'));
+        await oldLoad;
+
+        expect(state.loading).toBe(false);
+        expect(state.characters).toEqual([{ avatar: 'new.png' }]);
+        expect(state.settings).toEqual({ generation: 'new' });
+        expect(state.errors).toEqual([]);
+    });
+
+    test('invalidates nested chat and worldbook work from an older data load', async () => {
+        const state = {
+            route: 'chat',
+            loading: false,
+            loaded: false,
+            errors: [],
+            settingsBundle: {},
+            settings: {},
+            characters: [],
+            groups: [],
+            worldbooks: [],
+            selected: { character: 'same.png', group: 'same-group', worldbook: 'same-world' },
+            nestedChat: '',
+            nestedWorldbook: '',
+        };
+        let requestCount = 0;
+        const values = (url, generation) => ({
+            '/api/users/me': { generation },
+            '/api/settings/get': { settings: JSON.stringify({ generation }) },
+            '/api/characters/all': [{ avatar: 'same.png', generation }],
+            '/api/groups/all': [{ id: 'same-group', generation }],
+            '/api/worldinfo/list': [{ file_id: 'same-world', generation }],
+            '/api/backgrounds/all': { generation },
+            '/api/backgrounds/folders': { generation },
+            '/api/assets/get': { generation },
+            '/api/extensions/discover': { generation },
+            '/api/secrets/settings': { generation },
+            '/api/secrets/read': { generation },
+            '/api/stats/get': { generation },
+        })[url];
+        let releaseOldChat;
+        const oldChatBlocked = new Promise(resolve => {
+            releaseOldChat = resolve;
+        });
+        let markOldChatStarted;
+        const oldChatStarted = new Promise(resolve => {
+            markOldChatStarted = resolve;
+        });
+        const chatOperations = [
+            async isCurrent => {
+                markOldChatStarted();
+                await oldChatBlocked;
+                expect(isCurrent()).toBe(false);
+            },
+            async isCurrent => {
+                expect(isCurrent()).toBe(true);
+                state.nestedChat = 'new';
+            },
+        ];
+        let releaseOldWorldbook;
+        const oldWorldbookBlocked = new Promise(resolve => {
+            releaseOldWorldbook = resolve;
+        });
+        let markOldWorldbookStarted;
+        const oldWorldbookStarted = new Promise(resolve => {
+            markOldWorldbookStarted = resolve;
+        });
+        const worldbookOperations = [
+            async isCurrent => {
+                markOldWorldbookStarted();
+                await oldWorldbookBlocked;
+                expect(isCurrent()).toBe(false);
+            },
+            async isCurrent => {
+                expect(isCurrent()).toBe(true);
+                state.nestedWorldbook = 'new';
+            },
+        ];
+        const loader = createDataLoader({
+            state,
+            apiFetch: (url) => {
+                const generation = ['old', 'new'][Math.floor(requestCount++ / 12) % 2];
+                return Promise.resolve(values(url, generation));
+            },
+            render: () => {},
+            showToast: () => {},
+            ensureAvailableChatMode: () => {},
+            prepareChatForSelectedContext: ({ isCurrent }) => chatOperations.shift()(isCurrent),
+            loadWorldDetail: (_worldbookId, { isCurrent }) => worldbookOperations.shift()(isCurrent),
+        });
+
+        const oldChatLoad = loader.loadData({ silent: true });
+        await oldChatStarted;
+        const newChatLoad = loader.loadData({ silent: true });
+        await newChatLoad;
+        releaseOldChat();
+        await oldChatLoad;
+        expect(state.nestedChat).toBe('new');
+
+        state.route = 'worldbooks';
+        const oldWorldbookLoad = loader.loadData({ silent: true });
+        await oldWorldbookStarted;
+        const newWorldbookLoad = loader.loadData({ silent: true });
+        await newWorldbookLoad;
+        releaseOldWorldbook();
+        await oldWorldbookLoad;
+        expect(state.nestedWorldbook).toBe('new');
+        expect(state.loading).toBe(false);
+    });
+
     test('keeps a newer chat context while a group rename reports partial success', async () => {
         const firstGroup = { id: 'group-1', chats: ['old-chat'], chat_id: 'old-chat' };
         const secondGroup = { id: 'group-2', chats: ['second-chat'], chat_id: 'second-chat' };
@@ -1141,6 +1488,8 @@ test.describe('Modern action helpers', () => {
             loadChatMessages: async (...args) => loaded.push(args),
             moveChatReadState: () => {},
             deleteChatReadState: () => {},
+            renameModernChatFile: (_contextKey, _chatId, operation) => operation(),
+            deleteModernChatFile: (_contextKey, _chatId, operation) => operation(),
         });
 
         const renaming = actions.saveModernChatRename();
@@ -1196,6 +1545,8 @@ test.describe('Modern action helpers', () => {
             loadChatMessages: async (...args) => loaded.push(args),
             moveChatReadState: () => {},
             deleteChatReadState: () => {},
+            renameModernChatFile: (_contextKey, _chatId, operation) => operation(),
+            deleteModernChatFile: (_contextKey, _chatId, operation) => operation(),
         });
 
         await expect(actions.confirmModernChatDelete()).rejects.toThrow('聊天文件 old-chat.jsonl 已删除，但群聊索引更新失败');
@@ -1261,6 +1612,7 @@ test.describe('Modern action helpers', () => {
                 await creationReady;
                 return 'alice-new-chat';
             },
+            runModernChatFileOperation: (_entity, _chatId, operation) => operation(),
         });
 
         const sending = actions.sendModernMessage();
@@ -1283,6 +1635,69 @@ test.describe('Modern action helpers', () => {
         }]);
         expect(state.selected.chat).toBe('group-chat');
         expect(state.chatDrafts['alice.png::']).toBe('');
+    });
+
+    test('keeps generation occupied after stop until the original request settles', async () => {
+        const character = { avatar: 'alice.png', name: 'Alice' };
+        const state = {
+            selected: { chat: 'chat-one' },
+            engine: { generating: false, checking: false, ready: false, status: '', error: '', detail: '' },
+            errors: [],
+            chatDrafts: {},
+            chatMessages: { 'alice.png::chat-one': [{ mes: 'context' }] },
+            chatMetadata: {},
+        };
+        let rejectGeneration;
+        const generationBlocked = new Promise((_resolve, reject) => {
+            rejectGeneration = reject;
+        });
+        let markGenerationStarted;
+        const generationStarted = new Promise(resolve => {
+            markGenerationStarted = resolve;
+        });
+        const bridgeActions = [];
+        const actions = createChatGenerationActions({
+            state,
+            render: () => {},
+            showToast: () => {},
+            callLegacyBridge: async (action) => {
+                bridgeActions.push(action);
+                if (action === 'generate') {
+                    markGenerationStarted();
+                    return generationBlocked;
+                }
+                expect(action).toBe('stop');
+                return { ok: true };
+            },
+            formatNumber: String,
+            getSelectedChatEntity: () => character,
+            getChatContextKey: () => character.avatar,
+            getChatEntityName: entity => entity.name,
+            isGroupChatMode: () => false,
+            getSelectedChatMessages: () => state.chatMessages['alice.png::chat-one'],
+            getCurrentDraftKey: () => 'alice.png::chat-one',
+            getChatCacheKey: (contextKey, chatId) => `${contextKey}::${chatId}`,
+            getUserName: () => 'User',
+            loadChatMessages: async () => {},
+            refreshSelectedChatList: async () => {},
+            createModernChatFile: async () => 'chat-one',
+            runModernChatFileOperation: (_entity, _chatId, operation) => operation(),
+        });
+
+        const generation = actions.continueModernReply();
+        await generationStarted;
+        await actions.stopModernGeneration();
+
+        expect(state.engine.generating).toBe(true);
+        expect(state.engine.status).toBe('停止中');
+        expect(state.engine.detail).toContain('等待生成任务结束');
+        await actions.continueModernReply();
+        expect(bridgeActions).toEqual(['generate', 'stop']);
+
+        rejectGeneration(new Error('生成已停止'));
+        await expect(generation).rejects.toThrow('生成已停止');
+        expect(state.engine.generating).toBe(false);
+        expect(state.engine.status).toBe('已停止');
     });
 
     test('keeps a deleted worldbook removed when global settings saving fails', async () => {

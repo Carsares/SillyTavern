@@ -101,8 +101,13 @@ router.post('/rename', async function (request, response) {
     try {
         if (!request.body) return response.sendStatus(400);
 
-        const oldFileName = path.join(request.user.directories.backgrounds, sanitize(request.body.old_bg));
-        const newFileName = path.join(request.user.directories.backgrounds, sanitize(request.body.new_bg));
+        const oldName = sanitize(request.body.old_bg);
+        const newName = sanitize(request.body.new_bg);
+        if (!oldName || !newName) {
+            return response.sendStatus(400);
+        }
+        const oldFileName = path.join(request.user.directories.backgrounds, oldName);
+        const newFileName = path.join(request.user.directories.backgrounds, newName);
 
         if (!fs.existsSync(oldFileName)) {
             console.error('BG file not found');
@@ -114,18 +119,17 @@ router.post('/rename', async function (request, response) {
             return response.sendStatus(400);
         }
 
-        fs.copyFileSync(oldFileName, newFileName);
-        fs.unlinkSync(oldFileName);
-        invalidateThumbnail(request.user.directories, 'bg', request.body.old_bg);
+        fs.renameSync(oldFileName, newFileName);
+        invalidateThumbnail(request.user.directories, 'bg', oldName);
 
         // Update metadata for renamed image
-        const oldRelativePath = path.join('backgrounds', request.body.old_bg);
-        const newRelativePath = path.join('backgrounds', request.body.new_bg);
+        const oldRelativePath = path.join('backgrounds', oldName);
+        const newRelativePath = path.join('backgrounds', newName);
         await renameMetadata(request.user.directories.root, oldRelativePath, newRelativePath).catch(err => {
             console.warn('[Backgrounds] Failed to rename metadata:', err.message);
         });
 
-        return response.send('ok');
+        return response.send({ name: newName });
     } catch (err) {
         console.error(err);
         response.sendStatus(500);

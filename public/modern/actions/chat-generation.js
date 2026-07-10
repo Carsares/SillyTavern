@@ -17,9 +17,44 @@ export function createChatGenerationActions({
     loadChatMessages,
     refreshSelectedChatList,
     createModernChatFile,
+    runModernChatFileOperation,
 }) {
+    let generationSequence = 0;
+    let activeGenerationToken = 0;
+    const stoppedGenerationTokens = new Set();
+
     function isGenerationContextCurrent(contextKey, chatId) {
         return getChatContextKey() === contextKey && state.selected.chat === chatId;
+    }
+
+    function beginGeneration(status, detail) {
+        const token = ++generationSequence;
+        activeGenerationToken = token;
+        state.engine.generating = true;
+        state.engine.status = status;
+        state.engine.error = '';
+        state.engine.detail = detail;
+        render();
+        return token;
+    }
+
+    function failGeneration(token, error, status) {
+        if (activeGenerationToken !== token) {
+            return;
+        }
+        state.engine.error = error.message;
+        state.engine.status = status;
+        state.engine.detail = error.message;
+    }
+
+    function finishGeneration(token) {
+        stoppedGenerationTokens.delete(token);
+        if (activeGenerationToken !== token) {
+            return;
+        }
+        activeGenerationToken = 0;
+        state.engine.generating = false;
+        render();
     }
 
     async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
@@ -120,39 +155,37 @@ export function createChatGenerationActions({
             throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
 
-        state.engine.generating = true;
-        state.engine.status = '生成中';
-        state.engine.error = '';
-        state.engine.detail = `${entityName} · ${chatId}`;
-        render();
+        const token = beginGeneration('生成中', `${entityName} · ${chatId}`);
 
         try {
-            const result = await callLegacyBridge('generate', {
-                avatar: groupMode ? null : entity.avatar,
-                groupId: groupMode ? entity.id : null,
-                chat: chatId,
-                type,
-                message,
-            });
-            const nextChatId = stripJsonlExtension(result?.chat || chatId);
-            await syncGeneratedChat({
-                entity,
-                groupMode,
-                contextKey,
-                chatId,
-                nextChatId,
-                detail: `${nextChatId} · 已同步最新消息`,
-                toastTitle,
-                toastMessage,
-            });
+            await runModernChatFileOperation(entity, chatId, async () => {
+                if (stoppedGenerationTokens.has(token)) {
+                    throw new Error('生成已停止');
+                }
+                const result = await callLegacyBridge('generate', {
+                    avatar: groupMode ? null : entity.avatar,
+                    groupId: groupMode ? entity.id : null,
+                    chat: chatId,
+                    type,
+                    message,
+                });
+                const nextChatId = stripJsonlExtension(result?.chat || chatId);
+                await syncGeneratedChat({
+                    entity,
+                    groupMode,
+                    contextKey,
+                    chatId,
+                    nextChatId,
+                    detail: `${nextChatId} · 已同步最新消息`,
+                    toastTitle,
+                    toastMessage,
+                });
+            }, { groupMode });
         } catch (error) {
-            state.engine.error = error.message;
-            state.engine.status = error.message.includes('停止') ? '已停止' : '生成失败';
-            state.engine.detail = error.message;
+            failGeneration(token, error, error.message.includes('停止') ? '已停止' : '生成失败');
             throw error;
         } finally {
-            state.engine.generating = false;
-            render();
+            finishGeneration(token);
         }
     }
 
@@ -175,40 +208,38 @@ export function createChatGenerationActions({
             throw new Error('消息位置无效，请刷新后重试。');
         }
 
-        state.engine.generating = true;
-        state.engine.status = '候选切换中';
-        state.engine.error = '';
-        state.engine.detail = `${chatId} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`;
-        render();
+        const token = beginGeneration('候选切换中', `${chatId} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`);
 
         try {
-            const result = await callLegacyBridge('swipe', {
-                avatar: groupMode ? null : entity.avatar,
-                groupId: groupMode ? entity.id : null,
-                chat: chatId,
-                messageIndex: index,
-                direction,
-            });
-            const nextChatId = stripJsonlExtension(result?.chat || chatId);
-            const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
-            await syncGeneratedChat({
-                entity,
-                groupMode,
-                contextKey,
-                chatId,
-                nextChatId,
-                detail: `${nextChatId} · ${swipeDetail}`,
-                toastTitle: '候选已切换',
-                toastMessage: swipeDetail,
-            });
+            await runModernChatFileOperation(entity, chatId, async () => {
+                if (stoppedGenerationTokens.has(token)) {
+                    throw new Error('生成已停止');
+                }
+                const result = await callLegacyBridge('swipe', {
+                    avatar: groupMode ? null : entity.avatar,
+                    groupId: groupMode ? entity.id : null,
+                    chat: chatId,
+                    messageIndex: index,
+                    direction,
+                });
+                const nextChatId = stripJsonlExtension(result?.chat || chatId);
+                const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
+                await syncGeneratedChat({
+                    entity,
+                    groupMode,
+                    contextKey,
+                    chatId,
+                    nextChatId,
+                    detail: `${nextChatId} · ${swipeDetail}`,
+                    toastTitle: '候选已切换',
+                    toastMessage: swipeDetail,
+                });
+            }, { groupMode });
         } catch (error) {
-            state.engine.error = error.message;
-            state.engine.status = '候选切换失败';
-            state.engine.detail = error.message;
+            failGeneration(token, error, error.message.includes('停止') ? '已停止' : '候选切换失败');
             throw error;
         } finally {
-            state.engine.generating = false;
-            render();
+            finishGeneration(token);
         }
     }
 
@@ -323,14 +354,28 @@ export function createChatGenerationActions({
     }
 
     async function stopModernGeneration() {
+        if (!state.engine.generating) {
+            return;
+        }
+
+        const token = activeGenerationToken;
+        stoppedGenerationTokens.add(token);
+        state.engine.status = '停止中';
+        state.engine.detail = '正在向生成引擎发送停止请求。';
+        render();
         try {
             await callLegacyBridge('stop', {}, 15000);
+            if (activeGenerationToken === token) {
+                state.engine.detail = '停止请求已发送，正在等待生成任务结束。';
+            }
         } catch (error) {
+            stoppedGenerationTokens.delete(token);
             state.errors.push({ key: 'legacy-stop', message: error.message });
+            if (activeGenerationToken === token) {
+                state.engine.status = '生成中';
+                state.engine.detail = `停止请求失败：${error.message}`;
+            }
         }
-        state.engine.generating = false;
-        state.engine.status = '已停止';
-        state.engine.detail = '已向生成引擎发送停止请求。';
         render();
     }
 

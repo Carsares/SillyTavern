@@ -6,12 +6,14 @@ import {
     appendMediaToMessage,
     characters,
     chat,
+    captureChatPersistenceContext,
     eventSource,
     event_types,
     getCurrentChatId,
     getRequestHeaders,
     name2,
     reloadCurrentChat,
+    saveSettings,
     saveSettingsDebounced,
     this_chid,
     saveChatConditional,
@@ -28,6 +30,8 @@ import {
     getMediaIndex,
     getMediaDisplay,
     chatElement,
+    saveChatPersistenceContext,
+    updateChatPersistenceContextMetadata,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -48,7 +52,7 @@ import {
     isSameFile,
     clamp,
 } from './utils.js';
-import { extension_settings, renderExtensionTemplateAsync, saveMetadataDebounced } from './extensions.js';
+import { extension_settings, renderExtensionTemplateAsync } from './extensions.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { ScraperManager } from './scrapers.js';
 import { DragAndDropHandler } from './dragdrop.js';
@@ -57,6 +61,7 @@ import { t } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
+import { removeAttachmentFile, replaceAttachmentFile } from './attachment-file-helpers.js';
 
 /**
  * @typedef {Object} FileAttachment
@@ -79,6 +84,115 @@ const ATTACHMENT_SOURCE = {
     CHARACTER: 'character',
     CHAT: 'chat',
 };
+
+/**
+ * @typedef {Object} AttachmentPersistenceTarget
+ * @property {string} source Attachment source
+ * @property {ReturnType<typeof captureChatPersistenceContext>} chatContext Stable chat snapshot
+ * @property {string|null} characterAvatar Stable character identity
+ */
+
+/**
+ * Captures the owner of an attachment before asynchronous file work starts.
+ * @param {string} source Attachment source
+ * @returns {AttachmentPersistenceTarget}
+ */
+export function captureAttachmentPersistenceTarget(source) {
+    return {
+        source,
+        chatContext: source === ATTACHMENT_SOURCE.CHAT ? captureChatPersistenceContext() : null,
+        characterAvatar: source === ATTACHMENT_SOURCE.CHARACTER ? characters[this_chid]?.avatar ?? null : null,
+    };
+}
+
+/**
+ * Mutates a captured attachment list, persists it, and applies a narrow compensation if the save fails.
+ * @param {AttachmentPersistenceTarget} target Captured attachment owner
+ * @param {(attachments: FileAttachment[]) => void} update Reference update
+ * @param {(attachments: FileAttachment[]) => void} compensate Reference compensation
+ * @returns {Promise<boolean>} Whether persistence succeeded
+ */
+async function updateCapturedAttachmentReferences(target, update, compensate) {
+    if (target.source === ATTACHMENT_SOURCE.CHAT) {
+        if (!target.chatContext) {
+            throw new Error('Chat attachment target is no longer available');
+        }
+        target.chatContext = updateChatPersistenceContextMetadata(target.chatContext, metadata => {
+            metadata.attachments ??= [];
+            update(metadata.attachments);
+        });
+        if (await saveChatPersistenceContext(target.chatContext)) {
+            return true;
+        }
+        target.chatContext = updateChatPersistenceContextMetadata(target.chatContext, metadata => {
+            metadata.attachments ??= [];
+            compensate(metadata.attachments);
+        });
+        await saveChatPersistenceContext(target.chatContext);
+        return false;
+    }
+
+    let attachments;
+    if (target.source === ATTACHMENT_SOURCE.GLOBAL) {
+        extension_settings.attachments ??= [];
+        attachments = extension_settings.attachments;
+    } else if (target.source === ATTACHMENT_SOURCE.CHARACTER && target.characterAvatar) {
+        extension_settings.character_attachments ??= {};
+        extension_settings.character_attachments[target.characterAvatar] ??= [];
+        attachments = extension_settings.character_attachments[target.characterAvatar];
+    } else {
+        throw new Error(`Attachment target is no longer available: ${target.source}`);
+    }
+
+    update(attachments);
+    if (await saveSettings() === true) {
+        return true;
+    }
+    compensate(attachments);
+    await saveSettings();
+    return false;
+}
+
+/**
+ * Adds an attachment reference and persists it before returning.
+ * @param {AttachmentPersistenceTarget} target Captured attachment owner
+ * @param {FileAttachment} attachment Attachment to add
+ * @returns {Promise<boolean>} Whether persistence succeeded
+ */
+async function addCapturedAttachmentReference(target, attachment) {
+    return await updateCapturedAttachmentReferences(
+        target,
+        attachments => attachments.push(attachment),
+        attachments => {
+            const addedIndex = attachments.findLastIndex(item => item.url === attachment.url);
+            if (addedIndex !== -1) {
+                attachments.splice(addedIndex, 1);
+            }
+        },
+    );
+}
+
+/**
+ * Removes an attachment reference and persists it before physical cleanup.
+ * @param {AttachmentPersistenceTarget} target Captured attachment owner
+ * @param {string} url Attachment URL
+ * @returns {Promise<boolean>} Whether persistence succeeded
+ */
+async function removeCapturedAttachmentReference(target, url) {
+    /** @type {FileAttachment[]} */
+    let removedAttachments = [];
+    return await updateCapturedAttachmentReferences(
+        target,
+        attachments => {
+            removedAttachments = attachments.filter(attachment => attachment.url === url);
+            attachments.splice(0, attachments.length, ...attachments.filter(attachment => attachment.url !== url));
+        },
+        attachments => {
+            const existingUrls = new Set(attachments.map(attachment => attachment.url));
+            attachments.push(...removedAttachments.filter(attachment => !existingUrls.has(attachment.url)));
+        },
+    );
+}
 
 /**
  * @type {Record<string, ConverterFunction>} File converters
@@ -1102,7 +1216,7 @@ export async function deleteMediaFromServer(url, silent = false) {
             body: JSON.stringify({ path: url }),
         });
 
-        if (!result.ok) {
+        if (!result.ok && result.status !== 404) {
             if (!silent) {
                 const error = await result.text();
                 throw new Error(error);
@@ -1133,7 +1247,7 @@ export async function deleteFileFromServer(url, silent = false) {
             body: JSON.stringify({ path: url }),
         });
 
-        if (!result.ok) {
+        if (!result.ok && result.status !== 404) {
             if (!silent) {
                 const error = await result.text();
                 throw new Error(error);
@@ -1172,6 +1286,7 @@ async function openFilePopup(attachment) {
  * @param {function} callback Callback function
  */
 async function editAttachment(attachment, source, callback) {
+    const persistenceTarget = captureAttachmentPersistenceTarget(source);
     const originalFileText = attachment.text || (await getFileAttachment(attachment.url));
     const template = $(await renderExtensionTemplateAsync('attachments', 'notepad'));
 
@@ -1195,10 +1310,17 @@ async function editAttachment(attachment, source, callback) {
         return;
     }
 
-    const nullCallback = () => { };
-    await deleteAttachment(attachment, source, nullCallback, false);
     const file = new File([editedFileText], editedFileName, { type: 'text/plain' });
-    await uploadFileAttachmentToServer(file, source);
+    const replacement = await replaceAttachmentFile(
+        () => uploadFileAttachmentToServer(file, source, persistenceTarget),
+        () => deleteAttachment(attachment, source, () => { }, false, persistenceTarget),
+    );
+    if (!replacement.url) {
+        return;
+    }
+    if (!replacement.originalRemoved) {
+        toastr.warning(t`The replacement was uploaded, but the original attachment could not be removed.`, t`Data Bank`);
+    }
 
     callback();
 }
@@ -1250,6 +1372,8 @@ function disableAttachment(attachment, callback) {
  * @returns {Promise<void>} A promise that resolves when the attachment is moved.
  */
 async function moveAttachment(attachment, source, callback) {
+    const sourcePersistenceTarget = captureAttachmentPersistenceTarget(source);
+    const availablePersistenceTargets = Object.fromEntries(Object.values(ATTACHMENT_SOURCE).map(target => [target, captureAttachmentPersistenceTarget(target)]));
     let selectedTarget = source;
     const targets = getAvailableTargets();
     const template = $(await renderExtensionTemplateAsync('attachments', 'move-attachment', { name: attachment.name, targets }));
@@ -1271,8 +1395,16 @@ async function moveAttachment(attachment, source, callback) {
 
     const content = await getFileAttachment(attachment.url);
     const file = new File([content], attachment.name, { type: 'text/plain' });
-    await deleteAttachment(attachment, source, () => { }, false);
-    await uploadFileAttachmentToServer(file, selectedTarget);
+    const replacement = await replaceAttachmentFile(
+        () => uploadFileAttachmentToServer(file, selectedTarget, availablePersistenceTargets[selectedTarget]),
+        () => deleteAttachment(attachment, source, () => { }, false, sourcePersistenceTarget),
+    );
+    if (!replacement.url) {
+        return;
+    }
+    if (!replacement.originalRemoved) {
+        toastr.warning(t`The attachment was copied, but the original could not be removed.`, t`Data Bank`);
+    }
     callback();
 }
 
@@ -1282,41 +1414,35 @@ async function moveAttachment(attachment, source, callback) {
  * @param {string} source Source of the attachment
  * @param {function} callback Callback function
  * @param {boolean} [confirm=true] If true, show a confirmation dialog
- * @returns {Promise<void>} A promise that resolves when the attachment is deleted.
+ * @param {AttachmentPersistenceTarget} [persistenceTarget] Owner captured before asynchronous work
+ * @returns {Promise<boolean>} Whether the attachment was deleted.
  */
-export async function deleteAttachment(attachment, source, callback, confirm = true) {
+export async function deleteAttachment(attachment, source, callback, confirm = true, persistenceTarget = captureAttachmentPersistenceTarget(source)) {
     if (confirm) {
         const result = await callGenericPopup('Are you sure you want to delete this attachment?', POPUP_TYPE.CONFIRM);
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
-            return;
+            return false;
         }
     }
 
-    ensureAttachmentsExist();
+    const removal = await removeAttachmentFile(
+        () => removeCapturedAttachmentReference(persistenceTarget, attachment.url),
+        async () => {
+            if (Array.isArray(extension_settings.disabled_attachments) && extension_settings.disabled_attachments.includes(attachment.url)) {
+                extension_settings.disabled_attachments = extension_settings.disabled_attachments.filter(url => url !== attachment.url);
+                await saveSettings();
+            }
 
-    switch (source) {
-        case 'global':
-            extension_settings.attachments = extension_settings.attachments.filter((a) => a.url !== attachment.url);
-            saveSettingsDebounced();
-            break;
-        case 'chat':
-            chat_metadata.attachments = chat_metadata.attachments.filter((a) => a.url !== attachment.url);
-            saveMetadataDebounced();
-            break;
-        case 'character':
-            extension_settings.character_attachments[characters[this_chid]?.avatar] = extension_settings.character_attachments[characters[this_chid]?.avatar].filter((a) => a.url !== attachment.url);
-            break;
+            callback();
+            return await deleteFileFromServer(attachment.url, confirm === false);
+        },
+    );
+    if (!removal.referenceRemoved) {
+        toastr.error(t`The attachment reference could not be saved. The file was not deleted.`, t`Data Bank`);
+        return false;
     }
-
-    if (Array.isArray(extension_settings.disabled_attachments) && extension_settings.disabled_attachments.includes(attachment.url)) {
-        extension_settings.disabled_attachments = extension_settings.disabled_attachments.filter(url => url !== attachment.url);
-        saveSettingsDebounced();
-    }
-
-    const silent = confirm === false;
-    await deleteFileFromServer(attachment.url, silent);
-    callback();
+    return removal.fileRemoved;
 }
 
 /**
@@ -1565,19 +1691,19 @@ async function openAttachmentManager() {
 
             const includeDisabled = true;
             const attachments = getDataBankAttachments(includeDisabled);
-            selectedAttachments.forEach(async (checkbox) => {
+            for (const checkbox of selectedAttachments) {
                 const listItem = checkbox.closest('.attachmentListItem');
                 if (!(listItem instanceof HTMLElement)) {
-                    return;
+                    continue;
                 }
                 const url = listItem.dataset.attachmentUrl;
                 const source = listItem.dataset.attachmentSource;
                 const attachment = attachments.find(a => a.url === url);
                 if (!attachment) {
-                    return;
+                    continue;
                 }
                 await action.perform(attachment, source);
-            });
+            }
 
             document.querySelectorAll('.attachmentListItemCheckbox, .attachmentsBulkEditCheckbox').forEach(checkbox => {
                 if (checkbox instanceof HTMLInputElement) {
@@ -1686,9 +1812,10 @@ async function runScraper(scraperId, target, callback) {
  * Uploads a file attachment to the server.
  * @param {File} file File to upload
  * @param {string} target Target for the attachment
+ * @param {AttachmentPersistenceTarget} [persistenceTarget] Owner captured before asynchronous work
  * @returns {Promise<string>} Path to the uploaded file
  */
-export async function uploadFileAttachmentToServer(file, target) {
+export async function uploadFileAttachmentToServer(file, target, persistenceTarget = captureAttachmentPersistenceTarget(target)) {
     const isValid = await validateFile(file);
 
     if (!isValid) {
@@ -1727,21 +1854,10 @@ export async function uploadFileAttachmentToServer(file, target) {
         created: Date.now(),
     };
 
-    ensureAttachmentsExist();
-
-    switch (target) {
-        case ATTACHMENT_SOURCE.GLOBAL:
-            extension_settings.attachments.push(attachment);
-            saveSettingsDebounced();
-            break;
-        case ATTACHMENT_SOURCE.CHAT:
-            chat_metadata.attachments.push(attachment);
-            saveMetadataDebounced();
-            break;
-        case ATTACHMENT_SOURCE.CHARACTER:
-            extension_settings.character_attachments[characters[this_chid]?.avatar].push(attachment);
-            saveSettingsDebounced();
-            break;
+    if (!await addCapturedAttachmentReference(persistenceTarget, attachment)) {
+        // Keep the uploaded file because a failed response may still have committed the reference server-side.
+        toastr.error(t`The attachment reference could not be confirmed. Reload before trying again.`, t`Data Bank`);
+        return;
     }
 
     return fileUrl;

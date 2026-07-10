@@ -53,7 +53,19 @@ router.post('/save', function (request, response) {
     }
 
     const fullpath = path.join(settings.folder, filename);
-    writeFileAtomicSync(fullpath, JSON.stringify(request.body.preset, null, 4), 'utf-8');
+    const overwrite = request.body.overwrite !== false && request.body.overwrite !== 'false';
+    try {
+        if (overwrite) {
+            writeFileAtomicSync(fullpath, JSON.stringify(request.body.preset, null, 4), 'utf-8');
+        } else {
+            fs.writeFileSync(fullpath, JSON.stringify(request.body.preset, null, 4), { encoding: 'utf8', flag: 'wx' });
+        }
+    } catch (error) {
+        if (error?.code === 'EEXIST') {
+            return response.status(409).send('Preset already exists');
+        }
+        throw error;
+    }
     return response.send({ name });
 });
 

@@ -188,8 +188,9 @@ import {
     createTimeout,
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
+import { LatestSnapshotRegistry, SerialTaskQueue } from './scripts/save-coordinator.js';
 
-import { cancelDebouncedMetadataSave, completeExtensionInstallLifecycle, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, reloadExtensionSettingsAfterBranchSwitch, runGenerationInterceptors } from './scripts/extensions.js';
+import { cancelDebouncedMetadataSave, completeExtensionInstallLifecycle, doDailyExtensionUpdatesCheck, extension_settings, flushDebouncedMetadataSave, initExtensions, loadExtensionSettings, reloadExtensionSettingsAfterBranchSwitch, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -415,7 +416,17 @@ export let chat = [];
  * @type {import('./scripts/constants.js').SWIPE_STATE}
  */
 export let swipeState = SWIPE_STATE.NONE;
-let chatSaveTimeout;
+let chatSaveTimeout = null;
+/** @type {ChatPersistenceContext|null} */
+let pendingChatSaveContext = null;
+const chatSaveQueue = new SerialTaskQueue();
+const latestChatPersistenceContexts = new LatestSnapshotRegistry(cloneForPersistence);
+let activeChatSaveCount = 0;
+let characterSaveTimeout = null;
+/** @type {CharacterSaveRequest|null} */
+let pendingCharacterSaveRequest = null;
+const characterSaveQueue = new SerialTaskQueue();
+const settingsSaveQueue = new SerialTaskQueue();
 let importFlashTimeout;
 export let isChatSaving = false;
 let firstRun = false;
@@ -470,7 +481,126 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
-export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
+
+/**
+ * @typedef {object} CharacterSaveRequest
+ * @property {'createcharacter'|'editcharacter'} actionType Editor action captured before any asynchronous work
+ * @property {FormData} formData Character form snapshot
+ * @property {boolean} isNewChat Whether this save only updates the active chat pointer
+ * @property {unknown} cropData Serializable crop data snapshot
+ * @property {unknown} cropDataSource Original crop data value used to avoid clearing a newer crop
+ * @property {string[]} alternateGreetings Alternate greeting snapshot
+ * @property {Record<string, unknown>} extensions Character extension snapshot used while creating
+ * @property {string[]} extraBooks Auxiliary lorebook snapshot used while creating
+ * @property {string} avatarUrl Stable avatar identity for an edit
+ */
+
+/**
+ * Captures the character editor before a debounce or prior request can outlive its UI context.
+ * @param {Event} [event] Event that triggered the save
+ * @returns {CharacterSaveRequest|null}
+ */
+function captureCharacterSaveRequest(event) {
+    const form = document.getElementById('form_create');
+    if (!(form instanceof HTMLFormElement)) {
+        return null;
+    }
+
+    const actionType = form.getAttribute('actiontype');
+    if (actionType !== 'createcharacter' && actionType !== 'editcharacter') {
+        return null;
+    }
+
+    const formData = new FormData(form);
+    formData.set('fav', String(fav_ch_checked));
+    const avatarUrl = String(formData.get('avatar_url') ?? '');
+    const characterId = characters.findIndex(character => character.avatar === avatarUrl);
+    const alternateGreetings = actionType === 'createcharacter'
+        ? [...(create_save.alternate_greetings ?? [])]
+        : [...(characters[characterId]?.data?.alternate_greetings ?? [])];
+
+    return {
+        actionType,
+        formData,
+        isNewChat: event instanceof CustomEvent && event.type === 'newChat',
+        cropData: crop_data === undefined ? undefined : cloneForPersistence(crop_data),
+        cropDataSource: crop_data,
+        alternateGreetings,
+        extensions: actionType === 'createcharacter' ? cloneForPersistence(create_save.extensions ?? {}) : {},
+        extraBooks: actionType === 'createcharacter' ? [...(create_save.extra_books ?? [])] : [],
+        avatarUrl,
+    };
+}
+
+/**
+ * @param {CharacterSaveRequest} request Captured save request
+ * @returns {string} Stable debounce key
+ */
+function getCharacterSaveRequestKey(request) {
+    return request.actionType === 'editcharacter' ? `edit:${request.avatarUrl}` : 'create';
+}
+
+/**
+ * Queues a captured character save in invocation order.
+ * @param {CharacterSaveRequest} request Captured save request
+ * @returns {Promise<boolean>} Whether the save succeeded
+ */
+function enqueueCharacterSaveRequest(request) {
+    return characterSaveQueue.enqueue(() => performCharacterSaveRequest(request));
+}
+
+/**
+ * Takes the pending debounced request without losing it.
+ * @returns {CharacterSaveRequest|null}
+ */
+function takePendingCharacterSaveRequest() {
+    if (characterSaveTimeout) {
+        clearTimeout(characterSaveTimeout);
+        characterSaveTimeout = null;
+    }
+    const request = pendingCharacterSaveRequest;
+    pendingCharacterSaveRequest = null;
+    return request;
+}
+
+/** Schedules a character save using a snapshot of the current editor form. */
+export function saveCharacterDebounced() {
+    const request = captureCharacterSaveRequest();
+    if (!request || request.actionType !== 'editcharacter') {
+        return;
+    }
+    if (characterSaveTimeout) {
+        clearTimeout(characterSaveTimeout);
+    }
+    pendingCharacterSaveRequest = request;
+    characterSaveTimeout = setTimeout(() => {
+        characterSaveTimeout = null;
+        const pendingRequest = pendingCharacterSaveRequest;
+        pendingCharacterSaveRequest = null;
+        if (pendingRequest) {
+            enqueueCharacterSaveRequest(pendingRequest).catch(error => console.error('Error saving character', error));
+        }
+    }, DEFAULT_SAVE_EDIT_TIMEOUT);
+}
+
+/**
+ * Flushes the pending character edit and waits for all prior character saves.
+ * @returns {Promise<boolean>} Whether the latest character save succeeded
+ */
+export async function flushPendingCharacterSave() {
+    const pendingRequest = takePendingCharacterSaveRequest();
+    if (pendingRequest) {
+        const saved = await enqueueCharacterSaveRequest(pendingRequest);
+        if (!saved) {
+            throw new Error('Pending character save failed');
+        }
+    }
+    const result = await characterSaveQueue.wait();
+    if (result === false) {
+        throw new Error('Character save failed');
+    }
+    return true;
+}
 
 /**
  * Prints the character list in a debounced fashion without blocking, with a delay of 100 milliseconds.
@@ -546,6 +676,128 @@ export function getCurrentChatId() {
     } else if (this_chid !== undefined) {
         return characters[this_chid]?.chat;
     }
+}
+
+/**
+ * @typedef {object} ChatPersistenceContext
+ * @property {string} key Stable queue key for this chat
+ * @property {'character'|'group'} type Chat owner type
+ * @property {string} chatId Chat file name without extension
+ * @property {string|null} groupId Group ID for group chats
+ * @property {string|null} avatarUrl Character avatar file name for character chats
+ * @property {string|null} characterName Character name for character chats
+ * @property {ChatMessage[]} chatData Message snapshot
+ * @property {ChatMetadata} metadata Metadata snapshot
+ */
+
+/**
+ * Clones data exactly as it can be persisted in JSON.
+ * @template T
+ * @param {T} value Value to clone
+ * @returns {T}
+ */
+function cloneForPersistence(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * @returns {string|null} Stable identity of the active chat
+ */
+function getCurrentChatPersistenceKey() {
+    const chatId = getCurrentChatId();
+    if (!chatId) {
+        return null;
+    }
+    if (selected_group) {
+        return `group:${selected_group}:${chatId}`;
+    }
+    const avatarUrl = characters[this_chid]?.avatar;
+    return avatarUrl ? `character:${avatarUrl}:${chatId}` : null;
+}
+
+/**
+ * Captures the current chat identity and data so a later asynchronous operation cannot save into a new context.
+ * @returns {ChatPersistenceContext|null}
+ */
+export function captureChatPersistenceContext() {
+    const chatId = getCurrentChatId();
+    const key = getCurrentChatPersistenceKey();
+    if (!chatId || !key) {
+        return null;
+    }
+
+    const common = {
+        chatId: String(chatId),
+        chatData: cloneForPersistence(chat),
+        metadata: cloneForPersistence(chat_metadata),
+    };
+    /** @type {ChatPersistenceContext} */
+    let context;
+    if (selected_group) {
+        context = {
+            ...common,
+            key,
+            type: 'group',
+            groupId: String(selected_group),
+            avatarUrl: null,
+            characterName: null,
+        };
+    } else {
+        const character = characters[this_chid];
+        if (!character?.avatar) {
+            return null;
+        }
+        context = {
+            ...common,
+            key,
+            type: 'character',
+            groupId: null,
+            avatarUrl: character.avatar,
+            characterName: character.name,
+        };
+    }
+    return latestChatPersistenceContexts.accept(key, context);
+}
+
+/**
+ * Checks whether a captured persistence context still identifies the active chat.
+ * @param {ChatPersistenceContext|null} context Captured context
+ * @returns {boolean}
+ */
+export function isCurrentChatPersistenceContext(context) {
+    return Boolean(context && getCurrentChatPersistenceKey() === context.key);
+}
+
+/**
+ * Applies a metadata-only change to the newest known snapshot for a captured chat identity.
+ * The updater runs against a clone; if it throws, no metadata change is committed. This method
+ * commits only in memory. If the subsequent save fails, callers must invoke it again with a
+ * compensating updater scoped to the same metadata fields and persist the returned context.
+ * @param {ChatPersistenceContext} context Previously captured chat identity and fallback snapshot
+ * @param {(metadata: ChatMetadata) => void} updater Synchronous metadata updater
+ * @returns {ChatPersistenceContext} Latest full context with the metadata change applied
+ */
+export function updateChatPersistenceContextMetadata(context, updater) {
+    if (!context?.key) {
+        throw new TypeError('A captured chat persistence context is required');
+    }
+    if (typeof updater !== 'function') {
+        throw new TypeError('A chat metadata updater is required');
+    }
+
+    const currentContext = isCurrentChatPersistenceContext(context) ? captureChatPersistenceContext() : null;
+    const updatedContext = latestChatPersistenceContexts.update(context.key, currentContext ?? context, latestContext => {
+        latestContext.metadata ??= {};
+        updater(latestContext.metadata);
+    });
+
+    if (pendingChatSaveContext?.key === updatedContext.key) {
+        pendingChatSaveContext = cloneForPersistence(updatedContext);
+    }
+    if (isCurrentChatPersistenceContext(updatedContext)) {
+        chat_metadata = cloneForPersistence(updatedContext.metadata);
+    }
+    return updatedContext;
 }
 
 export const talkativeness_default = 0.5;
@@ -871,16 +1123,16 @@ export function resultCheckStatus() {
  * @param {number} id The ID of the character to switch to.
  * @param {object} [options] Options for the switch.
  * @param {boolean} [options.switchMenu=true] Whether to switch the right menu to the character edit menu if the character is already selected.
+ * @param {boolean} [options.skipPendingCharacterSave=false] Skip a queue wait while refreshing from inside that queue.
  * @returns {Promise<void>} A promise that resolves when the character is switched.
  */
-export async function selectCharacterById(id, { switchMenu = true } = {}) {
+export async function selectCharacterById(id, { switchMenu = true, skipPendingCharacterSave = false } = {}) {
     if (characters[id] === undefined) {
         return;
     }
 
-    if (isChatSaving) {
-        toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
-        return;
+    if (!skipPendingCharacterSave) {
+        await flushPendingCharacterSave();
     }
 
     if (selected_group && is_group_generating) {
@@ -1318,7 +1570,7 @@ export async function getCharacters() {
             const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
             if (newCharacterId >= 0) {
                 setCharacterId(newCharacterId);
-                await selectCharacterById(newCharacterId, { switchMenu: false });
+                await selectCharacterById(newCharacterId, { switchMenu: false, skipPendingCharacterSave: true });
             } else {
                 await Popup.show.text(t`ERROR: The active character is no longer available.`, t`The page will be refreshed to prevent data loss. Press "OK" to continue.`);
                 return location.reload();
@@ -1403,7 +1655,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
 }
 
 export async function replaceCurrentChat() {
-    await clearChat({ clearData: true });
+    await clearChat({ clearData: true, discardPendingSave: true });
 
     const chatsResponse = await fetch('/api/characters/chats', {
         method: 'POST',
@@ -1577,16 +1829,71 @@ export function cancelDebouncedChatSave() {
         clearTimeout(chatSaveTimeout);
         chatSaveTimeout = null;
     }
+    pendingChatSaveContext = null;
+}
+
+/**
+ * Schedules a full chat snapshot for persistence.
+ * @param {ChatPersistenceContext|null} context Captured chat context
+ */
+export function scheduleChatPersistenceSave(context) {
+    if (!context) {
+        return;
+    }
+    if (chatSaveTimeout) {
+        clearTimeout(chatSaveTimeout);
+    }
+    pendingChatSaveContext = context;
+    chatSaveTimeout = setTimeout(() => {
+        chatSaveTimeout = null;
+        const pendingContext = pendingChatSaveContext;
+        pendingChatSaveContext = null;
+        if (pendingContext) {
+            saveChatPersistenceContext(pendingContext).catch(error => console.error('Error saving chat', error));
+        }
+    }, DEFAULT_SAVE_EDIT_TIMEOUT);
+}
+
+/**
+ * Flushes the pending chat snapshot and waits for every queued chat save.
+ * @returns {Promise<boolean>} Whether the latest save succeeded
+ */
+export async function flushPendingChatSave() {
+    if (chatSaveTimeout) {
+        clearTimeout(chatSaveTimeout);
+        chatSaveTimeout = null;
+    }
+    const pendingContext = pendingChatSaveContext;
+    pendingChatSaveContext = null;
+    if (pendingContext) {
+        const saved = await saveChatPersistenceContext(pendingContext);
+        if (!saved) {
+            return false;
+        }
+    }
+    return (await chatSaveQueue.wait()) !== false;
 }
 
 /**
  * Visually removes all chat message elements.
  * @param {object} [options] Options
  * @param {boolean} [options.clearData=false] Optionally clear the chat array's contents.
+ * @param {boolean} [options.discardPendingSave=false] Discard pending chat data because the server is authoritative or the chat was deleted.
+ * @param {boolean} [options.skipCharacterSave=false] Skip waiting for a character save already performing this internal UI refresh.
  */
-export async function clearChat({ clearData = false } = {}) {
-    cancelDebouncedChatSave();
-    cancelDebouncedMetadataSave();
+export async function clearChat({ clearData = false, discardPendingSave = false, skipCharacterSave = false } = {}) {
+    if (!skipCharacterSave) {
+        await flushPendingCharacterSave();
+    }
+    if (discardPendingSave) {
+        cancelDebouncedChatSave();
+        cancelDebouncedMetadataSave();
+    } else {
+        await flushDebouncedMetadataSave();
+        if (!await flushPendingChatSave()) {
+            throw new Error('Chat could not be saved before clearing it');
+        }
+    }
     closeMessageEditor();
     extension_prompts = {};
     if (is_delete_mode) {
@@ -1685,7 +1992,7 @@ export const reloadCurrentChat = reloadChatMutex.update.bind(reloadChatMutex);
  */
 export async function reloadCurrentChatUnsafe() {
     preserveNeutralChat();
-    await clearChat({ clearData: true });
+    await clearChat({ clearData: true, discardPendingSave: true });
 
     if (selected_group) {
         await getGroupChat(selected_group, true);
@@ -7345,6 +7652,8 @@ export async function renameCharacter(name = null, { silent = false, renameChats
         return false;
     }
 
+    await flushPendingCharacterSave();
+
     const oldAvatar = characters[this_chid].avatar;
     const newValue = name || await callGenericPopup('<h3>' + t`New name:` + '</h3>', POPUP_TYPE.INPUT, characters[this_chid].name);
 
@@ -7512,26 +7821,7 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
 }
 
 export function saveChatDebounced() {
-    const chid = this_chid;
-    const selectedGroup = selected_group;
-
-    cancelDebouncedChatSave();
-
-    chatSaveTimeout = setTimeout(async () => {
-        if (selectedGroup !== selected_group) {
-            console.warn('Chat save timeout triggered, but group changed. Aborting.');
-            return;
-        }
-
-        if (chid !== this_chid) {
-            console.warn('Chat save timeout triggered, but chid changed. Aborting.');
-            return;
-        }
-
-        console.debug('Chat save timeout triggered');
-        await saveChatConditional();
-        console.debug('Chat saved');
-    }, DEFAULT_SAVE_EDIT_TIMEOUT);
+    scheduleChatPersistenceSave(captureChatPersistenceContext());
 }
 
 /**
@@ -7542,11 +7832,13 @@ export function saveChatDebounced() {
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
  * @param {ChatMessage[]} [options.chatData] Chat snapshot to save instead of the current in-memory chat
+ * @param {ChatPersistenceContext} [options.persistenceContext] Explicit captured chat context
  *
- * @returns {Promise<void>}
+ * @returns {Promise<boolean|void>} Whether the chat was saved
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false, chatData = undefined } = {}) {
-    if (selected_group) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, chatData = undefined, persistenceContext = undefined } = {}) {
+    const context = persistenceContext ?? captureChatPersistenceContext();
+    if (context?.type === 'group' || (!context && selected_group)) {
         toastr.error(t`Operation was aborted to prevent data corruption.`, t`saveChat called for a group chat`);
         throw new Error('saveChat called for a group chat');
     }
@@ -7556,8 +7848,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         [chatName, withMetadata, mesId, force] = arguments;
     }
 
-    const metadata = { ...chat_metadata, ...(withMetadata || {}) };
-    const fileName = chatName ?? characters[this_chid]?.chat;
+    const metadata = { ...(context?.metadata ?? chat_metadata), ...(withMetadata || {}) };
+    const fileName = chatName ?? context?.chatId ?? characters[this_chid]?.chat;
 
     if (!fileName && name2 === neutralCharacterName) {
         // TODO: Do something for a temporary chat with no character.
@@ -7569,13 +7861,18 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         return;
     }
 
-    characters[this_chid].date_last_chat = Date.now();
+    const character = context?.avatarUrl
+        ? characters.find(item => item.avatar === context.avatarUrl)
+        : characters[this_chid];
+    if (character) {
+        character.date_last_chat = Date.now();
+    }
 
     const trimmedChat = Array.isArray(chatData)
         ? chatData
-        : (mesId !== undefined && mesId >= 0 && mesId < chat.length)
-            ? chat.slice(0, Number(mesId) + 1)
-            : chat.slice();
+        : (mesId !== undefined && mesId >= 0 && mesId < (context?.chatData?.length ?? chat.length))
+            ? (context?.chatData ?? chat).slice(0, Number(mesId) + 1)
+            : (context?.chatData ?? chat).slice();
 
     /** @type {ChatHeader} */
     const chatHeader = {
@@ -7590,17 +7887,17 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
             cache: 'no-cache',
             headers: getRequestHeaders(),
             body: JSON.stringify({
-                ch_name: characters[this_chid].name,
+                ch_name: context?.characterName ?? character?.name,
                 file_name: fileName,
                 chat: [chatHeader, ...trimmedChat],
-                avatar_url: characters[this_chid].avatar,
+                avatar_url: context?.avatarUrl ?? character?.avatar,
                 force: force,
             }),
         });
         const result = await fetch('/api/chats/save', saveChatRequest);
 
         if (result.ok) {
-            return;
+            return true;
         }
 
         const errorData = await result.json();
@@ -7622,13 +7919,14 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         if (!forceSaveConfirmed) {
             console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
             window.location.reload();
-            return;
+            return false;
         }
 
-        await saveChat({ chatName, withMetadata, mesId, force: true });
+        return await saveChat({ chatName, withMetadata, mesId, force: true, chatData, persistenceContext: context });
     } catch (error) {
         console.error(error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+        return false;
     }
 }
 
@@ -7895,7 +8193,6 @@ function getFirstMessage() {
 }
 
 export async function openCharacterChat(file_name) {
-    await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     await clearChat({ clearData: true });
     characters[this_chid].chat = file_name;
     chat_metadata = {};
@@ -8247,24 +8544,34 @@ export async function saveSettings(loopCounter = 0) {
     };
 
     try {
-        const saveSettingsRequest = await compressRequest({
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(payload),
-            cache: 'no-cache',
+        // Serialize at invocation time so queued writes cannot observe later object mutations.
+        const payloadJson = JSON.stringify(payload);
+        const payloadSnapshot = JSON.parse(payloadJson);
+        await settingsSaveQueue.enqueue(async () => {
+            const saveSettingsRequest = await compressRequest({
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: payloadJson,
+                cache: 'no-cache',
+            });
+            const result = await fetch('/api/settings/save', saveSettingsRequest);
+
+            if (!result.ok) {
+                throw new Error(`Failed to save settings: ${result.statusText}`);
+            }
+
+            settings = payloadSnapshot;
+            return true;
         });
-        const result = await fetch('/api/settings/save', saveSettingsRequest);
-
-        if (!result.ok) {
-            throw new Error(`Failed to save settings: ${result.statusText}`);
-        }
-
-        settings = payload;
-        await eventSource.emit(event_types.SETTINGS_UPDATED);
     } catch (error) {
         console.error('Error saving settings:', error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Settings could not be saved`);
+        return false;
     }
+
+    // Emit after releasing the network queue so listeners may safely await saveSettings().
+    await eventSource.emit(event_types.SETTINGS_UPDATED);
+    return true;
 }
 
 /**
@@ -9561,33 +9868,48 @@ export async function saveMetadata() {
     return await saveChatConditional();
 }
 
-export async function saveChatConditional() {
-    try {
-        await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
-    } catch {
-        console.warn('Timeout waiting for chat to save');
-        return;
+/**
+ * Persists an explicit chat snapshot in invocation order without consulting the active UI context.
+ * @param {ChatPersistenceContext} context Captured chat context
+ * @param {object} [options] Save options
+ * @param {boolean} [options.force=false] Force overwrite after an integrity mismatch
+ * @param {boolean} [options.saveGroup=false] Persist updated group metadata as part of a normal active-chat save
+ * @returns {Promise<boolean>} Whether the snapshot was saved
+ */
+export async function saveChatPersistenceContext(context, { force = false, saveGroup = false } = {}) {
+    if (!context) {
+        return true;
     }
-
-    try {
-        cancelDebouncedChatSave();
-
+    const snapshot = cloneForPersistence(context);
+    latestChatPersistenceContexts.accept(snapshot.key, snapshot);
+    return await chatSaveQueue.enqueue(async () => {
+        activeChatSaveCount++;
         isChatSaving = true;
-
-        if (selected_group) {
-            await saveGroupChat(selected_group, true);
-        } else {
-            await saveChat();
+        try {
+            if (snapshot.type === 'group') {
+                return await saveGroupChat(snapshot.groupId, saveGroup, force, snapshot) !== false;
+            }
+            return await saveChat({ force, persistenceContext: snapshot }) !== false;
+        } catch (error) {
+            console.error('Error saving chat', error);
+            return false;
+        } finally {
+            activeChatSaveCount--;
+            isChatSaving = activeChatSaveCount > 0;
         }
+    });
+}
 
+export async function saveChatConditional() {
+    cancelDebouncedChatSave();
+    const context = captureChatPersistenceContext();
+    const saved = await saveChatPersistenceContext(context, { saveGroup: true });
+    if (saved && context) {
         // Save token and prompts cache to IndexedDB storage
         saveTokenCache();
-        saveItemizedPrompts(getCurrentChatId());
-    } catch (error) {
-        console.error('Error saving chat', error);
-    } finally {
-        isChatSaving = false;
+        saveItemizedPrompts(context.chatId);
     }
+    return saved;
 }
 
 /**
@@ -9896,59 +10218,71 @@ function addAlternateGreeting(template, greeting, index, getArray, popup) {
 /**
  * Creates or edits a character based on the form data.
  * @param {Event} [e] Event that triggered the function call.
+ * @returns {Promise<boolean>} Whether the character was saved
  */
 export async function createOrEditCharacter(e) {
     if (!settingsReady) {
         console.warn('Settings not ready, aborting character creation/editing.');
-        return;
+        return false;
     }
 
+    const request = captureCharacterSaveRequest(e);
+    if (!request) {
+        return false;
+    }
     $('#rm_info_avatar').html('');
-    const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
-    formData.set('fav', String(fav_ch_checked));
-    const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
-
-    const rawFile = formData.get('avatar');
-    if (rawFile instanceof File) {
-        const convertedFile = await ensureImageFormatSupported(rawFile);
-        formData.set('avatar', convertedFile);
+    const pendingRequest = takePendingCharacterSaveRequest();
+    if (pendingRequest && getCharacterSaveRequestKey(pendingRequest) !== getCharacterSaveRequestKey(request)) {
+        enqueueCharacterSaveRequest(pendingRequest).catch(error => console.error('Error saving previous character', error));
     }
+    return await enqueueCharacterSaveRequest(request);
+}
 
-    const headers = getRequestHeaders({ omitContentType: true });
+/**
+ * Persists a previously captured character form without consulting the active editor for request data.
+ * @param {CharacterSaveRequest} request Captured character save request
+ * @returns {Promise<boolean>} Whether the character was saved
+ */
+async function performCharacterSaveRequest(request) {
+    const { actionType, formData, isNewChat } = request;
 
-    if ($('#form_create').attr('actiontype') == 'createcharacter') {
-        if (String($('#character_name_pole').val()).length === 0) {
-            toastr.error(t`Name is required`);
-            return;
+    try {
+        const rawFile = formData.get('avatar');
+        if (rawFile instanceof File) {
+            const convertedFile = await ensureImageFormatSupported(rawFile);
+            formData.set('avatar', convertedFile);
         }
-        if (is_group_generating || is_send_press) {
-            toastr.error(t`Cannot create characters while generating. Stop the request and try again.`, t`Creation aborted`);
-            return;
-        }
-        try {
-            //if the character name text area isn't empty (only posible when creating a new character)
+
+        const headers = getRequestHeaders({ omitContentType: true });
+        if (actionType === 'createcharacter') {
+            if (String(formData.get('ch_name') ?? '').length === 0) {
+                toastr.error(t`Name is required`);
+                return false;
+            }
+            if (is_group_generating || is_send_press) {
+                toastr.error(t`Cannot create characters while generating. Stop the request and try again.`, t`Creation aborted`);
+                return false;
+            }
+
             let url = '/api/characters/create';
-
-            if (crop_data != undefined) {
-                url += `?crop=${encodeURIComponent(JSON.stringify(crop_data))}`;
+            if (request.cropData !== undefined) {
+                url += `?crop=${encodeURIComponent(JSON.stringify(request.cropData))}`;
             }
 
             formData.delete('alternate_greetings');
-            for (const value of create_save.alternate_greetings) {
+            for (const value of request.alternateGreetings) {
                 formData.append('alternate_greetings', value);
             }
-
-            formData.append('extensions', JSON.stringify(create_save.extensions));
+            formData.set('extensions', JSON.stringify(request.extensions));
 
             const fetchResult = await fetch(url, {
                 method: 'POST',
-                headers: headers,
+                headers,
                 body: formData,
                 cache: 'no-cache',
             });
-
             if (!fetchResult.ok) {
-                throw new Error('Fetch result is not ok');
+                throw new Error(`Character creation failed with status ${fetchResult.status}`);
             }
 
             const avatarId = await fetchResult.text();
@@ -9983,98 +10317,93 @@ export async function createOrEditCharacter(e) {
                 field.callback && field.callback(fieldValue);
             });
 
-            if (Array.isArray(create_save.extra_books) && create_save.extra_books.length > 0) {
+            if (request.extraBooks.length > 0) {
                 const fileName = getCharaFilename(null, { manualAvatarKey: avatarId });
                 const charLore = world_info.charLore ?? [];
-                charLore.push({ name: fileName, extraBooks: create_save.extra_books });
-                Object.assign(world_info, { charLore: charLore });
+                charLore.push({ name: fileName, extraBooks: request.extraBooks });
+                Object.assign(world_info, { charLore });
                 saveSettingsDebounced();
             }
             create_save.extra_books = [];
 
             $('#character_popup-button-h3').text('Create character');
-
             create_save.avatar = null;
+            $('#add_avatar_button').replaceWith($('#add_avatar_button').val('').clone(true));
 
-            $('#add_avatar_button').replaceWith(
-                $('#add_avatar_button').val('').clone(true),
-            );
-
-            let oldSelectedChar = null;
-            if (this_chid !== undefined) {
-                oldSelectedChar = characters[this_chid].avatar;
-            }
-
+            const oldSelectedChar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
             console.log(`new avatar id: ${avatarId}`);
             createTagMapFromList('#tagList', avatarId);
             await getCharacters();
-
             select_rm_info('char_create', avatarId, oldSelectedChar);
 
-            crop_data = undefined;
-        } catch (error) {
-            console.error('Error creating character', error);
-            toastr.error(t`Failed to create character`);
+            if (crop_data === request.cropDataSource) {
+                crop_data = undefined;
+            }
+            return true;
         }
-    } else {
-        try {
-            let url = '/api/characters/edit';
 
-            if (crop_data != undefined) {
-                url += `?crop=${encodeURIComponent(JSON.stringify(crop_data))}`;
-            }
+        let url = '/api/characters/edit';
+        if (request.cropData !== undefined) {
+            url += `?crop=${encodeURIComponent(JSON.stringify(request.cropData))}`;
+        }
 
-            formData.delete('alternate_greetings');
-            const chid = $('.open_alternate_greetings').data('chid');
-            if (characters[chid] && Array.isArray(characters[chid]?.data?.alternate_greetings)) {
-                for (const value of characters[chid].data.alternate_greetings) {
-                    formData.append('alternate_greetings', value);
-                }
-            }
+        formData.delete('alternate_greetings');
+        for (const value of request.alternateGreetings) {
+            formData.append('alternate_greetings', value);
+        }
 
-            const fetchResult = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: formData,
-                cache: 'no-cache',
-            });
+        const fetchResult = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: formData,
+            cache: 'no-cache',
+        });
+        if (!fetchResult.ok) {
+            throw new Error(`Character edit failed with status ${fetchResult.status}`);
+        }
 
-            if (!fetchResult.ok) {
-                throw new Error('Fetch result is not ok');
-            }
+        await getOneCharacter(request.avatarUrl);
+        favsToHotswap(); // Update fav state
 
-            await getOneCharacter(formData.get('avatar_url'));
-            favsToHotswap(); // Update fav state
-
-            $('#add_avatar_button').replaceWith(
-                $('#add_avatar_button').val('').clone(true),
-            );
-            $('#create_button').attr('value', 'Save');
+        $('#add_avatar_button').replaceWith($('#add_avatar_button').val('').clone(true));
+        $('#create_button').attr('value', 'Save');
+        if (crop_data === request.cropDataSource) {
             crop_data = undefined;
-            await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: this_chid, character: characters[this_chid] } });
+        }
 
-            // Recreate the chat if it hasn't been used at least once (i.e. with continue).
-            const message = getFirstMessage();
-            const shouldRegenerateMessage =
-                !isNewChat &&
-                message.mes &&
-                !selected_group &&
-                !chat_metadata.tainted &&
-                (chat.length === 0 || (chat.length === 1 && !chat[0].is_user && !chat[0].is_system));
+        const savedCharacterId = characters.findIndex(character => character.avatar === request.avatarUrl);
+        const savedCharacter = characters[savedCharacterId];
+        await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: savedCharacterId, character: savedCharacter } });
 
-            if (shouldRegenerateMessage) {
-                chat.splice(0, chat.length, message);
-                const messageId = (chat.length - 1);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
-                await clearChat();
-                await printMessages();
-                await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
-                await saveChatConditional();
-            }
-        } catch (error) {
-            console.log(error);
+        // Only regenerate a greeting when the saved character still owns the active chat.
+        const isSavedCharacterActive = savedCharacterId !== -1 && String(this_chid) === String(savedCharacterId);
+        const message = isSavedCharacterActive ? getFirstMessage() : null;
+        const shouldRegenerateMessage =
+            isSavedCharacterActive &&
+            !isNewChat &&
+            message?.mes &&
+            !selected_group &&
+            !chat_metadata.tainted &&
+            (chat.length === 0 || (chat.length === 1 && !chat[0].is_user && !chat[0].is_system));
+
+        if (shouldRegenerateMessage) {
+            chat.splice(0, chat.length, message);
+            const messageId = chat.length - 1;
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+            await clearChat({ skipCharacterSave: true });
+            await printMessages();
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
+            await saveChatConditional();
+        }
+        return true;
+    } catch (error) {
+        console.error('Error saving character', error);
+        if (actionType === 'createcharacter') {
+            toastr.error(t`Failed to create character`);
+        } else {
             toastr.error(t`Something went wrong while saving the character, or the image file provided was in an invalid format. Double check that the image is not a webp.`);
         }
+        return false;
     }
 }
 
@@ -10774,7 +11103,6 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
     }
 
     //Fix it; New chat doesn't create while open create character menu
-    await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     await clearChat({ clearData: true });
 
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
@@ -10897,7 +11225,6 @@ export async function renameChat(oldFileName, newName) {
  */
 export async function closeCurrentChat() {
     if (is_send_press == false) {
-        await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
         await clearChat({ clearData: true });
         resetSelectedGroup();
         setCharacterId(undefined);
@@ -11054,7 +11381,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
  */
 async function removeCharacterFromUI() {
     preserveNeutralChat();
-    await clearChat();
+    await clearChat({ discardPendingSave: true });
     $('#character_cross').trigger('click');
     resetChatState();
     $(document.getElementById('rm_button_selected_ch')).children('h2').text('');
@@ -11327,11 +11654,13 @@ jQuery(async function () {
         selected_button = 'characters';
         select_rm_characters();
     });
-    $('#rm_button_create').on('click', function () {
+    $('#rm_button_create').on('click', async function () {
+        await flushPendingCharacterSave();
         selected_button = 'create';
         select_rm_create();
     });
-    $('#rm_button_selected_ch').on('click', function () {
+    $('#rm_button_selected_ch').on('click', async function () {
+        await flushPendingCharacterSave();
         if (selected_group) {
             select_group_chats(selected_group, false);
         } else {

@@ -49,7 +49,10 @@ export function createChatActionRegistry({
         saveGroupMetadata,
         updateGroupMetadata,
         deleteGroupMetadata,
-        saveModernChat,
+        updateModernChat,
+        runModernChatFileOperation,
+        renameModernChatFile,
+        deleteModernChatFile,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
         createModernChatFile,
@@ -84,6 +87,8 @@ export function createChatActionRegistry({
         updateGroupMetadata,
         moveChatReadState,
         deleteChatReadState,
+        renameModernChatFile,
+        deleteModernChatFile,
     });
     const { closeChatBackups } = chatFileActions;
 
@@ -96,7 +101,8 @@ export function createChatActionRegistry({
         getSelectedChatMessages,
         getCurrentDraftKey,
         getChatCacheKey,
-        saveModernChat,
+        isGroupChatMode,
+        updateModernChat,
         refreshSelectedChatList,
     });
 
@@ -117,6 +123,7 @@ export function createChatActionRegistry({
         loadChatMessages,
         refreshSelectedChatList,
         createModernChatFile,
+        runModernChatFileOperation,
     });
 
     const groupActions = createGroupActions({

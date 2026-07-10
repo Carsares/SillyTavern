@@ -380,12 +380,74 @@ export function createChatContextActions({
         await refreshCachedChatLists({ quiet: true });
     }
 
-    async function saveModernChat(entity, chatId, messages, { groupMode = isGroupChatMode() } = {}) {
+    const chatFileOperationQueues = new Map();
+    const chatFileOperationBarriers = new Map();
+
+    function getChatFileOperationTarget(contextKey, chatId) {
+        const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
+        return {
+            chatId: normalizedChatId,
+            key: contextKey && normalizedChatId ? getChatCacheKey(contextKey, normalizedChatId) : '',
+        };
+    }
+
+    async function queueChatFileOperation(key, operation) {
+        const previousOperation = chatFileOperationQueues.get(key) || Promise.resolve();
+        const currentOperation = previousOperation.catch(() => {}).then(operation);
+        chatFileOperationQueues.set(key, currentOperation);
+
+        try {
+            return await currentOperation;
+        } finally {
+            if (chatFileOperationQueues.get(key) === currentOperation) {
+                chatFileOperationQueues.delete(key);
+            }
+        }
+    }
+
+    async function runModernChatFileOperation(entity, chatId, operation, { groupMode = isGroupChatMode() } = {}) {
         const contextKey = getChatContextKey(entity, groupMode);
-        if (!contextKey || !chatId) {
+        const target = getChatFileOperationTarget(contextKey, chatId);
+        if (!target.key || typeof operation !== 'function') {
             throw new Error(groupMode ? '缺少群聊或聊天文件' : '缺少角色或聊天文件');
         }
+        if (chatFileOperationBarriers.has(target.key)) {
+            throw new Error('聊天文件已删除、重命名或正在变更，无法继续保存。');
+        }
 
+        // Accept the operation before entering the queue. A later delete/rename waits for it, while newer saves are rejected by the barrier.
+        return queueChatFileOperation(target.key, () => operation({ contextKey, chatId: target.chatId }));
+    }
+
+    async function changeModernChatFile(contextKey, chatId, change, operation) {
+        const target = getChatFileOperationTarget(contextKey, chatId);
+        if (!target.key || typeof operation !== 'function') {
+            throw new Error('聊天文件变更目标无效。');
+        }
+        if (chatFileOperationBarriers.has(target.key)) {
+            throw new Error('聊天文件已删除、重命名或正在变更。');
+        }
+
+        // Install the barrier before waiting for previously accepted saves/generation work.
+        chatFileOperationBarriers.set(target.key, `${change}中`);
+        let confirmedUnchanged = false;
+        try {
+            const result = await queueChatFileOperation(target.key, () => operation({
+                confirmUnchanged: () => {
+                    confirmedUnchanged = true;
+                },
+            }));
+            chatFileOperationBarriers.set(target.key, `${change}完成`);
+            return result;
+        } catch (error) {
+            if (confirmedUnchanged) {
+                chatFileOperationBarriers.delete(target.key);
+            }
+            throw error;
+        }
+    }
+
+    async function saveModernChatNow(entity, chatId, messages, { contextKey, groupMode }) {
         const metadata = getSelectedChatMetadata(entity, chatId, groupMode);
         const chat = [
             { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
@@ -408,6 +470,35 @@ export function createChatContextActions({
 
         state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
         markChatRead(entity, chatId, messages, groupMode);
+    }
+
+    async function saveModernChat(entity, chatId, messages, { groupMode = isGroupChatMode() } = {}) {
+        const nextMessages = structuredClone(messages);
+        return runModernChatFileOperation(entity, chatId, ({ contextKey, chatId: normalizedChatId }) => {
+            return saveModernChatNow(entity, normalizedChatId, nextMessages, { contextKey, groupMode });
+        }, { groupMode });
+    }
+
+    async function updateModernChat(entity, chatId, updateMessages, { groupMode = isGroupChatMode() } = {}) {
+        if (typeof updateMessages !== 'function') {
+            throw new Error('聊天消息更新方法无效。');
+        }
+
+        return runModernChatFileOperation(entity, chatId, async ({ contextKey, chatId: normalizedChatId }) => {
+            const cacheKey = getChatCacheKey(contextKey, normalizedChatId);
+            const messages = structuredClone(state.chatMessages[cacheKey] || []);
+            const result = await updateMessages(messages);
+            await saveModernChatNow(entity, normalizedChatId, messages, { contextKey, groupMode });
+            return result;
+        }, { groupMode });
+    }
+
+    function renameModernChatFile(contextKey, chatId, operation) {
+        return changeModernChatFile(contextKey, chatId, '重命名', operation);
+    }
+
+    function deleteModernChatFile(contextKey, chatId, operation) {
+        return changeModernChatFile(contextKey, chatId, '删除', operation);
     }
 
     const chatFileCreationPromises = new Map();
@@ -550,6 +641,10 @@ export function createChatContextActions({
         updateGroupMetadata,
         deleteGroupMetadata,
         saveModernChat,
+        updateModernChat,
+        runModernChatFileOperation,
+        renameModernChatFile,
+        deleteModernChatFile,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
         createModernChatFile,

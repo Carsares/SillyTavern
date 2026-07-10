@@ -17,6 +17,9 @@ import {
     ensurePublicDirectoriesExist,
 } from '../users.js';
 import { DEFAULT_USER } from '../constants.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
+
+const USER_CREATE_QUEUE = new KeyedPromiseQueue();
 
 export const router = express.Router();
 
@@ -177,7 +180,6 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Missing required fields' });
         }
 
-        const handles = await getAllUserHandles();
         const handle = slugify(request.body.handle);
 
         if (!handle) {
@@ -185,32 +187,35 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Invalid handle' });
         }
 
-        if (handles.some(x => x === handle)) {
-            console.warn('Create user failed: User with that handle already exists');
-            return response.status(409).json({ error: 'User already exists' });
-        }
+        return await USER_CREATE_QUEUE.run(handle, async () => {
+            const handles = await getAllUserHandles();
+            if (handles.some(x => x === handle)) {
+                console.warn('Create user failed: User with that handle already exists');
+                return response.status(409).json({ error: 'User already exists' });
+            }
 
-        const salt = getPasswordSalt();
-        const password = request.body.password ? getPasswordHash(request.body.password, salt) : '';
+            const salt = getPasswordSalt();
+            const password = request.body.password ? getPasswordHash(request.body.password, salt) : '';
 
-        const newUser = {
-            handle: handle,
-            name: request.body.name || 'Anonymous',
-            created: Date.now(),
-            password: password,
-            salt: salt,
-            admin: !!request.body.admin,
-            enabled: true,
-        };
+            const newUser = {
+                handle: handle,
+                name: request.body.name || 'Anonymous',
+                created: Date.now(),
+                password: password,
+                salt: salt,
+                admin: !!request.body.admin,
+                enabled: true,
+            };
 
-        await storage.setItem(toKey(handle), newUser);
+            await storage.setItem(toKey(handle), newUser);
 
-        // Create user directories
-        console.info('Creating data directories for', newUser.handle);
-        await ensurePublicDirectoriesExist();
-        const directories = getUserDirectories(newUser.handle);
-        await checkForNewContent([directories], [CONTENT_TYPES.SETTINGS]);
-        return response.json({ handle: newUser.handle });
+            // Create user directories
+            console.info('Creating data directories for', newUser.handle);
+            await ensurePublicDirectoriesExist();
+            const directories = getUserDirectories(newUser.handle);
+            await checkForNewContent([directories], [CONTENT_TYPES.SETTINGS]);
+            return response.json({ handle: newUser.handle });
+        });
     } catch (error) {
         console.error('User create failed:', error);
         return response.sendStatus(500);

@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
+import sanitize from 'sanitize-filename';
 import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 function clone(value) {
@@ -38,6 +39,13 @@ function backgroundPathToFilename(path) {
 
 function createAssetFixture() {
     const fixture = createModernResourceFixture({
+        settings: {
+            background: {
+                name: 'uploaded-bg.png',
+                url: 'url("backgrounds/uploaded-bg.png")',
+                fitting: 'classic',
+            },
+        },
         backgrounds: {
             images: [
                 { filename: 'castle.png', isAnimated: false },
@@ -167,8 +175,9 @@ async function mockModernAssetsWorkspace(page) {
     await page.route('**/api/backgrounds/rename', route => {
         const payload = route.request().postDataJSON();
         requests.backgroundRenames.push(clone(payload));
-        renameBackgroundInFixture(fixture, payload.old_bg, payload.new_bg);
-        return fulfillJson(route, { ok: true });
+        const name = sanitize(payload.new_bg);
+        renameBackgroundInFixture(fixture, payload.old_bg, name);
+        return fulfillJson(route, { name });
     });
 
     await page.route('**/api/backgrounds/delete', route => {
@@ -276,16 +285,22 @@ test.describe('Modern assets page', () => {
         await expect(page.locator('.background-card', { hasText: 'uploaded-bg.png' })).toBeVisible();
 
         await page.locator('.background-card', { hasText: 'uploaded-bg.png' }).locator('[data-background-rename]').click();
-        await page.locator('[data-background-rename-input]').fill('renamed-upload.png');
+        await page.locator('[data-background-rename-input]').fill('folder/renamed-upload.png');
         await page.locator('[data-confirm-background-rename]').click();
 
         await expect.poll(() => requests.backgroundRenames.length).toBe(1);
         expect(requests.backgroundRenames[0]).toEqual({
             old_bg: 'uploaded-bg.png',
-            new_bg: 'renamed-upload.png',
+            new_bg: 'folder/renamed-upload.png',
+        });
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].background).toEqual({
+            name: 'folderrenamed-upload.png',
+            url: 'url("backgrounds/folderrenamed-upload.png")',
+            fitting: 'classic',
         });
         await expect(page.locator('.background-card', { hasText: 'uploaded-bg.png' })).toHaveCount(0);
-        await expect(page.locator('.background-card', { hasText: 'renamed-upload.png' })).toBeVisible();
+        await expect(page.locator('.background-card', { hasText: 'folderrenamed-upload.png' })).toBeVisible();
 
         await page.locator('[data-toggle-background-selection]').click();
         await page.locator('[data-background-select="city.png"]').check();
@@ -298,7 +313,7 @@ test.describe('Modern assets page', () => {
         expect(requests.backgroundDeletes).toEqual([{ bg: 'city.png' }, { bg: 'forest.webp' }]);
         await expect(page.locator('.background-card', { hasText: 'city.png' })).toHaveCount(0);
         await expect(page.locator('.background-card', { hasText: 'forest.webp' })).toHaveCount(0);
-        await expect(page.locator('.background-card', { hasText: 'renamed-upload.png' })).toBeVisible();
+        await expect(page.locator('.background-card', { hasText: 'folderrenamed-upload.png' })).toBeVisible();
         await expect(page.locator('[data-background-select]')).toHaveCount(0);
     });
 

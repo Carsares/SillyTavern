@@ -13,7 +13,10 @@ export function createChatContextLoaderActions({
     sortChats,
     syncChatReadStateForList = () => {},
 }) {
-    async function loadCharacterChats(character, { force = false, quiet = false } = {}) {
+    const chatListLoadTokens = new Map();
+    const chatMessageLoadTokens = new Map();
+
+    async function loadCharacterChats(character, { force = false, quiet = false, isCurrent = () => true } = {}) {
         if (!character?.avatar) {
             return [];
         }
@@ -21,6 +24,8 @@ export function createChatContextLoaderActions({
             return state.chatLists[character.avatar];
         }
 
+        const loadToken = Symbol(character.avatar);
+        chatListLoadTokens.set(character.avatar, loadToken);
         state.loadingChats[character.avatar] = true;
         try {
             const result = await apiFetch('/api/characters/chats', {
@@ -30,11 +35,14 @@ export function createChatContextLoaderActions({
                 },
             });
             const chats = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
+            if (!isCurrent() || chatListLoadTokens.get(character.avatar) !== loadToken) {
+                return state.chatLists[character.avatar] || [];
+            }
             state.chatLists[character.avatar] = chats;
             syncChatReadStateForList(character.avatar, chats);
             return chats;
         } catch (error) {
-            if (!quiet) {
+            if (isCurrent() && chatListLoadTokens.get(character.avatar) === loadToken && !quiet) {
                 state.errors.push({ key: 'chats', message: error.message });
                 showToast('聊天列表读取失败', error.message);
                 state.chatLists[character.avatar] = [];
@@ -42,11 +50,14 @@ export function createChatContextLoaderActions({
             }
             return state.chatLists[character.avatar] || [];
         } finally {
-            state.loadingChats[character.avatar] = false;
+            if (chatListLoadTokens.get(character.avatar) === loadToken) {
+                chatListLoadTokens.delete(character.avatar);
+                state.loadingChats[character.avatar] = false;
+            }
         }
     }
 
-    async function loadGroupChats(group, { force = false, quiet = false } = {}) {
+    async function loadGroupChats(group, { force = false, quiet = false, isCurrent = () => true } = {}) {
         if (!group?.id) {
             return [];
         }
@@ -56,6 +67,8 @@ export function createChatContextLoaderActions({
             return state.chatLists[contextKey];
         }
 
+        const loadToken = Symbol(contextKey);
+        chatListLoadTokens.set(contextKey, loadToken);
         state.loadingChats[contextKey] = true;
         try {
             const result = await apiFetch('/api/chats/search', {
@@ -66,11 +79,14 @@ export function createChatContextLoaderActions({
                 },
             });
             const chats = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
+            if (!isCurrent() || chatListLoadTokens.get(contextKey) !== loadToken) {
+                return state.chatLists[contextKey] || [];
+            }
             state.chatLists[contextKey] = chats;
             syncChatReadStateForList(contextKey, chats);
             return chats;
         } catch (error) {
-            if (!quiet) {
+            if (isCurrent() && chatListLoadTokens.get(contextKey) === loadToken && !quiet) {
                 state.errors.push({ key: 'group-chats', message: error.message });
                 showToast('群聊列表读取失败', error.message);
                 state.chatLists[contextKey] = [];
@@ -78,7 +94,10 @@ export function createChatContextLoaderActions({
             }
             return state.chatLists[contextKey] || [];
         } finally {
-            state.loadingChats[contextKey] = false;
+            if (chatListLoadTokens.get(contextKey) === loadToken) {
+                chatListLoadTokens.delete(contextKey);
+                state.loadingChats[contextKey] = false;
+            }
         }
     }
 
@@ -138,7 +157,12 @@ export function createChatContextLoaderActions({
         }
     }
 
-    async function loadChatMessages(entity, chatId, { force = false, groupMode = isGroupChatMode(), isContextCurrent = () => true } = {}) {
+    async function loadChatMessages(entity, chatId, {
+        force = false,
+        groupMode = isGroupChatMode(),
+        isContextCurrent = () => true,
+        isLoadCurrent = () => true,
+    } = {}) {
         const contextKey = getChatContextKey(entity, groupMode);
         if (!contextKey || !chatId) {
             return [];
@@ -155,18 +179,15 @@ export function createChatContextLoaderActions({
             const countMatches = !knownChat || knownCount === cachedMessages.length;
             const timestampMatches = !knownLastMes || !cachedLastMes || knownLastMes === cachedLastMes;
             if (countMatches && timestampMatches) {
-                if (isContextCurrent()) {
+                if (isLoadCurrent() && isContextCurrent()) {
                     markChatRead(entity, normalizedChatId, cachedMessages);
                 }
                 return cachedMessages;
             }
         }
 
-        if (state.chatMessages[cacheKey]) {
-            delete state.chatMessages[cacheKey];
-            delete state.chatMetadata[cacheKey];
-        }
-
+        const loadToken = Symbol(cacheKey);
+        chatMessageLoadTokens.set(cacheKey, loadToken);
         try {
             const result = groupMode
                 ? await apiFetch('/api/chats/group/get', { body: { id: normalizedChatId } })
@@ -177,6 +198,9 @@ export function createChatContextLoaderActions({
                         avatar_url: entity.avatar,
                     },
                 });
+            if (!isLoadCurrent() || chatMessageLoadTokens.get(cacheKey) !== loadToken) {
+                return state.chatMessages[cacheKey] || [];
+            }
             const header = Array.isArray(result) ? result.find(message => message && message.chat_metadata) : null;
             const messages = Array.isArray(result) ? result.filter(message => message && !message.chat_metadata) : [];
             state.chatMetadata[cacheKey] = header?.chat_metadata || {};
@@ -186,11 +210,19 @@ export function createChatContextLoaderActions({
             }
             return state.chatMessages[cacheKey];
         } catch (error) {
-            if (isContextCurrent()) {
-                state.errors.push({ key: 'chat', message: error.message });
-                showToast('聊天记录读取失败', error.message);
+            if (isLoadCurrent() && chatMessageLoadTokens.get(cacheKey) === loadToken) {
+                delete state.chatMessages[cacheKey];
+                delete state.chatMetadata[cacheKey];
+                if (isContextCurrent()) {
+                    state.errors.push({ key: 'chat', message: error.message });
+                    showToast('聊天记录读取失败', error.message);
+                }
             }
             return [];
+        } finally {
+            if (chatMessageLoadTokens.get(cacheKey) === loadToken) {
+                chatMessageLoadTokens.delete(cacheKey);
+            }
         }
     }
 
@@ -204,7 +236,7 @@ export function createChatContextLoaderActions({
         state.selected.chat = getChatId(chats[0]) || '';
     }
 
-    async function prepareChatForSelectedContext({ forceList = false, quiet = false } = {}) {
+    async function prepareChatForSelectedContext({ forceList = false, quiet = false, isCurrent = () => true } = {}) {
         const groupMode = isGroupChatMode();
         const entity = getSelectedChatEntity();
         const contextKey = getChatContextKey(entity, groupMode);
@@ -212,8 +244,10 @@ export function createChatContextLoaderActions({
             return;
         }
 
-        const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
-        const chats = groupMode ? await loadGroupChats(entity, { force: forceList, quiet }) : await loadCharacterChats(entity, { force: forceList, quiet });
+        const isContextCurrent = () => isCurrent() && isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
+        const chats = groupMode
+            ? await loadGroupChats(entity, { force: forceList, quiet, isCurrent })
+            : await loadCharacterChats(entity, { force: forceList, quiet, isCurrent });
         // A slower request for an old context must not replace the newer selection.
         if (!isContextCurrent()) {
             return;
@@ -221,7 +255,7 @@ export function createChatContextLoaderActions({
 
         useFirstAvailableChat(chats);
 
-        await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
+        await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent, isLoadCurrent: isCurrent });
     }
 
     async function refreshSelectedChatList(entity, { quiet = false, groupMode = isGroupChatMode() } = {}) {
