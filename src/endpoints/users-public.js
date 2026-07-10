@@ -65,14 +65,16 @@ router.post('/login', async (request, response) => {
             return response.status(400).json({ error: 'Missing required fields' });
         }
 
+        const handle = String(request.body.handle);
         const ip = getIpAddress(request, PREFER_REAL_IP_HEADER);
-        await loginLimiter.consume(ip);
+        const rateLimitKey = JSON.stringify([ip, handle]);
+        await loginLimiter.consume(rateLimitKey);
 
         /** @type {import('../users.js').User} */
-        const user = await storage.getItem(toKey(request.body.handle));
+        const user = await storage.getItem(toKey(handle));
 
         if (!user) {
-            console.error('Login failed: User', request.body.handle, 'not found');
+            console.error('Login failed: User', handle, 'not found');
             return response.status(403).json({ error: 'Incorrect credentials' });
         }
 
@@ -91,7 +93,7 @@ router.post('/login', async (request, response) => {
             return response.sendStatus(500);
         }
 
-        await loginLimiter.delete(ip);
+        await loginLimiter.delete(rateLimitKey);
         request.session.handle = user.handle;
         request.session.version = getAccountVersion(user);
         console.info('Login successful:', user.handle, 'from', ip, 'at', new Date().toLocaleString());

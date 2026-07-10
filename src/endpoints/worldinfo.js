@@ -6,6 +6,7 @@ import sanitize from 'sanitize-filename';
 import _ from 'lodash';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { tryParse } from '../util.js';
+import { removeUploadedFile } from '../middleware/uploadCleanup.js';
 
 /**
  * Reads a World Info file and returns its contents
@@ -100,35 +101,32 @@ router.post('/import', (request, response) => {
     if (!request.file) return response.sendStatus(400);
 
     const filename = `${path.parse(sanitize(request.file.originalname)).name}.json`;
-
-    let fileContents = null;
-
-    if (request.body.convertedData) {
-        fileContents = request.body.convertedData;
-    } else {
-        const pathToUpload = path.join(request.file.destination, request.file.filename);
-        fileContents = fs.readFileSync(pathToUpload, 'utf8');
-        fs.unlinkSync(pathToUpload);
-    }
+    const pathToUpload = path.join(request.file.destination, request.file.filename);
 
     try {
-        const worldContent = JSON.parse(fileContents);
-        if (!('entries' in worldContent)) {
-            throw new Error('File must contain a world info entries list');
+        const fileContents = request.body.convertedData || fs.readFileSync(pathToUpload, 'utf8');
+
+        try {
+            const worldContent = JSON.parse(fileContents);
+            if (!('entries' in worldContent)) {
+                throw new Error('File must contain a world info entries list');
+            }
+        } catch (err) {
+            return response.status(400).send('Is not a valid world info file');
         }
-    } catch (err) {
-        return response.status(400).send('Is not a valid world info file');
+
+        const pathToNewFile = path.join(request.user.directories.worlds, filename);
+        const worldName = path.parse(pathToNewFile).name;
+
+        if (!worldName) {
+            return response.status(400).send('World file must have a name');
+        }
+
+        writeFileAtomicSync(pathToNewFile, fileContents);
+        return response.send({ name: worldName });
+    } finally {
+        removeUploadedFile(request);
     }
-
-    const pathToNewFile = path.join(request.user.directories.worlds, filename);
-    const worldName = path.parse(pathToNewFile).name;
-
-    if (!worldName) {
-        return response.status(400).send('World file must have a name');
-    }
-
-    writeFileAtomicSync(pathToNewFile, fileContents);
-    return response.send({ name: worldName });
 });
 
 router.post('/edit', (request, response) => {

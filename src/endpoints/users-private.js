@@ -164,7 +164,15 @@ router.post('/backup', async (request, response) => {
             return response.status(403).json({ error: 'Unauthorized' });
         }
 
-        await createBackupArchive(handle, response);
+        /** @type {import('../users.js').User} */
+        const user = await storage.getItem(toKey(handle));
+
+        if (!user) {
+            console.error('Backup failed: User not found');
+            return response.status(404).json({ error: 'User not found' });
+        }
+
+        await createBackupArchive(user.handle, response);
     } catch (error) {
         console.error('Backup failed', error);
         return response.sendStatus(500);

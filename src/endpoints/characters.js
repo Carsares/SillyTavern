@@ -34,6 +34,7 @@ const isAndroid = process.platform === 'android';
 // Use shallow character data for the character list
 const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', false, 'boolean');
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
+const MAX_FILENAME_BYTES = 255;
 
 class DiskCache {
     /**
@@ -1061,6 +1062,10 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     const newInternalName = getPngName(newName, request.user.directories);
     const newAvatarName = `${newInternalName}.png`;
 
+    if (!newInternalName || Buffer.byteLength(newAvatarName) > MAX_FILENAME_BYTES) {
+        return response.sendStatus(400);
+    }
+
     const oldAvatarPath = path.join(request.user.directories.characters, oldAvatarName);
 
     const oldChatsPath = path.join(request.user.directories.chats, oldInternalName);
@@ -1077,7 +1082,10 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         const newData = JSON.stringify(oldData);
 
         // Write data to new location
-        await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
+        const writeSucceeded = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
+        if (!writeSucceeded) {
+            throw new Error(`Failed to write renamed character file: ${newAvatarName}`);
+        }
 
         // Rename chats folder
         if (fs.existsSync(oldChatsPath) && !fs.existsSync(newChatsPath)) {

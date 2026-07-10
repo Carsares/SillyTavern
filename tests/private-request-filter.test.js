@@ -67,6 +67,7 @@ function initAgent({ privateAddressWhitelist = [], allowUnresolvedHosts = false 
         logBlocked: false,
         logAllowed: false,
         allowUnresolvedHosts,
+        enableKeepAlive: false,
     });
 
     return http.globalAgent;
@@ -83,6 +84,41 @@ describe('private request filter', () => {
         await expect(blockedAgent.connect({}, { host: '127.0.0.1', secureEndpoint: false }))
             .rejects
             .toThrow('Blocked request to private IP address: 127.0.0.1');
+    });
+
+    test('blocks IPv4-mapped loopback addresses', async () => {
+        const agent = initAgent();
+
+        await expect(agent.connect({}, { host: '::ffff:7f00:1', secureEndpoint: false }))
+            .rejects
+            .toThrow('Blocked request to private IP address: 127.0.0.1');
+        expect(mockNetConnect).not.toHaveBeenCalled();
+    });
+
+    test('blocks IPv4-mapped link-local addresses', async () => {
+        const agent = initAgent();
+
+        await expect(agent.connect({}, { host: '::ffff:a9fe:a9fe', secureEndpoint: false }))
+            .rejects
+            .toThrow('Blocked request to private IP address: 169.254.169.254');
+        expect(mockNetConnect).not.toHaveBeenCalled();
+    });
+
+    test('blocks IPv4-mapped private network addresses', async () => {
+        const agent = initAgent();
+
+        await expect(agent.connect({}, { host: '::ffff:c0a8:1', secureEndpoint: false }))
+            .rejects
+            .toThrow('Blocked request to private IP address: 192.168.0.1');
+        expect(mockNetConnect).not.toHaveBeenCalled();
+    });
+
+    test('checks IPv4-mapped private addresses against the IPv4 whitelist', async () => {
+        const agent = initAgent({ privateAddressWhitelist: ['127.0.0.0/8'] });
+
+        await agent.connect({}, { host: '::ffff:7f00:1', secureEndpoint: false });
+
+        expect(mockNetConnect).toHaveBeenCalledWith(expect.objectContaining({ host: '127.0.0.1' }));
     });
 
     test('resolves hostnames and blocks when DNS returns private IP', async () => {

@@ -138,7 +138,7 @@ export function createChatContextLoaderActions({
         }
     }
 
-    async function loadChatMessages(entity, chatId, { force = false } = {}) {
+    async function loadChatMessages(entity, chatId, { force = false, isContextCurrent = () => true } = {}) {
         const contextKey = getChatContextKey(entity);
         if (!contextKey || !chatId) {
             return [];
@@ -155,7 +155,9 @@ export function createChatContextLoaderActions({
             const countMatches = !knownChat || knownCount === cachedMessages.length;
             const timestampMatches = !knownLastMes || !cachedLastMes || knownLastMes === cachedLastMes;
             if (countMatches && timestampMatches) {
-                markChatRead(entity, normalizedChatId, cachedMessages);
+                if (isContextCurrent()) {
+                    markChatRead(entity, normalizedChatId, cachedMessages);
+                }
                 return cachedMessages;
             }
         }
@@ -179,11 +181,15 @@ export function createChatContextLoaderActions({
             const messages = Array.isArray(result) ? result.filter(message => message && !message.chat_metadata) : [];
             state.chatMetadata[cacheKey] = header?.chat_metadata || {};
             state.chatMessages[cacheKey] = messages;
-            markChatRead(entity, normalizedChatId, messages);
+            if (isContextCurrent()) {
+                markChatRead(entity, normalizedChatId, messages);
+            }
             return state.chatMessages[cacheKey];
         } catch (error) {
-            state.errors.push({ key: 'chat', message: error.message });
-            showToast('聊天记录读取失败', error.message);
+            if (isContextCurrent()) {
+                state.errors.push({ key: 'chat', message: error.message });
+                showToast('聊天记录读取失败', error.message);
+            }
             return [];
         }
     }

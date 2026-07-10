@@ -61,6 +61,7 @@ function createChatFixture() {
         ],
         requests: {
             characterChats: [],
+            chatGets: [],
             saves: [],
             renames: [],
             deletes: [],
@@ -125,7 +126,7 @@ function fulfillJson(route, body, status = 200) {
     });
 }
 
-async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
+async function mockModernChatWorkspace(page, fixture = createChatFixture(), { beforeChatResponse = null } = {}) {
     await page.route('**/csrf-token', route => fulfillJson(route, { token: 'modern-chat-files-token' }));
     await page.route('**/api/users/me', route => fulfillJson(route, { name: 'Modern User', handle: 'modern-user' }));
     await page.route('**/api/settings/get', route => fulfillJson(route, {
@@ -170,8 +171,10 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
             : source;
         return fulfillJson(route, chats);
     });
-    await page.route('**/api/chats/get', route => {
+    await page.route('**/api/chats/get', async route => {
         const payload = route.request().postDataJSON();
+        fixture.requests.chatGets.push(payload);
+        await beforeChatResponse?.(payload);
         return fulfillJson(route, chatResponse(fixture, payload.file_name));
     });
     await page.route('**/api/chats/group/get', route => {
@@ -284,7 +287,7 @@ async function mockModernChatWorkspace(page, fixture = createChatFixture()) {
     return fixture;
 }
 
-async function mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse = null } = {}) {
+async function mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse = null, beforeSwipeResponse = null } = {}) {
     await page.route(/.*\?modernBridge=1$/u, route => route.fulfill({
         status: 200,
         contentType: 'text/html',
@@ -349,6 +352,7 @@ async function mockLegacyGenerationBridge(page, fixture, { beforeGenerateRespons
         }
 
         if (request.action === 'swipe') {
+            await beforeSwipeResponse?.(request);
             const chatId = stripJsonlExtension(payload.chat);
             const messages = (fixture.messagesByChat[chatId] || []).map((message, index) => {
                 if (index !== Number(payload.messageIndex)) return message;
@@ -874,6 +878,158 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-chat-input]')).toHaveValue('');
         await expect(page.locator('[data-send-message]')).toBeDisabled();
         await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+    });
+
+    test('keeps a newly selected group context when a character generation finishes', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.groups = [{ id: 'group-alpha', name: 'Mock Group', members: ['mock.png'], chats: ['group-chat'], chat_id: 'group-chat' }];
+        fixture.groupChats = [{ file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now }];
+        fixture.messagesByChat['group-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'group hello', send_date: now - 1000 },
+            { name: 'Mock Group', is_user: false, mes: 'group reply stays visible', send_date: now },
+        ];
+        const bridgeResponse = createDeferred();
+        await mockModernChatWorkspace(page, fixture);
+        await mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse: () => bridgeResponse.promise });
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-chat-input]').fill('character reply must stay in its original context');
+        await page.locator('[data-send-message]').click();
+        await expect.poll(() => fixture.requests.bridge.at(-1)?.action).toBe('generate');
+
+        await page.locator('[data-chat-mode="group"]').click();
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
+
+        bridgeResponse.resolve();
+        await expect(page.locator('[data-stop-generation]')).toHaveCount(0);
+        await expect(page.locator('[data-chat-mode="group"]')).toHaveClass(/active/);
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
+        await expect(page.locator('.chat-thread')).not.toContainText('generated reply to character reply must stay in its original context');
+    });
+
+    test('keeps a newly selected group context when a character swipe finishes', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.messagesByChat['existing-chat'][1] = {
+            ...fixture.messagesByChat['existing-chat'][1],
+            swipes: ['reply', 'alternate character reply'],
+            swipe_id: 0,
+        };
+        fixture.groups = [{ id: 'group-alpha', name: 'Mock Group', members: ['mock.png'], chats: ['group-chat'], chat_id: 'group-chat' }];
+        fixture.groupChats = [{ file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now }];
+        fixture.messagesByChat['group-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'group hello', send_date: now - 1000 },
+            { name: 'Mock Group', is_user: false, mes: 'group reply stays visible', send_date: now },
+        ];
+        const bridgeResponse = createDeferred();
+        await mockModernChatWorkspace(page, fixture);
+        await mockLegacyGenerationBridge(page, fixture, { beforeSwipeResponse: () => bridgeResponse.promise });
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-swipe-message="1"][data-swipe-direction="right"]').click();
+        await expect.poll(() => fixture.requests.bridge.at(-1)?.action).toBe('swipe');
+
+        await page.locator('[data-chat-mode="group"]').click();
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
+
+        bridgeResponse.resolve();
+        await expect(page.locator('[data-stop-generation]')).toHaveCount(0);
+        await expect(page.locator('[data-chat-mode="group"]')).toHaveClass(/active/);
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
+        await expect(page.locator('.chat-thread')).not.toContainText('alternate character reply');
+    });
+
+    test('does not mark the generated chat read when another chat is selected during message reload', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.chats.push({
+            file_id: 'other-chat',
+            file_name: 'other-chat.jsonl',
+            chat_items: 2,
+            file_size: '1 KB',
+            last_mes: Date.now() - 10_000,
+        });
+        fixture.messagesByChat['other-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'other hello', send_date: Date.now() - 11_000 },
+            { name: 'Mock Character', is_user: false, mes: 'other reply stays visible', send_date: Date.now() - 10_000 },
+        ];
+        const chatResponseGate = createDeferred();
+        let blockGeneratedChat = false;
+        let generatedChatLoadStarted = false;
+        await mockModernChatWorkspace(page, fixture, {
+            beforeChatResponse: payload => {
+                if (blockGeneratedChat && !generatedChatLoadStarted && stripJsonlExtension(payload.file_name) === 'existing-chat') {
+                    generatedChatLoadStarted = true;
+                    return chatResponseGate.promise;
+                }
+            },
+        });
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-chat-input]')).toBeVisible();
+        blockGeneratedChat = true;
+        await page.locator('[data-chat-input]').fill('generated reply should remain unread after switching chats');
+        await page.locator('[data-send-message]').click();
+        await expect.poll(() => generatedChatLoadStarted).toBe(true);
+
+        await page.locator('[data-select-chat="other-chat"]').click();
+        await expect(page.locator('[data-select-chat="other-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('other reply stays visible');
+
+        chatResponseGate.resolve();
+        await expect(page.locator('[data-stop-generation]')).toHaveCount(0);
+        const readState = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}'));
+        expect(readState.cursors['mock.png::existing-chat']).toMatchObject({ messageCount: 2 });
+        await expect(page.locator('[data-select-chat="other-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('other reply stays visible');
+    });
+
+    test('does not write generated chat read state into a new mode during message reload', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.groups = [{ id: 'group-alpha', name: 'Mock Group', members: ['mock.png'], chats: ['group-chat'], chat_id: 'group-chat' }];
+        fixture.groupChats = [{ file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now }];
+        fixture.messagesByChat['group-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'group hello', send_date: now - 1000 },
+            { name: 'Mock Group', is_user: false, mes: 'group reply stays visible', send_date: now },
+        ];
+        const chatResponseGate = createDeferred();
+        let blockGeneratedChat = false;
+        let generatedChatLoadStarted = false;
+        await mockModernChatWorkspace(page, fixture, {
+            beforeChatResponse: payload => {
+                if (blockGeneratedChat && !generatedChatLoadStarted && stripJsonlExtension(payload.file_name) === 'existing-chat') {
+                    generatedChatLoadStarted = true;
+                    return chatResponseGate.promise;
+                }
+            },
+        });
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-chat-input]')).toBeVisible();
+        blockGeneratedChat = true;
+        await page.locator('[data-chat-input]').fill('generated reply must keep its original read context');
+        await page.locator('[data-send-message]').click();
+        await expect.poll(() => generatedChatLoadStarted).toBe(true);
+
+        await page.locator('[data-chat-mode="group"]').click();
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
+
+        chatResponseGate.resolve();
+        await expect(page.locator('[data-stop-generation]')).toHaveCount(0);
+        const readState = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}'));
+        expect(readState.cursors['mock.png::existing-chat']).toMatchObject({ messageCount: 2 });
+        expect(readState.cursors['group:::existing-chat']).toBeUndefined();
+        expect(readState.contexts['group:']).toBeUndefined();
+        await expect(page.locator('[data-select-chat="group-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group reply stays visible');
     });
 
     test('sends a message with the composer keyboard shortcut', async ({ page }) => {

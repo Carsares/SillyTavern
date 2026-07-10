@@ -129,7 +129,7 @@ export function createCharacterActions({
 
         const oldName = getCharacterFileName(oldAvatar);
         const newName = getCharacterFileName(newAvatar);
-        const charLore = settings.world_info?.charLore?.find(item => item?.name === oldName);
+        const charLore = settings.world_info_settings?.world_info?.charLore?.find(item => item?.name === oldName);
         if (charLore) {
             charLore.name = newName;
             changed = true;
@@ -256,7 +256,6 @@ export function createCharacterActions({
         const formData = new FormData();
         formData.set('avatar', file, file.name);
         formData.set('file_type', extension);
-        formData.set('preserved_name', file.name);
         const result = await apiFetch('/api/characters/import', { body: formData, omitContentType: true });
         if (result?.error) {
             throw new Error('角色卡导入失败。');

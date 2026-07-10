@@ -1,4 +1,4 @@
-import { SECRET_KEYS, SecretManager, deleteSecret, readSecret, writeSecret } from '../endpoints/secrets.js';
+import { SECRET_KEYS, SecretManager, readSecret, writeSecret } from '../endpoints/secrets.js';
 
 export const REMOTE_PROVIDER_CREDENTIALS = Object.freeze({
     'github-extensions': [
@@ -84,7 +84,7 @@ export function removeRemoteCredential(directories, providerId, credentialId) {
     if (!credential) {
         throw new Error('Unknown remote resource credential.');
     }
-    deleteSecret(directories, credential.key);
+    new SecretManager(directories).clearSecrets(credential.key);
 }
 
 function getCredentialDefinition(providerId, credentialId) {

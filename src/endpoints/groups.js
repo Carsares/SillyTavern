@@ -28,6 +28,18 @@ function warnOnGroupMetadata(groupData) {
 }
 
 /**
+ * Checks that every group chat ID is a plain file name on supported platforms.
+ * @param {unknown} chats Group chat IDs
+ * @returns {boolean} Whether all group chat IDs are valid
+ */
+function areGroupChatIdsValid(chats) {
+    return Array.isArray(chats) && chats.every(chatId => typeof chatId === 'string'
+        && chatId.length > 0
+        && path.posix.basename(chatId) === chatId
+        && path.win32.basename(chatId) === chatId);
+}
+
+/**
  * Migrates group metadata to include chat metadata for each group chat instead of the group itself.
  * @param {import('../users.js').UserDirectoryList[]} userDirectories Listing of all users' directories
  */
@@ -160,6 +172,10 @@ router.post('/create', (request, response) => {
 
     warnOnGroupMetadata(request.body);
     const id = String(Date.now());
+    const chats = request.body.chats ?? [id];
+    if (!areGroupChatIdsValid(chats)) {
+        return response.sendStatus(400);
+    }
     const groupMetadata = {
         id: id,
         name: request.body.name ?? 'New Group',
@@ -171,7 +187,7 @@ router.post('/create', (request, response) => {
         disabled_members: request.body.disabled_members ?? [],
         fav: request.body.fav,
         chat_id: request.body.chat_id ?? id,
-        chats: request.body.chats ?? [id],
+        chats: chats,
         auto_mode_delay: request.body.auto_mode_delay ?? 5,
         generation_mode_join_prefix: request.body.generation_mode_join_prefix ?? '',
         generation_mode_join_suffix: request.body.generation_mode_join_suffix ?? '',
@@ -189,6 +205,9 @@ router.post('/create', (request, response) => {
 
 router.post('/edit', getFileNameValidationFunction('id'), (request, response) => {
     if (!request.body || !request.body.id) {
+        return response.sendStatus(400);
+    }
+    if (Object.hasOwn(request.body, 'chats') && !areGroupChatIdsValid(request.body.chats)) {
         return response.sendStatus(400);
     }
     warnOnGroupMetadata(request.body);

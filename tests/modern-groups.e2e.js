@@ -23,8 +23,14 @@ test.describe('Modern group resources', () => {
 
         await page.locator('[data-create-group]').click();
         await expect(page.locator('.settings-form', { hasText: '新建群组' })).toBeVisible();
+        await expect(page.locator('[data-group-field="activation_strategy"][data-group-scope="create"] option')).toHaveText([
+            '自然顺序',
+            '列表顺序',
+            '手动',
+            '随机轮流顺序',
+        ]);
         await page.locator('[data-group-field="name"][data-group-scope="create"]').fill('Modern Test Group');
-        await page.locator('[data-group-field="activation_strategy"][data-group-scope="create"]').selectOption('2');
+        await page.locator('[data-group-field="activation_strategy"][data-group-scope="create"]').selectOption('3');
         await page.locator('[data-group-member="alice.png"][data-group-scope="create"]').check();
         await page.locator('[data-group-member="bruno.png"][data-group-scope="create"]').check();
         await page.locator('[data-save-group-create]').click();
@@ -34,11 +40,12 @@ test.describe('Modern group resources', () => {
         expect(fixture.requests.groupCreate[0]).toMatchObject({
             name: 'Modern Test Group',
             members: ['alice.png', 'bruno.png'],
-            activation_strategy: 2,
+            activation_strategy: 3,
         });
 
         await page.locator('[data-edit-group="modern-test-group"]').click();
         await expect(page.locator('.settings-form', { hasText: '编辑群组' })).toBeVisible();
+        await expect(page.locator('[data-group-field="activation_strategy"][data-group-scope="edit"]')).toHaveValue('3');
         await page.locator('[data-group-field="name"][data-group-scope="edit"]').fill('Edited Modern Group');
         await page.locator('[data-group-field="allow_self_responses"][data-group-scope="edit"]').check();
         await page.locator('[data-group-field="generation_mode"][data-group-scope="edit"]').selectOption('1');

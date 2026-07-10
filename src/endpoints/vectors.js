@@ -387,8 +387,9 @@ async function queryCollection(directories, collectionId, source, sourceSettings
     const vector = await getVector(source, sourceSettings, searchText, true, directories);
 
     const result = await store.queryItems(vector, topK);
-    const metadata = result.filter(x => x.score >= threshold).map(x => x.item.metadata);
-    const hashes = result.map(x => Number(x.item.metadata.hash));
+    const filteredResults = result.filter(x => x.score >= threshold);
+    const metadata = filteredResults.map(x => x.item.metadata);
+    const hashes = filteredResults.map(x => Number(x.item.metadata.hash));
     return { metadata, hashes };
 }
 

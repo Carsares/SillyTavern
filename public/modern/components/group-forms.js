@@ -75,9 +75,10 @@ export function createGroupFormComponents(ctx) {
                 <label class="field-label">
                     <span>激活策略</span>
                     <select class="select-input" data-group-field="activation_strategy" data-group-scope="${scopeAttribute}">
-                        <option value="0" ${String(form.activation_strategy) === '0' ? 'selected' : ''}>自然发言</option>
+                        <option value="0" ${String(form.activation_strategy) === '0' ? 'selected' : ''}>自然顺序</option>
                         <option value="1" ${String(form.activation_strategy) === '1' ? 'selected' : ''}>列表顺序</option>
-                        <option value="2" ${String(form.activation_strategy) === '2' ? 'selected' : ''}>随机</option>
+                        <option value="2" ${String(form.activation_strategy) === '2' ? 'selected' : ''}>手动</option>
+                        <option value="3" ${String(form.activation_strategy) === '3' ? 'selected' : ''}>随机轮流顺序</option>
                     </select>
                 </label>
                 <label class="field-label">

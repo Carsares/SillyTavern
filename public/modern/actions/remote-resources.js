@@ -397,7 +397,6 @@ export function createRemoteResourceActions({
         const formData = new FormData();
         formData.set('avatar', new File([blob], ensureExtension(fileName, extension), { type: blob.type || 'application/octet-stream' }));
         formData.set('file_type', extension);
-        formData.set('preserved_name', ensureExtension(fileName, extension));
         const result = await apiFetch('/api/characters/import', { body: formData, omitContentType: true });
         if (result?.error) {
             throw new Error('角色卡导入失败。');

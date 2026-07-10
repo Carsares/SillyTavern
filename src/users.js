@@ -697,6 +697,33 @@ export function getUserDirectories(handle) {
 }
 
 /**
+ * Verifies that a user data root is strictly contained by the configured data root.
+ * Existing paths are also checked after resolving symbolic links.
+ * @param {string} userRoot User data root to verify
+ * @returns {Promise<void>}
+ */
+export async function validateUserDataRoot(userRoot) {
+    const dataRoot = path.resolve(globalThis.DATA_ROOT);
+    const resolvedUserRoot = path.resolve(userRoot);
+
+    if (resolvedUserRoot === dataRoot || !isPathUnderParent(dataRoot, resolvedUserRoot)) {
+        throw new Error(`Invalid user data root: ${resolvedUserRoot}`);
+    }
+
+    const realDataRoot = await fs.promises.realpath(dataRoot);
+    try {
+        const realUserRoot = await fs.promises.realpath(resolvedUserRoot);
+        if (realUserRoot === realDataRoot || !isPathUnderParent(realDataRoot, realUserRoot)) {
+            throw new Error(`Invalid user data root: ${realUserRoot}`);
+        }
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            throw error;
+        }
+    }
+}
+
+/**
  * Gets the avatar URL for the provided user.
  * @param {string} handle User handle
  * @returns {Promise<string>} User avatar URL
@@ -1147,6 +1174,7 @@ export function requireAdminMiddleware(request, response, next) {
  */
 export async function createBackupArchive(handle, response) {
     const directories = getUserDirectories(handle);
+    await validateUserDataRoot(directories.root);
 
     console.info('Backup requested for', handle);
     const archive = archiver('zip');

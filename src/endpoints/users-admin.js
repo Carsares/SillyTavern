@@ -13,6 +13,7 @@ import {
     getPasswordSalt,
     getPasswordHash,
     getUserDirectories,
+    validateUserDataRoot,
     ensurePublicDirectoriesExist,
 } from '../users.js';
 import { DEFAULT_USER } from '../constants.js';
@@ -218,26 +219,40 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
 
 router.post('/delete', requireAdminMiddleware, async (request, response) => {
     try {
-        if (!request.body.handle) {
+        const requestedHandle = request.body.handle;
+
+        if (!requestedHandle) {
             console.warn('Delete user failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
         }
 
-        if (request.body.handle === request.user.profile.handle) {
+        /** @type {import('../users.js').User} */
+        const user = await storage.getItem(toKey(requestedHandle));
+
+        if (!user) {
+            console.error('Delete user failed: User not found');
+            return response.status(404).json({ error: 'User not found' });
+        }
+
+        if (user.handle === request.user.profile.handle) {
             console.warn('Delete user failed: Cannot delete yourself');
             return response.status(400).json({ error: 'Cannot delete yourself' });
         }
 
-        if (request.body.handle === DEFAULT_USER.handle) {
+        if (user.handle === DEFAULT_USER.handle) {
             console.warn('Delete user failed: Cannot delete default user');
             return response.status(400).json({ error: 'Sorry, but the default user cannot be deleted. It is required as a fallback.' });
         }
 
-        await storage.removeItem(toKey(request.body.handle));
+        const directories = request.body.purge ? getUserDirectories(user.handle) : null;
+        if (directories) {
+            await validateUserDataRoot(directories.root);
+        }
 
-        if (request.body.purge) {
-            const directories = getUserDirectories(request.body.handle);
-            console.info('Deleting data directories for', request.body.handle);
+        await storage.removeItem(toKey(requestedHandle));
+
+        if (directories) {
+            console.info('Deleting data directories for', user.handle);
             await fsPromises.rm(directories.root, { recursive: true, force: true });
         }
 

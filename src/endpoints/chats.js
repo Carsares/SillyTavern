@@ -201,8 +201,7 @@ function importCAIChat(userName, characterName, jsonData) {
         return [starter, ...historyData];
     }
 
-    const newChats = (jsonData.histories.histories ?? []).map(history => newChats.push(convert(history).map(obj => JSON.stringify(obj)).join('\n')));
-    return newChats;
+    return (jsonData.histories.histories ?? []).map(history => convert(history).map(obj => JSON.stringify(obj)).join('\n'));
 }
 
 /**
@@ -357,28 +356,28 @@ async function checkChatIntegrity(filePath, integritySlug) {
  * @typedef {(textArray: string[]) => boolean} ChatMatchFunction
  */
 export async function getChatInfo(pathToFile, additionalData = {}, withMetadata = false, matcher = null) {
-    return new Promise(async (res) => {
-        const parsedPath = path.parse(pathToFile);
-        const stats = await fs.promises.stat(pathToFile);
-        const hasMatcher = (typeof matcher === 'function');
+    const parsedPath = path.parse(pathToFile);
+    const stats = await fs.promises.stat(pathToFile);
+    const hasMatcher = (typeof matcher === 'function');
 
-        const chatData = {
-            match: false,
-            file_id: parsedPath.name,
-            file_name: parsedPath.base,
-            file_size: formatBytes(stats.size),
-            chat_items: 0,
-            mes: '[The chat is empty]',
-            last_mes: stats.mtimeMs,
-            ...additionalData,
-        };
+    const chatData = {
+        match: false,
+        file_id: parsedPath.name,
+        file_name: parsedPath.base,
+        file_size: formatBytes(stats.size),
+        chat_items: 0,
+        mes: '[The chat is empty]',
+        last_mes: stats.mtimeMs,
+        ...additionalData,
+    };
 
-        if (stats.size === 0) {
-            res(chatData);
-            return;
-        }
+    if (stats.size === 0) {
+        return chatData;
+    }
 
+    return new Promise((resolve, reject) => {
         const fileStream = fs.createReadStream(pathToFile);
+        fileStream.once('error', reject);
         const rl = readline.createInterface({
             input: fileStream,
             crlfDelay: Infinity,
@@ -420,14 +419,33 @@ export async function getChatInfo(pathToFile, additionalData = {}, withMetadata 
                     chatData.last_mes = jsonData.send_date || new Date(Math.round(stats.mtimeMs)).toISOString();
                     chatData.match = hasMatcher ? hasAnyMatch : true;
 
-                    res(chatData);
+                    resolve(chatData);
                 } else {
                     console.warn('Found an invalid or corrupted chat file:', pathToFile);
-                    res({});
+                    resolve({});
                 }
+            } else {
+                console.warn('Found an invalid or corrupted chat file:', pathToFile);
+                resolve({});
             }
         });
     });
+}
+
+/**
+ * Resolves a group chat ID to a file path contained by the current user's group chat directory.
+ * @param {string} groupChatsDir Group chat directory
+ * @param {unknown} chatId Group chat ID
+ * @returns {string|null} Safe group chat file path
+ */
+function getGroupChatFilePath(groupChatsDir, chatId) {
+    if (typeof chatId !== 'string' || !chatId) {
+        return null;
+    }
+
+    const parentPath = path.resolve(groupChatsDir);
+    const filePath = path.resolve(parentPath, `${chatId}.jsonl`);
+    return isPathUnderParent(parentPath, filePath) ? filePath : null;
 }
 
 export const router = express.Router();
@@ -817,6 +835,9 @@ router.post('/group/info', async (request, response) => {
         const chatInfo = await getChatInfo(chatFilePath);
         return response.send(chatInfo);
     } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return response.sendStatus(404);
+        }
         console.error(error);
         return response.sendStatus(500);
     }
@@ -902,10 +923,10 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
             }
 
             // Find group chat files for given group ID
-            const groupChatsDir = path.join(request.user.directories.groupChats);
+            const groupChatsDir = request.user.directories.groupChats;
             chatFiles = targetGroup.chats
-                .map(chatId => path.join(groupChatsDir, `${chatId}.jsonl`))
-                .filter(fileName => fs.existsSync(fileName));
+                .map(chatId => getGroupChatFilePath(groupChatsDir, chatId))
+                .filter(fileName => fileName && fs.existsSync(fileName));
         } else {
             // Regular character chat directory
             const character_name = avatar_url.replace('.png', '');
@@ -1020,8 +1041,8 @@ router.post('/recent', async function (request, response) {
 
                     if (Array.isArray(groupData.chats)) {
                         for (const chat of groupData.chats) {
-                            const filePath = path.join(request.user.directories.groupChats, `${chat}.jsonl`);
-                            if (!fs.existsSync(filePath)) {
+                            const filePath = getGroupChatFilePath(request.user.directories.groupChats, chat);
+                            if (!filePath || !fs.existsSync(filePath)) {
                                 continue;
                             }
                             const stats = await fs.promises.stat(filePath);

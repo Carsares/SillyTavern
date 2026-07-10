@@ -47,6 +47,7 @@ import basicAuthMiddleware from './middleware/basicAuth.js';
 import getWhitelistMiddleware from './middleware/whitelist.js';
 import accessLoggerMiddleware, { backendErrorLoggerMiddleware, getLogRootPath, installBackendConsoleLogger, migrateAccessLog, prepareBackendLogStorage } from './middleware/accessLogWriter.js';
 import multerMonkeyPatch from './middleware/multerMonkeyPatch.js';
+import uploadCleanupMiddleware from './middleware/uploadCleanup.js';
 import initRequestProxy from './request-proxy.js';
 import initPrivateRequestFilter from './private-request-filter.js';
 import cacheBuster from './middleware/cacheBuster.js';
@@ -108,9 +109,6 @@ app.use(helmet({
 app.use(compression());
 app.use(responseTime());
 
-app.use(bodyParser.json({ limit: '500mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
-
 // CORS Settings //
 const corsEnabled = getConfigValue('cors.enabled', true, 'boolean');
 if (corsEnabled) {
@@ -149,6 +147,10 @@ if (cliArgs.whitelistMode) {
 }
 
 app.use(hostWhitelistMiddleware);
+
+// Parse request bodies only after header- and address-based access controls have accepted the request.
+app.use(bodyParser.json({ limit: '500mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
 
 app.use(cookieSession({
     name: getCookieSessionName(),
@@ -278,8 +280,10 @@ if (cliArgs.enableCorsProxy) {
 
 // File uploads
 const uploadsPath = path.join(cliArgs.dataRoot, UPLOADS_DIRECTORY);
-app.use(multer({ dest: uploadsPath, limits: { fieldSize: 500 * 1024 * 1024 } }).single('avatar'));
+const maxUploadSize = 500 * 1024 * 1024;
+app.use(multer({ dest: uploadsPath, limits: { fieldSize: maxUploadSize, fileSize: maxUploadSize } }).single('avatar'));
 app.use(multerMonkeyPatch);
+app.use(uploadCleanupMiddleware);
 
 app.get('/version', async function (_, response) {
     const data = await getVersion();
@@ -498,7 +502,7 @@ function setDnsResolutionOrder() {
 }
 
 // User storage module needs to be initialized before starting the server
-initUserStorage(globalThis.DATA_ROOT)
+await initUserStorage(globalThis.DATA_ROOT)
     .then(setDnsResolutionOrder)
     .then(ensurePublicDirectoriesExist)
     .then(migrateUserData)

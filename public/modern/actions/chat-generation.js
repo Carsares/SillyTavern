@@ -18,6 +18,42 @@ export function createChatGenerationActions({
     refreshSelectedChatList,
     createModernChatFile,
 }) {
+    function isGenerationContextCurrent(contextKey, chatId) {
+        return getChatContextKey() === contextKey && state.selected.chat === chatId;
+    }
+
+    async function syncGeneratedChat({ entity, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
+        delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
+        delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
+        state.engine.ready = true;
+        state.engine.status = '就绪';
+
+        // The bridge updates the original chat even if the user has navigated elsewhere; only sync it into the still-matching UI context.
+        if (!isGenerationContextCurrent(contextKey, chatId)) {
+            state.engine.detail = `${nextChatId} · 原聊天已更新，当前上下文保持不变`;
+            return;
+        }
+
+        await refreshSelectedChatList(entity);
+        if (!isGenerationContextCurrent(contextKey, chatId)) {
+            state.engine.detail = `${nextChatId} · 原聊天已更新，当前上下文保持不变`;
+            return;
+        }
+
+        state.selected.chat = nextChatId;
+        await loadChatMessages(entity, nextChatId, {
+            force: true,
+            isContextCurrent: () => isGenerationContextCurrent(contextKey, nextChatId),
+        });
+        if (!isGenerationContextCurrent(contextKey, nextChatId)) {
+            state.engine.detail = `${nextChatId} · 原聊天已更新，当前上下文保持不变`;
+            return;
+        }
+
+        state.engine.detail = detail;
+        showToast(toastTitle, toastMessage);
+    }
+
     async function checkLegacyGenerationEngine({ quiet = false } = {}) {
         if (state.engine.checking || state.engine.generating) {
             return;
@@ -74,6 +110,7 @@ export function createChatGenerationActions({
         if (!contextKey || !chatId) {
             throw new Error(isGroupChatMode() ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
+        const groupMode = isGroupChatMode();
 
         state.engine.generating = true;
         state.engine.status = '生成中';
@@ -83,22 +120,22 @@ export function createChatGenerationActions({
 
         try {
             const result = await callLegacyBridge('generate', {
-                avatar: isGroupChatMode() ? null : entity.avatar,
-                groupId: isGroupChatMode() ? entity.id : null,
+                avatar: groupMode ? null : entity.avatar,
+                groupId: groupMode ? entity.id : null,
                 chat: chatId,
                 type,
                 message,
             });
             const nextChatId = stripJsonlExtension(result?.chat || chatId);
-            state.selected.chat = nextChatId;
-            delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
-            delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
-            await refreshSelectedChatList(entity);
-            await loadChatMessages(entity, nextChatId, { force: true });
-            state.engine.ready = true;
-            state.engine.status = '就绪';
-            state.engine.detail = `${nextChatId} · 已同步最新消息`;
-            showToast(toastTitle, toastMessage);
+            await syncGeneratedChat({
+                entity,
+                contextKey,
+                chatId,
+                nextChatId,
+                detail: `${nextChatId} · 已同步最新消息`,
+                toastTitle,
+                toastMessage,
+            });
         } catch (error) {
             state.engine.error = error.message;
             state.engine.status = error.message.includes('停止') ? '已停止' : '生成失败';
@@ -120,6 +157,8 @@ export function createChatGenerationActions({
         if (!contextKey || !state.selected.chat) {
             throw new Error('请先选择一个聊天文件');
         }
+        const chatId = state.selected.chat;
+        const groupMode = isGroupChatMode();
 
         const index = Number(messageIndex);
         const messages = getSelectedChatMessages();
@@ -130,27 +169,28 @@ export function createChatGenerationActions({
         state.engine.generating = true;
         state.engine.status = '候选切换中';
         state.engine.error = '';
-        state.engine.detail = `${state.selected.chat} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`;
+        state.engine.detail = `${chatId} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`;
         render();
 
         try {
             const result = await callLegacyBridge('swipe', {
-                avatar: isGroupChatMode() ? null : entity.avatar,
-                groupId: isGroupChatMode() ? entity.id : null,
-                chat: state.selected.chat,
+                avatar: groupMode ? null : entity.avatar,
+                groupId: groupMode ? entity.id : null,
+                chat: chatId,
                 messageIndex: index,
                 direction,
             });
-            const nextChatId = stripJsonlExtension(result?.chat || state.selected.chat);
-            state.selected.chat = nextChatId;
-            delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
-            delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
-            await refreshSelectedChatList(entity);
-            await loadChatMessages(entity, nextChatId, { force: true });
-            state.engine.ready = true;
-            state.engine.status = '就绪';
-            state.engine.detail = `${nextChatId} · 当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
-            showToast('候选已切换', `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`);
+            const nextChatId = stripJsonlExtension(result?.chat || chatId);
+            const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
+            await syncGeneratedChat({
+                entity,
+                contextKey,
+                chatId,
+                nextChatId,
+                detail: `${nextChatId} · ${swipeDetail}`,
+                toastTitle: '候选已切换',
+                toastMessage: swipeDetail,
+            });
         } catch (error) {
             state.engine.error = error.message;
             state.engine.status = '候选切换失败';
@@ -209,7 +249,12 @@ export function createChatGenerationActions({
             });
         } catch (error) {
             delete state.chatMessages[cacheKey];
-            await loadChatMessages(entity, chatId, { force: true });
+            if (isGenerationContextCurrent(contextKey, chatId)) {
+                await loadChatMessages(entity, chatId, {
+                    force: true,
+                    isContextCurrent: () => isGenerationContextCurrent(contextKey, chatId),
+                });
+            }
             throw error;
         }
     }

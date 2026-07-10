@@ -264,6 +264,24 @@ export class SecretManager {
     }
 
     /**
+     * Deletes every stored secret for a given key
+     * @param {string} key Secret key to clear
+     */
+    clearSecrets(key) {
+        if (!fs.existsSync(this.filePath)) {
+            return;
+        }
+
+        const secrets = this._readSecretsFile();
+        if (!this._validateSecretKey(secrets, key)) {
+            return;
+        }
+
+        delete secrets[key];
+        this._writeSecretsFile(secrets);
+    }
+
+    /**
      * Reads the active secret value for a given key
      * @param {string} key Secret key
      * @param {string?} id ID of the secret to read (optional)

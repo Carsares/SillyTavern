@@ -4,6 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import dns from 'node:dns';
 import ipMatch from 'ip-matching';
+import ipaddr from 'ipaddr.js';
 import ipRegex from 'ip-regex';
 import { Agent } from 'agent-base';
 import { color } from './util.js';
@@ -30,6 +31,20 @@ const privateIpRanges = [
     // Link-local address (IPv6)
     ipMatch.getMatch('fe80::/10'),
 ];
+
+/**
+ * Converts an IPv4-mapped IPv6 address to its IPv4 representation.
+ * @param {string} address IP address
+ * @returns {string} Address used for private-range and whitelist checks
+ */
+function formatIpAddress(address) {
+    const parsedAddress = ipaddr.parse(address);
+    if (parsedAddress.kind() === 'ipv6' && parsedAddress instanceof ipaddr.IPv6 && parsedAddress.isIPv4MappedAddress()) {
+        return parsedAddress.toIPv4Address().toString();
+    }
+
+    return address;
+}
 
 /**
  * Custom HTTP/HTTPS agent that blocks requests to private IP addresses unless they are explicitly allowed in the private address whitelist.
@@ -141,21 +156,23 @@ class PrivateRequestAgent extends Agent {
          * @returns {net.Socket|tls.TLSSocket} A socket connected to the target IP address if it's allowed, otherwise an error is raised.
          */
         const validateIpAddress = (ip) => {
+            const address = formatIpAddress(ip);
+
             // Not a private IP address, allow the request
-            if (!this.#isPrivateIp(ip)) {
-                return connect(ip);
+            if (!this.#isPrivateIp(address)) {
+                return connect(address);
             }
 
             // Private IP address, check if it's allowed in the whitelist
-            if (this.#isAllowedPrivateAddress(ip)) {
+            if (this.#isAllowedPrivateAddress(address)) {
                 if (this.logAllowed) {
-                    console.info(color.green(LOG_HEADER), 'Allowed request to private IP address:', color.blue(ip));
+                    console.info(color.green(LOG_HEADER), 'Allowed request to private IP address:', color.blue(address));
                 }
 
-                return connect(ip);
+                return connect(address);
             }
 
-            return raiseError(`Blocked request to private IP address: ${ip}`, this.logBlocked);
+            return raiseError(`Blocked request to private IP address: ${address}`, this.logBlocked);
         };
 
         /**

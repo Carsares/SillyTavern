@@ -188,7 +188,48 @@ test.describe('Modern character resources', () => {
         expect(fixture.requests.characterImport[0].contentType).toContain('multipart/form-data');
         expect(fixture.requests.characterImport[0].bodyText).toContain('name="avatar"; filename="Imported Modern Character.json"');
         expect(fixture.requests.characterImport[0].bodyText).toContain('name="file_type"');
-        expect(fixture.requests.characterImport[0].bodyText).toContain('name="preserved_name"');
+        expect(fixture.requests.characterImport[0].bodyText).not.toContain('name="preserved_name"');
+    });
+
+    test('migrates attached worldbooks from the saved world info settings when renaming a character', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            settings: {
+                world_info_settings: {
+                    world_info: {
+                        charLore: [{ name: 'alice', extraBooks: ['ModernLore'] }],
+                    },
+                },
+            },
+        });
+        await mockModernWorkspace(page, fixture);
+        await page.route('**/api/characters/rename', async route => {
+            const payload = route.request().postDataJSON();
+            const previousAvatar = payload.avatar_url;
+            const nextAvatar = 'renamed-alice.png';
+            const character = fixture.characterDetails[previousAvatar];
+            fixture.characters = fixture.characters.map(item => item.avatar === previousAvatar
+                ? { ...item, avatar: nextAvatar, name: payload.new_name, data: { ...item.data, name: payload.new_name } }
+                : item);
+            fixture.characterDetails[nextAvatar] = { ...character, avatar: nextAvatar, name: payload.new_name, data: { ...character.data, name: payload.new_name } };
+            delete fixture.characterDetails[previousAvatar];
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ avatar: nextAvatar }),
+            });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-rename-character="alice.png"]').click();
+        await page.locator('[data-character-rename-input]').fill('Renamed Alice');
+        await page.locator('[data-confirm-character-rename]').click();
+
+        await expect(page.locator('[data-select-character="renamed-alice.png"]')).toBeVisible();
+        await expect(page.locator('.detail-title')).toHaveText('Renamed Alice');
+        expect(fixture.requests.settingsSave).toHaveLength(1);
+        expect(fixture.requests.settingsSave[0].world_info_settings.world_info.charLore).toEqual([
+            { name: 'renamed-alice', extraBooks: ['ModernLore'] },
+        ]);
     });
 
     test('replaces a character avatar through the avatar edit endpoint', async ({ page }) => {

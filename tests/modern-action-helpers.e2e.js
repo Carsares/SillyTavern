@@ -4,6 +4,7 @@ import { createCharacterDataHelpers } from '../public/modern/actions/character-d
 import { createChatBackupActions } from '../public/modern/actions/chat-backups.js';
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
+import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
 import { createWorldbookEntryListHelpers } from '../public/modern/actions/worldbook-entry-list.js';
 
 function sortChats(chats) {
@@ -237,6 +238,69 @@ test.describe('Modern action helpers', () => {
         await expect(helpers.loadChatMessages(entity, 'beta')).resolves.toHaveLength(1);
         expect(state.chatMetadata['alice.png::beta']).toEqual({ mood: 'focused' });
         expect(state.chatMessages['alice.png::beta'][0]).toMatchObject({ mes: 'hello' });
+    });
+
+    test('imports remote characters without requesting a filename-preserving replacement', async () => {
+        const importedBodies = [];
+        const state = {
+            selected: { character: 'alice.png', chat: 'existing-chat' },
+            worldDetails: {},
+            remoteResources: {
+                results: [{
+                    providerId: 'fixture-provider',
+                    providerName: 'Fixture Provider',
+                    id: 'remote-alice',
+                    resourceType: 'character',
+                    title: 'Remote Alice',
+                    sourceUrl: 'https://example.invalid/remote-alice',
+                    metadata: {},
+                }],
+                records: [],
+                operation: { key: '', running: false },
+            },
+        };
+        const actions = createRemoteResourceActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url === '/api/characters/import') {
+                    importedBodies.push(options.body);
+                    return { file_name: 'remote-alice-1.png' };
+                }
+                if (url === '/api/remote-resources/records') {
+                    return { id: 'record-1', ...options.body };
+                }
+                throw new Error(`Unexpected URL ${url}`);
+            },
+            apiFetchResponse: async url => {
+                expect(url).toBe('/api/remote-resources/download');
+                return new Response(JSON.stringify({ data: { name: 'Remote Alice' } }), {
+                    headers: {
+                        'content-type': 'application/json',
+                        'content-disposition': 'attachment; filename="Remote Alice.json"',
+                    },
+                });
+            },
+            loadData: async () => {},
+            render: () => {},
+            showToast: () => {},
+            callLegacyBridge: async () => {},
+            loadWorldDetail: async () => {},
+        });
+
+        await actions.importRemoteResource(0);
+
+        expect(importedBodies).toHaveLength(1);
+        expect(importedBodies[0].get('avatar')).toBeInstanceOf(File);
+        expect(importedBodies[0].get('avatar').name).toBe('Remote Alice.json');
+        expect(importedBodies[0].get('file_type')).toBe('json');
+        expect(importedBodies[0].has('preserved_name')).toBe(false);
+        expect(state.selected).toEqual({ character: 'remote-alice-1.png', chat: '' });
+        expect(state.remoteResources.records[0]).toMatchObject({
+            providerId: 'fixture-provider',
+            localType: 'character',
+            localId: 'remote-alice-1.png',
+            action: 'import',
+        });
     });
 
     test('previews, restores, and deletes chat backups through backup helper', async () => {
