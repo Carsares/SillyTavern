@@ -5,7 +5,7 @@ import fetch from 'node-fetch';
 import FormData from 'form-data';
 import express from 'express';
 
-import { getConfigValue, mergeObjectWithYaml, excludeKeysByYaml, trimV1, delay } from '../util.js';
+import { abortControllerOnClientClose, getConfigValue, mergeObjectWithYaml, excludeKeysByYaml, trimV1, delay } from '../util.js';
 import { setAdditionalHeaders } from '../additional-headers.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { AIMLAPI_HEADERS, OPENROUTER_HEADERS, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from '../constants.js';
@@ -661,12 +661,9 @@ router.post('/generate-image', async (request, response) => {
 });
 
 router.post('/generate-video', async (request, response) => {
+    const controller = new AbortController();
     try {
-        const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         const key = readSecret(request.user.directories, SECRET_KEYS.OPENAI);
 
@@ -689,6 +686,7 @@ router.post('/generate-video', async (request, response) => {
                 size: request.body.size || '720x1280',
                 seconds: request.body.seconds || '8',
             }),
+            signal: controller.signal,
         });
 
         if (!videoJobResponse.ok) {
@@ -720,6 +718,7 @@ router.post('/generate-video', async (request, response) => {
                 headers: {
                     'Authorization': `Bearer ${key}`,
                 },
+                signal: controller.signal,
             });
 
             if (!pollResponse.ok) {
@@ -743,6 +742,7 @@ router.post('/generate-video', async (request, response) => {
                     headers: {
                         'Authorization': `Bearer ${key}`,
                     },
+                    signal: controller.signal,
                 });
 
                 if (!contentResponse.ok) {
@@ -759,8 +759,11 @@ router.post('/generate-video', async (request, response) => {
         console.warn('OpenAI video generation timed out after multiple attempts');
         return response.status(504).send('Video generation timed out');
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error('OpenAI video generation failed', error);
-        response.status(500).send('Internal server error');
+        return response.status(500).send('Internal server error');
     }
 });
 

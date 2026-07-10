@@ -373,8 +373,11 @@ router.post('/generate-image', async (request, response) => {
         console.info('Horde image generation request:', generation);
 
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
+        response.once('close', function () {
+            if (response.writableEnded) {
+                return;
+            }
+
             console.warn('Horde image generation request aborted.');
             controller.abort();
             if (generation.id) {

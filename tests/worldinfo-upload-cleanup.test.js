@@ -4,11 +4,13 @@ import path from 'node:path';
 import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
 
 let importHandler;
+let editHandler;
 const tempRoots = [];
 
 beforeAll(async () => {
     const { router } = await import('../src/endpoints/worldinfo.js');
     importHandler = router.stack.find(layer => layer.route?.path === '/import').route.stack[0].handle;
+    editHandler = router.stack.find(layer => layer.route?.path === '/edit').route.stack[0].handle;
 });
 
 afterEach(() => {
@@ -58,6 +60,20 @@ function createResponse() {
     };
 }
 
+function createEditRequest(data) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-worldinfo-edit-'));
+    const worlds = path.join(root, 'worlds');
+    fs.mkdirSync(worlds);
+    tempRoots.push(root);
+    return {
+        root,
+        request: {
+            body: { name: 'Existing', data },
+            user: { directories: { worlds } },
+        },
+    };
+}
+
 describe('world info import upload cleanup', () => {
     test('removes the original upload when converted data is imported', () => {
         const { root, request } = createRequest(JSON.stringify({ entries: {} }));
@@ -78,6 +94,19 @@ describe('world info import upload cleanup', () => {
 
         expect(response.statusCode).toBe(400);
         expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
+    });
+
+    test('rejects imported World Info with an array or null entries', () => {
+        for (const convertedData of ['[]', '{"entries":null}']) {
+            const { root, request } = createRequest(convertedData);
+            const response = createResponse();
+
+            importHandler(request, response);
+
+            expect(response.statusCode).toBe(400);
+            expect(fs.readdirSync(path.join(root, 'worlds'))).toEqual([]);
+            expect(fs.existsSync(path.join(root, 'uploads', 'temporary'))).toBe(false);
+        }
     });
 
     test('does not overwrite an existing world without explicit permission', () => {
@@ -119,5 +148,33 @@ describe('world info import upload cleanup', () => {
         expect(response.body).toEqual({ name: 'Résumé' });
         expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(imported);
         expect(fs.readdirSync(path.join(root, 'worlds'))).toEqual(['Résumé.json']);
+    });
+
+    test('does not overwrite an existing World Info with an array or null entries', () => {
+        for (const data of [[], { entries: null }]) {
+            const { root, request } = createEditRequest(data);
+            const worldPath = path.join(root, 'worlds', 'Existing.json');
+            const original = { entries: { original: true } };
+            fs.writeFileSync(worldPath, JSON.stringify(original));
+            const response = createResponse();
+
+            editHandler(request, response);
+
+            expect(response.statusCode).toBe(400);
+            expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(original);
+        }
+    });
+
+    test('edits an existing World Info with a valid entries object', () => {
+        const updated = { entries: { updated: true } };
+        const { root, request } = createEditRequest(updated);
+        const worldPath = path.join(root, 'worlds', 'Existing.json');
+        fs.writeFileSync(worldPath, JSON.stringify({ entries: { original: true } }));
+        const response = createResponse();
+
+        editHandler(request, response);
+
+        expect(response.body).toEqual({ ok: true });
+        expect(JSON.parse(fs.readFileSync(worldPath, 'utf8'))).toEqual(updated);
     });
 });

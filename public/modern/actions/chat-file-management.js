@@ -10,12 +10,16 @@ export function createChatFileManagementActions({
     isGroupChatMode,
     getSelectedChatList,
     getChatCacheKey,
-    saveGroupMetadata,
+    updateGroupMetadata,
     refreshSelectedChatList,
     loadChatMessages,
     moveChatReadState,
     deleteChatReadState,
 }) {
+    function getChatId(chat) {
+        return stripJsonlExtension(chat?.file_id || chat?.file_name || '');
+    }
+
     function beginModernChatRename() {
         const entity = getSelectedChatEntity();
         const contextKey = getChatContextKey(entity);
@@ -40,7 +44,8 @@ export function createChatFileManagementActions({
 
     async function saveModernChatRename() {
         const entity = getSelectedChatEntity();
-        const contextKey = getChatContextKey(entity);
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
         const oldChatId = stripJsonlExtension(state.selected.chat);
         const newChatId = stripJsonlExtension(state.chatRenaming.name.trim());
         const renameKey = getChatCacheKey(contextKey, state.selected.chat);
@@ -51,13 +56,14 @@ export function createChatFileManagementActions({
             cancelModernChatRename();
             return;
         }
+        const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
         const result = await apiFetch('/api/chats/rename', {
             body: {
-                avatar_url: isGroupChatMode() ? null : entity.avatar,
+                avatar_url: groupMode ? null : entity.avatar,
                 original_file: `${oldChatId}.jsonl`,
                 renamed_file: `${newChatId}.jsonl`,
-                is_group: isGroupChatMode(),
+                is_group: groupMode,
             },
         });
         if (result?.error) {
@@ -65,20 +71,22 @@ export function createChatFileManagementActions({
         }
 
         const renamedChatId = stripJsonlExtension(result?.sanitizedFileName || newChatId);
-        if (isGroupChatMode()) {
-            const index = entity.chats?.indexOf(oldChatId) ?? -1;
-            if (index >= 0) {
-                entity.chats.splice(index, 1, renamedChatId);
+        let metadataError = null;
+        if (groupMode) {
+            try {
+                await updateGroupMetadata(entity, nextMetadata => {
+                    nextMetadata.chats = (nextMetadata.chats || []).map(chatId => chatId === oldChatId ? renamedChatId : chatId);
+                    if (nextMetadata.chat_id === oldChatId) {
+                        nextMetadata.chat_id = renamedChatId;
+                    }
+                });
+            } catch (error) {
+                metadataError = error;
             }
-            if (entity.chat_id === oldChatId) {
-                entity.chat_id = renamedChatId;
-            }
-            await saveGroupMetadata(entity);
         }
 
         const oldKey = getChatCacheKey(contextKey, oldChatId);
         const newKey = getChatCacheKey(contextKey, renamedChatId);
-        state.selected.chat = renamedChatId;
         if (state.chatMessages[oldKey]) {
             state.chatMessages[newKey] = state.chatMessages[oldKey];
             delete state.chatMessages[oldKey];
@@ -87,10 +95,24 @@ export function createChatFileManagementActions({
             state.chatMetadata[newKey] = state.chatMetadata[oldKey];
             delete state.chatMetadata[oldKey];
         }
+        state.chatLists[contextKey] = (state.chatLists[contextKey] || []).map(chat => getChatId(chat) === oldChatId
+            ? { ...chat, file_id: renamedChatId, file_name: `${renamedChatId}.jsonl` }
+            : chat);
         moveChatReadState(contextKey, oldChatId, renamedChatId);
-        state.chatRenaming = { key: '', name: '' };
-        await refreshSelectedChatList(entity);
-        await loadChatMessages(entity, renamedChatId);
+        if (state.chatRenaming.key === renameKey) {
+            state.chatRenaming = { key: '', name: '' };
+        }
+        await refreshSelectedChatList(entity, { groupMode, quiet: !!metadataError });
+        if (isContextCurrent()) {
+            const chats = state.chatLists[contextKey] || [];
+            state.selected.chat = chats.some(chat => getChatId(chat) === renamedChatId) ? renamedChatId : getChatId(chats[0]);
+            if (state.selected.chat) {
+                await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
+            }
+        }
+        if (metadataError) {
+            throw new Error(`聊天文件已重命名为 ${renamedChatId}.jsonl，但群聊索引更新失败：${metadataError.message}`);
+        }
         showToast('聊天已重命名', `${oldChatId} → ${renamedChatId}`);
         render();
     }
@@ -124,14 +146,16 @@ export function createChatFileManagementActions({
 
     async function confirmModernChatDelete() {
         const entity = getSelectedChatEntity();
-        const contextKey = getChatContextKey(entity);
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
         const chatId = stripJsonlExtension(state.chatDeleteConfirm.name);
         const deleteKey = getChatCacheKey(contextKey, state.selected.chat);
         if (!contextKey || !chatId || state.chatDeleteConfirm.key !== deleteKey) {
             throw new Error('删除目标已变化，请重新选择聊天。');
         }
+        const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
-        const result = isGroupChatMode()
+        const result = groupMode
             ? await apiFetch('/api/chats/group/delete', { body: { id: chatId } })
             : await apiFetch('/api/chats/delete', {
                 body: {
@@ -143,12 +167,18 @@ export function createChatFileManagementActions({
             throw new Error('聊天文件删除失败。');
         }
 
-        if (isGroupChatMode()) {
-            entity.chats = (entity.chats || []).filter(item => item !== chatId);
-            if (entity.chat_id === chatId) {
-                entity.chat_id = entity.chats[0] || '';
+        let metadataError = null;
+        if (groupMode) {
+            try {
+                await updateGroupMetadata(entity, nextMetadata => {
+                    nextMetadata.chats = (nextMetadata.chats || []).filter(item => item !== chatId);
+                    if (nextMetadata.chat_id === chatId) {
+                        nextMetadata.chat_id = nextMetadata.chats[0] || '';
+                    }
+                });
+            } catch (error) {
+                metadataError = error;
             }
-            await saveGroupMetadata(entity);
         }
 
         const cacheKey = getChatCacheKey(contextKey, chatId);
@@ -156,15 +186,21 @@ export function createChatFileManagementActions({
         delete state.chatMessageLimits[cacheKey];
         delete state.chatMetadata[cacheKey];
         delete state.chatDrafts[cacheKey];
+        state.chatLists[contextKey] = (state.chatLists[contextKey] || []).filter(chat => getChatId(chat) !== chatId);
         deleteChatReadState(contextKey, chatId);
-        state.chatRenaming = { key: '', name: '' };
-        state.chatDeleteConfirm = { key: '', name: '' };
-        state.selected.chat = '';
-        await refreshSelectedChatList(entity);
-        const chats = getSelectedChatList();
-        state.selected.chat = chats[0]?.file_id || '';
-        if (state.selected.chat) {
-            await loadChatMessages(entity, state.selected.chat);
+        if (state.chatDeleteConfirm.key === deleteKey) {
+            state.chatDeleteConfirm = { key: '', name: '' };
+        }
+        await refreshSelectedChatList(entity, { groupMode, quiet: !!metadataError });
+        if (isContextCurrent()) {
+            const chats = state.chatLists[contextKey] || [];
+            state.selected.chat = getChatId(chats[0]);
+            if (state.selected.chat) {
+                await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
+            }
+        }
+        if (metadataError) {
+            throw new Error(`聊天文件 ${chatId}.jsonl 已删除，但群聊索引更新失败：${metadataError.message}`);
         }
         showToast('聊天已删除', `${chatId}.jsonl`);
         render();

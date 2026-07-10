@@ -9,7 +9,7 @@ import lodash from 'lodash';
 
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { GEMINI_SAFETY, VERTEX_SAFETY } from '../constants.js';
-import { delay, getConfigValue, trimTrailingSlash } from '../util.js';
+import { abortControllerOnClientClose, delay, getConfigValue, trimTrailingSlash } from '../util.js';
 
 const API_MAKERSUITE = 'https://generativelanguage.googleapis.com';
 const API_VERTEX_AI = 'https://us-central1-aiplatform.googleapis.com';
@@ -496,12 +496,9 @@ router.post('/generate-image', async (request, response) => {
 });
 
 router.post('/generate-video', async (request, response) => {
+    const controller = new AbortController();
     try {
-        const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         const model = request.body.model || 'veo-3.1-generate-preview';
         const { url, headers, apiName, baseUrl } = await getGoogleApiConfig(request, model, 'predictLongRunning');
@@ -529,6 +526,7 @@ router.post('/generate-video', async (request, response) => {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(requestBody),
+            signal: controller.signal,
         });
 
         if (!videoJobResponse.ok) {
@@ -563,6 +561,7 @@ router.post('/generate-video', async (request, response) => {
                     method: 'POST',
                     headers: pollHeaders,
                     body: JSON.stringify({ operationName: videoJobName }),
+                    signal: controller.signal,
                 });
 
                 if (!pollResponse.ok) {
@@ -591,6 +590,7 @@ router.post('/generate-video', async (request, response) => {
                 const pollResponse = await fetch(pollUrl, {
                     method: 'GET',
                     headers: headers,
+                    signal: controller.signal,
                 });
 
                 if (!pollResponse.ok) {
@@ -617,6 +617,7 @@ router.post('/generate-video', async (request, response) => {
                     const videoResponse = await fetch(videoUri, {
                         method: 'GET',
                         headers: headers,
+                        signal: controller.signal,
                     });
 
                     if (!videoResponse.ok) {
@@ -635,6 +636,9 @@ router.post('/generate-video', async (request, response) => {
         console.warn(`${apiName} video generation error: Job timed out after multiple attempts`);
         return response.status(500).send('Video generation timed out');
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error('Google Video generation failed:', error);
         return response.sendStatus(500);
     }

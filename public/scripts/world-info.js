@@ -23,6 +23,7 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
+import { needsEmbeddedWorldInfoConfirmation, removeWorldInfoFromCharLore } from './world-info-file-helpers.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -98,6 +99,24 @@ export const DEFAULT_WEIGHT = 100;
 export const MAX_SCAN_DEPTH = 1000;
 const MAX_COMMENT_LENGTH = 100;
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+
+/**
+ * Resolves a user-provided world info name to the exact file name used by the backend.
+ * @param {string} worldInfoName User-provided world info name.
+ * @param {object} [options] Resolution options.
+ * @param {string} [options.excludeName] Exact existing name to exclude from matching.
+ * @returns {Promise<{sanitizedName: string, existingName: string|undefined, targetName: string}|null>} Resolved name details.
+ */
+async function resolveWorldInfoName(worldInfoName, { excludeName } = {}) {
+    const sanitizedName = await getSanitizedFilename(worldInfoName);
+    if (!sanitizedName) {
+        toastr.warning(t`World Info name must contain valid filename characters.`);
+        return null;
+    }
+
+    const existingName = world_names.find(name => name !== excludeName && equalsIgnoreCaseAndAccents(name, sanitizedName));
+    return { sanitizedName, existingName, targetName: existingName || sanitizedName };
+}
 
 // Typedef area
 /**
@@ -1183,23 +1202,29 @@ function registerWorldInfoSlashCommands() {
 
     async function createWorldWithName(possibleName = undefined, fallbackName = undefined) {
         let newName = (() => {
-            // Use the provided name if it's not in use
             if (typeof possibleName === 'string') {
-                const name = String(possibleName);
-                if (world_names.includes(name)) {
-                    throw new Error('This World Info file name is already in use');
-                }
-                return name;
+                return String(possibleName);
             }
 
             // Replace non-alphanumeric characters with underscores, cut to 64 characters
             return fallbackName ?? `Lorebook (${uuidv4()})`;
         })();
 
-        // Make sure the name is unique
-        newName = getUniqueName(newName, world_names.includes.bind(world_names));
+        const resolvedName = await resolveWorldInfoName(newName);
+        if (!resolvedName) {
+            throw new Error('World Info file name is invalid');
+        }
+        if (resolvedName.existingName) {
+            throw new Error('This World Info file name is already in use');
+        }
 
-        await createNewWorldInfo(newName);
+        // Make sure the name is unique
+        newName = getUniqueName(resolvedName.sanitizedName, world_names.includes.bind(world_names));
+
+        const created = await createNewWorldInfo(newName);
+        if (!created) {
+            throw new Error('Failed to create World Info file');
+        }
         return newName;
     }
 
@@ -2333,23 +2358,15 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
 
-        if (world_info.charLore) {
-            world_info.charLore.forEach((charLore, index) => {
-                if (charLore.extraBooks?.includes(name)) {
-                    const tempCharLore = charLore.extraBooks.filter((e) => e !== name);
-                    if (tempCharLore.length === 0) {
-                        world_info.charLore.splice(index, 1);
-                    } else {
-                        charLore.extraBooks = tempCharLore;
-                    }
-                }
-            });
-
-            saveSettingsDebounced();
+        const deleted = await deleteWorldInfo(name);
+        if (!deleted) {
+            return;
         }
 
-        // Selected world_info automatically refreshes
-        await deleteWorldInfo(name);
+        if (Array.isArray(world_info.charLore)) {
+            world_info.charLore = removeWorldInfoFromCharLore(world_info.charLore, name);
+            saveSettingsDebounced();
+        }
     });
 
     // Before printing the WI, we check if we should enable/disable search sorting
@@ -2555,10 +2572,20 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         const finalName = await Popup.show.input('Create a new World Info?', 'Enter a name for the new file:', tempName);
 
         if (finalName) {
-            await saveWorldInfo(finalName, data, true);
+            const resolvedName = await resolveWorldInfoName(finalName);
+            if (!resolvedName) {
+                return;
+            }
+
+            const allowed = await checkOverwriteExistingData('World Info', world_names, resolvedName.sanitizedName, { interactive: true, actionName: 'Duplicate' });
+            if (!allowed) {
+                return;
+            }
+
+            await saveWorldInfo(resolvedName.targetName, data, true);
             await updateWorldInfoList();
 
-            const selectedIndex = world_names.indexOf(finalName);
+            const selectedIndex = world_names.indexOf(resolvedName.targetName);
             if (selectedIndex !== -1) {
                 $('#world_editor_select').val(selectedIndex).trigger('change');
             } else {
@@ -4072,11 +4099,15 @@ async function _save(name, data) {
     // Prevent double saving if both immediate and debounced save are called
     cancelDebounce(saveWorldDebounced);
 
-    await fetch('/api/worldinfo/edit', {
+    const response = await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: name, data: data }),
     });
+    if (!response.ok) {
+        throw new Error(`Failed to save World Info: ${response.statusText}`);
+    }
+    worldInfoCache.set(name, data);
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
 
@@ -4099,13 +4130,12 @@ export async function saveWorldInfo(name, data, immediately = false) {
         return;
     }
 
-    // Update cache immediately, so any future call can pull from this
-    worldInfoCache.set(name, data);
-
     if (immediately) {
         return await _save(name, data);
     }
 
+    // Update cache immediately while the backend save is debounced.
+    worldInfoCache.set(name, data);
     saveWorldDebounced(name, data);
 }
 
@@ -4117,25 +4147,38 @@ async function renameWorldInfo(name, data) {
         console.debug('World info rename cancelled');
         return;
     }
-    if (equalsIgnoreCaseAndAccents(oldName, newName)) {
+    const resolvedName = await resolveWorldInfoName(newName, { excludeName: oldName });
+    if (!resolvedName) {
+        return;
+    }
+    if (equalsIgnoreCaseAndAccents(oldName, resolvedName.sanitizedName)) {
         toastr.warning(t`Name not accepted, as it is the same as before (ignoring case and accents).`, t`Rename World Info`);
+        return;
+    }
+
+    const otherWorldNames = world_names.filter(worldName => worldName !== oldName);
+    const allowed = await checkOverwriteExistingData('World Info', otherWorldNames, resolvedName.sanitizedName, { interactive: true, actionName: 'Rename' });
+    if (!allowed) {
         return;
     }
 
     const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
 
-    await saveWorldInfo(newName, data, true);
-    await deleteWorldInfo(oldName);
+    await saveWorldInfo(resolvedName.targetName, data, true);
+    const deleted = await deleteWorldInfo(oldName);
+    if (!deleted) {
+        throw new Error(`Failed to delete old World Info: ${oldName}`);
+    }
 
-    await updateWorldInfoLinks(oldName, newName);
+    await updateWorldInfoLinks(oldName, resolvedName.targetName);
 
     if (entryPreviouslySelected !== -1) {
-        const wiElement = getWIElement(newName);
+        const wiElement = getWIElement(resolvedName.targetName);
         wiElement.prop('selected', true);
         $('#world_info').trigger('change');
     }
 
-    const selectedIndex = world_names.indexOf(newName);
+    const selectedIndex = world_names.indexOf(resolvedName.targetName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     }
@@ -4340,19 +4383,20 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
         return false;
     }
 
-    const sanitizedWorldName = await getSanitizedFilename(worldName);
-    const existingWorldName = world_names.find(name => equalsIgnoreCaseAndAccents(name, sanitizedWorldName));
+    const resolvedName = await resolveWorldInfoName(worldName);
+    if (!resolvedName) {
+        return false;
+    }
 
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create' });
+    const allowed = await checkOverwriteExistingData('World Info', world_names, resolvedName.sanitizedName, { interactive: interactive, actionName: 'Create' });
     if (!allowed) {
         return false;
     }
 
-    const targetWorldName = existingWorldName || worldName;
-    await saveWorldInfo(targetWorldName, worldInfoTemplate, true);
+    await saveWorldInfo(resolvedName.targetName, worldInfoTemplate, true);
     await updateWorldInfoList();
 
-    const selectedIndex = world_names.indexOf(targetWorldName);
+    const selectedIndex = world_names.indexOf(resolvedName.targetName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     } else {
@@ -5625,9 +5669,16 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
     }
 
     const bookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
+    const resolvedName = await resolveWorldInfoName(bookName);
+    if (!resolvedName) {
+        return;
+    }
 
-    if (!skipPopup) {
-        const confirmation = await Popup.show.confirm(t`Are you sure you want to import '${bookName}'?`, world_names.includes(bookName) ? t`It will overwrite the World/Lorebook with the same name.` : '');
+    if (needsEmbeddedWorldInfoConfirmation(skipPopup, resolvedName.existingName)) {
+        const overwriteMessage = resolvedName.existingName
+            ? t`It will overwrite the existing World/Lorebook '${resolvedName.existingName}'.`
+            : '';
+        const confirmation = await Popup.show.confirm(t`Are you sure you want to import '${bookName}'?`, overwriteMessage);
         if (!confirmation) {
             return;
         }
@@ -5635,13 +5686,13 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
 
     const convertedBook = convertCharacterBook(characters[chid].data.character_book);
 
-    await saveWorldInfo(bookName, convertedBook, true);
+    await saveWorldInfo(resolvedName.targetName, convertedBook, true);
     await updateWorldInfoList();
-    $('#character_world').val(bookName).trigger('change');
+    $('#character_world').val(resolvedName.targetName).trigger('change');
 
-    toastr.success(t`The world '${bookName}' has been imported and linked to the character successfully.`, t`World/Lorebook imported`);
+    toastr.success(t`The world '${resolvedName.targetName}' has been imported and linked to the character successfully.`, t`World/Lorebook imported`);
 
-    const newIndex = world_names.indexOf(bookName);
+    const newIndex = world_names.indexOf(resolvedName.targetName);
     if (newIndex >= 0) {
         //show&draw the WI panel before..
         $('#WIDrawerIcon').trigger('click');
@@ -5776,17 +5827,20 @@ export async function importWorldInfo(file) {
     }
 
     const worldName = file.name.substr(0, file.name.lastIndexOf('.'));
-    const sanitizedWorldName = await getSanitizedFilename(worldName);
-    const existingWorldName = world_names.find(name => equalsIgnoreCaseAndAccents(name, sanitizedWorldName));
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import' });
+    const resolvedName = await resolveWorldInfoName(worldName);
+    if (!resolvedName) {
+        return false;
+    }
+
+    const allowed = await checkOverwriteExistingData('World Info', world_names, resolvedName.sanitizedName, { interactive: true, actionName: 'Import' });
     if (!allowed) {
         return false;
     }
 
     const fileExtensionIndex = file.name.lastIndexOf('.');
     const fileExtension = fileExtensionIndex === -1 ? '' : file.name.slice(fileExtensionIndex);
-    formData.append('avatar', file, existingWorldName ? `${existingWorldName}${fileExtension}` : file.name);
-    if (existingWorldName) {
+    formData.append('avatar', file, `${resolvedName.targetName}${fileExtension}`);
+    if (resolvedName.existingName) {
         formData.append('overwrite', 'true');
     }
 

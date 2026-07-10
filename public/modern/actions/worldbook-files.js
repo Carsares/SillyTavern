@@ -90,6 +90,37 @@ export function createWorldbookFileActions({
         render();
     }
 
+    function clearDeletedWorldbookState(worldbookId, removeGlobal) {
+        delete state.worldDetails[worldbookId];
+        state.worldbooks = (state.worldbooks || []).filter(worldbook => worldbook.file_id !== worldbookId);
+        if (Array.isArray(state.settingsBundle.world_names)) {
+            state.settingsBundle.world_names = state.settingsBundle.world_names.filter(name => name !== worldbookId);
+        }
+        if (state.worldbookDeleteConfirm.worldbookId === worldbookId) {
+            state.worldbookDeleteConfirm = { worldbookId: '' };
+        }
+        if (state.worldEntryEditing.worldbookId === worldbookId) {
+            state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
+        }
+        if (state.worldEntryDeleteConfirm.worldbookId === worldbookId) {
+            state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
+        }
+        if (state.worldEntryBulkDeleteConfirm?.worldbookId === worldbookId) {
+            state.worldEntryBulkDeleteConfirm = { worldbookId: '' };
+        }
+        if (state.worldEntryList?.worldbookId === worldbookId) {
+            state.worldEntryList = { worldbookId: '', query: '', sort: 'order', page: 1, selectedKeys: [] };
+        }
+        if (state.selected.worldbook === worldbookId) {
+            state.selected.worldbook = '';
+        }
+        if (removeGlobal) {
+            state.settings.world_info_settings = state.settings.world_info_settings || {};
+            state.settings.world_info_settings.world_info = state.settings.world_info_settings.world_info || {};
+            state.settings.world_info_settings.world_info.globalSelect = getGlobalWorldNames().filter(name => name !== worldbookId);
+        }
+    }
+
     async function confirmWorldbookDelete() {
         const worldbookId = state.worldbookDeleteConfirm.worldbookId;
         if (!worldbookId || state.selected.worldbook !== worldbookId) {
@@ -97,17 +128,34 @@ export function createWorldbookFileActions({
         }
 
         await apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } });
-        delete state.worldDetails[worldbookId];
-        state.worldbookDeleteConfirm = { worldbookId: '' };
-        state.worldEntryEditing = { worldbookId: '', entryKey: '', mode: '', form: {} };
-        state.worldEntryDeleteConfirm = { worldbookId: '', entryKey: '' };
         const globalWorlds = getGlobalWorldNames();
-        if (globalWorlds.includes(worldbookId)) {
-            state.settings.world_info_settings.world_info.globalSelect = globalWorlds.filter(name => name !== worldbookId);
-            await apiFetch('/api/settings/save', { body: state.settings });
+        const removeGlobal = globalWorlds.includes(worldbookId);
+        clearDeletedWorldbookState(worldbookId, removeGlobal);
+
+        let settingsError = null;
+        if (removeGlobal) {
+            try {
+                await apiFetch('/api/settings/save', { body: state.settings });
+            } catch (error) {
+                settingsError = error;
+            }
         }
-        state.selected.worldbook = '';
-        await loadData({ silent: true });
+
+        let refreshError = null;
+        try {
+            await loadData({ silent: true });
+        } catch (error) {
+            refreshError = error;
+        }
+        // Keep the known file deletion reflected even when a secondary refresh or settings save failed.
+        clearDeletedWorldbookState(worldbookId, removeGlobal);
+        if (settingsError || refreshError) {
+            const details = [
+                settingsError ? `全局启用设置保存失败：${settingsError.message}` : '',
+                refreshError ? `列表刷新失败：${refreshError.message}` : '',
+            ].filter(Boolean).join('；');
+            throw new Error(`世界书 ${worldbookId}.json 已删除，但${details}`);
+        }
         showToast('世界书已删除', `${worldbookId}.json`);
     }
 

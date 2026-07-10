@@ -260,6 +260,76 @@ export function createChatContextActions({
         await apiFetch('/api/groups/edit', { body: group });
     }
 
+    const groupMetadataUpdateQueues = new Map();
+    const groupMetadataReloadRequired = new Set();
+
+    function useGroupMetadata(group, metadata) {
+        Object.assign(group, metadata);
+        const currentGroup = state.groups.find(item => item.id === group.id);
+        if (currentGroup && currentGroup !== group) {
+            Object.assign(currentGroup, metadata);
+        }
+    }
+
+    async function reloadGroupMetadata(group) {
+        const groups = await apiFetch('/api/groups/all');
+        const metadata = Array.isArray(groups) ? groups.find(item => item.id === group.id) : null;
+        if (!metadata) {
+            throw new Error('群聊元数据重新读取失败。');
+        }
+        useGroupMetadata(group, metadata);
+        groupMetadataReloadRequired.delete(group.id);
+    }
+
+    async function updateGroupMetadata(group, updateMetadata) {
+        if (!group?.id || typeof updateMetadata !== 'function') {
+            throw new Error('群聊元数据更新目标无效。');
+        }
+
+        const groupId = group.id;
+        const previousUpdate = groupMetadataUpdateQueues.get(groupId) || Promise.resolve();
+        const currentUpdate = previousUpdate.catch(() => {}).then(async () => {
+            if (groupMetadataReloadRequired.has(groupId)) {
+                await reloadGroupMetadata(group);
+            }
+
+            async function getNextMetadata() {
+                const currentGroup = state.groups.find(item => item.id === groupId) || group;
+                const nextMetadata = structuredClone(currentGroup);
+                await updateMetadata(nextMetadata);
+                return nextMetadata;
+            }
+
+            let nextMetadata = await getNextMetadata();
+            try {
+                await saveGroupMetadata(nextMetadata);
+            } catch (error) {
+                groupMetadataReloadRequired.add(groupId);
+                try {
+                    // Resolve an uncertain response from authoritative data, then retry the same idempotent RMW once.
+                    await reloadGroupMetadata(group);
+                    nextMetadata = await getNextMetadata();
+                    await saveGroupMetadata(nextMetadata);
+                } catch {
+                    groupMetadataReloadRequired.add(groupId);
+                    throw error;
+                }
+            }
+            useGroupMetadata(group, nextMetadata);
+            groupMetadataReloadRequired.delete(groupId);
+            return nextMetadata;
+        });
+        groupMetadataUpdateQueues.set(groupId, currentUpdate);
+
+        try {
+            return await currentUpdate;
+        } finally {
+            if (groupMetadataUpdateQueues.get(groupId) === currentUpdate) {
+                groupMetadataUpdateQueues.delete(groupId);
+            }
+        }
+    }
+
     async function refreshSelectedChatUnreadState() {
         await refreshCachedChatLists({ quiet: true });
     }
@@ -329,19 +399,18 @@ export function createChatContextActions({
             }
 
             if (groupMode) {
-                const chats = Array.isArray(entity.chats) ? entity.chats : [];
-                const nextChats = chats.includes(chatId) ? [...chats] : [...chats, chatId];
                 // Persist the chat file before publishing its ID in group metadata.
                 try {
-                    await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: chatId });
+                    await updateGroupMetadata(entity, nextMetadata => {
+                        const chats = Array.isArray(nextMetadata.chats) ? nextMetadata.chats : [];
+                        nextMetadata.chats = chats.includes(chatId) ? [...chats] : [...chats, chatId];
+                        nextMetadata.chat_id = chatId;
+                    });
                 } catch (error) {
                     // Keep the file because the metadata write may have committed before its response failed.
                     clearCreatedChatState();
                     throw error;
                 }
-
-                entity.chats = nextChats;
-                entity.chat_id = chatId;
             }
 
             await refreshSelectedChatList(entity, { groupMode });
@@ -432,6 +501,7 @@ export function createChatContextActions({
         getCharacterName,
         getUserName,
         saveGroupMetadata,
+        updateGroupMetadata,
         saveModernChat,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,

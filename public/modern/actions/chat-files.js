@@ -27,7 +27,7 @@ export function createChatFileActions({
     loadChatMessages,
     refreshSelectedChatList,
     createModernChatFile,
-    saveGroupMetadata,
+    updateGroupMetadata,
     moveChatReadState,
     deleteChatReadState,
 }) {
@@ -41,7 +41,7 @@ export function createChatFileActions({
         isGroupChatMode,
         getSelectedChatList,
         getChatCacheKey,
-        saveGroupMetadata,
+        updateGroupMetadata,
         refreshSelectedChatList,
         loadChatMessages,
         moveChatReadState,
@@ -80,11 +80,11 @@ export function createChatFileActions({
 
         async function syncImportedFiles() {
             if (groupMode) {
-                const nextChats = uniqueValues([...(entity.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
                 const nextChatId = stripJsonlExtension(importedFileNames[0]);
-                await saveGroupMetadata({ ...entity, chats: nextChats, chat_id: nextChatId });
-                entity.chats = nextChats;
-                entity.chat_id = nextChatId;
+                await updateGroupMetadata(entity, nextMetadata => {
+                    nextMetadata.chats = uniqueValues([...(nextMetadata.chats || []), ...importedFileNames.map(stripJsonlExtension)]);
+                    nextMetadata.chat_id = nextChatId;
+                });
             }
             await refreshSelectedChatList(entity, { groupMode });
             if (isContextCurrent()) {

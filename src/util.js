@@ -30,6 +30,19 @@ let CACHED_CONFIG = null;
 let CONFIG_PATH = null;
 
 /**
+ * Aborts an outbound request when the client disconnects before the response completes.
+ * @param {import('express').Response} response Express response
+ * @param {AbortController} controller Outbound request controller
+ */
+export function abortControllerOnClientClose(response, controller) {
+    response.once('close', () => {
+        if (!response.writableEnded) {
+            controller.abort();
+        }
+    });
+}
+
+/**
  * Converts a configuration key to an environment variable key.
  * @param {string} key Configuration key
  * @returns {string} Environment variable key

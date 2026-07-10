@@ -22,7 +22,7 @@ export function createChatGenerationActions({
         return getChatContextKey() === contextKey && state.selected.chat === chatId;
     }
 
-    async function syncGeneratedChat({ entity, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
+    async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
         delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
         delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
         state.engine.ready = true;
@@ -34,7 +34,7 @@ export function createChatGenerationActions({
             return;
         }
 
-        await refreshSelectedChatList(entity);
+        await refreshSelectedChatList(entity, { groupMode });
         if (!isGenerationContextCurrent(contextKey, chatId)) {
             state.engine.detail = `${nextChatId} · 原聊天已更新，当前上下文保持不变`;
             return;
@@ -43,6 +43,7 @@ export function createChatGenerationActions({
         state.selected.chat = nextChatId;
         await loadChatMessages(entity, nextChatId, {
             force: true,
+            groupMode,
             isContextCurrent: () => isGenerationContextCurrent(contextKey, nextChatId),
         });
         if (!isGenerationContextCurrent(contextKey, nextChatId)) {
@@ -101,21 +102,28 @@ export function createChatGenerationActions({
         }
     }
 
-    async function runLegacyChatGeneration(type, { entity, chatId, message = '', toastTitle, toastMessage }) {
+    async function runLegacyChatGeneration(type, {
+        entity,
+        chatId,
+        groupMode = isGroupChatMode(),
+        contextKey = getChatContextKey(entity, groupMode),
+        entityName = getChatEntityName(entity),
+        message = '',
+        toastTitle,
+        toastMessage,
+    }) {
         if (state.engine.generating) {
             return;
         }
 
-        const contextKey = getChatContextKey(entity);
         if (!contextKey || !chatId) {
-            throw new Error(isGroupChatMode() ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
+            throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
-        const groupMode = isGroupChatMode();
 
         state.engine.generating = true;
         state.engine.status = '生成中';
         state.engine.error = '';
-        state.engine.detail = `${getChatEntityName(entity)} · ${chatId}`;
+        state.engine.detail = `${entityName} · ${chatId}`;
         render();
 
         try {
@@ -129,6 +137,7 @@ export function createChatGenerationActions({
             const nextChatId = stripJsonlExtension(result?.chat || chatId);
             await syncGeneratedChat({
                 entity,
+                groupMode,
                 contextKey,
                 chatId,
                 nextChatId,
@@ -184,6 +193,7 @@ export function createChatGenerationActions({
             const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
             await syncGeneratedChat({
                 entity,
+                groupMode,
                 contextKey,
                 chatId,
                 nextChatId,
@@ -224,14 +234,19 @@ export function createChatGenerationActions({
         }
 
         const entity = getSelectedChatEntity();
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        const entityName = getChatEntityName(entity);
+        if (!contextKey) {
+            throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
+        }
         let chatId = state.selected.chat;
         if (!chatId) {
             chatId = await createModernChatFile(entity);
         }
 
-        const contextKey = getChatContextKey(entity);
-        if (!contextKey || !chatId) {
-            throw new Error(isGroupChatMode() ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
+        if (!chatId) {
+            throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
 
         const cacheKey = getChatCacheKey(contextKey, chatId);
@@ -243,6 +258,9 @@ export function createChatGenerationActions({
             await runLegacyChatGeneration('normal', {
                 entity,
                 chatId,
+                groupMode,
+                contextKey,
+                entityName,
                 message: draft,
                 toastTitle: '消息已生成',
                 toastMessage: '生成引擎已完成回复并保存聊天文件。',
@@ -252,6 +270,7 @@ export function createChatGenerationActions({
             if (isGenerationContextCurrent(contextKey, chatId)) {
                 await loadChatMessages(entity, chatId, {
                     force: true,
+                    groupMode,
                     isContextCurrent: () => isGenerationContextCurrent(contextKey, chatId),
                 });
             }

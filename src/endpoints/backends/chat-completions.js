@@ -22,6 +22,7 @@ import {
     ZAI_ENDPOINT,
 } from '../../constants.js';
 import {
+    abortControllerOnClientClose,
     forwardFetchResponse,
     getConfigValue,
     tryParse,
@@ -222,10 +223,7 @@ async function sendClaudeRequest(request, response) {
 
     try {
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
         const additionalHeaders = {};
         const betaHeaders = ['output-128k-2025-02-19', 'context-1m-2025-08-07'];
         const useTools = Array.isArray(request.body.tools) && request.body.tools.length > 0;
@@ -628,10 +626,7 @@ async function sendMakerSuiteRequest(request, response) {
 
     try {
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
         const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
@@ -765,10 +760,7 @@ async function sendAI21Request(request, response) {
 
     const bodyParams = {};
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
     // Hack to support JSON schema
     if (request.body.json_schema) {
         bodyParams.response_format = {
@@ -847,10 +839,7 @@ async function sendMistralAIRequest(request, response) {
     try {
         const messages = convertMistralMessages(request.body.messages, getPromptNames(request));
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         const requestBody = {
             'model': request.body.model,
@@ -928,10 +917,7 @@ async function sendMistralAIRequest(request, response) {
 async function sendCohereRequest(request, response) {
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.COHERE, request.body.secret_id);
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     if (!apiKey) {
         console.warn('Cohere API key is missing.');
@@ -1035,10 +1021,7 @@ async function sendDeepSeekRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         let bodyParams = {};
@@ -1147,10 +1130,7 @@ async function sendXaiRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         let bodyParams = {};
@@ -1253,10 +1233,7 @@ async function sendAimlapiRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         let bodyParams = {};
@@ -1358,10 +1335,7 @@ async function sendElectronHubRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         let bodyParams = {};
@@ -1470,10 +1444,7 @@ async function sendChutesRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         let bodyParams = {};
@@ -1572,10 +1543,7 @@ async function sendMinimaxRequest(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    abortControllerOnClientClose(response, controller);
 
     try {
         // MiniMax does not allow consecutive messages with the same role.
@@ -1690,8 +1658,7 @@ async function sendAzureOpenAIRequest(request, response) {
         : undefined;
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', () => controller.abort());
+    abortControllerOnClientClose(response, controller);
 
     const config = {
         method: 'POST',
@@ -2529,10 +2496,7 @@ router.post('/generate', async function (request, response) {
             `${apiUrl}/chat/completions`;
 
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         if (!isTextCompletion && Array.isArray(request.body.tools) && request.body.tools.length > 0) {
             bodyParams['tools'] = request.body.tools;

@@ -282,13 +282,15 @@ router.post('/generate', async function (request, response) {
         console.debug(request.body);
 
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', async function () {
-            if (request.body.api_type === TEXTGEN_TYPES.KOBOLDCPP && !response.writableEnded) {
-                await abortKoboldCppRequest(request, trimV1(baseUrl));
+        response.once('close', async function () {
+            if (response.writableEnded) {
+                return;
             }
 
             controller.abort();
+            if (request.body.api_type === TEXTGEN_TYPES.KOBOLDCPP) {
+                await abortKoboldCppRequest(request, trimV1(baseUrl));
+            }
         });
 
         let url = trimV1(baseUrl);

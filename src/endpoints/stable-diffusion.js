@@ -9,7 +9,7 @@ import urlJoin from 'url-join';
 import _ from 'lodash';
 import mime from 'mime-types';
 
-import { delay, getBasicAuthHeader, isValidUrl, tryParse } from '../util.js';
+import { abortControllerOnClientClose, delay, getBasicAuthHeader, isValidUrl, tryParse } from '../util.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { AIMLAPI_HEADERS } from '../constants.js';
@@ -322,19 +322,20 @@ router.post('/generate', async (request, response) => {
         }
 
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            if (!response.writableEnded) {
-                startBackgroundRequest(
-                    () => {
-                        const interruptUrl = new URL(request.body.url);
-                        interruptUrl.pathname = '/sdapi/v1/interrupt';
-                        return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
-                    },
-                    'Failed to interrupt SD WebUI generation:',
-                );
+        response.once('close', function () {
+            if (response.writableEnded) {
+                return;
             }
+
             controller.abort();
+            startBackgroundRequest(
+                () => {
+                    const interruptUrl = new URL(request.body.url);
+                    interruptUrl.pathname = '/sdapi/v1/interrupt';
+                    return fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                },
+                'Failed to interrupt SD WebUI generation:',
+            );
         });
 
         console.debug('SD WebUI request:', request.body);
@@ -579,9 +580,13 @@ comfy.post('/generate', async (request, response) => {
         let item;
         const url = new URL(urlJoin(request.body.url, '/prompt'));
 
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            if (!response.writableEnded && !item) {
+        response.once('close', function () {
+            if (response.writableEnded) {
+                return;
+            }
+
+            controller.abort();
+            if (!item) {
                 startBackgroundRequest(
                     () => {
                         const interruptUrl = new URL(urlJoin(request.body.url, '/interrupt'));
@@ -590,7 +595,6 @@ comfy.post('/generate', async (request, response) => {
                     'Failed to interrupt ComfyUI generation:',
                 );
             }
-            controller.abort();
         });
 
         const promptResult = await fetch(url, {
@@ -701,9 +705,13 @@ comfyRunPod.post('/generate', async (request, response) => {
         let item;
         const url = new URL(urlJoin(request.body.url, '/run'));
 
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            if (!response.writableEnded && !item) {
+        response.once('close', function () {
+            if (response.writableEnded) {
+                return;
+            }
+
+            controller.abort();
+            if (!item && jobId) {
                 startBackgroundRequest(
                     () => {
                         const interruptUrl = new URL(urlJoin(request.body.url, `/cancel/${jobId}`));
@@ -712,7 +720,6 @@ comfyRunPod.post('/generate', async (request, response) => {
                     'Failed to cancel ComfyUI RunPod generation:',
                 );
             }
-            controller.abort();
         });
         const workflow = JSON.parse(request.body.prompt).prompt;
         const wrappedWorkflow = workflow?.input?.workflow ? workflow : ({ input: { workflow: workflow } });
@@ -746,13 +753,19 @@ comfyRunPod.post('/generate', async (request, response) => {
             }
             /** @type {any} */
             const status = await result.json();
-            if (status.output) {
-                item = status.output.images[0];
-            }
-            if (item) {
+            const jobStatus = String(status?.status || '').toUpperCase();
+            if (jobStatus === 'COMPLETED') {
+                item = status.output?.images?.[0];
+                if (!item) {
+                    throw new Error('ComfyUI RunPod returned no image.');
+                }
                 break;
             }
-            await delay(500);
+            if (jobStatus === 'IN_QUEUE' || jobStatus === 'IN_PROGRESS' || jobStatus === 'RUNNING') {
+                await delay(500);
+                continue;
+            }
+            throw new Error(`ComfyUI RunPod job ended with status ${jobStatus || 'UNKNOWN'}.`);
         }
         const format = path.extname(item.filename).slice(1).toLowerCase() || 'png';
         return response.send({ format: format, data: item.data });
@@ -1987,12 +2000,9 @@ zai.post('/generate', async (request, response) => {
 });
 
 zai.post('/generate-video', async (request, response) => {
+    const controller = new AbortController();
     try {
-        const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        abortControllerOnClientClose(response, controller);
 
         const key = readSecret(request.user.directories, SECRET_KEYS.ZAI);
 
@@ -2044,6 +2054,7 @@ zai.post('/generate-video', async (request, response) => {
                 headers: {
                     'Authorization': `Bearer ${key}`,
                 },
+                signal: controller.signal,
             });
 
             if (!pollResponse.ok) {
@@ -2070,7 +2081,7 @@ zai.post('/generate-video', async (request, response) => {
                     return response.sendStatus(500);
                 }
 
-                const contentResponse = await fetch(url);
+                const contentResponse = await fetch(url, { signal: controller.signal });
                 if (!contentResponse.ok) {
                     const text = await contentResponse.text();
                     console.warn('Z.AI video content fetch failed', contentResponse.statusText, text);
@@ -2084,6 +2095,9 @@ zai.post('/generate-video', async (request, response) => {
         console.warn('Z.AI video was not available after multiple attempts.');
         return response.sendStatus(500);
     } catch (error) {
+        if (controller.signal.aborted) {
+            return response;
+        }
         console.error(error);
         return response.sendStatus(500);
     }

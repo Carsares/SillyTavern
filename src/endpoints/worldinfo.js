@@ -9,6 +9,15 @@ import { tryParse } from '../util.js';
 import { removeUploadedFile } from '../middleware/uploadCleanup.js';
 
 /**
+ * Checks whether a value has the persisted World Info data shape.
+ * @param {unknown} data Value to check.
+ * @returns {boolean} Whether the value is valid World Info data.
+ */
+function isValidWorldInfoData(data) {
+    return _.isPlainObject(data) && _.isPlainObject(data.entries);
+}
+
+/**
  * Reads a World Info file and returns its contents
  * @param {import('../users.js').UserDirectoryList} directories User directories
  * @param {string} worldInfoName Name of the World Info file
@@ -108,7 +117,7 @@ router.post('/import', (request, response) => {
 
         try {
             const worldContent = JSON.parse(fileContents);
-            if (!('entries' in worldContent)) {
+            if (!isValidWorldInfoData(worldContent)) {
                 throw new Error('File must contain a world info entries list');
             }
         } catch (err) {
@@ -151,11 +160,7 @@ router.post('/edit', (request, response) => {
         return response.status(400).send('World file must have a name');
     }
 
-    try {
-        if (!('entries' in request.body.data)) {
-            throw new Error('World info must contain an entries list');
-        }
-    } catch (err) {
+    if (!isValidWorldInfoData(request.body.data)) {
         return response.status(400).send('Is not a valid world info file');
     }
 

@@ -36,9 +36,13 @@ router.post('/generate', async function (request, response_generate) {
 
     const request_prompt = request.body.prompt;
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', async function () {
-        if (request.body.can_abort && !response_generate.writableEnded) {
+    response_generate.once('close', async function () {
+        if (response_generate.writableEnded) {
+            return;
+        }
+
+        controller.abort();
+        if (request.body.can_abort) {
             try {
                 console.info('Aborting Kobold generation...');
                 // send abort signal to koboldcpp
@@ -53,7 +57,6 @@ router.post('/generate', async function (request, response_generate) {
                 console.error(error);
             }
         }
-        controller.abort();
     });
 
     let this_settings = {

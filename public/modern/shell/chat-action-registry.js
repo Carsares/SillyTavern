@@ -47,6 +47,7 @@ export function createChatActionRegistry({
         getUserName,
         sortChats,
         saveGroupMetadata,
+        updateGroupMetadata,
         saveModernChat,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
@@ -79,7 +80,7 @@ export function createChatActionRegistry({
         loadChatMessages,
         refreshSelectedChatList,
         createModernChatFile,
-        saveGroupMetadata,
+        updateGroupMetadata,
         moveChatReadState,
         deleteChatReadState,
     });
@@ -159,6 +160,7 @@ export function createChatActionRegistry({
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
         saveGroupMetadata,
+        updateGroupMetadata,
         sortChats,
         toggleChatSidebar,
     };
