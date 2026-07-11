@@ -8,8 +8,12 @@ export function createRemoteResourceComponents(ctx) {
         pageHead,
         renderEmptyState,
         loadRemoteResources,
+        showToast,
+        render,
     } = ctx;
     let autoLoadPending = false;
+    // Stops the first-load failure from silently re-firing (and re-toasting) on every render; manual refresh still retries.
+    let autoLoadFailed = false;
 
     function renderRemoteResources() {
         ensureRemoteResourcesLoaded();
@@ -267,7 +271,7 @@ export function createRemoteResourceComponents(ctx) {
     }
 
     function ensureRemoteResourcesLoaded() {
-        if (state.remoteResources.loaded || state.remoteResources.loading || autoLoadPending) {
+        if (state.remoteResources.loaded || state.remoteResources.loading || autoLoadPending || autoLoadFailed) {
             return;
         }
 
@@ -275,6 +279,12 @@ export function createRemoteResourceComponents(ctx) {
         window.setTimeout(async () => {
             try {
                 await loadRemoteResources();
+            } catch (error) {
+                // Surface the first-load failure instead of failing silently, and stop auto-retrying every render
+                autoLoadFailed = true;
+                state.errors.push({ key: 'remote-resources', message: error.message });
+                showToast('远程资源读取失败', error.message);
+                render();
             } finally {
                 autoLoadPending = false;
             }
