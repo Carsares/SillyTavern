@@ -10,11 +10,16 @@ import { serverDirectory } from './server-directory.js';
 
 const USER_AGENT = 'SillyTavern';
 
-export async function downloadChubLorebook(id) {
+export async function downloadChubLorebook(id, cookie) {
     const [lorebooks, creatorName, projectName] = id.split('/');
+    // 可选注入已配置的 Chub cookie，携带登录态访问受限世界书；未传时保持匿名行为
+    const headers = { 'Accept': 'application/json', 'User-Agent': USER_AGENT };
+    if (cookie) {
+        headers['Cookie'] = cookie;
+    }
     const result = await fetch(`https://api.chub.ai/api/${lorebooks}/${creatorName}/${projectName}`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+        headers: headers,
     });
 
     if (!result.ok) {
@@ -34,7 +39,7 @@ export async function downloadChubLorebook(id) {
     const downloadUrl = `https://api.chub.ai/api/v4/projects/${projectId}/repository/files/raw%252Fsillytavern_raw.json/raw`;
     const downloadResult = await fetch(downloadUrl, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+        headers: headers,
     });
 
     if (!downloadResult.ok) {
@@ -51,11 +56,16 @@ export async function downloadChubLorebook(id) {
     return { buffer, fileName, fileType };
 }
 
-export async function downloadChubCharacter(id) {
+export async function downloadChubCharacter(id, cookie) {
     const [creatorName, projectName] = id.split('/');
+    // 可选注入已配置的 Chub cookie，携带登录态访问受限角色；未传时保持匿名行为
+    const headers = { 'Accept': 'application/json', 'User-Agent': USER_AGENT };
+    if (cookie) {
+        headers['Cookie'] = cookie;
+    }
     const result = await fetch(`https://api.chub.ai/api/characters/${creatorName}/${projectName}?full=true`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+        headers: headers,
     });
 
     if (!result.ok) {
@@ -99,7 +109,8 @@ export async function downloadChubCharacter(id) {
     const imageUrl = metadata.node?.max_res_url;
 
     if (imageUrl) {
-        const downloadResult = await fetch(imageUrl);
+        // 有 cookie 时同样携带登录态拉取受限图片，未传时保持原匿名请求
+        const downloadResult = await fetch(imageUrl, cookie ? { headers: { 'Cookie': cookie } } : undefined);
         if (downloadResult.ok) {
             imageBuffer = Buffer.from(await downloadResult.arrayBuffer());
         }

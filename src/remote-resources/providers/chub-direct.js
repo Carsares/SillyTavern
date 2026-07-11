@@ -32,16 +32,19 @@ export const chubDirectProvider = {
         };
     },
 
-    async download(params) {
+    async download(params, context) {
         const resourceType = params.resourceType || REMOTE_RESOURCE_TYPES.CHARACTER;
         const id = String(params.resourceId || '').trim();
         if (!id) {
             throw new Error('Chub resource ID is required.');
         }
 
+        // 与搜索链路一致，读取已配置的 Chub cookie 注入下载请求，携带登录态访问受限内容
+        const cookie = readSecret(context.directories, SECRET_KEYS.REMOTE_RESOURCES_CHUB_COOKIE);
+
         if (resourceType === REMOTE_RESOURCE_TYPES.CHARACTER) {
             return {
-                ...(await downloadChubCharacter(id.replace(/^characters\//, ''))),
+                ...(await downloadChubCharacter(id.replace(/^characters\//, ''), cookie)),
                 resourceType,
             };
         }
@@ -49,7 +52,7 @@ export const chubDirectProvider = {
         if (resourceType === REMOTE_RESOURCE_TYPES.WORLDBOOK) {
             const lorebookId = id.startsWith('lorebooks/') ? id : `lorebooks/${id}`;
             return {
-                ...(await downloadChubLorebook(lorebookId)),
+                ...(await downloadChubLorebook(lorebookId, cookie)),
                 resourceType,
             };
         }
