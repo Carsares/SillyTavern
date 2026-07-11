@@ -24,6 +24,25 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.page-title')).toHaveText('聊天工作区');
     });
 
+    test('redirects a direct legacy index hit to the modern workspace', async ({ page }) => {
+        await page.goto('/index.html');
+
+        await expect(page).toHaveURL(/\/modern\//);
+        await expect(page.locator('.brand-title')).toHaveText('SillyTavern');
+    });
+
+    test('keeps the legacy page reachable for the bridge iframe and OAuth callbacks', async ({ page }) => {
+        const bare = await page.request.get('/index.html', { maxRedirects: 0 });
+        expect(bare.status()).toBe(302);
+        expect(bare.headers()['location']).toContain('/modern/');
+
+        const bridge = await page.request.get('/index.html?modernBridge=1', { maxRedirects: 0 });
+        expect(bridge.status()).toBe(200);
+
+        const oauth = await page.request.get('/index.html?source=openrouter', { maxRedirects: 0 });
+        expect(oauth.status()).toBe(200);
+    });
+
     for (const [route, title] of modernRoutes) {
         test(`renders ${route}`, async ({ page }) => {
             const errors = [];

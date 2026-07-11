@@ -250,6 +250,17 @@ app.get('/callback/:source?', (request, response) => {
 // Host login page
 app.get('/login', loginPageMiddleware);
 
+// Retire the legacy full page from user-facing navigation: direct hits go to the modern workspace.
+// The hidden bridge iframe (modernBridge=1) and OAuth PKCE callbacks (source=...) still need the legacy
+// page, so let those fall through to the static handler below.
+app.get('/index.html', cacheBuster.middleware, (request, response, next) => {
+    if (request.query.modernBridge !== undefined || request.query.source !== undefined) {
+        return next();
+    }
+    const query = request.url.split('?')[1];
+    return response.redirect(query ? `/modern/?${query}` : '/modern/');
+});
+
 // Host frontend assets
 const webpackMiddleware = getWebpackServeMiddleware();
 app.use(webpackMiddleware);
