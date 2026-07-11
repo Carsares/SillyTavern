@@ -9,7 +9,7 @@ export function createPersonaCardComponents(ctx) {
         const cacheBust = state.avatarCacheBust[persona.avatarId];
         const avatarUrl = `${getPersonaUrl(persona.avatarId)}${cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : ''}`;
         return `
-        <article class="resource-card persona-card ${persona.avatarId === selectedPersonaId ? 'selected' : ''}" data-persona-card="${escapeHtml(persona.avatarId)}">
+        <article class="resource-card persona-card ${persona.avatarId === selectedPersonaId ? 'selected' : ''}${state.personaEditing.avatarId === persona.avatarId ? ' is-editing' : ''}" data-persona-card="${escapeHtml(persona.avatarId)}">
             <div class="detail-hero compact-hero">
                 <img class="avatar large" src="${avatarUrl}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
                 <div>

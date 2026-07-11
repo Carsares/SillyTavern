@@ -603,6 +603,12 @@ tr:last-child td {
     gap: 12px;
 }
 
+/* An inline-editing persona card spans its own full row so sibling cards in the
+   same grid row aren't stretched to its expanded height (no dead whitespace). */
+.persona-card.is-editing {
+    grid-column: 1 / -1;
+}
+
 /* Group member ordering + enable/disable list */
 .group-member-order-section {
     margin-top: 12px;

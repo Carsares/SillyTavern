@@ -175,6 +175,8 @@ export function createGroupRouteContext(groups) {
         confirmGroupDelete,
         updateGroupFormField,
         toggleGroupFormMember,
+        moveGroupFormMember,
+        toggleGroupFormMemberEnabled,
     } = groups;
 
     return {
@@ -191,6 +193,8 @@ export function createGroupRouteContext(groups) {
         confirmGroupDelete,
         updateGroupFormField,
         toggleGroupFormMember,
+        moveGroupFormMember,
+        toggleGroupFormMemberEnabled,
     };
 }
 

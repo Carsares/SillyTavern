@@ -14,7 +14,11 @@ export function bindShellEvents({
     handleClick,
 }) {
     elements.refreshButton.addEventListener('click', () => loadData());
-    elements.themeButton.addEventListener('click', () => setTheme(state.theme === 'dark' ? 'light' : 'dark'));
+    elements.themeButton.addEventListener('click', () => {
+        setTheme(state.theme === 'dark' ? 'light' : 'dark');
+        // Re-render so views that display the theme (设置 preferences, inspector) reflect the toggle
+        render();
+    });
     elements.mobileMenuButton.addEventListener('click', () => elements.app.querySelector('.sidebar')?.classList.toggle('open'));
     elements.search.addEventListener('input', event => {
         const query = event.target.value.trim();
