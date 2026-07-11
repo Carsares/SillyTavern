@@ -7,8 +7,14 @@ export function createChatComposerComponents({
     function renderChatComposer(messages) {
         const draft = getCurrentDraft();
         const draftLength = draft.trim().length;
-        const hasTarget = Boolean(getSelectedChatEntity());
+        const entity = getSelectedChatEntity();
+        const hasTarget = Boolean(entity);
         const canSend = !state.engine.generating && hasTarget && draftLength > 0;
+
+        // Manual group activation (strategy 2): let the user pick which enabled member speaks next
+        const manualSpeakers = !state.engine.generating && entity && String(entity.activation_strategy) === '2' && Array.isArray(entity.members)
+            ? entity.members.filter(avatar => !(Array.isArray(entity.disabled_members) && entity.disabled_members.includes(avatar)))
+            : [];
 
         return `
         <div class="composer">
@@ -33,6 +39,16 @@ export function createChatComposerComponents({
                     <i class="fa-solid fa-stop"></i>
                     停止
                 </button>
+            ` : ''}
+            ${manualSpeakers.length ? `
+                <div class="composer-manual-speakers">
+                    <span class="composer-manual-label">手动发言：</span>
+                    ${manualSpeakers.map(avatar => {
+        const character = state.characters.find(item => (item.avatar || '') === avatar);
+        const name = character?.name || character?.data?.name || avatar;
+        return `<button class="secondary-button compact-button" type="button" data-speak-member="${escapeHtml(avatar)}">${escapeHtml(name)}</button>`;
+    }).join('')}
+                </div>
             ` : ''}
         </div>
     `;

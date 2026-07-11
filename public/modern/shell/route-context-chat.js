@@ -113,6 +113,7 @@ export function createChatGenerationRouteContext(chatGeneration) {
         stopModernGeneration,
         regenerateModernReply,
         continueModernReply,
+        triggerGroupMemberModernReply,
         swipeModernMessage,
     } = chatGeneration;
 
@@ -122,6 +123,7 @@ export function createChatGenerationRouteContext(chatGeneration) {
         stopModernGeneration,
         regenerateModernReply,
         continueModernReply,
+        triggerGroupMemberModernReply,
         swipeModernMessage,
     };
 }

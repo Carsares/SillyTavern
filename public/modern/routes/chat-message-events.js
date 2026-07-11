@@ -8,6 +8,7 @@ export function createChatMessageEvents(ctx) {
         checkLegacyGenerationEngine,
         regenerateModernReply,
         continueModernReply,
+        triggerGroupMemberModernReply,
         swipeModernMessage,
         copyModernMessage,
         beginModernMessageDelete,
@@ -63,6 +64,18 @@ export function createChatMessageEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'continue-message', message: error.message });
                 showToast('继续生成失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        const speakMemberButton = event.target.closest('[data-speak-member]');
+        if (speakMemberButton) {
+            try {
+                await triggerGroupMemberModernReply(speakMemberButton.dataset.speakMember);
+            } catch (error) {
+                state.errors.push({ key: 'group-manual-speak', message: error.message });
+                showToast('生成失败', error.message);
                 render();
             }
             return true;

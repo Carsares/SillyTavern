@@ -5967,8 +5967,16 @@ async function handleModernBridgeGenerate(payload = {}) {
         setOnlineStatus('Modern bridge status check skipped');
     }
 
+    // Manual group activation: let the modern UI force a specific member (by avatar) to speak next
+    let forceChid = undefined;
+    if (context.group && params.forceAvatar) {
+        const forcedIndex = characters.findIndex(character => character.avatar === params.forceAvatar);
+        if (forcedIndex !== -1) {
+            forceChid = forcedIndex;
+        }
+    }
     const result = context.group
-        ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type))
+        ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type, { force_chid: forceChid }))
         : await Generate(type);
     if (type === 'normal' && chat.length <= messageCountBefore) {
         throw new Error('原版生成引擎未生成新消息，请检查 API 连接状态。');

@@ -144,6 +144,7 @@ export function createChatGenerationActions({
         contextKey = getChatContextKey(entity, groupMode),
         entityName = getChatEntityName(entity),
         message = '',
+        forceAvatar = null,
         toastTitle,
         toastMessage,
     }) {
@@ -168,6 +169,8 @@ export function createChatGenerationActions({
                     chat: chatId,
                     type,
                     message,
+                    // Manual group activation: force a specific member to speak next
+                    forceAvatar: groupMode ? forceAvatar : null,
                 });
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
                 await syncGeneratedChat({
@@ -353,6 +356,31 @@ export function createChatGenerationActions({
         });
     }
 
+    // Manual group activation: force a specific member to speak next without a new user message
+    async function triggerGroupMemberModernReply(avatar) {
+        if (state.engine.generating) {
+            return;
+        }
+
+        if (!isGroupChatMode()) {
+            throw new Error('仅群聊支持手动指定发言成员');
+        }
+
+        const entity = getSelectedChatEntity();
+        if (!getChatContextKey(entity) || !state.selected.chat) {
+            throw new Error('请先选择群聊和聊天文件');
+        }
+
+        await runLegacyChatGeneration('normal', {
+            entity,
+            chatId: state.selected.chat,
+            message: '',
+            forceAvatar: avatar,
+            toastTitle: '已生成回复',
+            toastMessage: '指定成员已发言并保存聊天文件。',
+        });
+    }
+
     async function stopModernGeneration() {
         if (!state.engine.generating) {
             return;
@@ -385,6 +413,7 @@ export function createChatGenerationActions({
         stopModernGeneration,
         regenerateModernReply,
         continueModernReply,
+        triggerGroupMemberModernReply,
         swipeModernMessage,
     };
 }
