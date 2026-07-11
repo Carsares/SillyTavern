@@ -17,7 +17,7 @@
 - 用户人设：人设创建、头像上传、默认人设切换和删除。
 - 素材库：背景上传、重命名、删除、文件夹管理、资产下载和删除。
 - 远程资源：独立聚合官方内容索引、GitHub/GitLab 扩展搜索、RisuRealm、Chub/CharacterHub、Character Tavern、AICharacterCards、LoreBary、WyvernChat、Mnemo、SpicyChat、Backyard AI、DataCat、Botbooru、Chatbots Webring、CharacterCard.com、Neocities Creator Sources、MLPCHAG Ponydex、Anchorhold /AICG Feed、Cardbox Archive、AICG Rentry Events、Rentry Tavern Export、AICG Rentry Directory、Character Archive Catbox 和 Blobfish23 Neocities 搜索，支持远程搜索、下载/导入、扩展安装、URL 导入、导入记录和资源站凭据保存状态。
-- API 连接管理：聊天补全和文本补全配置、密钥写入、模型刷新、连接测试、请求压缩配置。
+- API 连接管理：聊天补全、文本补全、KoboldAI Classic、NovelAI、AI Horde 五种主 API 的连接配置、密钥写入、模型刷新、连接测试、请求压缩配置。
 - 扩展：本地扩展查看、安装、更新、分支切换、移动和删除。
 - 活动与统计：近期资源活动、对象跳转和统计状态。
 - 设置中心：现代界面偏好、设置快照创建、预览和恢复。
