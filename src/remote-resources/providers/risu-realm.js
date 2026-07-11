@@ -13,6 +13,8 @@ import fetch from 'node-fetch';
 
 const BASE_URL = 'https://realm.risuai.net';
 const DOWNLOAD_PROBE_TIMEOUT_MS = 8000;
+// 限制 HEAD 探测并发，避免对单一第三方主机瞬间打出数百并发。
+const PROBE_CONCURRENCY = 8;
 const DOWNLOAD_FORMATS = Object.freeze({
     [REMOTE_RESOURCE_TYPES.CHARACTER]: { format: 'json-v3', extension: 'json', contentType: 'application/json' },
     [REMOTE_RESOURCE_TYPES.WORLDBOOK]: { format: 'lorebook-v3', extension: 'json', contentType: 'application/json' },
@@ -41,7 +43,8 @@ export const risuRealmProvider = {
         const items = parseSearchResults(text)
             .filter(item => !params.resourceType || item.resourceType === params.resourceType);
         const candidates = items.slice(offset, Math.min(items.length, offset + Math.max(limit * 10, limit)));
-        const availableItems = (await Promise.all(candidates.map(probeDownloadAvailability)))
+        // 按 PROBE_CONCURRENCY 分批探测，结果顺序与内容和全量并发一致。
+        const availableItems = (await mapWithLimit(candidates, PROBE_CONCURRENCY, probeDownloadAvailability))
             .filter(item => item.capabilities.download)
             .slice(0, limit);
 
@@ -148,4 +151,14 @@ async function probeDownloadAvailability(item) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+// 分批执行 mapper，保持与 Promise.all 相同的结果顺序，同时限制并发上限。
+async function mapWithLimit(items, limit, mapper) {
+    const results = [];
+    for (let index = 0; index < items.length; index += limit) {
+        const batch = items.slice(index, index + limit);
+        results.push(...await Promise.all(batch.map(mapper)));
+    }
+    return results;
 }
