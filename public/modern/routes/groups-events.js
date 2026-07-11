@@ -89,7 +89,7 @@ export function createGroupsEvents(ctx) {
 
         const moveMemberButton = event.target.closest('[data-group-member-move]');
         if (moveMemberButton) {
-            moveGroupFormMember(moveMemberButton.dataset.groupScope, moveMemberButton.dataset.groupMember, moveMemberButton.dataset.groupMemberMove);
+            moveGroupFormMember(moveMemberButton.dataset.groupScope, moveMemberButton.dataset.groupMemberAvatar, moveMemberButton.dataset.groupMemberMove);
             return;
         }
 

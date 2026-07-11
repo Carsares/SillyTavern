@@ -73,10 +73,10 @@ export function createGroupFormComponents(ctx) {
                 <span class="group-member-order">${formatNumber(index + 1)}</span>
                 <span class="group-member-name">${escapeHtml(title)}${isDisabled ? '（已禁用）' : ''}</span>
                 <div class="group-member-controls">
-                    <button class="secondary-button compact-button" type="button" data-group-member-move="up" data-group-member="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === 0 ? 'disabled' : ''} title="上移" aria-label="上移">
+                    <button class="secondary-button compact-button" type="button" data-group-member-move="up" data-group-member-avatar="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === 0 ? 'disabled' : ''} title="上移" aria-label="上移">
                         <i class="fa-solid fa-arrow-up"></i>
                     </button>
-                    <button class="secondary-button compact-button" type="button" data-group-member-move="down" data-group-member="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === orderedMembers.length - 1 ? 'disabled' : ''} title="下移" aria-label="下移">
+                    <button class="secondary-button compact-button" type="button" data-group-member-move="down" data-group-member-avatar="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === orderedMembers.length - 1 ? 'disabled' : ''} title="下移" aria-label="下移">
                         <i class="fa-solid fa-arrow-down"></i>
                     </button>
                     <button class="secondary-button compact-button" type="button" data-group-member-toggle-enabled="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" title="${isDisabled ? '启用成员' : '禁用成员'}" aria-label="${isDisabled ? '启用成员' : '禁用成员'}">
