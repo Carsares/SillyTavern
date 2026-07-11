@@ -29,8 +29,8 @@
 - 资源承接：角色、群组、世界书、预设、人设、背景、资产、扩展、设置快照的主要 CRUD 和文件流转都在新版内完成。
 - 模块拆分：`public/modern/app.js` 已收敛为启动装配层；业务动作、route、component、shell、core 已拆到对应目录。
 - 样式拆分：样式已拆为基础、shell、组件、布局、覆盖层、响应式和 route 级 CSS，不再存在需要优先拆分的单体 `styles.css`。
-- 后端兼容验证：`tests/modern-real-backend-integration.e2e.js` 已覆盖新版 UI 触发的真实后端主链路；当前 endpoint 审计无缺口。
-- 外部依赖验证：`tests/modern-external-dependencies.e2e.js` 已覆盖公网 URL 资产下载、公开 Git 扩展安装/更新/删除、OpenRouter 真实供应商 smoke；默认跳过，配置 `MODERN_EXTERNAL_E2E=1` 后进入外部依赖回归。
+- 后端兼容验证：`tests/modern-real-backend-integration.e2e.js` 已覆盖新版 UI 触发的真实后端主链路；涉及公网下载或 URL 粘贴导入的 endpoint（如 `/api/content/importURL`）由默认跳过的 `tests/modern-external-dependencies.e2e.js` 覆盖。两个套件合起来构成当前 endpoint 审计口径，无缺口。
+- 外部依赖验证：`tests/modern-external-dependencies.e2e.js` 已覆盖公网 URL 资产下载、URL 粘贴导入（`/api/content/importURL`）、公开 Git 扩展安装/更新/删除、OpenRouter 真实供应商 smoke；默认跳过，配置 `MODERN_EXTERNAL_E2E=1` 后进入外部依赖回归。
 - E2E 基线：modern E2E 覆盖入口、路由、聊天、角色、群组、世界书、预设、人设、素材、API、扩展、活动、设置、inspector 和真实后端集成。
 
 当前不再作为缺口处理：

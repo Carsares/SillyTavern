@@ -224,6 +224,37 @@ test.describe('Modern external dependency integration', () => {
         }
     });
 
+    test('imports a worldbook by pasting a URL from the modern UI through the real backend', async ({ page }) => {
+        test.setTimeout(180_000);
+
+        // Exercises /api/content/importURL (the URL-paste import path) end to end
+        const urlImportTarget = process.env.MODERN_EXTERNAL_URL_IMPORT || 'https://chub.ai/lorebooks/bartleby/toaru-sillytavern';
+        const tracker = trackApiRequests(page);
+        const recordsBefore = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+        const recordIdsBefore = new Set((recordsBefore || []).map(record => record.id).filter(Boolean));
+
+        try {
+            await gotoModern(page, 'remoteResources', '远程资源');
+            await page.locator('[data-remote-resource-tab="url"]').click();
+            await page.locator('[data-remote-url-import]').fill(urlImportTarget);
+
+            const importUrlCountBefore = tracker.count('/api/content/importURL');
+            const recordsCountBefore = tracker.count('/api/remote-resources/records');
+            await page.locator('[data-import-remote-url]').click();
+
+            await expect.poll(() => tracker.count('/api/content/importURL'), { timeout: 120_000 }).toBeGreaterThan(importUrlCountBefore);
+            await expect(page.locator('.toast', { hasText: '世界书已导入' })).toBeVisible({ timeout: 120_000 });
+            await expect.poll(() => tracker.count('/api/remote-resources/records'), { timeout: 120_000 }).toBeGreaterThan(recordsCountBefore);
+
+            await expect.poll(async () => {
+                const records = await apiFetch(page, '/api/remote-resources/records', undefined, 'GET');
+                return (records || []).some(record => record.providerId === 'chub' && !recordIdsBefore.has(record.id) && record.action === 'import-url' && record.localType === 'worldbook');
+            }, { timeout: 120_000 }).toBe(true);
+        } finally {
+            await cleanupNewRemoteRecords(page, recordIdsBefore, 'chub');
+        }
+    });
+
     test('imports a Cardbox Archive character from the modern UI through the real backend', async ({ page }) => {
         test.setTimeout(180_000);
 
