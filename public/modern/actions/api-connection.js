@@ -2,6 +2,7 @@ import { createApiChatCompletionConnectionActions } from './api-chat-completion-
 import { createApiTextCompletionConnectionActions } from './api-text-completion-connection.js';
 import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
 import { createApiNovelConnectionActions } from './api-novel-connection.js';
+import { createApiHordeConnectionActions } from './api-horde-connection.js';
 
 export function createApiConnectionActions({
     state,
@@ -159,6 +160,20 @@ export function createApiConnectionActions({
         recordApiTestResult,
     });
     const {
+        loadHordeModels,
+        refreshHordeModels,
+        saveHordeConnectionFromForm,
+        testHordeConnection,
+    } = createApiHordeConnectionActions({
+        state,
+        elements,
+        apiFetch,
+        loadData,
+        render,
+        showToast,
+        recordApiTestResult,
+    });
+    const {
         saveApiConnectionFromForm,
         testApiConnection,
     } = createApiChatCompletionConnectionActions({
@@ -183,6 +198,8 @@ export function createApiConnectionActions({
         testKoboldConnection,
         saveNovelConnectionFromForm,
         testNovelConnection,
+        saveHordeConnectionFromForm,
+        testHordeConnection,
     });
 
     return {
@@ -198,5 +215,7 @@ export function createApiConnectionActions({
         saveApiConnectionFromForm,
         updateApiSourceFields,
         updateTextCompletionTypeFields,
+        loadHordeModels,
+        refreshHordeModels,
     };
 }

@@ -258,6 +258,7 @@ export function createModernState() {
         },
         apiTestHistory: [],
         apiMainDraft: '',
+        hordeModels: { loaded: false, loading: false, items: [] },
         extensionOperation: {
             name: '',
             type: '',

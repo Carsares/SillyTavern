@@ -50,6 +50,8 @@ export function createApiRouteContext(api) {
         saveApiConnectionFromForm,
         updateApiSourceFields,
         updateTextCompletionTypeFields,
+        loadHordeModels,
+        refreshHordeModels,
     } = api;
 
     return {
@@ -65,6 +67,8 @@ export function createApiRouteContext(api) {
         saveApiConnectionFromForm,
         updateApiSourceFields,
         updateTextCompletionTypeFields,
+        loadHordeModels,
+        refreshHordeModels,
     };
 }
 

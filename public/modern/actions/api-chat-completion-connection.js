@@ -22,6 +22,8 @@ export function createApiChatCompletionConnectionActions({
     testKoboldConnection,
     saveNovelConnectionFromForm,
     testNovelConnection,
+    saveHordeConnectionFromForm,
+    testHordeConnection,
 }) {
     function getChatCompletionSettingsFromForm() {
         const savedSettings = getOaiSettings();
@@ -71,6 +73,10 @@ export function createApiChatCompletionConnectionActions({
         }
         if (mainApi === 'novel') {
             await saveNovelConnectionFromForm();
+            return;
+        }
+        if (mainApi === 'koboldhorde') {
+            await saveHordeConnectionFromForm();
             return;
         }
         if (mainApi !== 'openai') {
@@ -179,6 +185,10 @@ export function createApiChatCompletionConnectionActions({
         }
         if (getSelectedApiMain() === 'novel') {
             await testNovelConnection();
+            return;
+        }
+        if (getSelectedApiMain() === 'koboldhorde') {
+            await testHordeConnection();
             return;
         }
         if (getSelectedApiMain() !== 'openai') {

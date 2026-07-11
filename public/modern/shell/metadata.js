@@ -35,6 +35,7 @@ export function createShellMetadata({
         const chatModel = chatSource ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
             || (api === 'novel' ? settings.model_novel : '')
+            || (api === 'koboldhorde' ? (settings.horde_settings?.models || []).join('、') : '')
             || settings.textgenerationwebui_settings?.openrouter_model
             || settings.textgenerationwebui_settings?.custom_model
             || settings.model

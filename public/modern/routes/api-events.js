@@ -8,6 +8,7 @@ export function createApiEvents(ctx) {
         saveApiConnectionFromForm,
         updateApiSourceFields,
         updateTextCompletionTypeFields,
+        refreshHordeModels,
     } = ctx;
 
     async function handleApiClick(event) {
@@ -42,6 +43,17 @@ export function createApiEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'api-save', message: error.message });
                 showToast('连接配置保存失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-horde-refresh]')) {
+            try {
+                await refreshHordeModels();
+            } catch (error) {
+                state.errors.push({ key: 'horde-models', message: error.message });
+                showToast('AI Horde 模型刷新失败', error.message);
                 render();
             }
             return true;
