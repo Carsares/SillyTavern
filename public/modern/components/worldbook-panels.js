@@ -73,7 +73,7 @@ export function createWorldbookPanelComponents(ctx) {
         return `
         <details class="settings-form inline-form worldbook-global-settings">
             <summary class="form-subsection-title">全局生成参数</summary>
-            <p class="panel-subtitle">影响所有启用世界书的注入预算与扫描行为，对应旧版全局设置。</p>
+            <p class="panel-subtitle">全局生效于所有已启用的世界书，控制条目注入预算与扫描行为。</p>
             <div class="form-grid two-columns">
                 <label class="field-label">
                     <span>扫描深度</span>
