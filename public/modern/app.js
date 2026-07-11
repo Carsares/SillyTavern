@@ -9,6 +9,7 @@ import {
 import { createApiClient } from './core/api-client.js';
 import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
+import { getElementScrollTop, restoreElementScrollTop } from './core/scroll-state.js';
 import { createCommonComponents } from './components/common.js';
 import { createActionRegistry } from './shell/action-registry.js';
 import { createDataLoader } from './shell/data-loader.js';
@@ -296,8 +297,17 @@ async function pollChatUnreadState() {
 
     chatUnreadPolling = true;
     try {
+        // Snapshot the poll-visible chat data first; an unchanged poll skips the re-render so reading isn't interrupted
+        const chatListsSignature = JSON.stringify(state.chatLists);
         await refreshSelectedChatUnreadState();
+        if (JSON.stringify(state.chatLists) === chatListsSignature) {
+            return;
+        }
+
+        // render() rebuilds #content and the chat view scrolls the document, so preserve the reader's scroll position
+        const documentScrollTop = getElementScrollTop(document.scrollingElement);
         render();
+        restoreElementScrollTop(document.scrollingElement, documentScrollTop);
     } catch (error) {
         state.errors.push({ key: 'chat-unread-poll', message: error.message });
     } finally {
