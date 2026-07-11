@@ -155,6 +155,11 @@ async function fetchWithTimeout(url, options = {}) {
         });
 
         if (!response.ok) {
+            // Distinguish rate limiting (429) from generic failures so the frontend can tell "throttled" apart from "site down"
+            if (response.status === 429) {
+                const retryAfter = response.headers.get('retry-after');
+                throw new Error(`Remote request rate limited (429)${retryAfter ? `, retry after ${retryAfter}s` : ''}`);
+            }
             const text = await response.text().catch(() => '');
             throw new Error(`Remote request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
         }
