@@ -169,8 +169,8 @@ export function createChatGenerationActions({
                     chat: chatId,
                     type,
                     message,
-                    // Manual group activation: force a specific member to speak next
-                    forceAvatar: groupMode ? forceAvatar : null,
+                    // Manual group activation: only forwarded when a specific member is forced, so other flows are unchanged
+                    ...(groupMode && forceAvatar ? { forceAvatar } : {}),
                 });
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
                 await syncGeneratedChat({
