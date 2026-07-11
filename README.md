@@ -39,7 +39,7 @@
 
 - `/`：登录校验后重定向到 `/modern/`。
 - `/modern`、`/modern/`、`/modern/index.html`：返回新版界面。
-- `/callback/:source?`：OAuth 回调后继续回到根入口，最终进入新版。
+- `/callback/:source?`：OAuth 回调后 307 重定向到 `/index.html`（旧版整页），出于安全考虑不直接进入新版。
 
 远程资源后端集中在 `src/remote-resources/` 和 `src/endpoints/remote-resources.js`：
 
@@ -57,7 +57,7 @@
 - SpicyChat 搜索先读取 `/v2/applications/spicychat` 下发的公开 Typesense 配置，再查询 SFW 且定义公开的 `public_characters_alias` 角色索引；角色下载读取 `/v2/characters/:id` 并转换为 SillyTavern JSON。Lorebook 页面匿名 403，公开 `lorebooks_public` 索引当前为空，暂不接入世界书。
 - Backyard AI 搜索使用 Community Hub 的匿名 tRPC 接口 `hub.browse.getHubGroupConfigsBySearch`，空搜索读取 `getHubGroupConfigsBySortType` 的 Trending 列表；角色下载读取 `getHubCharacterConfigById` 并转换为 SillyTavern JSON，详情中的 `LorebookItems` 会保留到角色卡内嵌 `character_book`，当前没有独立世界书公开目录。
 - DataCat 搜索先通过 `/api/liberator/identify` 创建匿名 session，再调用 `/api/characters/recent-public` 搜索 JanitorAI/JannyAI 聚合角色；下载读取 `/api/characters/:id/download` 返回的 SillyTavern `chara_card_v2` JSON。DataCat 结果会显式标记 NSFW。
-- Botbooru 搜索使用匿名 `/posts/` 角色列表和 `/api/lorebooks` 世界书列表，默认附加 `sfw_only=true`；角色下载使用 `/download/png/:id` 保留 PNG 角色卡，世界书下载使用 `/api/lorebooks/:number/download.json`。Botbooru token 槽位仅预留给后续登录态扩展。
+- Botbooru 搜索使用匿名 `/posts/` 角色列表和 `/api/lorebooks` 世界书列表，默认附加 `sfw_only=true`；角色下载使用 `/download/png/:id` 保留 PNG 角色卡，世界书下载使用 `/api/lorebooks/:number/download.json`。Botbooru token 已作为 `Bearer` 随请求发送，但当前搜索的 `sfw_only` 恒为 `true`，token 暂无额外可见效果。
 - Hugging Face ST Repos 搜索已验证的公开 SillyTavern 资源仓库文件树，只返回角色卡、世界书和预设 JSON；世界书源包含 `sphiratrioth666/Lorebooks_as_ACTIVE_scenario_and_character_guidance_tool` 和 `sphiratrioth666/GM-5_Game_Mistress_Roleplaying_System` 的 `01. WORLD LOREBOOKS/` 目录。
 - Chatbots Webring 搜索 `chatbots.neocities.org` 静态成员站点，只抓取成员页和明确资源子页里的角色卡/世界书/预设文件、`/JSONs/` 预设 JSON、`/lorebooks/` 世界书 JSON，以及成员页明确引用的 Catbox / Chub CDN PNG 角色卡。
 - Neocities Creator Sources 只抓取固定验证过的独立创作者页：Kylaci 的 Chub CDN PNG 角色卡、Graystone Universe 的世界书 JSON、LeafCanFly 的同源 SillyTavern 预设 JSON、Akiri 的 `ST_Settings/*.json` 上下文模板和采样预设、The Luminarium 的 `Cards/*.png` 角色卡 / 已验证世界书 / 预设 JSON、Kintsugi 的主预设 JSON、Momoura 的预设 JSON 和 Japari Library 世界书、Ratlover 的 `cards/*.png` 角色卡、Moxxie 的根级 PNG 角色卡和 `lorebook.json` 世界书；下载前会回读来源页确认直链仍公开存在。
