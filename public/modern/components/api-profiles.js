@@ -56,7 +56,12 @@ export function createApiProfileComponents(ctx) {
     }
 
     function renderApiProfileCard(profile) {
-        const canSelect = profile.mainApi && profile.title !== '主连接';
+        // 主连接 summarizes whichever sub-profile is active, so it must not compete for the 当前/备用 signal
+        const isSummary = profile.title === '主连接';
+        const badgeLabel = isSummary ? '汇总' : (profile.active ? '当前' : '备用');
+        const badgeActive = !isSummary && profile.active;
+        // Only an inactive type card gets a switch button; on the active card it would be a silent no-op
+        const canSelect = profile.mainApi && !isSummary && !profile.active;
         return `
         <article class="resource-card api-profile-card">
             <div class="card-head">
@@ -64,13 +69,13 @@ export function createApiProfileComponents(ctx) {
                     <h3 class="card-title">${escapeHtml(profile.title)}</h3>
                     <div class="card-meta">${escapeHtml(profile.kind)}</div>
                 </div>
-                <span class="badge">${profile.active ? '当前' : '备用'}</span>
+                <span class="badge${badgeActive ? ' active' : ''}">${badgeLabel}</span>
             </div>
             <div class="kv-list">
-                ${renderKeyValue('来源', profile.source || '未配置')}
-                ${renderKeyValue('模型', profile.model || '未配置')}
-                ${renderKeyValue('预设', profile.preset || '未配置')}
-                ${renderKeyValue('端点', profile.endpoint || '未配置')}
+                ${renderKeyValue('来源', profile.source, { emptyText: '未配置' })}
+                ${renderKeyValue('模型', profile.model, { emptyText: '未配置' })}
+                ${renderKeyValue('预设', profile.preset, { emptyText: '未配置' })}
+                ${renderKeyValue('端点', profile.endpoint, { emptyText: '未配置' })}
             </div>
             ${canSelect ? `
                 <button class="secondary-button" type="button" data-api-profile-main="${escapeHtml(profile.mainApi)}">

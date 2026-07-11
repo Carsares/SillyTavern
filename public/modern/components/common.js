@@ -90,11 +90,20 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         `;
     }
 
-    function renderKeyValue(key, value) {
+    function renderKeyValue(key, value, options) {
+        // Legacy 2-arg calls keep the original behavior (nullish -> '未设置', '' stays '', no empty styling);
+        // passing options opts into empty detection + a muted 'is-empty' value so absent fields read as absent.
+        const hasOptions = options !== undefined;
+        const emptyText = options?.emptyText ?? '未设置';
+        const isEmpty = hasOptions
+            ? (value === null || value === undefined || value === '')
+            : (value === null || value === undefined);
+        const display = isEmpty ? emptyText : value;
+        const emptyClass = hasOptions && isEmpty ? ' is-empty' : '';
         return `
             <div class="kv-row">
                 <span class="kv-key">${escapeHtml(key)}</span>
-                <span class="kv-value" title="${escapeHtml(value ?? '未设置')}">${escapeHtml(value ?? '未设置')}</span>
+                <span class="kv-value${emptyClass}" title="${escapeHtml(display)}">${escapeHtml(display)}</span>
             </div>
         `;
     }

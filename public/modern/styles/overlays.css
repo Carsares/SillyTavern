@@ -78,6 +78,19 @@
     white-space: nowrap;
 }
 
+/* Empty markers (未配置/未设置) read as absent rather than as a real value */
+.kv-value.is-empty {
+    color: var(--text-muted);
+    font-family: inherit;
+}
+
+/* Connection-profile rows keep the short label on one line so a long endpoint URL truncates in
+   the value column instead of squeezing the CJK label ("端点") into two stacked glyphs */
+.api-profile-card .kv-key {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 .command-palette {
     position: fixed;
     inset: 0;

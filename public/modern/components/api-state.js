@@ -23,6 +23,16 @@ export function createApiStateComponents(ctx) {
         const chatEndpoint = getChatCompletionEndpoint(openaiSource, oaiSettings);
         const mainIsChat = settings.main_api === 'openai';
         const mainIsTextgen = settings.main_api === 'textgenerationwebui';
+        // For a kobold/novel/koboldhorde main API the provider is the main_api itself; resolve that API's own model
+        // rather than the flat settings.model (which is empty for novel/horde and would show 未配置)
+        let otherApiModel = settings.model || '';
+        if (settings.main_api === 'novel') {
+            otherApiModel = settings.model_novel || '';
+        } else if (settings.main_api === 'koboldhorde') {
+            otherApiModel = (settings.horde_settings?.models || []).join('、');
+        }
+        const mainApiSource = mainIsChat ? openaiSource : (mainIsTextgen ? textgenProfile.source : (settings.main_api || ''));
+        const mainApiModel = mainIsChat ? openaiModel : (mainIsTextgen ? textgenProfile.model : otherApiModel);
 
         return [
             {
@@ -30,8 +40,8 @@ export function createApiStateComponents(ctx) {
                 kind: 'generation',
                 mainApi: settings.main_api || '',
                 active: true,
-                source: settings.main_api || '',
-                model: mainIsChat ? openaiModel : (mainIsTextgen ? textgenProfile.model : settings.model || ''),
+                source: mainApiSource,
+                model: mainApiModel,
                 preset: mainIsChat ? chatPreset : (mainIsTextgen ? textgenProfile.preset : settings.preset_settings || settings.active_preset || ''),
                 endpoint: mainIsChat ? chatEndpoint : (mainIsTextgen ? textgenProfile.endpoint : maskEndpoint(settings.api_server || settings.api_server_textgenerationwebui || '')),
             },

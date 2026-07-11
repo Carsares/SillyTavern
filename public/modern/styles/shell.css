@@ -238,6 +238,12 @@ kbd {
     color: var(--danger);
 }
 
+.badge.active {
+    border-color: color-mix(in srgb, var(--success) 40%, transparent);
+    background: color-mix(in srgb, var(--success) 14%, var(--surface));
+    color: var(--success);
+}
+
 .icon-button,
 .primary-button,
 .secondary-button {
