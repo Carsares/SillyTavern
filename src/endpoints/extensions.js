@@ -8,8 +8,12 @@ import { CheckRepoActions, default as simpleGit } from 'simple-git';
 import { PUBLIC_DIRECTORIES } from '../constants.js';
 import { getConfigValue, isValidUrl } from '../util.js';
 import { createGitClient } from '../git/client.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 
 const gitBackend = getConfigValue('git.backend', 'auto');
+
+// Serialize write operations per extension directory to avoid git/filesystem races (e.g. .git/index.lock conflicts, update racing delete)
+const EXTENSION_OP_QUEUE = new KeyedPromiseQueue();
 
 /**
  * @type {Partial<import('simple-git').SimpleGitOptions>}
@@ -190,24 +194,28 @@ router.post('/update', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const { isUpToDate, remoteUrl } = await checkIfRepoIsUpToDate(extensionPath);
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
-        const isRepo = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
-        if (!isRepo) {
-            throw new Error(`Directory is not a Git repository at ${extensionPath}`);
-        }
-        const currentBranch = await git.branch();
-        if (!isUpToDate) {
-            await git.pull('origin', currentBranch.current);
-            console.info(`Extension has been updated at ${extensionPath}`);
-        } else {
-            console.info(`Extension is up to date at ${extensionPath}`);
-        }
-        await git.fetch('origin');
-        const fullCommitHash = await git.revparse(['HEAD']);
-        const shortCommitHash = fullCommitHash.slice(0, 7);
+        // Serialize git changes on this extension directory to avoid racing with other write operations
+        const result = await EXTENSION_OP_QUEUE.run(extensionPath, async () => {
+            const { isUpToDate, remoteUrl } = await checkIfRepoIsUpToDate(extensionPath);
+            const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+            const isRepo = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+            if (!isRepo) {
+                throw new Error(`Directory is not a Git repository at ${extensionPath}`);
+            }
+            const currentBranch = await git.branch();
+            if (!isUpToDate) {
+                await git.pull('origin', currentBranch.current);
+                console.info(`Extension has been updated at ${extensionPath}`);
+            } else {
+                console.info(`Extension is up to date at ${extensionPath}`);
+            }
+            await git.fetch('origin');
+            const fullCommitHash = await git.revparse(['HEAD']);
+            const shortCommitHash = fullCommitHash.slice(0, 7);
+            return { shortCommitHash, isUpToDate, remoteUrl };
+        });
 
-        return response.send({ shortCommitHash, extensionPath, isUpToDate, remoteUrl });
+        return response.send({ shortCommitHash: result.shortCommitHash, extensionPath, isUpToDate: result.isUpToDate, remoteUrl: result.remoteUrl });
     } catch (error) {
         console.error('Updating extension failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
@@ -238,23 +246,26 @@ router.post('/branches', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
-        // Unshallow the repository if it is shallow
-        const isShallow = await git.revparse(['--is-shallow-repository']) === 'true';
-        if (isShallow) {
-            console.info(`Unshallowing the repository at ${extensionPath}`);
-            await git.fetch('origin', ['--unshallow']);
-        }
+        // Serialize git changes on this extension directory to avoid racing with other write operations
+        const result = await EXTENSION_OP_QUEUE.run(extensionPath, async () => {
+            const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+            // Unshallow the repository if it is shallow
+            const isShallow = await git.revparse(['--is-shallow-repository']) === 'true';
+            if (isShallow) {
+                console.info(`Unshallowing the repository at ${extensionPath}`);
+                await git.fetch('origin', ['--unshallow']);
+            }
 
-        // Fetch all branches
-        await git.remote(['set-branches', 'origin', '*']);
-        await git.fetch('origin');
-        const localBranches = await git.branchLocal();
-        const remoteBranches = await git.branch(['-r', '--list', 'origin/*']);
-        const result = [
-            ...Object.values(localBranches.branches),
-            ...Object.values(remoteBranches.branches),
-        ].map(b => ({ current: b.current, commit: b.commit, name: b.name, label: b.label }));
+            // Fetch all branches
+            await git.remote(['set-branches', 'origin', '*']);
+            await git.fetch('origin');
+            const localBranches = await git.branchLocal();
+            const remoteBranches = await git.branch(['-r', '--list', 'origin/*']);
+            return [
+                ...Object.values(localBranches.branches),
+                ...Object.values(remoteBranches.branches),
+            ].map(b => ({ current: b.current, commit: b.commit, name: b.name, label: b.label }));
+        });
 
         return response.send(result);
     } catch (error) {
@@ -287,39 +298,42 @@ router.post('/switch', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
-        const branches = await git.branchLocal();
+        // Serialize the branch checkout on this extension directory to avoid racing with other write operations
+        return await EXTENSION_OP_QUEUE.run(extensionPath, async () => {
+            const git = simpleGit({ baseDir: extensionPath, ...OPTIONS });
+            const branches = await git.branchLocal();
 
-        if (String(branch).startsWith('origin/')) {
-            const localBranch = branch.replace('origin/', '');
-            if (branches.all.includes(localBranch)) {
-                console.info(`Branch ${localBranch} already exists locally, checking it out`);
-                await git.checkout(localBranch);
+            if (String(branch).startsWith('origin/')) {
+                const localBranch = branch.replace('origin/', '');
+                if (branches.all.includes(localBranch)) {
+                    console.info(`Branch ${localBranch} already exists locally, checking it out`);
+                    await git.checkout(localBranch);
+                    return response.sendStatus(204);
+                }
+
+                console.info(`Branch ${localBranch} does not exist locally, creating it from ${branch}`);
+                await git.checkoutBranch(localBranch, branch);
                 return response.sendStatus(204);
             }
 
-            console.info(`Branch ${localBranch} does not exist locally, creating it from ${branch}`);
-            await git.checkoutBranch(localBranch, branch);
+            if (!branches.all.includes(branch)) {
+                console.error(`Branch ${branch} does not exist locally`);
+                return response.status(404).send(`Branch ${branch} does not exist locally`);
+            }
+
+            // Check if the branch is already checked out
+            const currentBranch = await git.branch();
+            if (currentBranch.current === branch) {
+                console.info(`Branch ${branch} is already checked out`);
+                return response.sendStatus(204);
+            }
+
+            // Checkout the branch
+            await git.checkout(branch);
+            console.info(`Checked out branch ${branch} at ${extensionPath}`);
+
             return response.sendStatus(204);
-        }
-
-        if (!branches.all.includes(branch)) {
-            console.error(`Branch ${branch} does not exist locally`);
-            return response.status(404).send(`Branch ${branch} does not exist locally`);
-        }
-
-        // Check if the branch is already checked out
-        const currentBranch = await git.branch();
-        if (currentBranch.current === branch) {
-            console.info(`Branch ${branch} is already checked out`);
-            return response.sendStatus(204);
-        }
-
-        // Checkout the branch
-        await git.checkout(branch);
-        console.info(`Checked out branch ${branch} at ${extensionPath}`);
-
-        return response.sendStatus(204);
+        });
     } catch (error) {
         console.error('Switching branches failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
@@ -363,9 +377,12 @@ router.post('/move', async (request, response) => {
             return response.status(409).send('Source and destination directories are the same.');
         }
 
-        fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
-        fs.rmSync(sourcePath, { recursive: true, force: true });
-        console.info(`Extension has been moved from ${sourcePath} to ${destinationPath}`);
+        // Serialize the filesystem move keyed on the source extension directory to avoid racing with its other write operations
+        await EXTENSION_OP_QUEUE.run(sourcePath, async () => {
+            fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
+            fs.rmSync(sourcePath, { recursive: true, force: true });
+            console.info(`Extension has been moved from ${sourcePath} to ${destinationPath}`);
+        });
 
         return response.sendStatus(204);
     } catch (error) {
@@ -463,8 +480,11 @@ router.post('/delete', async (request, response) => {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
         }
 
-        await fs.promises.rm(extensionPath, { recursive: true });
-        console.info(`Extension has been deleted at ${extensionPath}`);
+        // Serialize the deletion on this extension directory to avoid racing with its other write operations
+        await EXTENSION_OP_QUEUE.run(extensionPath, async () => {
+            await fs.promises.rm(extensionPath, { recursive: true });
+            console.info(`Extension has been deleted at ${extensionPath}`);
+        });
 
         return response.send(`Extension has been deleted at ${extensionPath}`);
     } catch (error) {
