@@ -280,8 +280,8 @@ router.post('/upload', async (request, response) => {
         const filename = spriteName + path.parse(file.originalname).ext;
         const spritePath = path.join(file.destination, file.filename);
         const pathToFile = path.join(spritesPath, sanitize(filename));
-        // Copy uploaded file to sprites folder
-        fs.cpSync(spritePath, pathToFile);
+        // Copy uploaded file to sprites folder via atomic write to avoid readers seeing a partial sprite
+        writeFileAtomicSync(pathToFile, fs.readFileSync(spritePath));
         // Remove uploaded file
         fs.unlinkSync(spritePath);
         return response.send({ ok: true });
