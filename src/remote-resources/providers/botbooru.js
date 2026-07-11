@@ -16,7 +16,7 @@ const IMAGE_PREVIEW_SIZE = 640;
 export const botbooruProvider = {
     id: 'botbooru',
     name: 'Botbooru',
-    description: 'Botbooru 公开角色和世界书接口，匿名搜索 SFW 资源；预留 token 槽位用于后续登录态扩展。',
+    description: 'Botbooru 公开角色和世界书接口，匿名搜索 SFW 资源；已配置的 token 会随请求发送，但当前强制 SFW 使其无额外可见效果。',
     authMode: 'token',
     supportsSearch: true,
     supportsDownload: true,
