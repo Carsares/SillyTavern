@@ -32,7 +32,8 @@ export function createShellMetadata({
         const chatSource = api === 'kobold'
             ? (settings.api_server || '')
             : (settings.chat_completion_source || oaiSettings.chat_completion_source || '');
-        const chatModel = chatSource ? getChatCompletionModel(oaiSettings, chatSource) : '';
+        // kobold's chatSource is a server URL, not a completion source, so skip the chat-completion model lookup
+        const chatModel = (chatSource && api !== 'kobold') ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
             || (api === 'novel' ? settings.model_novel : '')
             || (api === 'koboldhorde' ? (settings.horde_settings?.models || []).join('、') : '')

@@ -38,7 +38,7 @@ export function createPersonaCardComponents(ctx) {
                     管理
                 </button>
             </div>
-            ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel(persona) : ''}
+            ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel() : ''}
             ${state.personaDeleteConfirm.avatarId === persona.avatarId ? renderPersonaDeletePanel(persona) : ''}
         </article>
     `;
@@ -75,17 +75,12 @@ export function createPersonaCardComponents(ctx) {
     `;
     }
 
-    function renderPersonaEditPanel(persona) {
-        const form = state.personaEditing.form;
-        const formValue = {
-            name: form.name || persona.name,
-            title: form.title || '',
-            description: form.description || '',
-        };
-
+    function renderPersonaEditPanel() {
+        // Pass the editing form straight through (like the create panel) so every persisted
+        // descriptor field — position/depth/role/lorebook/connections — is reflected when editing
         return `
         <div class="settings-form">
-            ${renderPersonaFormContent(formValue, 'edit')}
+            ${renderPersonaFormContent(state.personaEditing.form, 'edit')}
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-cancel-persona-edit>
                     <i class="fa-solid fa-xmark"></i>

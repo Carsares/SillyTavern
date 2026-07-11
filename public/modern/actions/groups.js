@@ -232,6 +232,8 @@ export function createGroupActions({
             members.add(avatar);
         } else {
             members.delete(avatar);
+            // Removing a member also clears its disabled flag, so re-adding it later starts active
+            form.disabled_members = (Array.isArray(form.disabled_members) ? form.disabled_members : []).filter(member => member !== avatar);
         }
         form.members = [...members];
         render();
