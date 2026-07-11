@@ -615,6 +615,18 @@ tr:last-child td {
     color: var(--text-muted);
 }
 
+.form-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.form-section-header .form-subsection-title {
+    margin: 0;
+}
+
 .group-member-order-list {
     list-style: none;
     margin: 0;

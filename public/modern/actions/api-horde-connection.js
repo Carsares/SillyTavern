@@ -33,6 +33,10 @@ export function createApiHordeConnectionActions({
     }
 
     async function refreshHordeModels() {
+        // Persist the user's current (unsaved) selection in memory so the refresh re-render keeps it selected
+        const hordeSettings = state.settings.horde_settings || {};
+        state.settings.horde_settings = hordeSettings;
+        hordeSettings.models = getSelectedHordeModels();
         await loadHordeModels({ force: true });
         showToast('AI Horde 模型已刷新', `${state.hordeModels.items.length} 个可用模型`);
     }
@@ -63,7 +67,7 @@ export function createApiHordeConnectionActions({
         await saveSettingsSerialized(apiFetch, state.settings);
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('AI Horde 连接已保存', models.length ? `${models.length} 个模型` : '未选择模型');
+        showToast('AI Horde 连接已保存', models.length ? `${models.length} 个模型` : '未选择模型，无法生成，请至少选择一个');
     }
 
     async function testHordeConnection() {

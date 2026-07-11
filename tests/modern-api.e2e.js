@@ -321,6 +321,10 @@ test.describe('Modern API page', () => {
 
         await expect.poll(() => userInfoCalled).toBe(true);
         await expect(page.locator('.api-history-panel')).toContainText('tester');
+
+        // Refreshing the model list keeps the current selection instead of resetting it
+        await page.locator('[data-horde-refresh]').click();
+        await expect(page.locator('[data-horde-model]')).toHaveValues(['koboldcpp/model-a', 'koboldcpp/model-b']);
     });
 
     test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
