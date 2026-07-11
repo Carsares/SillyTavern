@@ -81,6 +81,8 @@ async function connectJson(method, payload) {
             'User-Agent': USER_AGENT,
         },
         body: JSON.stringify(payload),
+        // 加 20s 超时，避免第三方站点不响应时挂住聚合搜索。
+        signal: AbortSignal.timeout(20000),
     });
     const text = await response.text();
     if (!response.ok) {

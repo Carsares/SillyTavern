@@ -141,6 +141,8 @@ async function postTypesenseSearch(apiKey, payload) {
             'User-Agent': USER_AGENT,
         },
         body: JSON.stringify(payload),
+        // 裸 fetch 无默认超时，加 20s 上限避免 Typesense 无响应时请求悬挂。
+        signal: AbortSignal.timeout(20000),
     });
     const text = await response.text();
     if (!response.ok) {

@@ -63,6 +63,8 @@ export const jannyAiProvider = {
                 'Accept': 'text/html,*/*;q=0.8',
                 'User-Agent': USER_AGENT,
             },
+            // 加 20s 超时，避免第三方站点不响应时挂住聚合搜索。
+            signal: AbortSignal.timeout(20000),
         });
         if (!response.ok) {
             throw new Error(`JannyAI character detail request failed: ${response.status} ${response.statusText}`);
@@ -92,6 +94,8 @@ async function postSearch(payload) {
             'User-Agent': USER_AGENT,
         },
         body: JSON.stringify(payload),
+        // 加 20s 超时，避免第三方站点不响应时挂住聚合搜索。
+        signal: AbortSignal.timeout(20000),
     });
     const text = await response.text();
     if (!response.ok) {
