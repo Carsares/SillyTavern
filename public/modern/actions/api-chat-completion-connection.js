@@ -18,6 +18,8 @@ export function createApiChatCompletionConnectionActions({
     recordApiTestResult,
     saveTextCompletionConnectionFromForm,
     testTextCompletionConnection,
+    saveKoboldConnectionFromForm,
+    testKoboldConnection,
 }) {
     function getChatCompletionSettingsFromForm() {
         const savedSettings = getOaiSettings();
@@ -59,6 +61,10 @@ export function createApiChatCompletionConnectionActions({
 
         if (mainApi === 'textgenerationwebui') {
             await saveTextCompletionConnectionFromForm();
+            return;
+        }
+        if (mainApi === 'kobold') {
+            await saveKoboldConnectionFromForm();
             return;
         }
         if (mainApi !== 'openai') {
@@ -159,6 +165,10 @@ export function createApiChatCompletionConnectionActions({
         }
         if (getSelectedApiMain() === 'textgenerationwebui') {
             await testTextCompletionConnection();
+            return;
+        }
+        if (getSelectedApiMain() === 'kobold') {
+            await testKoboldConnection();
             return;
         }
         if (getSelectedApiMain() !== 'openai') {

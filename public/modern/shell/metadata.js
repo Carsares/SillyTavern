@@ -28,7 +28,10 @@ export function createShellMetadata({
         const bundle = state.settingsBundle || {};
         const api = settings.main_api || '未选择';
         const oaiSettings = settings.oai_settings || {};
-        const chatSource = settings.chat_completion_source || oaiSettings.chat_completion_source || '';
+        // KoboldAI Classic has no completion source; its connection is the server URL
+        const chatSource = api === 'kobold'
+            ? (settings.api_server || '')
+            : (settings.chat_completion_source || oaiSettings.chat_completion_source || '');
         const chatModel = chatSource ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
             || settings.textgenerationwebui_settings?.openrouter_model

@@ -4,6 +4,7 @@ import { createApiDiagnosticComponents } from './api-diagnostics.js';
 import { createApiProfileComponents } from './api-profiles.js';
 import { createApiStateComponents } from './api-state.js';
 import { createApiTextCompletionComponents } from './api-text-completion.js';
+import { createApiKoboldComponents } from './api-kobold-editor.js';
 
 export function createApiComponents(ctx) {
     const {
@@ -34,6 +35,9 @@ export function createApiComponents(ctx) {
         renderApiMainSelect,
     } = createApiCurrentComponents(ctx);
     const {
+        renderKoboldEditor,
+    } = createApiKoboldComponents(ctx);
+    const {
         getApiProfiles,
         getCurrentProviderInfo,
         getApiChecks,
@@ -48,7 +52,7 @@ export function createApiComponents(ctx) {
         const provider = getCurrentProviderInfo();
         const profiles = getApiProfiles();
         const checks = getApiChecks(provider, profiles);
-        const canTestConnection = ['openai', 'textgenerationwebui'].includes(getSelectedApiMain());
+        const canTestConnection = ['openai', 'textgenerationwebui', 'kobold'].includes(getSelectedApiMain());
 
         return `
         ${pageHead('API 连接管理', '连接、模型、预设和请求状态。', `
@@ -84,6 +88,10 @@ export function createApiComponents(ctx) {
 
         if (mainApi === 'textgenerationwebui') {
             return renderTextCompletionEditor(mainApi, renderApiMainSelect);
+        }
+
+        if (mainApi === 'kobold') {
+            return renderKoboldEditor(mainApi, renderApiMainSelect);
         }
 
         if (mainApi !== 'openai') {

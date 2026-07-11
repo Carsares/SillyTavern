@@ -126,8 +126,8 @@ test.describe('Modern API page', () => {
     test('keeps unsupported main API visible before switching to a modern editor', async ({ page }) => {
         const settingsBundle = {
             settings: JSON.stringify({
-                main_api: 'kobold',
-                preset_settings: 'Legacy Kobold Preset',
+                main_api: 'koboldhorde',
+                preset_settings: 'Legacy Horde Preset',
                 textgenerationwebui_settings: {
                     type: 'ooba',
                     server_urls: {
@@ -147,8 +147,8 @@ test.describe('Modern API page', () => {
         await page.goto('/modern/?view=api');
 
         await expect(page.locator('.form-section-title', { hasText: '连接' })).toBeVisible();
-        await expect(page.locator('[data-api-main]')).toHaveValue('kobold');
-        await expect(page.locator('[data-api-main] option:checked')).toHaveText('当前：kobold（暂不支持编辑）');
+        await expect(page.locator('[data-api-main]')).toHaveValue('koboldhorde');
+        await expect(page.locator('[data-api-main] option:checked')).toHaveText('当前：koboldhorde（暂不支持编辑）');
         await expect(page.locator('text=当前主 API 暂不支持在现代页编辑。')).toBeVisible();
 
         await page.locator('[data-api-main]').selectOption('textgenerationwebui');
@@ -156,6 +156,51 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-textgen-type]')).toHaveValue('ooba');
         await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:5000');
         await expect(page.locator('[data-textgen-model]')).toHaveValue('ooba/saved-model');
+    });
+
+    test('edits and tests the KoboldAI Classic connection in the modern editor', async ({ page }) => {
+        let savedSettings = null;
+        let statusBody = null;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'kobold',
+                api_server: 'http://saved.kobold:5000/api',
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+
+        await page.route('**/api/backends/kobold/status', route => {
+            statusBody = route.request().postDataJSON();
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model: 'koboldcpp/test-model' }) });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('[data-api-main]')).toHaveValue('kobold');
+        await expect(page.locator('[data-kobold-api-url]')).toHaveValue('http://saved.kobold:5000/api');
+        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
+
+        await page.locator('[data-kobold-api-url]').fill('http://new.kobold:5001/api');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => savedSettings?.api_server).toBe('http://new.kobold:5001/api');
+        expect(savedSettings.main_api).toBe('kobold');
+
+        await page.locator('[data-test-api]').click();
+
+        await expect.poll(() => statusBody?.api_server).toBe('http://new.kobold:5001/api');
+        await expect(page.locator('.api-history-panel')).toContainText('koboldcpp/test-model');
     });
 
     test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
