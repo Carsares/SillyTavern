@@ -111,6 +111,11 @@ export function createPersonasEvents(ctx) {
     }
 
     async function handlePersonasChange(event) {
+        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-persona-field]')) {
+            updatePersonaFormField(event.target);
+            return;
+        }
+
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-persona-create-file]')) {
             state.personaCreating.file = event.target.files?.[0] || null;
             render();

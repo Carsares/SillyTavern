@@ -101,20 +101,65 @@ export function createPersonaCardComponents(ctx) {
     }
 
     function renderPersonaFormContent(form, scope) {
+        const scopeAttr = escapeHtml(scope);
+        const position = Number.isFinite(Number(form.position)) ? Number(form.position) : 0;
+        const positionOptions = [
+            { value: 0, label: '嵌入提示词（In-Prompt）' },
+            { value: 2, label: '作者注释顶部' },
+            { value: 3, label: '作者注释底部' },
+            { value: 4, label: '按深度插入' },
+            { value: 9, label: '不注入' },
+        ].map(option => `<option value="${option.value}" ${position === option.value ? 'selected' : ''}>${option.label}</option>`).join('');
+        const role = Number.isFinite(Number(form.role)) ? Number(form.role) : 0;
+        const roleOptions = [
+            { value: 0, label: 'System' },
+            { value: 1, label: 'User' },
+            { value: 2, label: 'Assistant' },
+        ].map(option => `<option value="${option.value}" ${role === option.value ? 'selected' : ''}>${option.label}</option>`).join('');
+        const lorebookOptions = ['<option value="">（无）</option>']
+            .concat(state.worldbooks.map(worldbook => {
+                const id = worldbook.file_id;
+                return `<option value="${escapeHtml(id)}" ${form.lorebook === id ? 'selected' : ''}>${escapeHtml(worldbook.name || id)}</option>`;
+            })).join('');
+        const connections = Array.isArray(form.connections) ? form.connections : [];
         return `
         <div class="form-grid">
             <label class="field-label">
                 <span>名称</span>
-                <input class="text-input" type="text" data-persona-field="name" data-persona-scope="${escapeHtml(scope)}" value="${escapeHtml(form.name || '')}">
+                <input class="text-input" type="text" data-persona-field="name" data-persona-scope="${scopeAttr}" value="${escapeHtml(form.name || '')}">
             </label>
             <label class="field-label">
                 <span>标题</span>
-                <input class="text-input" type="text" data-persona-field="title" data-persona-scope="${escapeHtml(scope)}" value="${escapeHtml(form.title || '')}">
+                <input class="text-input" type="text" data-persona-field="title" data-persona-scope="${scopeAttr}" value="${escapeHtml(form.title || '')}">
             </label>
             <label class="field-label">
                 <span>描述</span>
-                <textarea data-persona-field="description" data-persona-scope="${escapeHtml(scope)}">${escapeHtml(form.description || '')}</textarea>
+                <textarea data-persona-field="description" data-persona-scope="${scopeAttr}">${escapeHtml(form.description || '')}</textarea>
             </label>
+            <label class="field-label">
+                <span>描述注入位置</span>
+                <select class="select-input" data-persona-field="position" data-persona-scope="${scopeAttr}">${positionOptions}</select>
+            </label>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>插入深度（按深度插入时生效）</span>
+                    <input class="text-input" type="number" min="0" step="1" data-persona-field="depth" data-persona-scope="${scopeAttr}" value="${escapeHtml(String(form.depth ?? 2))}">
+                </label>
+                <label class="field-label">
+                    <span>插入角色</span>
+                    <select class="select-input" data-persona-field="role" data-persona-scope="${scopeAttr}">${roleOptions}</select>
+                </label>
+            </div>
+            <label class="field-label">
+                <span>关联世界书</span>
+                <select class="select-input" data-persona-field="lorebook" data-persona-scope="${scopeAttr}">${lorebookOptions}</select>
+            </label>
+            ${scope === 'edit' && connections.length ? `
+            <div class="field-label">
+                <span>角色连接（只读）</span>
+                <p class="panel-subtitle">已连接 ${connections.length} 个角色/群组，切换到该人设时自动生效；连接的增删请在角色或群组页操作。</p>
+            </div>
+            ` : ''}
         </div>
     `;
     }

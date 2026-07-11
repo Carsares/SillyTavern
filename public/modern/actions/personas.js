@@ -19,17 +19,26 @@ export function createPersonaActions({
         const personas = powerUser.personas || {};
         const descriptions = powerUser.persona_descriptions || {};
 
-        return Object.entries(personas).map(([avatarId, name]) => ({
-            avatarId,
-            name,
-            title: descriptions[avatarId]?.title || '',
-            description: descriptions[avatarId]?.description || '',
-            default: powerUser.default_persona === avatarId,
-        }));
+        return Object.entries(personas).map(([avatarId, name]) => {
+            const descriptor = descriptions[avatarId] || {};
+            return {
+                avatarId,
+                name,
+                title: descriptor.title || '',
+                description: descriptor.description || '',
+                // Advanced descriptor fields that the legacy UI exposed and the engine still consumes
+                position: descriptor.position ?? 0,
+                depth: descriptor.depth ?? 2,
+                role: descriptor.role ?? 0,
+                lorebook: descriptor.lorebook || '',
+                connections: Array.isArray(descriptor.connections) ? descriptor.connections : [],
+                default: powerUser.default_persona === avatarId,
+            };
+        });
     }
 
     function defaultPersonaForm() {
-        return { name: '', title: '', description: '' };
+        return { name: '', title: '', description: '', position: 0, depth: 2, role: 0, lorebook: '' };
     }
 
     function beginPersonaCreate() {
@@ -75,6 +84,10 @@ export function createPersonaActions({
         powerUser.persona_descriptions[avatarId] = {
             title: form.title || '',
             description: form.description || '',
+            position: Number.isFinite(form.position) ? form.position : 0,
+            depth: Number.isFinite(form.depth) ? form.depth : 2,
+            role: Number.isFinite(form.role) ? form.role : 0,
+            lorebook: form.lorebook || '',
         };
         if (!powerUser.default_persona) {
             powerUser.default_persona = avatarId;
@@ -93,6 +106,12 @@ export function createPersonaActions({
                 name: persona.name || '',
                 title: persona.title || '',
                 description: persona.description || '',
+                position: persona.position ?? 0,
+                depth: persona.depth ?? 2,
+                role: persona.role ?? 0,
+                lorebook: persona.lorebook || '',
+                // Kept for read-only display; editing connections stays on the character/group pages
+                connections: Array.isArray(persona.connections) ? persona.connections : [],
             },
         };
         state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
@@ -120,6 +139,10 @@ export function createPersonaActions({
             ...(powerUser.persona_descriptions[avatarId] || {}),
             title: form.title || '',
             description: form.description || '',
+            position: Number.isFinite(form.position) ? form.position : 0,
+            depth: Number.isFinite(form.depth) ? form.depth : 2,
+            role: Number.isFinite(form.role) ? form.role : 0,
+            lorebook: form.lorebook || '',
         };
         await saveSettingsSerialized(apiFetch, state.settings);
         state.personaEditing = { avatarId: '', form: {} };
@@ -188,7 +211,10 @@ export function createPersonaActions({
 
     function updatePersonaFormField(element) {
         const form = element.dataset.personaScope === 'create' ? state.personaCreating.form : state.personaEditing.form;
-        form[element.dataset.personaField] = element.value;
+        const field = element.dataset.personaField;
+        // position/depth/role persist as numbers to match the persona descriptor model
+        const numericFields = new Set(['position', 'depth', 'role']);
+        form[field] = numericFields.has(field) ? Number(element.value) : element.value;
     }
 
     return {
