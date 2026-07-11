@@ -63,6 +63,7 @@ export function createWorldbookActions({
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
+        saveWorldInfoGlobalSetting,
     } = detailActions;
     const fileActions = createWorldbookFileActions({
         state,
@@ -107,6 +108,7 @@ export function createWorldbookActions({
         restoreWorldbookFile,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
+        saveWorldInfoGlobalSetting,
         getWorldEntryListState,
         updateWorldEntryListField,
         setWorldEntryPage,

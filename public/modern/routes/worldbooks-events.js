@@ -34,6 +34,7 @@ export function createWorldbooksEvents(ctx) {
         updateWorldEntryFormField,
         importWorldbookFile,
         toggleWorldEntrySelection,
+        saveWorldInfoGlobalSetting,
     } = ctx;
 
     async function handleWorldbooksClick(event) {
@@ -278,6 +279,20 @@ export function createWorldbooksEvents(ctx) {
 
         if (event.target instanceof HTMLSelectElement && event.target.matches('[data-world-entry-sort]')) {
             updateWorldEntryListField('sort', event.target.value);
+            return;
+        }
+
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-worldbook-setting]')) {
+            // Global world-info params: checkbox -> boolean, number input -> number
+            const field = event.target.dataset.worldbookSetting;
+            const value = event.target.type === 'checkbox' ? event.target.checked : Number(event.target.value);
+            try {
+                await saveWorldInfoGlobalSetting(field, value);
+            } catch (error) {
+                state.errors.push({ key: 'worldbook-global-setting', message: error.message });
+                showToast('世界书全局设置保存失败', error.message);
+                render();
+            }
             return;
         }
 

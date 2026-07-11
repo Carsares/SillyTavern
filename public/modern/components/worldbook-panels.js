@@ -62,9 +62,56 @@ export function createWorldbookPanelComponents(ctx) {
     `;
     }
 
+    // Global world-info generation parameters (injection budget / recursion), previously only editable in the legacy UI
+    function renderWorldbookGlobalSettingsPanel() {
+        const worldInfo = state.settings.world_info_settings || {};
+        const numberValue = (field, fallback) => {
+            const value = Number(worldInfo[field]);
+            return Number.isFinite(value) ? value : fallback;
+        };
+        const boolValue = field => !!worldInfo[field];
+        return `
+        <details class="settings-form inline-form worldbook-global-settings">
+            <summary class="form-subsection-title">全局生成参数</summary>
+            <p class="panel-subtitle">影响所有启用世界书的注入预算与扫描行为，对应旧版全局设置。</p>
+            <div class="form-grid two-columns">
+                <label class="field-label">
+                    <span>扫描深度</span>
+                    <input class="text-input" type="number" min="0" step="1" data-worldbook-setting="world_info_depth" value="${numberValue('world_info_depth', 2)}">
+                </label>
+                <label class="field-label">
+                    <span>预算（%）</span>
+                    <input class="text-input" type="number" min="1" max="100" step="1" data-worldbook-setting="world_info_budget" value="${numberValue('world_info_budget', 25)}">
+                </label>
+                <label class="field-label">
+                    <span>预算上限（tokens，0 表示不限）</span>
+                    <input class="text-input" type="number" min="0" step="1" data-worldbook-setting="world_info_budget_cap" value="${numberValue('world_info_budget_cap', 0)}">
+                </label>
+            </div>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-worldbook-setting="world_info_recursive" ${boolValue('world_info_recursive') ? 'checked' : ''}>
+                <span>递归扫描</span>
+            </label>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-worldbook-setting="world_info_overflow_alert" ${boolValue('world_info_overflow_alert') ? 'checked' : ''}>
+                <span>预算溢出提醒</span>
+            </label>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-worldbook-setting="world_info_case_sensitive" ${boolValue('world_info_case_sensitive') ? 'checked' : ''}>
+                <span>区分大小写</span>
+            </label>
+            <label class="checkbox-card compact-checkbox">
+                <input type="checkbox" data-worldbook-setting="world_info_match_whole_words" ${boolValue('world_info_match_whole_words') ? 'checked' : ''}>
+                <span>全词匹配</span>
+            </label>
+        </details>
+    `;
+    }
+
     return {
         renderWorldbookCreatePanel,
         renderWorldbookDeletePanel,
         renderWorldbookRow,
+        renderWorldbookGlobalSettingsPanel,
     };
 }

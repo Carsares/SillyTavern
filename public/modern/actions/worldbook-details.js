@@ -150,6 +150,13 @@ export function createWorldbookDetailActions({
         showToast(nextGlobalWorlds.includes(worldbookId) ? '世界书已启用' : '世界书已停用', worldbookId);
     }
 
+    // Persists a global world-info generation parameter (depth/budget/recursive/...) into the shared settings blob
+    async function saveWorldInfoGlobalSetting(field, value) {
+        state.settings.world_info_settings = state.settings.world_info_settings || {};
+        state.settings.world_info_settings[field] = value;
+        await saveSettingsSerialized(apiFetch, state.settings);
+    }
+
     return {
         loadWorldDetail,
         saveWorldbookDetail,
@@ -160,5 +167,6 @@ export function createWorldbookDetailActions({
         getGlobalWorldNames,
         isGlobalWorldEnabled,
         toggleGlobalWorld,
+        saveWorldInfoGlobalSetting,
     };
 }

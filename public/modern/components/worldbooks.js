@@ -26,6 +26,7 @@ export function createWorldbooksComponents(ctx) {
         renderWorldbookCreatePanel,
         renderWorldbookDeletePanel,
         renderWorldbookRow,
+        renderWorldbookGlobalSettingsPanel,
     } = createWorldbookPanelComponents(ctx);
 
     function renderWorldbooks() {
@@ -59,6 +60,7 @@ export function createWorldbooksComponents(ctx) {
                     ${renderRouteFilter('筛选世界书', '名称或文件 ID')}
                 </div>
                 ${state.worldbookCreating.active ? renderWorldbookCreatePanel() : ''}
+                ${renderWorldbookGlobalSettingsPanel()}
                 <div class="resource-list">
                     ${worldbooks.map(worldbook => renderWorldbookRow(worldbook)).join('') || renderInlineEmpty('暂无世界书')}
                 </div>
