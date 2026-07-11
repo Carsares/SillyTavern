@@ -327,6 +327,37 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-horde-model]')).toHaveValues(['koboldcpp/model-a', 'koboldcpp/model-b']);
     });
 
+    test('completes an OpenRouter OAuth callback into a saved secret', async ({ page }) => {
+        let writtenSecret = null;
+        let exchangeBody = null;
+        const settingsBundle = {
+            settings: JSON.stringify({ main_api: 'openai', oai_settings: { chat_completion_source: 'openrouter' } }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+        await page.addInitScript('window.localStorage.setItem("st-modern-openrouter-code-verifier", "test-verifier-123")');
+        await page.route('https://openrouter.ai/api/v1/auth/keys', route => {
+            exchangeBody = route.request().postDataJSON();
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ key: 'sk-or-test-key' }) });
+        });
+        await page.route('**/api/secrets/write', route => {
+            writtenSecret = route.request().postDataJSON();
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+
+        await page.goto('/modern/?oauthSource=openrouter&oauthQuery=code%3Dtestcode');
+
+        await expect.poll(() => exchangeBody).toMatchObject({ code: 'testcode', code_verifier: 'test-verifier-123' });
+        await expect.poll(() => writtenSecret).toMatchObject({ key: 'api_key_openrouter', value: 'sk-or-test-key' });
+        await expect(page.locator('.toast', { hasText: 'OpenRouter 授权成功' })).toBeVisible();
+        await expect.poll(() => new URL(page.url()).searchParams.get('oauthSource')).toBe(null);
+        await expect(page.locator('body')).not.toContainText('sk-or-test-key');
+    });
+
     test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
         let savedSettings = null;
         let writtenSecret = null;

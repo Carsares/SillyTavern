@@ -3,6 +3,7 @@ import { createApiTextCompletionConnectionActions } from './api-text-completion-
 import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
 import { createApiNovelConnectionActions } from './api-novel-connection.js';
 import { createApiHordeConnectionActions } from './api-horde-connection.js';
+import { createApiOAuthActions } from './api-oauth.js';
 
 export function createApiConnectionActions({
     state,
@@ -94,6 +95,7 @@ export function createApiConnectionActions({
                 || fieldName === 'custom-url' && uiState.showCustomUrl
                 || fieldName === 'reverse-proxy' && uiState.showReverseProxy
                 || fieldName === 'api-key' && uiState.hasSecretMapping
+                || fieldName === 'openrouter-auth' && source === 'openrouter'
             );
             field.hidden = !isVisible;
         });
@@ -174,6 +176,16 @@ export function createApiConnectionActions({
         recordApiTestResult,
     });
     const {
+        startOpenRouterAuth,
+        completeOpenRouterAuthFromUrl,
+    } = createApiOAuthActions({
+        state,
+        apiFetch,
+        loadData,
+        render,
+        showToast,
+    });
+    const {
         saveApiConnectionFromForm,
         testApiConnection,
     } = createApiChatCompletionConnectionActions({
@@ -217,5 +229,7 @@ export function createApiConnectionActions({
         updateTextCompletionTypeFields,
         loadHordeModels,
         refreshHordeModels,
+        startOpenRouterAuth,
+        completeOpenRouterAuthFromUrl,
     };
 }

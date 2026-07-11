@@ -323,6 +323,8 @@ bindShellEvents({
 
 render();
 loadData({ notify: false });
+// Handle an OpenRouter OAuth callback forwarded to /modern (no-op when the params are absent)
+apiConnectionActions.completeOpenRouterAuthFromUrl();
 setInterval(pollChatUnreadState, 5000);
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {

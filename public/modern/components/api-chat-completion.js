@@ -114,6 +114,14 @@ export function createApiChatCompletionComponents(ctx) {
                         value="" autocomplete="new-password"
                         placeholder="${apiUiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets'}">
                 </label>
+                <div class="field-label" data-api-field="openrouter-auth" ${source === 'openrouter' ? '' : 'hidden'}>
+                    <span>OpenRouter 授权</span>
+                    <button class="secondary-button" type="button" data-openrouter-auth>
+                        <i class="fa-solid fa-key"></i>
+                        用 OpenRouter 授权获取密钥
+                    </button>
+                    <span class="panel-subtitle">跳转 OpenRouter 授权后自动写入密钥，无需手动粘贴。</span>
+                </div>
             </div>
             <div class="connection-test">
                 <span class="badge" data-api-secret-status>${apiUiState.secretSaved ? '密钥已保存' : (apiUiState.hasSecretMapping ? '未保存密钥' : '无密钥字段')}</span>

@@ -31,7 +31,7 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.brand-title')).toHaveText('SillyTavern');
     });
 
-    test('keeps the legacy page reachable for the bridge iframe and OAuth callbacks', async ({ page }) => {
+    test('keeps the legacy page reachable only for the hidden bridge iframe', async ({ page }) => {
         const bare = await page.request.get('/index.html', { maxRedirects: 0 });
         expect(bare.status()).toBe(302);
         expect(bare.headers()['location']).toContain('/modern/');
@@ -39,8 +39,17 @@ test.describe('Modern workspace', () => {
         const bridge = await page.request.get('/index.html?modernBridge=1', { maxRedirects: 0 });
         expect(bridge.status()).toBe(200);
 
+        // OAuth no longer lands on the legacy page: a stray source= hit is redirected to modern too
         const oauth = await page.request.get('/index.html?source=openrouter', { maxRedirects: 0 });
-        expect(oauth.status()).toBe(200);
+        expect(oauth.status()).toBe(302);
+        expect(oauth.headers()['location']).toContain('/modern/');
+    });
+
+    test('forwards OAuth callbacks to the modern workspace', async ({ page }) => {
+        const callback = await page.request.get('/callback/openrouter?code=abc', { maxRedirects: 0 });
+        expect(callback.status()).toBe(307);
+        expect(callback.headers()['location']).toContain('/modern/');
+        expect(callback.headers()['location']).toContain('oauthSource=openrouter');
     });
 
     for (const [route, title] of modernRoutes) {

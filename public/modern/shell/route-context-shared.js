@@ -52,6 +52,7 @@ export function createApiRouteContext(api) {
         updateTextCompletionTypeFields,
         loadHordeModels,
         refreshHordeModels,
+        startOpenRouterAuth,
     } = api;
 
     return {
@@ -69,6 +70,7 @@ export function createApiRouteContext(api) {
         updateTextCompletionTypeFields,
         loadHordeModels,
         refreshHordeModels,
+        startOpenRouterAuth,
     };
 }
 

@@ -9,6 +9,7 @@ export function createApiEvents(ctx) {
         updateApiSourceFields,
         updateTextCompletionTypeFields,
         refreshHordeModels,
+        startOpenRouterAuth,
     } = ctx;
 
     async function handleApiClick(event) {
@@ -54,6 +55,17 @@ export function createApiEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'horde-models', message: error.message });
                 showToast('AI Horde 模型刷新失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-openrouter-auth]')) {
+            try {
+                await startOpenRouterAuth();
+            } catch (error) {
+                state.errors.push({ key: 'openrouter-oauth', message: error.message });
+                showToast('OpenRouter 授权发起失败', error.message);
                 render();
             }
             return true;

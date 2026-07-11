@@ -235,15 +235,15 @@ app.get(['/modern', '/modern/', '/modern/index.html'], cacheBuster.middleware, (
     return response.sendFile('modern/index.html', { root: path.join(serverDirectory, 'public') });
 });
 
-// Callback endpoint for OAuth PKCE flows (e.g. OpenRouter)
+// Callback endpoint for OAuth PKCE flows (e.g. OpenRouter): forward to the modern workspace, which owns the exchange
 app.get('/callback/:source?', (request, response) => {
     const source = request.params.source;
     const query = request.url.split('?')[1];
     const searchParams = new URLSearchParams();
-    source && searchParams.set('source', source);
-    query && searchParams.set('query', query);
+    source && searchParams.set('oauthSource', source);
+    query && searchParams.set('oauthQuery', query);
     const queryString = searchParams.toString();
-    const path = queryString ? `/index.html?${queryString}` : '/index.html';
+    const path = queryString ? `/modern/?${queryString}` : '/modern/';
     return response.redirect(307, path);
 });
 
@@ -251,10 +251,9 @@ app.get('/callback/:source?', (request, response) => {
 app.get('/login', loginPageMiddleware);
 
 // Retire the legacy full page from user-facing navigation: direct hits go to the modern workspace.
-// The hidden bridge iframe (modernBridge=1) and OAuth PKCE callbacks (source=...) still need the legacy
-// page, so let those fall through to the static handler below.
+// Only the hidden bridge iframe (modernBridge=1) still needs the legacy page (OAuth now lands on /modern).
 app.get('/index.html', cacheBuster.middleware, (request, response, next) => {
-    if (request.query.modernBridge !== undefined || request.query.source !== undefined) {
+    if (request.query.modernBridge !== undefined) {
         return next();
     }
     const query = request.url.split('?')[1];
