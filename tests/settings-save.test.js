@@ -41,7 +41,7 @@ function createResponse() {
 }
 
 describe('settings save', () => {
-    test('returns 500 when the settings file cannot be written', () => {
+    test('returns 500 when the settings file cannot be written', async () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-settings-save-'));
         const invalidRoot = path.join(root, 'not-a-directory');
         fs.writeFileSync(invalidRoot, 'file');
@@ -49,7 +49,8 @@ describe('settings save', () => {
         jest.spyOn(console, 'error').mockImplementation(() => {});
         const response = createResponse();
 
-        saveHandler({ body: { theme: 'dark' }, user: { directories: { root: invalidRoot }, profile: { handle: 'user' } } }, response);
+        // Handler is now async (writes run inside the per-user serialization queue), so await it before asserting
+        await saveHandler({ body: { theme: 'dark' }, user: { directories: { root: invalidRoot }, profile: { handle: 'user' } } }, response);
 
         expect(response.sendStatus).toHaveBeenCalledWith(500);
         expect(response.send).not.toHaveBeenCalled();

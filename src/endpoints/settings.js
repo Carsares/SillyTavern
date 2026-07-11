@@ -10,6 +10,10 @@ import { SETTINGS_FILE } from '../constants.js';
 import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
+
+// Serializes settings writes per user handle so /save and /restore-snapshot don't race each other
+const SETTINGS_WRITE_QUEUE = new KeyedPromiseQueue();
 
 const ENABLE_EXTENSIONS = !!getConfigValue('extensions.enabled', true, 'boolean');
 const ENABLE_EXTENSIONS_AUTO_UPDATE = !!getConfigValue('extensions.autoUpdate', true, 'boolean');
@@ -203,11 +207,14 @@ function getLatestBackup(handle) {
 
 export const router = express.Router();
 
-router.post('/save', function (request, response) {
+router.post('/save', async function (request, response) {
     try {
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        writeFileAtomicSync(pathToSettings, JSON.stringify(request.body, null, 4), 'utf8');
-        triggerAutoSave(request.user.profile.handle);
+        // Serialize the write against concurrent saves/restores for the same user
+        await SETTINGS_WRITE_QUEUE.run(request.user.profile.handle, async () => {
+            writeFileAtomicSync(pathToSettings, JSON.stringify(request.body, null, 4), 'utf8');
+            triggerAutoSave(request.user.profile.handle);
+        });
         response.send({ result: 'ok' });
     } catch (err) {
         console.error(err);
@@ -364,8 +371,11 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         }
 
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        fs.rmSync(pathToSettings, { force: true });
-        fs.copyFileSync(snapshotPath, pathToSettings);
+        // Serialize against concurrent saves/restores and replace atomically (no delete-then-copy window)
+        await SETTINGS_WRITE_QUEUE.run(request.user.profile.handle, async () => {
+            const content = fs.readFileSync(snapshotPath, 'utf8');
+            writeFileAtomicSync(pathToSettings, content, 'utf8');
+        });
 
         response.sendStatus(204);
     } catch (error) {
