@@ -8,7 +8,6 @@ export function createSettingsActions({
     setTheme,
     getChatModeLabel,
     numberInput,
-    formatBytes,
 }) {
     async function loadSettingsSnapshots({ force = false } = {}) {
         if (state.settingsSnapshots.loaded && !force) {
@@ -98,18 +97,11 @@ export function createSettingsActions({
         render();
     }
 
-    function saveRequestCompressionFromForm() {
-        const current = getRequestCompressionSettings();
-        showToast('请求压缩为启动配置', `当前运行值：${current.enabled ? '已开启' : '未开启'}，${formatBytes(current.minPayloadSize || 0)} - ${formatBytes(current.maxPayloadSize || 0)}`);
-        render();
-    }
-
     return {
         getRequestCompressionSettings,
         loadSettingsSnapshots,
         createSettingsSnapshot,
         saveModernPreferencesFromForm,
-        saveRequestCompressionFromForm,
         previewSettingsSnapshot,
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,

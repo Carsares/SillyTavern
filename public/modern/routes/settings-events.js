@@ -6,7 +6,6 @@ export function createSettingsEvents(ctx) {
         loadSettingsSnapshots,
         createSettingsSnapshot,
         saveModernPreferencesFromForm,
-        saveRequestCompressionFromForm,
         previewSettingsSnapshot,
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
@@ -62,17 +61,6 @@ export function createSettingsEvents(ctx) {
 
         if (event.target.closest('[data-save-modern-preferences]')) {
             saveModernPreferencesFromForm();
-            return true;
-        }
-
-        if (event.target.closest('[data-save-request-compression]')) {
-            try {
-                await saveRequestCompressionFromForm();
-            } catch (error) {
-                state.errors.push({ key: 'request-compression-save', message: error.message });
-                showToast('请求压缩保存失败', error.message);
-                render();
-            }
             return true;
         }
 
