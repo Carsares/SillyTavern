@@ -1,6 +1,7 @@
 import { createApiChatCompletionConnectionActions } from './api-chat-completion-connection.js';
 import { createApiTextCompletionConnectionActions } from './api-text-completion-connection.js';
 import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
+import { createApiNovelConnectionActions } from './api-novel-connection.js';
 
 export function createApiConnectionActions({
     state,
@@ -146,6 +147,18 @@ export function createApiConnectionActions({
         recordApiTestResult,
     });
     const {
+        saveNovelConnectionFromForm,
+        testNovelConnection,
+    } = createApiNovelConnectionActions({
+        state,
+        elements,
+        apiFetch,
+        loadData,
+        render,
+        showToast,
+        recordApiTestResult,
+    });
+    const {
         saveApiConnectionFromForm,
         testApiConnection,
     } = createApiChatCompletionConnectionActions({
@@ -168,6 +181,8 @@ export function createApiConnectionActions({
         testTextCompletionConnection,
         saveKoboldConnectionFromForm,
         testKoboldConnection,
+        saveNovelConnectionFromForm,
+        testNovelConnection,
     });
 
     return {

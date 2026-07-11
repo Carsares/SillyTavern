@@ -203,6 +203,62 @@ test.describe('Modern API page', () => {
         await expect(page.locator('.api-history-panel')).toContainText('koboldcpp/test-model');
     });
 
+    test('edits and tests the NovelAI connection without exposing secrets', async ({ page }) => {
+        let savedSettings = null;
+        let writtenSecret = null;
+        let statusCalled = false;
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'novel',
+                model_novel: 'kayra-v1',
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle, {
+            api_key_novel: [{ id: 'saved', value: '********nai', label: 'saved', active: true }],
+        });
+
+        await page.route('**/api/secrets/write', route => {
+            writtenSecret = route.request().postDataJSON();
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+
+        await page.route('**/api/settings/save', route => {
+            savedSettings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(savedSettings);
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+
+        await page.route('**/api/novelai/status', route => {
+            statusCalled = true;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tier: 2 }) });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        await expect(page.locator('[data-api-main]')).toHaveValue('novel');
+        await expect(page.locator('[data-novel-model]')).toHaveValue('kayra-v1');
+        await expect(page.locator('[data-novel-secret-status]')).toHaveText('密钥已保存');
+
+        await page.locator('[data-novel-model]').selectOption('llama-3-erato-v1');
+        await page.locator('[data-novel-api-key]').fill('nai-secret-token');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => savedSettings?.model_novel).toBe('llama-3-erato-v1');
+        expect(savedSettings.main_api).toBe('novel');
+        expect(writtenSecret).toMatchObject({ key: 'api_key_novel', value: 'nai-secret-token' });
+        await expect(page.locator('body')).not.toContainText('nai-secret-token');
+
+        await page.locator('[data-test-api]').click();
+
+        await expect.poll(() => statusCalled).toBe(true);
+        await expect(page.locator('.api-history-panel')).toContainText('Scroll');
+    });
+
     test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
         let savedSettings = null;
         let writtenSecret = null;

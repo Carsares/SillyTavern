@@ -34,6 +34,7 @@ export function createShellMetadata({
             : (settings.chat_completion_source || oaiSettings.chat_completion_source || '');
         const chatModel = chatSource ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
+            || (api === 'novel' ? settings.model_novel : '')
             || settings.textgenerationwebui_settings?.openrouter_model
             || settings.textgenerationwebui_settings?.custom_model
             || settings.model

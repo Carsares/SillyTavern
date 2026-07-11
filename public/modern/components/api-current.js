@@ -58,7 +58,7 @@ export function createApiCurrentComponents(ctx) {
     }
 
     function renderApiMainSelect(mainApi) {
-        const modernMainApis = ['openai', 'textgenerationwebui', 'kobold'];
+        const modernMainApis = ['openai', 'textgenerationwebui', 'kobold', 'novel'];
         const isModernMainApi = modernMainApis.includes(mainApi);
         return `
         <label class="field-label">
@@ -68,6 +68,7 @@ export function createApiCurrentComponents(ctx) {
                 <option value="openai" ${mainApi === 'openai' ? 'selected' : ''}>聊天补全</option>
                 <option value="textgenerationwebui" ${mainApi === 'textgenerationwebui' ? 'selected' : ''}>文本补全</option>
                 <option value="kobold" ${mainApi === 'kobold' ? 'selected' : ''}>KoboldAI Classic</option>
+                <option value="novel" ${mainApi === 'novel' ? 'selected' : ''}>NovelAI</option>
             </select>
         </label>
     `;
