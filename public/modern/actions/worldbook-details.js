@@ -1,26 +1,14 @@
+import { KeyedPromiseQueue, saveSettingsSerialized } from '../core/keyed-queue.js';
+
 export function createWorldbookDetailActions({
     state,
     apiFetch,
     loadData,
     showToast,
 }) {
-    const worldbookUpdateQueues = new Map();
+    const worldbookQueue = new KeyedPromiseQueue();
     const worldbookDeleteBarriers = new Map();
     const worldbookLoadTokens = new Map();
-
-    async function queueWorldbookOperation(worldbookId, operation) {
-        const previousOperation = worldbookUpdateQueues.get(worldbookId) || Promise.resolve();
-        const currentOperation = previousOperation.catch(() => {}).then(operation);
-        worldbookUpdateQueues.set(worldbookId, currentOperation);
-
-        try {
-            return await currentOperation;
-        } finally {
-            if (worldbookUpdateQueues.get(worldbookId) === currentOperation) {
-                worldbookUpdateQueues.delete(worldbookId);
-            }
-        }
-    }
 
     async function loadWorldDetail(worldbookId, { force = false, isCurrent = () => true } = {}) {
         if (!worldbookId || (state.worldDetails[worldbookId] && !force)) {
@@ -78,7 +66,7 @@ export function createWorldbookDetailActions({
         }
 
         // Serialize each world's read-modify-save cycle so later edits clone the latest saved detail.
-        return queueWorldbookOperation(worldbookId, async () => {
+        return worldbookQueue.run(worldbookId, async () => {
             await loadWorldDetail(worldbookId, { force: !state.worldDetails[worldbookId] });
             const detail = state.worldDetails[worldbookId];
             if (!detail) {
@@ -106,7 +94,7 @@ export function createWorldbookDetailActions({
         // Block newly started edits immediately, while allowing already queued edits to finish before deletion.
         worldbookDeleteBarriers.set(worldbookId, 'deleting');
         try {
-            await queueWorldbookOperation(worldbookId, () => apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } }));
+            await worldbookQueue.run(worldbookId, () => apiFetch('/api/worldinfo/delete', { body: { name: worldbookId } }));
             worldbookDeleteBarriers.set(worldbookId, 'deleted');
         } catch (error) {
             const worldbookExists = await getWorldbookExistence(worldbookId);
@@ -157,7 +145,7 @@ export function createWorldbookDetailActions({
             : [...globalWorlds, worldbookId];
 
         state.settings.world_info_settings.world_info.globalSelect = nextGlobalWorlds;
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
         showToast(nextGlobalWorlds.includes(worldbookId) ? '世界书已启用' : '世界书已停用', worldbookId);
     }

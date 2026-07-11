@@ -1,5 +1,6 @@
 import { createAssetDataHelpers } from './asset-data.js';
 import { createBackgroundFolderActions } from './background-folders.js';
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 function getBackgroundSettingsUrl(filename) {
     return `url("backgrounds/${encodeURIComponent(filename)}")`;
@@ -101,7 +102,7 @@ export function createAssetActions({
                     name: savedName,
                     url: getBackgroundSettingsUrl(savedName),
                 };
-                await apiFetch('/api/settings/save', { body: state.settings });
+                await saveSettingsSerialized(apiFetch, state.settings);
             }
             await loadData({ silent: true });
             showToast('背景已重命名', `${oldName} → ${savedName}`);

@@ -1,3 +1,5 @@
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
+
 export function createWorldbookFileActions({
     state,
     apiFetch,
@@ -155,7 +157,7 @@ export function createWorldbookFileActions({
         let settingsError = null;
         if (removeGlobal) {
             try {
-                await apiFetch('/api/settings/save', { body: state.settings });
+                await saveSettingsSerialized(apiFetch, state.settings);
             } catch (error) {
                 settingsError = error;
             }

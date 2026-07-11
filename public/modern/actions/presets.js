@@ -1,5 +1,6 @@
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from './openai-preset-fields.js';
 import { createPresetListHelpers } from './preset-list.js';
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 export function createPresetActions({
     state,
@@ -86,7 +87,7 @@ export function createPresetActions({
         const savedName = await savePresetFile('openai', name, preset, { overwrite: name === currentName });
         state.settings.oai_settings = state.settings.oai_settings || {};
         state.settings.oai_settings.preset_settings_openai = savedName;
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.openAiPresetDraft = { name: '' };
         state.presetSelection = { apiId: 'openai', name: savedName };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
@@ -229,7 +230,7 @@ export function createPresetActions({
             state.settings.oai_settings = state.settings.oai_settings || {};
             state.settings.oai_settings.preset_settings_openai = nextName;
             try {
-                await apiFetch('/api/settings/save', { body: state.settings });
+                await saveSettingsSerialized(apiFetch, state.settings);
             } catch (error) {
                 state.settings.oai_settings.preset_settings_openai = name;
                 throw error;
@@ -255,7 +256,7 @@ export function createPresetActions({
         state.settings.oai_settings = state.settings.oai_settings || {};
         state.settings.oai_settings.preset_settings_openai = presetName;
         useOpenAiPresetFields(state.settings.oai_settings, preset);
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
         showToast('预设已切换', `当前聊天补全预设：${presetName}`);
     }

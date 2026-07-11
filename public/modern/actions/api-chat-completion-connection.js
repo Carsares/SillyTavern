@@ -1,3 +1,5 @@
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
+
 export function createApiChatCompletionConnectionActions({
     state,
     elements,
@@ -96,7 +98,7 @@ export function createApiChatCompletionConnectionActions({
             await apiFetch('/api/secrets/write', { body: { key: secretKey, value: apiKey, label: `${source} modern` } });
         }
 
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.apiMainDraft = '';
         await loadData({ silent: true });
         showToast('连接配置已保存', `${source} / ${model}`);

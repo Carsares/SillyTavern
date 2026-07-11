@@ -1,6 +1,7 @@
 import {
     downloadFile,
 } from '../core/utils.js';
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
 import { createCharacterDataHelpers } from './character-data.js';
 import { createCharacterDetailActions } from './character-detail.js';
 
@@ -147,7 +148,7 @@ export function createCharacterActions({
         }
 
         if (changed) {
-            await apiFetch('/api/settings/save', { body: settings });
+            await saveSettingsSerialized(apiFetch, settings);
         }
     }
 

@@ -1,3 +1,5 @@
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
+
 export function createPersonaActions({
     state,
     apiFetch,
@@ -77,7 +79,7 @@ export function createPersonaActions({
         if (!powerUser.default_persona) {
             powerUser.default_persona = avatarId;
         }
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
         await loadData({ silent: true });
         showToast('用户人设已创建', name);
@@ -119,7 +121,7 @@ export function createPersonaActions({
             title: form.title || '',
             description: form.description || '',
         };
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.personaEditing = { avatarId: '', form: {} };
         await loadData({ silent: true });
         showToast('用户人设已保存', form.name.trim());
@@ -133,7 +135,7 @@ export function createPersonaActions({
         }
 
         powerUser.default_persona = avatarId;
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
         showToast('默认人设已更新', powerUser.personas[avatarId]);
         render();
@@ -165,7 +167,7 @@ export function createPersonaActions({
         if (powerUser.default_persona === avatarId) {
             powerUser.default_persona = null;
         }
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.personaDeleteConfirm = { avatarId: '' };
         state.personaEditing = { avatarId: '', form: {} };
         await loadData({ silent: true });

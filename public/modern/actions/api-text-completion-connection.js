@@ -1,3 +1,5 @@
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
+
 const textCompletionModelFields = {
     ooba: 'custom_model',
     generic: 'generic_model',
@@ -162,7 +164,7 @@ export function createApiTextCompletionConnectionActions({
             await apiFetch('/api/secrets/write', { body: { key: secretKey, value: apiKey, label: `${settings.source} modern text completion` } });
         }
 
-        await apiFetch('/api/settings/save', { body: state.settings });
+        await saveSettingsSerialized(apiFetch, state.settings);
         state.apiMainDraft = '';
         await loadData({ silent: true });
         showToast('文本补全连接已保存', `${settings.source} / ${settings.model || settings.endpoint}`);

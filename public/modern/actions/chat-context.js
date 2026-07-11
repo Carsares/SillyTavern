@@ -1,6 +1,7 @@
 import { createChatContextLoaderActions } from './chat-context-loaders.js';
 import { createChatContextSelectorHelpers } from './chat-context-selectors.js';
 import { chatReadStateStorageKey } from '../core/state.js';
+import { KeyedPromiseQueue } from '../core/keyed-queue.js';
 
 export function createChatContextActions({
     state,
@@ -260,23 +261,9 @@ export function createChatContextActions({
         await apiFetch('/api/groups/edit', { body: group });
     }
 
-    const groupMetadataUpdateQueues = new Map();
+    const groupMetadataQueue = new KeyedPromiseQueue();
     const groupMetadataReloadRequired = new Set();
     const groupMetadataDeleteBarriers = new Set();
-
-    async function queueGroupMetadataOperation(groupId, operation) {
-        const previousOperation = groupMetadataUpdateQueues.get(groupId) || Promise.resolve();
-        const currentOperation = previousOperation.catch(() => {}).then(operation);
-        groupMetadataUpdateQueues.set(groupId, currentOperation);
-
-        try {
-            return await currentOperation;
-        } finally {
-            if (groupMetadataUpdateQueues.get(groupId) === currentOperation) {
-                groupMetadataUpdateQueues.delete(groupId);
-            }
-        }
-    }
 
     function useGroupMetadata(group, metadata) {
         Object.assign(group, metadata);
@@ -315,7 +302,7 @@ export function createChatContextActions({
             throw new Error('群聊已删除或正在删除，无法继续更新。');
         }
 
-        return queueGroupMetadataOperation(groupId, async () => {
+        return groupMetadataQueue.run(groupId, async () => {
             if (groupMetadataReloadRequired.has(groupId)) {
                 await reloadGroupMetadata(group);
             }
@@ -359,7 +346,7 @@ export function createChatContextActions({
         // Mark deletion before waiting so operations that have not entered the queue cannot recreate the group.
         groupMetadataDeleteBarriers.add(groupId);
         try {
-            await queueGroupMetadataOperation(groupId, async () => {
+            await groupMetadataQueue.run(groupId, async () => {
                 await apiFetch('/api/groups/delete', { body: { id: groupId } });
                 groupMetadataReloadRequired.delete(groupId);
             });
@@ -380,7 +367,7 @@ export function createChatContextActions({
         await refreshCachedChatLists({ quiet: true });
     }
 
-    const chatFileOperationQueues = new Map();
+    const chatFileOperationQueue = new KeyedPromiseQueue();
     const chatFileOperationBarriers = new Map();
 
     function getChatFileOperationTarget(contextKey, chatId) {
@@ -389,20 +376,6 @@ export function createChatContextActions({
             chatId: normalizedChatId,
             key: contextKey && normalizedChatId ? getChatCacheKey(contextKey, normalizedChatId) : '',
         };
-    }
-
-    async function queueChatFileOperation(key, operation) {
-        const previousOperation = chatFileOperationQueues.get(key) || Promise.resolve();
-        const currentOperation = previousOperation.catch(() => {}).then(operation);
-        chatFileOperationQueues.set(key, currentOperation);
-
-        try {
-            return await currentOperation;
-        } finally {
-            if (chatFileOperationQueues.get(key) === currentOperation) {
-                chatFileOperationQueues.delete(key);
-            }
-        }
     }
 
     async function runModernChatFileOperation(entity, chatId, operation, { groupMode = isGroupChatMode() } = {}) {
@@ -416,7 +389,7 @@ export function createChatContextActions({
         }
 
         // Accept the operation before entering the queue. A later delete/rename waits for it, while newer saves are rejected by the barrier.
-        return queueChatFileOperation(target.key, () => operation({ contextKey, chatId: target.chatId }));
+        return chatFileOperationQueue.run(target.key, () => operation({ contextKey, chatId: target.chatId }));
     }
 
     async function changeModernChatFile(contextKey, chatId, change, operation) {
@@ -432,7 +405,7 @@ export function createChatContextActions({
         chatFileOperationBarriers.set(target.key, `${change}中`);
         let confirmedUnchanged = false;
         try {
-            const result = await queueChatFileOperation(target.key, () => operation({
+            const result = await chatFileOperationQueue.run(target.key, () => operation({
                 confirmUnchanged: () => {
                     confirmedUnchanged = true;
                 },
