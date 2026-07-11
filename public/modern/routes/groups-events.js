@@ -14,6 +14,8 @@ export function createGroupsEvents(ctx) {
         confirmGroupDelete,
         updateGroupFormField,
         toggleGroupFormMember,
+        moveGroupFormMember,
+        toggleGroupFormMemberEnabled,
     } = ctx;
 
     async function handleGroupsClick(event) {
@@ -82,6 +84,18 @@ export function createGroupsEvents(ctx) {
                 showToast('群组删除失败', error.message);
                 render();
             }
+            return;
+        }
+
+        const moveMemberButton = event.target.closest('[data-group-member-move]');
+        if (moveMemberButton) {
+            moveGroupFormMember(moveMemberButton.dataset.groupScope, moveMemberButton.dataset.groupMember, moveMemberButton.dataset.groupMemberMove);
+            return;
+        }
+
+        const toggleMemberEnabledButton = event.target.closest('[data-group-member-toggle-enabled]');
+        if (toggleMemberEnabledButton) {
+            toggleGroupFormMemberEnabled(toggleMemberEnabledButton.dataset.groupScope, toggleMemberEnabledButton.dataset.groupMemberToggleEnabled);
             return;
         }
 

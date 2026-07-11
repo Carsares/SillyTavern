@@ -61,6 +61,31 @@ export function createGroupFormComponents(ctx) {
         `;
         }).join('') || renderInlineEmpty('暂无角色，先导入或创建角色卡。');
 
+        // Ordered view of selected members: drives the "列表顺序" strategy and exposes per-member enable/disable
+        const orderedMembers = Array.isArray(form.members) ? form.members : [];
+        const disabledMembers = new Set(Array.isArray(form.disabled_members) ? form.disabled_members : []);
+        const memberOrderRows = orderedMembers.map((avatar, index) => {
+            const character = state.characters.find(item => (item.avatar || '') === avatar);
+            const title = character?.name || character?.data?.name || avatar;
+            const isDisabled = disabledMembers.has(avatar);
+            return `
+            <li class="group-member-row${isDisabled ? ' is-disabled' : ''}">
+                <span class="group-member-order">${formatNumber(index + 1)}</span>
+                <span class="group-member-name">${escapeHtml(title)}${isDisabled ? '（已禁用）' : ''}</span>
+                <div class="group-member-controls">
+                    <button class="secondary-button compact-button" type="button" data-group-member-move="up" data-group-member="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === 0 ? 'disabled' : ''} title="上移" aria-label="上移">
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </button>
+                    <button class="secondary-button compact-button" type="button" data-group-member-move="down" data-group-member="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" ${index === orderedMembers.length - 1 ? 'disabled' : ''} title="下移" aria-label="下移">
+                        <i class="fa-solid fa-arrow-down"></i>
+                    </button>
+                    <button class="secondary-button compact-button" type="button" data-group-member-toggle-enabled="${escapeHtml(avatar)}" data-group-scope="${scopeAttribute}" title="${isDisabled ? '启用成员' : '禁用成员'}" aria-label="${isDisabled ? '启用成员' : '禁用成员'}">
+                        <i class="fa-solid ${isDisabled ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
+                    </button>
+                </div>
+            </li>`;
+        }).join('');
+
         return `
         <div class="character-form">
             <div class="form-grid two-columns">
@@ -104,11 +129,19 @@ export function createGroupFormComponents(ctx) {
             <section class="form-section">
                 <div>
                     <h3 class="form-section-title">成员</h3>
-                    <p class="panel-subtitle">已选择 ${formatNumber(selectedMembers.size)} 个角色。</p>
+                    <p class="panel-subtitle">勾选加入群组的角色；下方可调整发言顺序（用于"列表顺序"策略）并临时禁用成员。已选择 ${formatNumber(selectedMembers.size)} 个角色。</p>
                 </div>
                 <div class="checkbox-grid">
                     ${memberOptions}
                 </div>
+                ${orderedMembers.length ? `
+                <div class="group-member-order-section">
+                    <h4 class="form-subsection-title">成员顺序与状态</h4>
+                    <ol class="group-member-order-list">
+                        ${memberOrderRows}
+                    </ol>
+                </div>
+                ` : ''}
             </section>
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" ${isCreate ? 'data-cancel-group-create' : 'data-cancel-group-edit'}>

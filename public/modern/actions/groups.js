@@ -15,6 +15,7 @@ export function createGroupActions({
             name: '',
             avatar_url: '',
             members: [],
+            disabled_members: [],
             allow_self_responses: false,
             activation_strategy: '0',
             generation_mode: '0',
@@ -29,6 +30,7 @@ export function createGroupActions({
             name: group?.name || '',
             avatar_url: group?.avatar_url || '',
             members: Array.isArray(group?.members) ? [...group.members] : [],
+            disabled_members: Array.isArray(group?.disabled_members) ? [...group.disabled_members] : [],
             allow_self_responses: !!group?.allow_self_responses,
             activation_strategy: String(group?.activation_strategy ?? 0),
             generation_mode: String(group?.generation_mode ?? 0),
@@ -54,7 +56,7 @@ export function createGroupActions({
             allow_self_responses: !!form.allow_self_responses,
             activation_strategy: numberInput(form.activation_strategy, 0),
             generation_mode: numberInput(form.generation_mode, 0),
-            disabled_members: Array.isArray(previous.disabled_members) ? previous.disabled_members.filter(member => members.includes(member)) : [],
+            disabled_members: Array.isArray(form.disabled_members) ? form.disabled_members.filter(member => members.includes(member)) : [],
             fav: !!form.fav,
             auto_mode_delay: numberInput(form.auto_mode_delay, 5),
         };
@@ -235,6 +237,36 @@ export function createGroupActions({
         render();
     }
 
+    // Reorders a selected member so the "列表顺序" activation strategy has a user-controllable order
+    function moveGroupFormMember(scope, avatar, direction) {
+        const form = scope === 'create' ? state.groupCreating.form : state.groupEditing.form;
+        const members = Array.isArray(form.members) ? [...form.members] : [];
+        const index = members.indexOf(avatar);
+        if (index === -1) {
+            return;
+        }
+        const target = direction === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= members.length) {
+            return;
+        }
+        [members[index], members[target]] = [members[target], members[index]];
+        form.members = members;
+        render();
+    }
+
+    // Toggles a member between active and temporarily disabled without removing it from the group
+    function toggleGroupFormMemberEnabled(scope, avatar) {
+        const form = scope === 'create' ? state.groupCreating.form : state.groupEditing.form;
+        const disabled = new Set(Array.isArray(form.disabled_members) ? form.disabled_members : []);
+        if (disabled.has(avatar)) {
+            disabled.delete(avatar);
+        } else {
+            disabled.add(avatar);
+        }
+        form.disabled_members = [...disabled];
+        render();
+    }
+
     return {
         defaultGroupForm,
         groupToForm,
@@ -249,5 +281,7 @@ export function createGroupActions({
         confirmGroupDelete,
         updateGroupFormField,
         toggleGroupFormMember,
+        moveGroupFormMember,
+        toggleGroupFormMemberEnabled,
     };
 }
