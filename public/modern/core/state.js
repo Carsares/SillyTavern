@@ -200,6 +200,8 @@ export function createModernState() {
             apiId: 'openai',
             name: '',
         },
+        // Group ids the user has expanded, preserved so selecting a preset doesn't collapse them
+        presetExpandedGroups: [],
         presetEditor: {
             apiId: '',
             name: '',

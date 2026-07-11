@@ -72,6 +72,9 @@ export function createPresetListHelpers({
 
     function selectPreset(apiId, name) {
         const presetListScrollTop = getElementScrollTop(getPresetList(apiId));
+        // Snapshot the groups the user has expanded so re-rendering after selection keeps them open
+        state.presetExpandedGroups = Array.from(document.querySelectorAll('[data-preset-group][open]'))
+            .map(group => group.dataset.presetGroup);
         state.presetSelection = { apiId, name };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         state.presetDeleteConfirm = { apiId: '', name: '' };
