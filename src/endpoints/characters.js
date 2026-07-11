@@ -37,6 +37,8 @@ const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', 
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
 const MAX_FILENAME_BYTES = 255;
 const CHARACTER_NAME_QUEUE = new KeyedPromiseQueue();
+// Serialize in-place write/delete on the same avatar file to avoid concurrent clobbering
+const CHARACTER_AVATAR_QUEUE = new KeyedPromiseQueue();
 
 class DiskCache {
     /**
@@ -1242,7 +1244,10 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
 
         const crop = tryParse(request.query.crop);
         const fileName = request.body.avatar_url.replace('.png', '');
-        await writeCharacterData(uploadPath, data, fileName, request, crop);
+        // Serialize by avatar path so concurrent edits to the same avatar file don't clobber each other
+        await CHARACTER_AVATAR_QUEUE.run(characterPath, async () => {
+            await writeCharacterData(uploadPath, data, fileName, request, crop);
+        });
 
         // Remove uploaded temp file
         fs.unlinkSync(uploadPath);
@@ -1506,7 +1511,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         return response.sendStatus(400);
     }
 
-    fs.unlinkSync(avatarPath);
+    // Serialize by avatar path so a concurrent edit/replace of the same avatar file can't race the delete
+    await CHARACTER_AVATAR_QUEUE.run(avatarPath, async () => {
+        fs.unlinkSync(avatarPath);
+    });
     invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
     let dir_name = (request.body.avatar_url.replace('.png', ''));
 

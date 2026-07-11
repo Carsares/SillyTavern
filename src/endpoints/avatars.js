@@ -11,15 +11,19 @@ import { getFileNameValidationFunction } from '../middleware/validateFileName.js
 import { applyAvatarCropResize } from './characters.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import cacheBuster from '../middleware/cacheBuster.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 
 export const router = express.Router();
+
+// Serializes upload/delete per avatar file so a Jimp.read yield can't interleave the two operations
+const AVATAR_FILE_QUEUE = new KeyedPromiseQueue();
 
 router.post('/get', function (request, response) {
     const images = getImages(request.user.directories.avatars);
     response.send(images);
 });
 
-router.post('/delete', getFileNameValidationFunction('avatar'), function (request, response) {
+router.post('/delete', getFileNameValidationFunction('avatar'), async function (request, response) {
     if (!request.body) return response.sendStatus(400);
 
     if (request.body.avatar !== sanitize(request.body.avatar)) {
@@ -29,13 +33,27 @@ router.post('/delete', getFileNameValidationFunction('avatar'), function (reques
 
     const fileName = path.join(request.user.directories.avatars, sanitize(request.body.avatar));
 
-    if (fs.existsSync(fileName)) {
-        fs.unlinkSync(fileName);
-        invalidateThumbnail(request.user.directories, 'persona', sanitize(request.body.avatar));
-        return response.send({ result: 'ok' });
-    }
+    try {
+        // Serialize per-file so a concurrent upload of the same avatar can't interleave with this delete
+        const deleted = await AVATAR_FILE_QUEUE.run(path.resolve(fileName), async () => {
+            if (fs.existsSync(fileName)) {
+                fs.unlinkSync(fileName);
+                invalidateThumbnail(request.user.directories, 'persona', sanitize(request.body.avatar));
+                return true;
+            }
+            return false;
+        });
 
-    return response.sendStatus(404);
+        if (deleted) {
+            return response.send({ result: 'ok' });
+        }
+
+        return response.sendStatus(404);
+    } catch (err) {
+        // Async handler: keep the pre-serialization 500 contract instead of hanging the request
+        console.error('Error deleting user avatar:', err);
+        return response.sendStatus(500);
+    }
 });
 
 router.post('/upload', getFileNameValidationFunction('overwrite_name'), async (request, response) => {
@@ -47,16 +65,20 @@ router.post('/upload', getFileNameValidationFunction('overwrite_name'), async (r
         const rawImg = await Jimp.read(pathToUpload);
         const image = await applyAvatarCropResize(rawImg, crop);
 
-        // Remove previous thumbnail and bust cache if overwriting
-        if (request.body.overwrite_name) {
-            invalidateThumbnail(request.user.directories, 'persona', sanitize(request.body.overwrite_name));
-            cacheBuster.bust(request, response);
-        }
-
         const filename = sanitize(request.body.overwrite_name || `${Date.now()}.png`);
         const pathToNewFile = path.join(request.user.directories.avatars, filename);
-        writeFileAtomicSync(pathToNewFile, image);
-        fs.unlinkSync(pathToUpload);
+
+        // Serialize per-file so a concurrent delete of the same avatar can't interleave with this write
+        await AVATAR_FILE_QUEUE.run(path.resolve(pathToNewFile), async () => {
+            // Remove previous thumbnail and bust cache if overwriting
+            if (request.body.overwrite_name) {
+                invalidateThumbnail(request.user.directories, 'persona', sanitize(request.body.overwrite_name));
+                cacheBuster.bust(request, response);
+            }
+            writeFileAtomicSync(pathToNewFile, image);
+            fs.unlinkSync(pathToUpload);
+        });
+
         return response.send({ path: filename });
     } catch (err) {
         console.error('Error uploading user avatar:', err);
