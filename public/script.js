@@ -1028,7 +1028,10 @@ async function firstLoadInit() {
     initSettingsSearch();
     initBulkEdit();
     initReasoning();
-    initWelcomeScreen();
+    // Headless bridge mode: the welcome screen is pure UI (invisible in the hidden iframe) and unused by the generation engine
+    if (!isModernBridgeMode) {
+        initWelcomeScreen();
+    }
     await initScrapers();
     initCustomSelectedSamplers();
     initDataMaid();
