@@ -39,7 +39,7 @@
 
 - `/`：登录校验后重定向到 `/modern/`。
 - `/modern`、`/modern/`、`/modern/index.html`：返回新版界面。
-- `/callback/:source?`：OAuth 回调后 307 重定向到 `/index.html`（旧版整页），出于安全考虑不直接进入新版。
+- `/callback/:source?`：OAuth 回调 307 重定向到 `/modern/`（带上 `oauthSource`、`oauthQuery` 参数），由新版工作区完成 code 换 key。
 
 远程资源后端集中在 `src/remote-resources/` 和 `src/endpoints/remote-resources.js`：
 

@@ -15,6 +15,9 @@ const BASE_URL = 'https://realm.risuai.net';
 const DOWNLOAD_PROBE_TIMEOUT_MS = 8000;
 // 限制 HEAD 探测并发，避免对单一第三方主机瞬间打出数百并发。
 const PROBE_CONCURRENCY = 8;
+// 单轮搜索的下载探测总预算；超预算后停止继续探测，把慢主机下的最坏延迟从
+// ceil(候选数/并发)*单探测超时 收敛到预算级，避免拖住整轮聚合搜索。
+const SEARCH_PROBE_BUDGET_MS = 10000;
 const DOWNLOAD_FORMATS = Object.freeze({
     [REMOTE_RESOURCE_TYPES.CHARACTER]: { format: 'json-v3', extension: 'json', contentType: 'application/json' },
     [REMOTE_RESOURCE_TYPES.WORLDBOOK]: { format: 'lorebook-v3', extension: 'json', contentType: 'application/json' },
@@ -43,8 +46,8 @@ export const risuRealmProvider = {
         const items = parseSearchResults(text)
             .filter(item => !params.resourceType || item.resourceType === params.resourceType);
         const candidates = items.slice(offset, Math.min(items.length, offset + Math.max(limit * 10, limit)));
-        // 按 PROBE_CONCURRENCY 分批探测，结果顺序与内容和全量并发一致。
-        const availableItems = (await mapWithLimit(candidates, PROBE_CONCURRENCY, probeDownloadAvailability))
+        // 在总预算内按并发上限分批探测下载可用性，结果顺序与全量并发一致。
+        const availableItems = (await probeCandidates(candidates))
             .filter(item => item.capabilities.download)
             .slice(0, limit);
 
@@ -153,12 +156,19 @@ async function probeDownloadAvailability(item) {
     }
 }
 
-// 分批执行 mapper，保持与 Promise.all 相同的结果顺序，同时限制并发上限。
-async function mapWithLimit(items, limit, mapper) {
+// 在 SEARCH_PROBE_BUDGET_MS 总预算内按 PROBE_CONCURRENCY 分批探测下载可用性，结果顺序与全量并发一致。
+// 超预算后剩余候选按解析出的可用状态透传（单探测仍有 DOWNLOAD_PROBE_TIMEOUT_MS 兜底），
+// 避免慢但可达的主机把探测阶段拖到分钟级。
+async function probeCandidates(candidates) {
+    const deadline = Date.now() + SEARCH_PROBE_BUDGET_MS;
     const results = [];
-    for (let index = 0; index < items.length; index += limit) {
-        const batch = items.slice(index, index + limit);
-        results.push(...await Promise.all(batch.map(mapper)));
+    for (let index = 0; index < candidates.length; index += PROBE_CONCURRENCY) {
+        if (Date.now() >= deadline) {
+            results.push(...candidates.slice(index));
+            break;
+        }
+        const batch = candidates.slice(index, index + PROBE_CONCURRENCY);
+        results.push(...await Promise.all(batch.map(probeDownloadAvailability)));
     }
     return results;
 }
