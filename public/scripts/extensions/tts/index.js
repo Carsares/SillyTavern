@@ -52,6 +52,7 @@ let periodicMessageGenerationTimer = null;
 let lastPositionOfParagraphEnd = -1;
 let currentInitVoiceMapPromise = null;
 let currentTtsProviderLoadPromise = null;
+let ttsPlaybackRevision = 0;
 
 const DEFAULT_VOICE_MARKER = '[Default Voice]';
 const DISABLED_VOICE_MARKER = 'disabled';
@@ -220,6 +221,9 @@ async function moduleWorker() {
 }
 
 function resetTtsPlayback() {
+    // Invalidate async provider and audio work before clearing shared playback state.
+    ttsPlaybackRevision++;
+
     // Stop system TTS utterance
     cancelTtsPlay();
 
@@ -298,6 +302,7 @@ function debugTtsPlayback() {
     console.log(JSON.stringify(
         {
             'ttsProviderName': ttsProviderName,
+            'ttsPlaybackRevision': ttsPlaybackRevision,
             'voiceMap': voiceMap,
             'audioPaused': audioPaused,
             'audioJobQueue': audioJobQueue,
@@ -321,7 +326,7 @@ audioElement.autoplay = true;
 
 /**
  * @type AudioJob[] Audio job queue
- * @typedef {{audioBlob: Blob | string, char: string}} AudioJob Audio job object
+ * @typedef {{audioBlob: Blob | string, char: string, playbackRevision: number}} AudioJob Audio job object
  */
 const audioJobQueue = [];
 /**
@@ -331,6 +336,10 @@ let currentAudioJob;
 let audioPaused = false;
 let audioQueueProcessorReady = true;
 
+function isCurrentAudioJob(audioJob) {
+    return audioJob?.playbackRevision === ttsPlaybackRevision && currentAudioJob === audioJob;
+}
+
 /**
  * Play audio data from audio job object.
  * @param {AudioJob} audioJob Audio job object
@@ -338,30 +347,45 @@ let audioQueueProcessorReady = true;
  */
 async function playAudioData(audioJob) {
     const { audioBlob, char } = audioJob;
-    // Since current audio job can be cancelled, don't playback if it is null
-    if (currentAudioJob == null) {
-        console.log('Cancelled TTS playback because currentAudioJob was null');
+    if (!isCurrentAudioJob(audioJob)) {
+        console.log('Cancelled stale TTS audio playback');
+        return;
     }
+
+    let srcUrl;
     if (audioBlob instanceof Blob) {
-        const srcUrl = await getBase64Async(audioBlob);
+        srcUrl = await getBase64Async(audioBlob);
+        if (!isCurrentAudioJob(audioJob)) {
+            return;
+        }
 
         // VRM lip sync
         if (extension_settings.vrm?.enabled && typeof globalThis.vrmLipSync === 'function') {
             await globalThis.vrmLipSync(audioBlob, char);
+            if (!isCurrentAudioJob(audioJob)) {
+                return;
+            }
         }
-
-        audioElement.src = srcUrl;
     } else if (typeof audioBlob === 'string') {
-        audioElement.src = audioBlob;
+        srcUrl = audioBlob;
     } else {
         throw `TTS received invalid audio data type ${typeof audioBlob}`;
     }
-    audioElement.addEventListener('ended', completeCurrentAudioJob);
+
+    if (!isCurrentAudioJob(audioJob)) {
+        return;
+    }
+
+    audioElement.addEventListener('ended', () => completeCurrentAudioJob(audioJob), { once: true });
     audioElement.addEventListener('canplay', () => {
+        if (!isCurrentAudioJob(audioJob)) {
+            return;
+        }
         console.debug('Starting TTS playback');
         audioElement.playbackRate = extension_settings.tts.playback_rate;
         audioElement.play();
-    });
+    }, { once: true });
+    audioElement.src = srcUrl;
 }
 
 globalThis.tts_preview = function (id) {
@@ -465,7 +489,10 @@ function addAudioControl() {
     updateUiAudioPlayState();
 }
 
-function completeCurrentAudioJob() {
+function completeCurrentAudioJob(audioJob) {
+    if (!isCurrentAudioJob(audioJob)) {
+        return;
+    }
     audioQueueProcessorReady = true;
     currentAudioJob = null;
     // updateUiPlayState();
@@ -476,9 +503,14 @@ function completeCurrentAudioJob() {
  * Accepts an HTTP response containing audio/mpeg data, and puts the data as a Blob() on the queue for playback
  * @param {Response} response
  * @param {string} char
- * @returns {Promise<{audioBlob: Blob|string, mimeType: string}>}
+ * @param {number} playbackRevision
+ * @returns {Promise<{audioBlob: Blob|string, mimeType: string}|null>}
  */
-async function addAudioJob(response, char) {
+async function addAudioJob(response, char, playbackRevision) {
+    if (playbackRevision !== ttsPlaybackRevision) {
+        return null;
+    }
+
     let audioBlob, mimeType;
     if (typeof response === 'string') {
         audioBlob = response;
@@ -490,7 +522,12 @@ async function addAudioJob(response, char) {
         }
         mimeType = audioBlob.type;
     }
-    audioJobQueue.push({ audioBlob, char });
+
+    if (playbackRevision !== ttsPlaybackRevision) {
+        return null;
+    }
+
+    audioJobQueue.push({ audioBlob, char, playbackRevision });
     console.debug('Pushed audio job to queue.');
     return { audioBlob, mimeType };
 }
@@ -500,13 +537,19 @@ async function processAudioJobQueue() {
     if (audioJobQueue.length == 0 || !audioQueueProcessorReady || audioPaused) {
         return;
     }
+    let audioJob;
     try {
         audioQueueProcessorReady = false;
-        currentAudioJob = audioJobQueue.shift();
-        playAudioData(currentAudioJob);
+        audioJob = audioJobQueue.shift();
+        currentAudioJob = audioJob;
+        await playAudioData(audioJob);
     } catch (error) {
+        if (!isCurrentAudioJob(audioJob)) {
+            return;
+        }
         toastr.error(error.toString());
         console.error(error);
+        currentAudioJob = null;
         audioQueueProcessorReady = true;
     }
 }
@@ -520,40 +563,79 @@ const ttsJobQueue = [];
 /** @type {TtsMessage|null} */
 let currentTtsJob = null; // Null if nothing is currently being processed
 
-function completeTtsJob() {
-    console.info(`Current TTS job for ${currentTtsJob?.name} completed.`);
-    currentTtsJob = null;
+function isCurrentTtsJob(ttsJob, playbackRevision) {
+    return playbackRevision === ttsPlaybackRevision && currentTtsJob === ttsJob;
 }
 
-async function tts(text, voiceId, char, voiceMapKey = null) {
-    const messageId = currentTtsJob?.id ?? null;
+function clearCurrentTtsJob(ttsJob, playbackRevision) {
+    if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+        return false;
+    }
+    currentTtsJob = null;
+    return true;
+}
+
+function completeTtsJob(ttsJob, playbackRevision) {
+    if (clearCurrentTtsJob(ttsJob, playbackRevision)) {
+        console.info(`Current TTS job for ${ttsJob?.name} completed.`);
+    }
+}
+
+async function tts(text, voiceId, char, voiceMapKey, ttsJob, playbackRevision) {
+    if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+        return;
+    }
+
+    const messageId = ttsJob.id ?? null;
 
     await eventSource.emit(event_types.TTS_JOB_STARTED, { messageId, characterName: char, text, voiceId });
+    if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+        return;
+    }
 
     async function processResponse(response) {
-        // RVC injection
-        if (typeof globalThis.rvcVoiceConversion === 'function' && extension_settings.rvc.enabled)
-            response = await globalThis.rvcVoiceConversion(response, char, text);
+        if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+            return false;
+        }
 
-        const audioResult = await addAudioJob(response, char);
+        // RVC injection
+        if (typeof globalThis.rvcVoiceConversion === 'function' && extension_settings.rvc.enabled) {
+            response = await globalThis.rvcVoiceConversion(response, char, text);
+            if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+                return false;
+            }
+        }
+
+        const audioResult = await addAudioJob(response, char, playbackRevision);
+        if (!audioResult || !isCurrentTtsJob(ttsJob, playbackRevision)) {
+            return false;
+        }
         const eventData = { messageId, characterName: char, text, audio: audioResult.audioBlob, mimeType: audioResult.mimeType };
         await eventSource.emit(event_types.TTS_AUDIO_READY, eventData);
+        return isCurrentTtsJob(ttsJob, playbackRevision);
     }
 
     // voiceMapKey can also include segment qualifiers, e.g. '{char} ("Quotes")'
-    let response = await ttsProvider.generateTts(text, voiceId, voiceMapKey);
+    const response = await ttsProvider.generateTts(text, voiceId, voiceMapKey);
+    if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+        return;
+    }
 
     // If async generator, process every chunk as it comes in
     if (typeof response[Symbol.asyncIterator] === 'function') {
         for await (const chunk of response) {
-            await processResponse(chunk);
+            if (!await processResponse(chunk)) {
+                return;
+            }
         }
     } else {
-        await processResponse(response);
+        if (!await processResponse(response)) {
+            return;
+        }
     }
 
     await eventSource.emit(event_types.TTS_JOB_COMPLETE, { messageId, characterName: char });
-    completeTtsJob();
+    completeTtsJob(ttsJob, playbackRevision);
 }
 
 function parseMessageSegments(text) {
@@ -626,13 +708,15 @@ async function processTtsQueue() {
     }
 
     console.debug('New message found, running TTS');
-    currentTtsJob = ttsJobQueue.shift();
+    const ttsJob = ttsJobQueue.shift();
+    const playbackRevision = ttsPlaybackRevision;
+    currentTtsJob = ttsJob;
 
     // Handle segmented jobs that already have processed text
-    if (currentTtsJob.segmentType && currentTtsJob.segmentText) {
-        const char = currentTtsJob.name;
-        const segmentText = currentTtsJob.segmentText;
-        const segmentType = currentTtsJob.segmentType;
+    if (ttsJob.segmentType && ttsJob.segmentText) {
+        const char = ttsJob.name;
+        const segmentText = ttsJob.segmentText;
+        const segmentType = ttsJob.segmentType;
 
         console.log(`TTS (${segmentType}): ${segmentText}`);
 
@@ -659,11 +743,11 @@ async function processTtsQueue() {
 
             if (voiceMapEntry === DISABLED_VOICE_MARKER) {
                 const storageKey = `tts_disabled_warned_${char}`;
-                if (!accountStorage.getItem(storageKey) || currentTtsJob.manual) {
+                if (!accountStorage.getItem(storageKey) || ttsJob.manual) {
                     accountStorage.setItem(storageKey, 'true');
                     toastr.info(`TTS voice for ${char} is disabled.`);
                 }
-                currentTtsJob = null;
+                clearCurrentTtsJob(ttsJob, playbackRevision);
                 setTimeout(() => wrapper.update(), 0);
                 return;
             }
@@ -673,6 +757,9 @@ async function processTtsQueue() {
             }
 
             const voice = await ttsProvider.getVoice(voiceMapEntry);
+            if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+                return;
+            }
             const voiceId = voice.voice_id;
             if (voiceId == null) {
                 toastr.error(`Specified voice for ${char} was not found. Check the TTS extension settings.`);
@@ -680,17 +767,20 @@ async function processTtsQueue() {
             }
 
             // Pass the full voiceMapKey (e.g., "User ("Quotes")") as well with character name
-            await tts(segmentText, voiceId, char, voiceMapKey);
+            await tts(segmentText, voiceId, char, voiceMapKey, ttsJob, playbackRevision);
         } catch (error) {
+            if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+                return;
+            }
             toastr.error(error.toString());
             console.error(error);
-            currentTtsJob = null;
+            clearCurrentTtsJob(ttsJob, playbackRevision);
         }
         return;
     }
 
     // Process unsegmented job (first time processing)
-    let text = extension_settings.tts.narrate_translated_only ? (currentTtsJob?.extra?.display_text || currentTtsJob.mes) : currentTtsJob.mes;
+    let text = extension_settings.tts.narrate_translated_only ? (ttsJob?.extra?.display_text || ttsJob.mes) : ttsJob.mes;
 
     // Substitute macros
     text = substituteParams(text);
@@ -730,13 +820,16 @@ async function processTtsQueue() {
 
     if (typeof ttsProvider?.processText === 'function') {
         text = await ttsProvider.processText(text);
+        if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+            return;
+        }
     }
 
     // Collapse newlines and spaces into single space
     text = text.replace(/\s+/g, ' ').trim();
 
     console.log(`TTS: ${text}`);
-    const char = currentTtsJob.name;
+    const char = ttsJob.name;
 
     // Remove character name from start of the line if power user setting is disabled
     if (char && !power_user.allow_name2_display) {
@@ -747,7 +840,7 @@ async function processTtsQueue() {
     try {
         if (!text) {
             console.warn('Got empty text in TTS queue job.');
-            completeTtsJob();
+            completeTtsJob(ttsJob, playbackRevision);
             return;
         }
 
@@ -756,7 +849,7 @@ async function processTtsQueue() {
 
         if (segments.length === 0) {
             console.warn('No valid segments found in text.');
-            completeTtsJob();
+            completeTtsJob(ttsJob, playbackRevision);
             return;
         }
 
@@ -766,21 +859,24 @@ async function processTtsQueue() {
                 name: char,
                 segmentType: segments[i].type,
                 segmentText: segments[i].text,
-                is_user: currentTtsJob.is_user,
-                mes: currentTtsJob.mes,
-                extra: currentTtsJob.extra,
-                id: currentTtsJob.id,
-                manual: currentTtsJob.manual,
+                is_user: ttsJob.is_user,
+                mes: ttsJob.mes,
+                extra: ttsJob.extra,
+                id: ttsJob.id,
+                manual: ttsJob.manual,
             };
             ttsJobQueue.unshift(segmentJob);
         }
 
         // Clear current job so the segmented jobs can be processed
-        currentTtsJob = null;
+        clearCurrentTtsJob(ttsJob, playbackRevision);
     } catch (error) {
+        if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
+            return;
+        }
         toastr.error(error.toString());
         console.error(error);
-        currentTtsJob = null;
+        clearCurrentTtsJob(ttsJob, playbackRevision);
     }
 }
 

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-/* global document */
+/* global document, window */
 
 test.describe('TTS settings', () => {
     test.beforeEach(async ({ page }) => {
@@ -33,5 +33,79 @@ test.describe('TTS settings', () => {
         await expect(page.locator('#tts_enabled')).toBeChecked();
         await expect(page.locator('#tts_voicemap_block .tts_voicemap_block_char')).not.toHaveCount(0);
         await expect(page.locator('#tts_status')).toContainText('TTS Provider Loaded');
+    });
+
+    test('discards provider results from playback that was reset', async ({ page }) => {
+        await page.evaluate(async () => {
+            const { chat, eventSource, event_types } = await import('./script.js');
+            const { extension_settings } = await import('./scripts/extensions.js');
+            const { registerTtsProvider } = await import('./scripts/extensions/tts/index.js');
+
+            window.testTtsRequests = [];
+            window.testTtsAudioEvents = [];
+            eventSource.on(event_types.TTS_AUDIO_READY, event => window.testTtsAudioEvents.push(event.text));
+
+            class DeferredTtsProvider {
+                settings = {};
+
+                get settingsHtml() {
+                    return '<div id="deferred_tts_provider"></div>';
+                }
+
+                async loadSettings(settings) {
+                    this.settings = settings;
+                }
+
+                async checkReady() {}
+
+                async fetchTtsVoiceObjects() {
+                    return [{ name: 'Test Voice', voice_id: 'test-voice', preview_url: false, lang: 'en-US' }];
+                }
+
+                async getVoice(voiceId) {
+                    return { voice_id: voiceId };
+                }
+
+                async generateTts(text) {
+                    return new Promise(resolve => window.testTtsRequests.push({ text, resolve }));
+                }
+            }
+
+            const providerName = 'Deferred Test';
+            extension_settings.tts[providerName] = { voiceMap: { '[Default Voice]': 'test-voice' } };
+            extension_settings.tts.narrate_by_paragraphs = false;
+            extension_settings.tts.multi_voice_enabled = false;
+            registerTtsProvider(providerName, DeferredTtsProvider);
+
+            const enabled = document.getElementById('tts_enabled');
+            if (enabled.checked) {
+                enabled.click();
+            }
+            const provider = document.getElementById('tts_provider');
+            provider.value = providerName;
+            provider.dispatchEvent(new Event('change', { bubbles: true }));
+
+            chat.splice(0, chat.length, { name: '[Default Voice]', mes: 'stale text', is_system: false, is_user: false, extra: {} });
+        });
+        await expect(page.locator('#deferred_tts_provider')).toBeAttached();
+        await page.evaluate(() => document.getElementById('tts_enabled').click());
+        await expect(page.locator('#tts_voicemap_block .tts_voicemap_block_char')).not.toHaveCount(0);
+
+        await page.evaluate(() => window.playFullConversation());
+        await expect.poll(() => page.evaluate(() => window.testTtsRequests.length)).toBe(1);
+
+        await page.evaluate(async () => {
+            const { chat } = await import('./script.js');
+            chat[0].mes = 'current text';
+            window.playFullConversation();
+        });
+        await expect.poll(() => page.evaluate(() => window.testTtsRequests.length)).toBe(2);
+
+        await page.evaluate(() => window.testTtsRequests[0].resolve('data:audio/mpeg;base64,SUQz'));
+        await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 100)));
+        expect(await page.evaluate(() => window.testTtsAudioEvents)).toEqual([]);
+
+        await page.evaluate(() => window.testTtsRequests[1].resolve('data:audio/mpeg;base64,SUQz'));
+        await expect.poll(() => page.evaluate(() => window.testTtsAudioEvents)).toEqual(['current text']);
     });
 });
