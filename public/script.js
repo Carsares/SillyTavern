@@ -148,6 +148,7 @@ import {
 
 import {
     debounce,
+    isDebouncePending,
     delay,
     trimToEndSentence,
     countOccurrences,
@@ -481,6 +482,21 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
+
+/** @returns {boolean} Whether user data is waiting to be persisted or currently saving */
+function hasPendingSave() {
+    return Boolean(
+        isChatSaving
+        || chatSaveTimeout !== null
+        || pendingChatSaveContext !== null
+        || chatSaveQueue.hasPendingTasks
+        || characterSaveTimeout !== null
+        || pendingCharacterSaveRequest !== null
+        || characterSaveQueue.hasPendingTasks
+        || isDebouncePending(saveSettingsDebounced)
+        || settingsSaveQueue.hasPendingTasks,
+    );
+}
 
 /**
  * @typedef {object} CharacterSaveRequest
@@ -13108,7 +13124,7 @@ jQuery(async function () {
     await firstLoadInit();
 
     window.addEventListener('beforeunload', (e) => {
-        if (isChatSaving || this_edit_mes_id >= 0) {
+        if (hasPendingSave() || this_edit_mes_id >= 0) {
             e.preventDefault();
             e.returnValue = true;
         }

@@ -20,6 +20,25 @@ describe('save coordinators', () => {
         expect(order).toEqual(['first', 'second']);
     });
 
+    test('serial task queue reports queued and executing work as pending', async () => {
+        const queue = new SerialTaskQueue();
+        let releaseFirst;
+        let releaseSecond;
+        const first = queue.enqueue(() => new Promise(resolve => { releaseFirst = resolve; }));
+        const second = queue.enqueue(() => new Promise(resolve => { releaseSecond = resolve; }));
+
+        expect(queue.hasPendingTasks).toBe(true);
+        await Promise.resolve();
+        releaseFirst();
+        await first;
+        expect(queue.hasPendingTasks).toBe(true);
+
+        await Promise.resolve();
+        releaseSecond();
+        await second;
+        expect(queue.hasPendingTasks).toBe(false);
+    });
+
     test('latest snapshot update preserves newer data when given a stale fallback', () => {
         const registry = new LatestSnapshotRegistry(value => JSON.parse(JSON.stringify(value)));
         const stale = { chatData: ['old'], metadata: { attachments: ['old-file'] } };

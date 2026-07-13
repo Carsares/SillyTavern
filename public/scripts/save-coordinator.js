@@ -3,6 +3,12 @@
  */
 export class SerialTaskQueue {
     #tail = Promise.resolve(true);
+    #pendingTaskCount = 0;
+
+    /** @returns {boolean} Whether the queue has work that is queued or executing */
+    get hasPendingTasks() {
+        return this.#pendingTaskCount > 0;
+    }
 
     /**
      * Adds a task to the queue.
@@ -11,7 +17,15 @@ export class SerialTaskQueue {
      * @returns {Promise<T>} Result of the task
      */
     enqueue(task) {
-        const result = this.#tail.then(task, task);
+        this.#pendingTaskCount++;
+        const execute = async () => {
+            try {
+                return await task();
+            } finally {
+                this.#pendingTaskCount--;
+            }
+        };
+        const result = this.#tail.then(execute, execute);
         this.#tail = result.catch(() => false);
         return result;
     }

@@ -559,11 +559,24 @@ export function copyText(text) {
 }
 
 /**
- * Map of debounced functions to their timers.
+ * Map of debounced functions to their scheduled state.
  * Weak map is used to avoid memory leaks.
- * @type {WeakMap<function, any>}
+ * @type {WeakMap<function, {timer: ReturnType<typeof setTimeout>|null, functions: function[]}>}
  */
 const debounceMap = new WeakMap();
+
+/**
+ * Clears a scheduled debounce state without disturbing another wrapper around the same function.
+ * @param {{timer: ReturnType<typeof setTimeout>|null, functions: function[]}} state Debounce state
+ */
+function clearDebounceState(state) {
+    state.timer = null;
+    for (const debounceFunction of state.functions) {
+        if (debounceMap.get(debounceFunction) === state) {
+            debounceMap.delete(debounceFunction);
+        }
+    }
+}
 
 /**
  * Creates a debounced function that delays invoking func until after wait milliseconds have elapsed since the last time the debounced function was invoked.
@@ -572,15 +585,32 @@ const debounceMap = new WeakMap();
  * @returns {function} The debounced function.
  */
 export function debounce(func, timeout = debounce_timeout.standard) {
-    let timer;
-    let fn = (...args) => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { func.apply(this, args); }, timeout);
-        debounceMap.set(func, timer);
-        debounceMap.set(fn, timer);
+    const state = { timer: null, functions: [] };
+    const fn = (...args) => {
+        if (state.timer !== null) {
+            clearTimeout(state.timer);
+        }
+        state.timer = setTimeout(() => {
+            clearDebounceState(state);
+            func.apply(this, args);
+        }, timeout);
+        for (const debounceFunction of state.functions) {
+            debounceMap.set(debounceFunction, state);
+        }
     };
+    state.functions = [func, fn];
 
     return fn;
+}
+
+/**
+ * Checks whether a debounced function is waiting to execute.
+ * @param {function} func Original or debounced function
+ * @returns {boolean} Whether the function has a scheduled invocation
+ */
+export function isDebouncePending(func) {
+    const state = debounceMap.get(func);
+    return Boolean(state && state.timer !== null);
 }
 
 /**
@@ -616,9 +646,10 @@ export function debounceAsync(func, timeout = debounce_timeout.standard) {
  * @param {function} func The function to cancel. Either the original or the debounced function.
  */
 export function cancelDebounce(func) {
-    if (debounceMap.has(func)) {
-        clearTimeout(debounceMap.get(func));
-        debounceMap.delete(func);
+    const state = debounceMap.get(func);
+    if (state && state.timer !== null) {
+        clearTimeout(state.timer);
+        clearDebounceState(state);
     }
 }
 
