@@ -148,6 +148,7 @@ import {
 
 import {
     debounce,
+    cancelDebounce,
     isDebouncePending,
     delay,
     trimToEndSentence,
@@ -9045,6 +9046,10 @@ export function getCurrentChatDetails() {
     return { sessionName: currentChat, group: group, characterName: displayName, avatarImgURL: avatarImg };
 }
 
+let pastChatsViewToken = null;
+let pastChatsSearchToken = null;
+let debouncedPastChatsSearch = null;
+
 /**
  * Displays the past chats for a character or a group based on the selected context.
  * The function first fetches the chats, processes them, and then displays them in
@@ -9053,6 +9058,11 @@ export function getCurrentChatDetails() {
  * @param {string[]} hightlightNames - An array of chat names to highlight
  */
 export async function displayPastChats(hightlightNames = []) {
+    const viewToken = Symbol('past-chats-view');
+    pastChatsViewToken = viewToken;
+    pastChatsSearchToken = null;
+    cancelDebounce(debouncedPastChatsSearch);
+    debouncedPastChatsSearch = null;
     $('#select_chat_div').empty();
     $('#select_chat_search').val('').off('input');
 
@@ -9060,17 +9070,29 @@ export async function displayPastChats(hightlightNames = []) {
     const currentChat = chatDetails.sessionName;
     const displayName = chatDetails.characterName;
     const avatarImg = chatDetails.avatarImgURL;
+    const groupId = selected_group;
+    const characterAvatar = groupId ? null : characters[this_chid]?.avatar;
+    const initialSearchToken = Symbol('past-chats-search');
+    pastChatsSearchToken = initialSearchToken;
 
-    await displayChats('', currentChat, displayName, avatarImg, selected_group, hightlightNames);
+    const viewIsCurrent = await displayChats('', currentChat, displayName, avatarImg, groupId, characterAvatar, hightlightNames, viewToken, initialSearchToken);
+    if (!viewIsCurrent) {
+        return;
+    }
 
-    const debouncedDisplay = debounce((searchQuery) => {
-        displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group, []);
+    debouncedPastChatsSearch = debounce((searchQuery, searchToken) => {
+        if (pastChatsViewToken !== viewToken || pastChatsSearchToken !== searchToken) {
+            return;
+        }
+        void displayChats(searchQuery, currentChat, displayName, avatarImg, groupId, characterAvatar, [], viewToken, searchToken);
     });
 
     // Define the search input listener
     $('#select_chat_search').off('input').on('input', function () {
         const searchQuery = $(this).val();
-        debouncedDisplay(searchQuery);
+        const searchToken = Symbol('past-chats-search');
+        pastChatsSearchToken = searchToken;
+        debouncedPastChatsSearch(searchQuery, searchToken);
     });
 
     // UX convenience: Focus the search field when the Manage Chat Files view opens.
@@ -9082,15 +9104,20 @@ export async function displayPastChats(hightlightNames = []) {
     addChatBackupsBrowser();
 }
 
-async function displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group, highlightNames) {
+async function displayChats(searchQuery, currentChat, displayName, avatarImg, groupId, characterAvatar, highlightNames, viewToken, searchToken) {
+    const isCurrent = () => pastChatsViewToken === viewToken && pastChatsSearchToken === searchToken;
+    if (!isCurrent()) {
+        return false;
+    }
+
     try {
         const response = await fetch('/api/chats/search', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 query: searchQuery,
-                avatar_url: selected_group ? null : characters[this_chid].avatar,
-                group_id: selected_group || null,
+                avatar_url: characterAvatar,
+                group_id: groupId || null,
             }),
         });
 
@@ -9099,6 +9126,9 @@ async function displayChats(searchQuery, currentChat, displayName, avatarImg, se
         }
 
         const filteredData = await response.json();
+        if (!isCurrent()) {
+            return false;
+        }
         $('#select_chat_div').empty();
 
         filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
@@ -9127,9 +9157,14 @@ async function displayChats(searchQuery, currentChat, displayName, avatarImg, se
                 flashHighlight(template, debounce_timeout.extended);
             }
         }
+        return true;
     } catch (error) {
-        console.error('Error loading chats:', error);
-        toastr.error('Could not load chat data. Try reloading the page.');
+        if (isCurrent()) {
+            console.error('Error loading chats:', error);
+            toastr.error('Could not load chat data. Try reloading the page.');
+            return true;
+        }
+        return false;
     }
 }
 

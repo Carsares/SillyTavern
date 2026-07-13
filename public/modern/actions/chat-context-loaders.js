@@ -15,6 +15,7 @@ export function createChatContextLoaderActions({
 }) {
     const chatListLoadTokens = new Map();
     const chatMessageLoadTokens = new Map();
+    let chatSearchToken = null;
 
     async function loadCharacterChats(character, { force = false, quiet = false, isCurrent = () => true } = {}) {
         if (!character?.avatar) {
@@ -102,6 +103,7 @@ export function createChatContextLoaderActions({
     }
 
     function clearChatSearch() {
+        chatSearchToken = null;
         const contextKey = getChatContextKey();
         state.chatSearch = {
             avatar: state.selected.character || '',
@@ -114,10 +116,13 @@ export function createChatContextLoaderActions({
     }
 
     async function searchSelectedChats() {
+        const searchToken = Symbol('chat-search');
+        chatSearchToken = searchToken;
+        const groupMode = isGroupChatMode();
         const entity = getSelectedChatEntity();
-        const contextKey = getChatContextKey(entity);
+        const contextKey = getChatContextKey(entity, groupMode);
         if (!entity || !contextKey) {
-            throw new Error(isGroupChatMode() ? '请先选择一个群聊。' : '请先选择一个角色。');
+            throw new Error(groupMode ? '请先选择一个群聊。' : '请先选择一个角色。');
         }
 
         const query = state.chatSearch.query.trim();
@@ -128,7 +133,7 @@ export function createChatContextLoaderActions({
 
         state.chatSearch = {
             ...state.chatSearch,
-            avatar: isGroupChatMode() ? '' : entity.avatar,
+            avatar: groupMode ? '' : entity.avatar,
             contextKey,
             loading: true,
         };
@@ -138,13 +143,16 @@ export function createChatContextLoaderActions({
             const result = await apiFetch('/api/chats/search', {
                 body: {
                     query,
-                    avatar_url: isGroupChatMode() ? null : entity.avatar,
-                    group_id: isGroupChatMode() ? entity.id : null,
+                    avatar_url: groupMode ? null : entity.avatar,
+                    group_id: groupMode ? entity.id : null,
                 },
             });
+            if (chatSearchToken !== searchToken) {
+                return;
+            }
             const results = Array.isArray(result) ? sortChats(result.filter(chat => chat.file_name)) : [];
             state.chatSearch = {
-                avatar: isGroupChatMode() ? '' : entity.avatar,
+                avatar: groupMode ? '' : entity.avatar,
                 contextKey,
                 query,
                 searchedQuery: query,
@@ -152,6 +160,9 @@ export function createChatContextLoaderActions({
                 results,
             };
         } catch (error) {
+            if (chatSearchToken !== searchToken) {
+                return;
+            }
             state.chatSearch.loading = false;
             throw error;
         }

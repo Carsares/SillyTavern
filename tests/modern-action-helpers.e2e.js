@@ -548,6 +548,63 @@ test.describe('Modern action helpers', () => {
         expect(state.chatMessages['alice.png::beta'][0]).toMatchObject({ mes: 'hello' });
     });
 
+    test('keeps only the latest chat search result and invalidates searches when cleared', async () => {
+        const entity = { avatar: 'alice.png', name: 'Alice' };
+        const state = {
+            selected: { character: 'alice.png' },
+            chatSearch: { avatar: '', contextKey: '', query: 'first', searchedQuery: '', loading: false, results: [] },
+        };
+        const pending = new Map();
+        const helpers = createChatContextLoaderActions({
+            state,
+            apiFetch: async (_url, options) => new Promise((resolve, reject) => {
+                pending.set(options.body.query, { resolve, reject });
+            }),
+            render: () => {},
+            showToast: () => {},
+            getChatCacheKey: (contextKey, chatId) => `${contextKey}::${chatId}`,
+            getChatContextKey: (item = entity) => item?.avatar || '',
+            getSelectedChatEntity: () => entity,
+            isGroupChatMode: () => false,
+            sortChats,
+        });
+
+        const firstSearch = helpers.searchSelectedChats();
+        state.chatSearch.query = 'second';
+        const secondSearch = helpers.searchSelectedChats();
+        pending.get('second').resolve([{ file_name: 'second.jsonl', last_mes: '2026-01-02T00:00:00Z' }]);
+        await secondSearch;
+        pending.get('first').resolve([{ file_name: 'first.jsonl', last_mes: '2026-01-01T00:00:00Z' }]);
+        await firstSearch;
+
+        expect(state.chatSearch).toMatchObject({ query: 'second', searchedQuery: 'second', loading: false });
+        expect(state.chatSearch.results.map(chat => chat.file_name)).toEqual(['second.jsonl']);
+
+        state.chatSearch.query = 'stale-error';
+        const staleSearch = helpers.searchSelectedChats();
+        state.chatSearch.query = 'current';
+        const currentSearch = helpers.searchSelectedChats();
+        pending.get('stale-error').reject(new Error('stale failure'));
+        await staleSearch;
+        expect(state.chatSearch.loading).toBe(true);
+        pending.get('current').resolve([{ file_name: 'current.jsonl', last_mes: '2026-01-03T00:00:00Z' }]);
+        await currentSearch;
+
+        state.chatSearch.query = 'cleared';
+        const clearedSearch = helpers.searchSelectedChats();
+        helpers.clearChatSearch();
+        pending.get('cleared').resolve([{ file_name: 'cleared.jsonl', last_mes: '2026-01-04T00:00:00Z' }]);
+        await clearedSearch;
+        expect(state.chatSearch).toEqual({
+            avatar: 'alice.png',
+            contextKey: 'alice.png',
+            query: '',
+            searchedQuery: '',
+            loading: false,
+            results: [],
+        });
+    });
+
     test('does not let a stale chat context request replace the current selection', async () => {
         const alice = { avatar: 'alice.png', name: 'Alice' };
         const bob = { avatar: 'bob.png', name: 'Bob' };
@@ -1903,6 +1960,60 @@ test.describe('Modern action helpers', () => {
             localId: 'remote-alice-1.png',
             action: 'import',
         });
+    });
+
+    test('keeps only the latest remote resource search result and loading state', async () => {
+        const state = {
+            remoteResources: {
+                loaded: true,
+                loading: false,
+                searching: false,
+                searched: false,
+                query: 'first',
+                resourceType: 'character',
+                selectedProviders: ['provider'],
+                providers: [{ id: 'provider', supportsSearch: true }],
+                results: [],
+                total: 0,
+                errors: [],
+                records: [],
+            },
+        };
+        const pending = new Map();
+        const toasts = [];
+        const actions = createRemoteResourceActions({
+            state,
+            apiFetch: async (_url, options) => new Promise((resolve, reject) => {
+                pending.set(options.body.query, { resolve, reject });
+            }),
+            render: () => {},
+            showToast: (...args) => toasts.push(args),
+        });
+
+        const firstSearch = actions.searchRemoteResources();
+        state.remoteResources.query = 'second';
+        const secondSearch = actions.searchRemoteResources();
+        pending.get('second').resolve({ items: [{ id: 'second' }], total: 1, errors: [] });
+        await secondSearch;
+        pending.get('first').resolve({ items: [{ id: 'first' }], total: 1, errors: [] });
+        await firstSearch;
+
+        expect(state.remoteResources.results).toEqual([{ id: 'second' }]);
+        expect(state.remoteResources.total).toBe(1);
+
+        state.remoteResources.query = 'stale-error';
+        const staleSearch = actions.searchRemoteResources();
+        state.remoteResources.query = 'current';
+        const currentSearch = actions.searchRemoteResources();
+        pending.get('stale-error').reject(new Error('stale failure'));
+        await staleSearch;
+        expect(state.remoteResources.searching).toBe(true);
+        expect(toasts).toEqual([]);
+        pending.get('current').resolve({ items: [{ id: 'current' }], total: 1, errors: [] });
+        await currentSearch;
+
+        expect(state.remoteResources.searching).toBe(false);
+        expect(state.remoteResources.results).toEqual([{ id: 'current' }]);
     });
 
     test('confirms and retries a remote worldbook import after a server conflict', async () => {

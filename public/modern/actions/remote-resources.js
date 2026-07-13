@@ -15,6 +15,8 @@ export function createRemoteResourceActions({
     restoreWorldbookFile,
     confirmAction = message => window.confirm(message),
 }) {
+    let remoteSearchToken = null;
+
     function getRemoteResourceCount() {
         return state.remoteResources.records.length;
     }
@@ -81,36 +83,53 @@ export function createRemoteResourceActions({
     }
 
     async function searchRemoteResources() {
-        if (!state.remoteResources.loaded) {
-            await loadRemoteResources();
-        }
-        const providers = state.remoteResources.selectedProviders.length
-            ? state.remoteResources.selectedProviders
-            : state.remoteResources.providers.filter(provider => provider.supportsSearch).map(provider => provider.id);
-
-        state.remoteResources.searching = true;
-        state.remoteResources.searched = true;
-        state.remoteResources.errors = [];
-        render();
+        const searchToken = Symbol('remote-search');
+        remoteSearchToken = searchToken;
+        const query = state.remoteResources.query.trim();
+        const resourceType = state.remoteResources.resourceType;
+        const selectedProviders = [...state.remoteResources.selectedProviders];
         try {
+            if (!state.remoteResources.loaded) {
+                await loadRemoteResources();
+            }
+            if (remoteSearchToken !== searchToken) {
+                return;
+            }
+
+            const providers = selectedProviders.length
+                ? selectedProviders
+                : state.remoteResources.providers.filter(provider => provider.supportsSearch).map(provider => provider.id);
+            state.remoteResources.searching = true;
+            state.remoteResources.searched = true;
+            state.remoteResources.errors = [];
+            render();
             const result = await apiFetch('/api/remote-resources/search', {
                 body: {
-                    query: state.remoteResources.query.trim(),
-                    resourceType: state.remoteResources.resourceType,
+                    query,
+                    resourceType,
                     providers,
                     page: 1,
                     limit: 48,
                 },
             });
+            if (remoteSearchToken !== searchToken) {
+                return;
+            }
             state.remoteResources.results = Array.isArray(result?.items) ? result.items : [];
             state.remoteResources.total = Number(result?.total) || state.remoteResources.results.length;
             state.remoteResources.errors = Array.isArray(result?.errors) ? result.errors : [];
             if (state.remoteResources.errors.length) {
                 showToast('部分资源站读取失败', state.remoteResources.errors[0]);
             }
+        } catch (error) {
+            if (remoteSearchToken === searchToken) {
+                throw error;
+            }
         } finally {
-            state.remoteResources.searching = false;
-            render();
+            if (remoteSearchToken === searchToken) {
+                state.remoteResources.searching = false;
+                render();
+            }
         }
     }
 
