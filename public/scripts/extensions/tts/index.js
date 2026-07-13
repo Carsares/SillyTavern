@@ -401,18 +401,11 @@ async function onTtsVoicesClick() {
             /** @type {HTMLAudioElement?} */
             let previewAudio = null;
             if (voice.preview_url) {
-                try {
-                    const previewUrl = new URL(String(voice.preview_url), document.baseURI);
-                    if (previewUrl.protocol === 'http:' || previewUrl.protocol === 'https:') {
-                        previewAudio = document.createElement('audio');
-                        previewAudio.id = voiceId;
-                        previewAudio.src = previewUrl.href;
-                        previewAudio.dataset.disabled = 'false';
-                        voicePreview.appendChild(previewAudio);
-                    }
-                } catch {
-                    // Invalid preview URLs use provider-generated previews instead.
-                }
+                previewAudio = document.createElement('audio');
+                previewAudio.id = voiceId;
+                previewAudio.src = String(voice.preview_url);
+                previewAudio.dataset.disabled = 'false';
+                voicePreview.appendChild(previewAudio);
             }
 
             playButton.addEventListener('click', () => previewAudio ? previewAudio.play() : ttsProvider.previewTtsVoice(voiceId));
