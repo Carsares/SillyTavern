@@ -225,20 +225,34 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
-    if (selected_group) {
-        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, branchChatSnapshot);
-    } else {
-        await saveChat({ chatName: name, withMetadata: newMetadata, mesId, chatData: branchChatSnapshot });
+    const childSaved = selected_group
+        ? await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, branchChatSnapshot)
+        : await saveChat({ chatName: name, withMetadata: newMetadata, mesId, chatData: branchChatSnapshot });
+    if (!childSaved) {
+        return null;
     }
+
     // append to branches list if it exists
     // otherwise create it
-    if (typeof lastMes.extra !== 'object') {
+    const previousExtra = lastMes.extra;
+    const hadExtraObject = Boolean(previousExtra && typeof previousExtra === 'object');
+    if (!hadExtraObject) {
         lastMes.extra = {};
     }
-    if (typeof lastMes.extra.branches !== 'object') {
-        lastMes.extra.branches = [];
+    const previousBranches = lastMes.extra.branches;
+    lastMes.extra.branches = Array.isArray(previousBranches) ? [...previousBranches, name] : [name];
+
+    if (!await saveChatConditional()) {
+        if (!hadExtraObject) {
+            lastMes.extra = previousExtra;
+        } else if (previousBranches === undefined) {
+            delete lastMes.extra.branches;
+        } else {
+            lastMes.extra.branches = previousBranches;
+        }
+        return null;
     }
-    lastMes.extra.branches.push(name);
+
     return name;
 }
 
@@ -265,12 +279,10 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     }
 
     const lastMes = chat[mesId];
-
-    if (typeof lastMes.extra !== 'object') {
-        lastMes.extra = {};
-    }
-
-    const isReplace = lastMes.extra.bookmark_link;
+    const previousExtra = lastMes.extra;
+    const hadExtraObject = Boolean(previousExtra && typeof previousExtra === 'object');
+    const previousBookmarkLink = hadExtraObject ? previousExtra.bookmark_link : undefined;
+    const isReplace = previousBookmarkLink;
 
     let name = await getBookmarkName({ isReplace: isReplace, forceName: forceName });
     if (!name) {
@@ -281,18 +293,33 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     const newMetadata = { main_chat: mainChat };
     await saveItemizedPrompts(name);
 
-    if (selected_group) {
-        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
-    } else {
-        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+    const childSaved = selected_group
+        ? await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId)
+        : await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+    if (!childSaved) {
+        return null;
     }
 
+    if (!hadExtraObject) {
+        lastMes.extra = {};
+    }
     lastMes.extra.bookmark_link = name;
 
     const mes = $(`.mes[mesid="${mesId}"]`);
     updateBookmarkDisplay(mes, name);
 
-    await saveChatConditional();
+    if (!await saveChatConditional()) {
+        if (!hadExtraObject) {
+            lastMes.extra = previousExtra;
+        } else if (previousBookmarkLink === undefined) {
+            delete lastMes.extra.bookmark_link;
+        } else {
+            lastMes.extra.bookmark_link = previousBookmarkLink;
+        }
+        updateBookmarkDisplay(mes, previousBookmarkLink ?? '');
+        return null;
+    }
+
     toastr.success('Click the flag icon next to the message to open the checkpoint chat.', 'Create Checkpoint', { timeOut: 10000 });
     return name;
 }
@@ -304,9 +331,12 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
  * @param {string?} [newBookmarkLink=null] - The new bookmark link (optional)
  */
 export function updateBookmarkDisplay(mes, newBookmarkLink = null) {
-    newBookmarkLink && mes.attr('bookmark_link', newBookmarkLink);
+    if (newBookmarkLink !== null) {
+        newBookmarkLink ? mes.attr('bookmark_link', newBookmarkLink) : mes.removeAttr('bookmark_link');
+    }
     const bookmarkFlag = mes.find('.mes_bookmark');
-    bookmarkFlag.attr('title', `Checkpoint\n${mes.attr('bookmark_link')}\n\n${bookmarkFlag.data('tooltip')}`);
+    const bookmarkLink = mes.attr('bookmark_link');
+    bookmarkFlag.attr('title', bookmarkLink ? `Checkpoint\n${bookmarkLink}\n\n${bookmarkFlag.data('tooltip')}` : bookmarkFlag.data('tooltip'));
 }
 
 async function backToMainChat() {

@@ -2393,16 +2393,14 @@ export async function importGroupChat(formData, { refresh = true } = {}) {
  * @param {ChatMetadata?} metadata New metadata to save with the chat
  * @param {number|undefined} mesId Optional message ID to trim the chat up to
  * @param {ChatMessage[]|undefined} chatData Optional chat snapshot to save instead of the current in-memory chat
- * @returns {Promise<void>} Promise that resolves when the group chat is saved
+ * @returns {Promise<boolean>} Whether both the chat and group reference were saved
  */
 export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chatData = undefined) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
-        return;
+        return false;
     }
-
-    group.chats.push(name);
 
     /** @type {ChatHeader} */
     const chatHeader = {
@@ -2418,19 +2416,33 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
             ? chat.slice(0, Number(mesId) + 1)
             : chat;
 
-    await editGroup(groupId, true, false);
-
-    const saveChatRequest = await compressRequest({
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
-    });
-    const response = await fetch('/api/chats/group/save', saveChatRequest);
-
-    if (!response.ok) {
+    try {
+        const saveChatRequest = await compressRequest({
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
+        });
+        const response = await fetch('/api/chats/group/save', saveChatRequest);
+        if (!response.ok) {
+            throw new Error(`Group chat save failed with status ${response.status}`);
+        }
+    } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
-        console.error('Group chat could not be saved', response);
+        console.error('Group chat could not be saved', error);
+        return false;
     }
+
+    // Publish the group reference only after the child chat exists.
+    group.chats.push(name);
+    if (!await editGroup(groupId, true, false)) {
+        const chatIndex = group.chats.lastIndexOf(name);
+        if (chatIndex !== -1) {
+            group.chats.splice(chatIndex, 1);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 function onSendTextareaInput() {
