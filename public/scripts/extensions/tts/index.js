@@ -51,6 +51,7 @@ let lastMessageHash = null;
 let periodicMessageGenerationTimer = null;
 let lastPositionOfParagraphEnd = -1;
 let currentInitVoiceMapPromise = null;
+let currentTtsProviderLoadPromise = null;
 
 const DEFAULT_VOICE_MARKER = '[Default Voice]';
 const DISABLED_VOICE_MARKER = 'disabled';
@@ -117,7 +118,7 @@ export function registerTtsProvider(name, provider) {
 
     // Load if it was previously selected
     if (extension_settings.tts.currentProvider === name) {
-        loadTtsProvider(name);
+        startTtsProviderLoad(name);
     }
 }
 
@@ -960,13 +961,30 @@ function onRefreshClick() {
     });
 }
 
-function onEnableClick() {
+async function onEnableClick() {
     extension_settings.tts.enabled = $('#tts_enabled').is(
         ':checked',
     );
     updateUiAudioPlayState();
     saveSettingsDebounced();
     $('body').toggleClass('tts', extension_settings.tts.enabled);
+
+    if (!extension_settings.tts.enabled) {
+        return;
+    }
+
+    const providerLoadPromise = currentTtsProviderLoadPromise;
+    if (providerLoadPromise) {
+        try {
+            await providerLoadPromise;
+        } catch (error) {
+            console.error('Failed to load TTS provider', error);
+            setTtsStatus(error, false);
+        }
+        return;
+    }
+
+    await initVoiceMap();
 }
 
 
@@ -1065,6 +1083,21 @@ function updateRegexPatternWarning() {
 // TTS Provider //
 //##############//
 
+function startTtsProviderLoad(provider) {
+    const loadPromise = loadTtsProvider(provider);
+    currentTtsProviderLoadPromise = loadPromise;
+    loadPromise.then(() => {
+        if (currentTtsProviderLoadPromise === loadPromise) {
+            currentTtsProviderLoadPromise = null;
+        }
+    }, () => {
+        if (currentTtsProviderLoadPromise === loadPromise) {
+            currentTtsProviderLoadPromise = null;
+        }
+    });
+    return loadPromise;
+}
+
 async function loadTtsProvider(provider) {
     //Clear the current config and add new config
     $('#tts_provider_settings').html('');
@@ -1095,7 +1128,7 @@ function onTtsProviderChange() {
     const ttsProviderSelection = $('#tts_provider').val();
     extension_settings.tts.currentProvider = ttsProviderSelection;
     $('#playback_rate_block').toggle(extension_settings.tts.currentProvider !== 'System');
-    loadTtsProvider(ttsProviderSelection);
+    startTtsProviderLoad(ttsProviderSelection);
 }
 
 // Ensure that TTS provider settings are saved to extension settings.
@@ -1589,7 +1622,7 @@ export async function init() {
     }
     await addExtensionControls(); // No init dependencies
     loadSettings(); // Depends on Extension Controls and loadTtsProvider
-    loadTtsProvider(extension_settings.tts.currentProvider); // No dependencies
+    startTtsProviderLoad(extension_settings.tts.currentProvider); // No dependencies
     addAudioControl(); // Depends on Extension Controls
     setInterval(wrapper.update.bind(wrapper), UPDATE_INTERVAL); // Init depends on all the things
     eventSource.on(event_types.MESSAGE_SWIPED, resetTtsPlayback);
