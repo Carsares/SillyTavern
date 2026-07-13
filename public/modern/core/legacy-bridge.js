@@ -37,11 +37,11 @@ export function createLegacyBridge({
     window.addEventListener('message', handleMessage);
 
     async function ensureFrame() {
-        if (bridge.frame?.contentWindow) {
-            return bridge.frame;
-        }
         if (bridge.loadPromise) {
             return bridge.loadPromise;
+        }
+        if (bridge.frame?.contentWindow) {
+            return bridge.frame;
         }
 
         bridge.loadPromise = new Promise((resolve, reject) => {
