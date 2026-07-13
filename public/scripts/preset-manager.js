@@ -509,7 +509,9 @@ class PresetManager {
         }
         try {
             await this.savePreset(newName, undefined, { overwrite: false });
-            await this.deletePreset(oldName);
+            if (!await this.deletePreset(oldName)) {
+                throw new Error(`Preset ${oldName} could not be deleted`);
+            }
         } catch (error) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be renamed`);
             console.error('Preset could not be renamed', error);
@@ -775,17 +777,36 @@ class PresetManager {
     /**
      * Deletes a preset by name. If not provided, deletes the currently selected preset.
      * @param {string} [name] Name of the preset to delete.
+     * @returns {Promise<boolean>} Whether the preset was deleted
      */
     async deletePreset(name) {
         const { preset_names, presets } = this.getPresetList();
         const value = name ? (this.isKeyedApi() ? this.findPreset(name) : name) : this.getSelectedPreset();
         const nameToDelete = name || this.getSelectedPresetName();
+        const switchPresets = !name || this.getSelectedPresetName() == name;
 
         if (value == 'gui') {
             toastr.info(t`Cannot delete GUI preset`);
-            return;
+            return false;
         }
 
+        let response;
+        try {
+            response = await fetch('/api/presets/delete', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ name: nameToDelete, apiId: this.apiId }),
+            });
+        } catch (error) {
+            console.error('Preset could not be deleted', error);
+            return false;
+        }
+
+        if (!response.ok) {
+            return false;
+        }
+
+        // Keep the local list intact until the server confirms deletion.
         if (this.isKeyedApi()) {
             $(this.select).find(`option[value="${value}"]`).remove();
             const index = preset_names.indexOf(nameToDelete);
@@ -798,8 +819,6 @@ class PresetManager {
         }
 
         // switch in UI only when deleting currently selected preset
-        const switchPresets = !name || this.getSelectedPresetName() == name;
-
         if (Object.keys(preset_names).length && switchPresets) {
             const nextPresetName = Object.keys(preset_names)[0];
             const newValue = preset_names[nextPresetName];
@@ -807,13 +826,7 @@ class PresetManager {
             $(this.select).trigger('change');
         }
 
-        const response = await fetch('/api/presets/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: nameToDelete, apiId: this.apiId }),
-        });
-
-        return response.ok;
+        return true;
     }
 
     /**
