@@ -7,11 +7,20 @@ export function createPersonaActions({
     render,
     showToast,
 }) {
-    function getPowerUserSettingsForWrite() {
-        const source = state.settings.power_user || state.settings;
+    function getPowerUserSettingsForWrite(settings = state.settings) {
+        const source = settings.power_user || settings;
         source.personas = source.personas || {};
         source.persona_descriptions = source.persona_descriptions || {};
         return source;
+    }
+
+    function removePersonaSettings(settings, avatarId) {
+        const powerUser = getPowerUserSettingsForWrite(settings);
+        delete powerUser.personas[avatarId];
+        delete powerUser.persona_descriptions[avatarId];
+        if (powerUser.default_persona === avatarId) {
+            powerUser.default_persona = null;
+        }
     }
 
     function getPersonas() {
@@ -181,16 +190,24 @@ export function createPersonaActions({
             throw new Error('请选择要删除的用户人设。');
         }
 
-        const powerUser = getPowerUserSettingsForWrite();
-        const name = powerUser.personas[avatarId] || avatarId;
-        await apiFetch('/api/avatars/delete', { body: { avatar: avatarId } });
-        delete powerUser.personas[avatarId];
-        delete powerUser.persona_descriptions[avatarId];
-        delete state.avatarCacheBust[avatarId];
-        if (powerUser.default_persona === avatarId) {
-            powerUser.default_persona = null;
+        const powerUser = state.settings.power_user || state.settings;
+        const name = powerUser.personas?.[avatarId] || avatarId;
+
+        // Commit the reference removal before deleting the avatar so a failed settings save cannot leave a broken persona.
+        const nextSettings = structuredClone(state.settings);
+        removePersonaSettings(nextSettings, avatarId);
+        await saveSettingsSerialized(apiFetch, nextSettings);
+        removePersonaSettings(state.settings, avatarId);
+
+        try {
+            await apiFetch('/api/avatars/delete', { body: { avatar: avatarId } });
+        } catch (error) {
+            // A retry after an uncertain response is complete when the avatar is already gone.
+            if (error?.status !== 404) {
+                throw error;
+            }
         }
-        await saveSettingsSerialized(apiFetch, state.settings);
+        delete state.avatarCacheBust[avatarId];
         state.personaDeleteConfirm = { avatarId: '' };
         state.personaEditing = { avatarId: '', form: {} };
         await loadData({ silent: true });

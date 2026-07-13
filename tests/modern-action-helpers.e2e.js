@@ -9,6 +9,7 @@ import { createChatGenerationActions } from '../public/modern/actions/chat-gener
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
 import { createGroupActions } from '../public/modern/actions/groups.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
+import { createPersonaActions } from '../public/modern/actions/personas.js';
 import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
 import { createWorldbookDetailActions } from '../public/modern/actions/worldbook-details.js';
 import { createWorldbookEntryBulkActions } from '../public/modern/actions/worldbook-entry-bulk.js';
@@ -21,6 +22,85 @@ function sortChats(chats) {
 }
 
 test.describe('Modern action helpers', () => {
+    test('keeps persona state and avatar intact when deletion settings fail to save', async () => {
+        const state = {
+            settings: {
+                power_user: {
+                    personas: { 'persona.png': 'Persona' },
+                    persona_descriptions: { 'persona.png': { description: 'Description' } },
+                    default_persona: 'persona.png',
+                },
+            },
+            avatarCacheBust: { 'persona.png': '1' },
+            personaDeleteConfirm: { avatarId: 'persona.png' },
+            personaEditing: { avatarId: '', form: {} },
+        };
+        const requests = [];
+        const actions = createPersonaActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                requests.push({ url, body: structuredClone(options.body) });
+                throw new Error('settings save failed');
+            },
+            loadData: async () => {},
+            render: () => {},
+            showToast: () => {},
+        });
+
+        await expect(actions.confirmPersonaDelete()).rejects.toThrow('settings save failed');
+
+        expect(requests.map(request => request.url)).toEqual(['/api/settings/save']);
+        expect(requests[0].body.power_user.personas['persona.png']).toBeUndefined();
+        expect(state.settings.power_user.personas['persona.png']).toBe('Persona');
+        expect(state.settings.power_user.persona_descriptions['persona.png']).toEqual({ description: 'Description' });
+        expect(state.settings.power_user.default_persona).toBe('persona.png');
+        expect(state.avatarCacheBust['persona.png']).toBe('1');
+    });
+
+    test('persists persona removal before idempotent avatar cleanup', async () => {
+        const state = {
+            settings: {
+                power_user: {
+                    personas: { 'persona.png': 'Persona' },
+                    persona_descriptions: { 'persona.png': { description: 'Description' } },
+                    default_persona: 'persona.png',
+                },
+            },
+            avatarCacheBust: { 'persona.png': '1' },
+            personaDeleteConfirm: { avatarId: 'persona.png' },
+            personaEditing: { avatarId: 'persona.png', form: {} },
+        };
+        const requests = [];
+        let loadCount = 0;
+        const actions = createPersonaActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                requests.push({ url, body: structuredClone(options.body) });
+                if (url === '/api/avatars/delete') {
+                    const error = new Error('avatar already deleted');
+                    error.status = 404;
+                    throw error;
+                }
+                return { ok: true };
+            },
+            loadData: async () => loadCount++,
+            render: () => {},
+            showToast: () => {},
+        });
+
+        await actions.confirmPersonaDelete();
+
+        expect(requests.map(request => request.url)).toEqual(['/api/settings/save', '/api/avatars/delete']);
+        expect(requests[0].body.power_user.personas['persona.png']).toBeUndefined();
+        expect(state.settings.power_user.personas['persona.png']).toBeUndefined();
+        expect(state.settings.power_user.persona_descriptions['persona.png']).toBeUndefined();
+        expect(state.settings.power_user.default_persona).toBeNull();
+        expect(state.avatarCacheBust['persona.png']).toBeUndefined();
+        expect(state.personaDeleteConfirm.avatarId).toBe('');
+        expect(state.personaEditing.avatarId).toBe('');
+        expect(loadCount).toBe(1);
+    });
+
     test('filters, sorts, pages, and selects worldbook entries', () => {
         const state = {
             worldEntryList: { worldbookId: '', query: '', sort: 'order', page: 1, selectedKeys: [] },
