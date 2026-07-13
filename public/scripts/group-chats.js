@@ -78,6 +78,8 @@ import {
     unshallowCharacter,
     chatElement,
     ensureMessageMediaIsArray,
+    acceptChatPersistenceIntegrity,
+    captureChatPersistenceContext,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -308,7 +310,9 @@ export async function getGroupChat(groupId, reload = false) {
             addOneMessage(mes);
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
         }
-        await saveGroupChat(groupId, false);
+        if (await saveGroupChat(groupId, false)) {
+            metadata.integrity = chat_metadata.integrity;
+        }
     } else if (Array.isArray(data) && data.length) {
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
@@ -675,6 +679,12 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false, persistenc
         }
 
         return await saveGroupChat(groupId, shouldSaveGroup, true, persistenceContext);
+    }
+
+    const saveResult = await response.json();
+    const savedContext = persistenceContext ?? captureChatPersistenceContext();
+    if (savedContext?.type === 'group' && String(savedContext.groupId) === String(groupId)) {
+        acceptChatPersistenceIntegrity(savedContext, chatId, saveResult?.integrity);
     }
 
     if (shouldSaveGroup) {

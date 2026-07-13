@@ -1115,7 +1115,7 @@ test.describe('Modern action helpers', () => {
                 errors: [],
                 chatSearch: { avatar: '', contextKey: '', query: '', searchedQuery: '', loading: false, results: [] },
                 chatMessages: { [cacheKey]: [{ mes: 'first' }, { mes: 'second' }] },
-                chatMetadata: { [cacheKey]: {} },
+                chatMetadata: { [cacheKey]: { integrity: 'revision-1' } },
                 chatReadState: { cursors: {}, contexts: {} },
                 chatMessageLimits: {},
                 chatDrafts: {},
@@ -1130,18 +1130,20 @@ test.describe('Modern action helpers', () => {
                 markFirstSaveStarted = resolve;
             });
             const savedChats = [];
+            const savedIntegrities = [];
             const events = [];
             const actions = createChatContextActions({
                 state,
                 apiFetch: async (url, options = {}) => {
                     expect(url).toBe('/api/chats/save');
                     savedChats.push(structuredClone(options.body.chat.slice(1)));
+                    savedIntegrities.push(options.body.chat[0].chat_metadata.integrity);
                     events.push(`save-${savedChats.length}`);
                     if (savedChats.length === 1) {
                         markFirstSaveStarted();
                         await firstSaveBlocked;
                     }
-                    return { ok: true };
+                    return { ok: true, integrity: `revision-${savedChats.length + 1}` };
                 },
                 render: () => {},
                 showToast: () => {},
@@ -1170,8 +1172,10 @@ test.describe('Modern action helpers', () => {
                 [{ mes: 'edited' }, { mes: 'second' }],
                 [{ mes: 'edited' }],
             ]);
+            expect(savedIntegrities).toEqual(['revision-1', 'revision-2']);
             expect(events).toEqual(['save-1', 'save-2', 'generation', 'delete']);
             expect(state.chatMessages[cacheKey]).toEqual([{ mes: 'edited' }]);
+            expect(state.chatMetadata[cacheKey].integrity).toBe('revision-3');
             await expect(actions.saveModernChat(character, chatId, [])).rejects.toThrow('聊天文件已删除、重命名或正在变更');
         } finally {
             globalThis.localStorage = previousLocalStorage;

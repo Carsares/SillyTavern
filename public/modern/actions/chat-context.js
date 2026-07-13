@@ -421,6 +421,7 @@ export function createChatContextActions({
     }
 
     async function saveModernChatNow(entity, chatId, messages, { contextKey, groupMode }) {
+        const cacheKey = getChatCacheKey(contextKey, chatId);
         const metadata = getSelectedChatMetadata(entity, chatId, groupMode);
         const chat = [
             { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
@@ -440,8 +441,11 @@ export function createChatContextActions({
         if (result?.error) {
             throw new Error(result.error === 'integrity' ? '聊天文件已被其他会话修改，请刷新后重试。' : String(result.error));
         }
+        if (typeof result?.integrity === 'string' && result.integrity) {
+            state.chatMetadata[cacheKey] = { ...metadata, integrity: result.integrity };
+        }
 
-        state.chatMessages[getChatCacheKey(contextKey, chatId)] = messages;
+        state.chatMessages[cacheKey] = messages;
         markChatRead(entity, chatId, messages, groupMode);
     }
 

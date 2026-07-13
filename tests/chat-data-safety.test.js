@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
 let getChatInfo;
+let trySaveChat;
 let chatRouter;
 let groupRouter;
 
@@ -14,7 +16,7 @@ const tempDirectories = [];
 beforeAll(async () => {
     const { setConfigFilePath } = await import('../src/util.js');
     setConfigFilePath(fileURLToPath(new URL('../config.yaml', import.meta.url)));
-    ({ getChatInfo, router: chatRouter } = await import('../src/endpoints/chats.js'));
+    ({ getChatInfo, trySaveChat, router: chatRouter } = await import('../src/endpoints/chats.js'));
     ({ router: groupRouter } = await import('../src/endpoints/groups.js'));
 });
 
@@ -59,6 +61,115 @@ function createGroupChatDirectories() {
     Object.values(directories).forEach(directory => fs.mkdirSync(directory, { recursive: true }));
     return { root, directories };
 }
+
+function createChatSaveDirectories() {
+    const root = createTempDirectory();
+    const directories = {
+        chats: path.join(root, 'chats'),
+        groupChats: path.join(root, 'group chats'),
+        backups: path.join(root, 'backups'),
+    };
+    Object.values(directories).forEach(directory => fs.mkdirSync(directory, { recursive: true }));
+    return directories;
+}
+
+function createChatData(integrity, message) {
+    return [
+        { chat_metadata: { integrity }, user_name: 'unused', character_name: 'unused' },
+        { name: 'Character', mes: message },
+    ];
+}
+
+function finishControlledRead(stream, line) {
+    if (!stream.destroyed && !stream.writableEnded) {
+        stream.end(`${line}\n`);
+    }
+}
+
+describe('chat integrity revisions', () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }));
+    afterEach(() => {
+        jest.runOnlyPendingTimers();
+        jest.useRealTimers();
+    });
+
+    test('rotates character chat integrity and rejects a sequential stale save', async () => {
+        const directories = createChatSaveDirectories();
+        const characterDirectory = path.join(directories.chats, 'avatar');
+        const chatFile = path.join(characterDirectory, 'chat.jsonl');
+        fs.mkdirSync(characterDirectory, { recursive: true });
+        fs.writeFileSync(chatFile, createChatData('revision-1', 'initial').map(message => JSON.stringify(message)).join('\n'));
+        const handler = getRouteHandler(chatRouter, '/save');
+        const user = { profile: { handle: 'character-integrity' }, directories };
+
+        const firstResponse = createResponse();
+        await handler({ body: { avatar_url: 'avatar.png', file_name: 'chat', chat: createChatData('revision-1', 'first save') }, user }, firstResponse);
+        const firstResult = firstResponse.send.mock.calls[0][0];
+        expect(firstResult).toEqual({ ok: true, integrity: expect.any(String) });
+        expect(firstResult.integrity).not.toBe('revision-1');
+
+        const staleResponse = createResponse();
+        await handler({ body: { avatar_url: 'avatar.png', file_name: 'chat', chat: createChatData('revision-1', 'stale save') }, user }, staleResponse);
+        expect(staleResponse.status).toHaveBeenCalledWith(400);
+        expect(staleResponse.send).toHaveBeenCalledWith({ error: 'integrity' });
+
+        const savedChat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(savedChat[0].chat_metadata.integrity).toBe(firstResult.integrity);
+        expect(savedChat[1].mes).toBe('first save');
+    });
+
+    test('rotates group chat integrity and rejects a sequential stale save', async () => {
+        const directories = createChatSaveDirectories();
+        const chatFile = path.join(directories.groupChats, 'group-chat.jsonl');
+        fs.writeFileSync(chatFile, createChatData('revision-1', 'initial').map(message => JSON.stringify(message)).join('\n'));
+        const handler = getRouteHandler(chatRouter, '/group/save');
+        const user = { profile: { handle: 'group-integrity' }, directories };
+
+        const firstResponse = createResponse();
+        await handler({ body: { id: 'group-chat', chat: createChatData('revision-1', 'first save') }, user }, firstResponse);
+        const firstResult = firstResponse.send.mock.calls[0][0];
+        expect(firstResult).toEqual({ ok: true, integrity: expect.any(String) });
+
+        const staleResponse = createResponse();
+        await handler({ body: { id: 'group-chat', chat: createChatData('revision-1', 'stale save') }, user }, staleResponse);
+        expect(staleResponse.status).toHaveBeenCalledWith(400);
+        expect(staleResponse.send).toHaveBeenCalledWith({ error: 'integrity' });
+
+        const savedChat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(savedChat[0].chat_metadata.integrity).toBe(firstResult.integrity);
+        expect(savedChat[1].mes).toBe('first save');
+    });
+
+    test('serializes the integrity check and write for the same chat file', async () => {
+        const directories = createChatSaveDirectories();
+        const chatFile = path.join(directories.groupChats, 'racing-chat.jsonl');
+        const initialChat = createChatData('revision-1', 'initial');
+        fs.writeFileSync(chatFile, initialChat.map(message => JSON.stringify(message)).join('\n'));
+        const controlledRead = new PassThrough();
+        controlledRead.close = () => controlledRead.destroy();
+        const createReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValueOnce(controlledRead);
+        let checkedSave;
+
+        try {
+            checkedSave = trySaveChat(createChatData('revision-1', 'checked save'), chatFile, false, 'race-checked', 'checked', directories.backups);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(createReadStream).toHaveBeenCalledTimes(1);
+
+            const forcedSave = trySaveChat(createChatData('stale-revision', 'forced save'), chatFile, true, 'race-forced', 'forced', directories.backups);
+            controlledRead.end(`${JSON.stringify(initialChat[0])}\n`);
+            const [, forcedIntegrity] = await Promise.all([checkedSave, forcedSave]);
+
+            const savedChat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(savedChat[0].chat_metadata.integrity).toBe(forcedIntegrity);
+            expect(savedChat[1].mes).toBe('forced save');
+        } finally {
+            finishControlledRead(controlledRead, JSON.stringify(initialChat[0]));
+            await checkedSave?.catch(() => {});
+            createReadStream.mockRestore();
+        }
+    });
+});
 
 describe('chat data safety', () => {
     test('missing group chat info returns a controlled 404', async () => {

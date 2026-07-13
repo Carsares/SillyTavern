@@ -800,6 +800,22 @@ export function updateChatPersistenceContextMetadata(context, updater) {
     return updatedContext;
 }
 
+/**
+ * Accepts the server-issued integrity revision for the chat represented by a captured context.
+ * @param {ChatPersistenceContext|null} context Captured chat context
+ * @param {string} chatId Saved chat ID
+ * @param {unknown} integrity Server-issued integrity revision
+ * @returns {ChatPersistenceContext|null} Updated context when the saved target matches
+ */
+export function acceptChatPersistenceIntegrity(context, chatId, integrity) {
+    if (!context?.key || String(context.chatId) !== String(chatId) || typeof integrity !== 'string' || !integrity) {
+        return context;
+    }
+    return updateChatPersistenceContextMetadata(context, metadata => {
+        metadata.integrity = integrity;
+    });
+}
+
 export const talkativeness_default = 0.5;
 export const depth_prompt_depth_default = 4;
 export const depth_prompt_role_default = 'system';
@@ -7908,6 +7924,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         const result = await fetch('/api/chats/save', saveChatRequest);
 
         if (result.ok) {
+            const saveResult = await result.json();
+            acceptChatPersistenceIntegrity(context, fileName, saveResult?.integrity);
             return true;
         }
 
@@ -9892,11 +9910,20 @@ export async function saveChatPersistenceContext(context, { force = false, saveG
         return true;
     }
     const snapshot = cloneForPersistence(context);
-    latestChatPersistenceContexts.accept(snapshot.key, snapshot);
+    const knownIntegrity = latestChatPersistenceContexts.get(snapshot.key)?.metadata?.integrity;
+    const followsLatestIntegrity = !knownIntegrity || snapshot.metadata?.integrity === knownIntegrity;
+    if (followsLatestIntegrity) {
+        latestChatPersistenceContexts.accept(snapshot.key, snapshot);
+    }
     return await chatSaveQueue.enqueue(async () => {
         activeChatSaveCount++;
         isChatSaving = true;
         try {
+            const latestIntegrity = followsLatestIntegrity ? latestChatPersistenceContexts.get(snapshot.key)?.metadata?.integrity : undefined;
+            if (latestIntegrity) {
+                snapshot.metadata ??= {};
+                snapshot.metadata.integrity = latestIntegrity;
+            }
             if (snapshot.type === 'group') {
                 return await saveGroupChat(snapshot.groupId, saveGroup, force, snapshot) !== false;
             }

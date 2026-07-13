@@ -21,12 +21,15 @@ import {
     tryDeleteFile,
     readFirstLine,
     isPathUnderParent,
+    uuidv4,
 } from '../util.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
 const throttleInterval = Number(getConfigValue('backups.chat.throttleInterval', 10_000, 'number'));
 const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'boolean');
+const CHAT_WRITE_QUEUE = new KeyedPromiseQueue();
 
 export const CHAT_BACKUPS_PREFIX = 'chat_';
 
@@ -309,7 +312,7 @@ function importRisuChat(userName, characterName, jsonData) {
 /**
  * Checks if the chat being saved has the same integrity as the one being loaded.
  * @param {string} filePath Path to the chat file
- * @param {string} integritySlug Integrity slug
+ * @param {string|undefined} integritySlug Integrity slug
  * @returns {Promise<boolean>} Whether the chat is intact
  */
 async function checkChatIntegrity(filePath, integritySlug) {
@@ -467,22 +470,35 @@ class IntegrityMismatchError extends Error {
  * Tries to save the chat data to a file, performing an integrity check if required.
  * @param {Array} chatData The chat array to save.
  * @param {string} filePath Target file path for the data.
- * @param {boolean} skipIntegrityCheck If undefined, the chat's integrity will not be checked.
+ * @param {boolean} skipIntegrityCheck Whether the chat's integrity should not be checked.
  * @param {string} handle The users handle, passed to getBackupFunction.
  * @param {string} cardName Passed to backupChat.
  * @param {string} backupDirectory Passed to backupChat.
+ * @returns {Promise<string|undefined>} The new integrity revision when the chat has a valid header.
  */
 export async function trySaveChat(chatData, filePath, skipIntegrityCheck = false, handle, cardName, backupDirectory) {
-    const jsonlData = chatData?.map(m => JSON.stringify(m)).join('\n');
+    return CHAT_WRITE_QUEUE.run(filePath, async () => {
+        const doIntegrityCheck = (checkIntegrity && !skipIntegrityCheck);
+        const chatIntegritySlug = doIntegrityCheck ? chatData?.[0]?.chat_metadata?.integrity : undefined;
 
-    const doIntegrityCheck = (checkIntegrity && !skipIntegrityCheck);
-    const chatIntegritySlug = doIntegrityCheck ? chatData?.[0]?.chat_metadata?.integrity : undefined;
+        if (doIntegrityCheck && !await checkChatIntegrity(filePath, chatIntegritySlug)) {
+            throw new IntegrityMismatchError(`Chat integrity check failed for "${filePath}". The expected integrity slug was "${chatIntegritySlug}".`);
+        }
 
-    if (chatIntegritySlug && !await checkChatIntegrity(filePath, chatIntegritySlug)) {
-        throw new IntegrityMismatchError(`Chat integrity check failed for "${filePath}". The expected integrity slug was "${chatIntegritySlug}".`);
-    }
-    tryWriteFileSync(filePath, jsonlData);
-    getBackupFunction(handle)(backupDirectory, cardName, jsonlData);
+        const storedChatData = [...chatData];
+        const header = storedChatData[0];
+        let integrity;
+        if (header && typeof header === 'object' && !Array.isArray(header)) {
+            integrity = uuidv4();
+            const metadata = header.chat_metadata && typeof header.chat_metadata === 'object' && !Array.isArray(header.chat_metadata) ? header.chat_metadata : {};
+            storedChatData[0] = { ...header, chat_metadata: { ...metadata, integrity } };
+        }
+
+        const jsonlData = storedChatData.map(m => JSON.stringify(m)).join('\n');
+        tryWriteFileSync(filePath, jsonlData);
+        getBackupFunction(handle)(backupDirectory, cardName, jsonlData);
+        return integrity;
+    });
 }
 
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
@@ -497,8 +513,8 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
         }
 
         if (Array.isArray(chatData)) {
-            await trySaveChat(chatData, chatFilePath, request.body.force, handle, cardName, request.user.directories.backups);
-            return response.send({ ok: true });
+            const integrity = await trySaveChat(chatData, chatFilePath, request.body.force, handle, cardName, request.user.directories.backups);
+            return response.send({ ok: true, integrity });
         } else {
             return response.status(400).send({ error: 'The request\'s body.chat is not an array.' });
         }
@@ -921,8 +937,8 @@ router.post('/group/save', async function (request, response) {
         const chatData = request.body.chat;
 
         if (Array.isArray(chatData)) {
-            await trySaveChat(chatData, chatFilePath, request.body.force, handle, String(id), request.user.directories.backups);
-            return response.send({ ok: true });
+            const integrity = await trySaveChat(chatData, chatFilePath, request.body.force, handle, String(id), request.user.directories.backups);
+            return response.send({ ok: true, integrity });
         } else {
             return response.status(400).send({ error: 'The request\'s body.chat is not an array.' });
         }
