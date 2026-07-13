@@ -10559,12 +10559,6 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
     }
 
-    // Cancel pending save to prevent accidental swipe_id overwrites.
-    cancelDebouncedChatSave();
-
-    swipeState = SWIPE_STATE.SWIPING;
-    let generation;
-
     const thisMesDiv = chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
     const thisMesText = thisMesDiv.find('.mes_block .mes_text');
     const thisMesDivHeight = thisMesDiv[0]?.scrollHeight;
@@ -10573,6 +10567,12 @@ export async function swipe(event, direction, { source, repeated, message = chat
         console.error(`Message #${mesId}'s DOM element is not valid.`);
         return;
     }
+
+    // Cancel pending save to prevent accidental swipe_id overwrites.
+    cancelDebouncedChatSave();
+
+    swipeState = SWIPE_STATE.SWIPING;
+    let generation;
     const originalSwipeId = Number(chat[mesId]?.swipe_id ?? 0);
     let newSwipeId = Number(forceSwipeId ?? originalSwipeId);
 
@@ -10898,10 +10898,6 @@ export async function swipe(event, direction, { source, repeated, message = chat
     }
     if (isStreamingEnabled() && streamingProcessor) {
         streamingProcessor.onStopStreaming();
-    }
-
-    if (isHordeGenerationNotAllowed()) {
-        return unblockGeneration();
     }
 
     //If the swipe is not being deleted.
