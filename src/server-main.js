@@ -149,10 +149,6 @@ if (cliArgs.whitelistMode) {
 
 app.use(hostWhitelistMiddleware);
 
-// Parse request bodies only after header- and address-based access controls have accepted the request.
-app.use(bodyParser.json({ limit: '500mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
-
 app.use(cookieSession({
     name: getCookieSessionName(),
     sameSite: 'lax',
@@ -267,10 +263,15 @@ app.use(userCssMiddleware);
 app.use(express.static(path.join(serverDirectory, 'public'), {}));
 
 // Public API
-app.use('/api/users', usersPublicRouter);
+app.use('/api/users', bodyParser.json(), bodyParser.urlencoded({ extended: true }), usersPublicRouter);
 
 // Everything below this line requires authentication
 app.use(requireLoginMiddleware);
+
+// Authenticated endpoints retain the existing payload budget used by imports and other large requests.
+app.use(bodyParser.json({ limit: '500mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
+
 app.post('/api/ping', (request, response) => {
     if (request.query.extend && request.session) {
         request.session.touch = Date.now();
