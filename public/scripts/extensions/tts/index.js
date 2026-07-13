@@ -374,27 +374,55 @@ globalThis.tts_preview = function (id) {
 };
 
 async function onTtsVoicesClick() {
-    let popupText = '';
+    const popupContent = document.createElement('div');
 
     try {
         const voiceIds = await ttsProvider.fetchTtsVoiceObjects();
 
         for (const voice of voiceIds) {
-            popupText += `
-            <div class="voice_preview">
-                <span class="voice_lang">${voice.lang || ''}</span>
-                <b class="voice_name">${voice.name}</b>
-                <i onclick="tts_preview('${voice.voice_id}')" class="fa-solid fa-play"></i>
-            </div>`;
+            const voiceId = String(voice.voice_id ?? '');
+            const voicePreview = document.createElement('div');
+            voicePreview.classList.add('voice_preview');
+
+            const voiceLang = document.createElement('span');
+            voiceLang.classList.add('voice_lang');
+            voiceLang.textContent = String(voice.lang ?? '');
+            voicePreview.appendChild(voiceLang);
+
+            const voiceName = document.createElement('b');
+            voiceName.classList.add('voice_name');
+            voiceName.textContent = String(voice.name ?? '');
+            voicePreview.appendChild(voiceName);
+
+            const playButton = document.createElement('i');
+            playButton.classList.add('fa-solid', 'fa-play');
+            voicePreview.appendChild(playButton);
+
+            /** @type {HTMLAudioElement?} */
+            let previewAudio = null;
             if (voice.preview_url) {
-                popupText += `<audio id="${voice.voice_id}" src="${voice.preview_url}" data-disabled="${voice.preview_url == false}"></audio>`;
+                try {
+                    const previewUrl = new URL(String(voice.preview_url), document.baseURI);
+                    if (previewUrl.protocol === 'http:' || previewUrl.protocol === 'https:') {
+                        previewAudio = document.createElement('audio');
+                        previewAudio.id = voiceId;
+                        previewAudio.src = previewUrl.href;
+                        previewAudio.dataset.disabled = 'false';
+                        voicePreview.appendChild(previewAudio);
+                    }
+                } catch {
+                    // Invalid preview URLs use provider-generated previews instead.
+                }
             }
+
+            playButton.addEventListener('click', () => previewAudio ? previewAudio.play() : ttsProvider.previewTtsVoice(voiceId));
+            popupContent.appendChild(voicePreview);
         }
     } catch {
-        popupText = 'Could not load voices list. Check your API key.';
+        popupContent.textContent = 'Could not load voices list. Check your API key.';
     }
 
-    callGenericPopup(popupText, POPUP_TYPE.TEXT, '', { allowVerticalScrolling: true });
+    callGenericPopup(popupContent, POPUP_TYPE.TEXT, '', { allowVerticalScrolling: true });
 }
 
 function updateUiAudioPlayState() {
