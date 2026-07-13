@@ -9,6 +9,54 @@ import { DEFAULT_AVATAR_PATH } from './constants.js';
 import { serverDirectory } from './server-directory.js';
 
 const USER_AGENT = 'SillyTavern';
+const MAX_CHUB_JSON_BYTES = 16 * 1024 * 1024;
+const MAX_CHUB_CHARACTER_IMAGE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Reads a Chub response without allowing the remote server to grow the process heap without bound.
+ * @param {import('node-fetch').Response} response Chub response
+ * @param {number} maxBytes Maximum accepted decoded body size
+ * @param {string} resourceName Resource name used in errors
+ * @returns {Promise<Buffer>} Response body
+ */
+async function readResponseBuffer(response, maxBytes, resourceName) {
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && /^\d+$/u.test(contentLength)) {
+        const declaredSize = Number(contentLength);
+        if (!Number.isSafeInteger(declaredSize) || declaredSize > maxBytes) {
+            response.body?.destroy();
+            throw new Error(`${resourceName} exceeds the ${maxBytes} byte limit`);
+        }
+    }
+
+    if (!response.body) {
+        throw new Error(`${resourceName} response body is missing`);
+    }
+
+    const chunks = [];
+    let totalBytes = 0;
+    for await (const chunk of response.body) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buffer.length;
+        if (totalBytes > maxBytes) {
+            response.body.destroy();
+            throw new Error(`${resourceName} exceeds the ${maxBytes} byte limit`);
+        }
+        chunks.push(buffer);
+    }
+
+    return Buffer.concat(chunks, totalBytes);
+}
+
+/**
+ * @param {import('node-fetch').Response} response Chub JSON response
+ * @param {string} resourceName Resource name used in errors
+ * @returns {Promise<any>} Parsed response body
+ */
+async function readResponseJson(response, resourceName) {
+    const buffer = await readResponseBuffer(response, MAX_CHUB_JSON_BYTES, resourceName);
+    return JSON.parse(buffer.toString('utf8').replace(/^\uFEFF/u, ''));
+}
 
 export async function downloadChubLorebook(id, cookie) {
     const [lorebooks, creatorName, projectName] = id.split('/');
@@ -23,13 +71,13 @@ export async function downloadChubLorebook(id, cookie) {
     });
 
     if (!result.ok) {
-        const text = await result.text();
+        const text = (await readResponseBuffer(result, MAX_CHUB_JSON_BYTES, 'Chub lorebook error response')).toString('utf8');
         console.error('Chub returned error', result.statusText, text);
         throw new Error('Failed to fetch lorebook metadata');
     }
 
     /** @type {any} */
-    const metadata = await result.json();
+    const metadata = await readResponseJson(result, 'Chub lorebook metadata');
     const projectId = metadata.node?.id;
 
     if (!projectId) {
@@ -43,13 +91,13 @@ export async function downloadChubLorebook(id, cookie) {
     });
 
     if (!downloadResult.ok) {
-        const text = await downloadResult.text();
+        const text = (await readResponseBuffer(downloadResult, MAX_CHUB_JSON_BYTES, 'Chub lorebook error response')).toString('utf8');
         console.error('Chub returned error', downloadResult.statusText, text);
         throw new Error('Failed to download lorebook');
     }
 
     const name = projectName;
-    const buffer = Buffer.from(await downloadResult.arrayBuffer());
+    const buffer = await readResponseBuffer(downloadResult, MAX_CHUB_JSON_BYTES, 'Chub lorebook');
     const fileName = `${sanitize(name)}.json`;
     const fileType = downloadResult.headers.get('content-type');
 
@@ -69,13 +117,13 @@ export async function downloadChubCharacter(id, cookie) {
     });
 
     if (!result.ok) {
-        const text = await result.text();
+        const text = (await readResponseBuffer(result, MAX_CHUB_JSON_BYTES, 'Chub character error response')).toString('utf8');
         console.error('Chub returned error', result.statusText, text);
         throw new Error('Failed to fetch character metadata');
     }
 
     /** @type {any} */
-    const metadata = await result.json();
+    const metadata = await readResponseJson(result, 'Chub character metadata');
     const { definition, topics } = metadata.node;
 
     /** @type {TavernCardV2} */
@@ -112,7 +160,7 @@ export async function downloadChubCharacter(id, cookie) {
         // 有 cookie 时同样携带登录态拉取受限图片，未传时保持原匿名请求
         const downloadResult = await fetch(imageUrl, cookie ? { headers: { 'Cookie': cookie } } : undefined);
         if (downloadResult.ok) {
-            imageBuffer = Buffer.from(await downloadResult.arrayBuffer());
+            imageBuffer = await readResponseBuffer(downloadResult, MAX_CHUB_CHARACTER_IMAGE_BYTES, 'Chub character image');
         }
     }
 
