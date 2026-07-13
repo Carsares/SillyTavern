@@ -1649,7 +1649,7 @@ async function loadPersonaForCurrentChat({ doRender = false } = {}) {
         await setUserAvatar(chatPersona, { toastPersonaNameChange: false, navigateToCurrent: true });
 
         if (power_user.persona_show_notifications) {
-            let message = t`Auto-selected persona based on ${connectType} connection.<br />Your messages will now be sent as ${power_user.personas[chatPersona]}.`;
+            let message = t`Auto-selected persona based on ${connectType} connection.<br />Your messages will now be sent as ${escapeHtml(power_user.personas[chatPersona])}.`;
             if (willAutoLock) {
                 message += '<br /><br />' + t`Auto-locked this persona to current chat.`;
             }
