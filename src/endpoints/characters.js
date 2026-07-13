@@ -14,7 +14,18 @@ import storage from 'node-persist';
 
 import { AVATAR_WIDTH, AVATAR_HEIGHT, DEFAULT_AVATAR_PATH } from '../constants.js';
 import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction, forbiddenRegExp } from '../middleware/validateFileName.js';
-import { deepMerge, humanizedDateTime, tryParse, MemoryLimitedMap, getConfigValue, mutateJsonString, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
+import {
+    deepMerge,
+    humanizedDateTime,
+    tryParse,
+    MemoryLimitedMap,
+    getConfigValue,
+    mutateJsonString,
+    clientRelativePath,
+    getUniqueName,
+    sanitizeSafeCharacterReplacements,
+    ZipExtractionLimitError,
+} from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
 import { readWorldInfoFile } from './worldinfo.js';
@@ -1710,7 +1721,10 @@ router.post('/import', async function (request, response) {
         response.send({ file_name: fileName });
     } catch (err) {
         console.error(err);
-        response.send({ error: true });
+        if (err instanceof ZipExtractionLimitError) {
+            return response.status(413).send({ error: err.message });
+        }
+        return response.send({ error: true });
     }
 });
 

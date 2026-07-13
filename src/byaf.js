@@ -2,7 +2,7 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import urlJoin from 'url-join';
 import { DEFAULT_AVATAR_PATH } from './constants.js';
-import { extractFileFromZipBuffer } from './util.js';
+import { extractFileFromZipBuffer, ZipExtractionBudget } from './util.js';
 
 /**
  * A parser for BYAF (Backyard Archive Format) files.
@@ -12,6 +12,7 @@ export class ByafParser {
      * @param {ArrayBufferLike} data BYAF ZIP buffer
      */
     #data;
+    #extractionBudget = new ZipExtractionBudget();
 
     /**
      * Creates an instance of ByafParser.
@@ -145,7 +146,7 @@ export class ByafParser {
             throw new Error('Invalid BYAF file: missing character path');
         }
 
-        const characterBuffer = await extractFileFromZipBuffer(this.#data, characterPath);
+        const characterBuffer = await extractFileFromZipBuffer(this.#data, characterPath, { budget: this.#extractionBudget });
         if (!characterBuffer) {
             throw new Error('Invalid BYAF file: failed to extract character JSON');
         }
@@ -173,10 +174,11 @@ export class ByafParser {
             return [{}];
         }
 
+        this.#extractionBudget.assertRequestedEntries(scenariosArray.length);
         const scenarios = [];
 
         for (const scenarioPath of scenariosArray) {
-            const scenarioBuffer = await extractFileFromZipBuffer(this.#data, scenarioPath);
+            const scenarioBuffer = await extractFileFromZipBuffer(this.#data, scenarioPath, { budget: this.#extractionBudget });
             if (!scenarioBuffer) {
                 console.warn('Warning: failed to extract BYAF scenario JSON');
             }
@@ -213,6 +215,7 @@ export class ByafParser {
             return [{ filename: '', image: defaultAvatarBuffer, label: '' }];
         }
 
+        this.#extractionBudget.assertRequestedEntries(characterImages.length);
         const imageBuffers = [];
         for (const image of characterImages) {
             const imagePath = image?.path;
@@ -222,7 +225,7 @@ export class ByafParser {
             }
 
             const fullImagePath = urlJoin(path.dirname(characterPath), imagePath);
-            const imageBuffer = await extractFileFromZipBuffer(this.#data, fullImagePath);
+            const imageBuffer = await extractFileFromZipBuffer(this.#data, fullImagePath, { budget: this.#extractionBudget });
             if (!imageBuffer) {
                 console.warn('Warning: failed to extract BYAF character image');
                 continue;
@@ -280,11 +283,12 @@ export class ByafParser {
     async getChatBackgrounds(character, scenarios) {
         // Implementation for extracting chat backgrounds from BYAF data
         const backgrounds = [];
+        this.#extractionBudget.assertRequestedEntries(scenarios.filter(scenario => scenario?.backgroundImage).length);
         let i = 1;
         for (const scenario of scenarios) {
             const bgImagePath = scenario?.backgroundImage;
             if (bgImagePath) {
-                const data = await extractFileFromZipBuffer(this.#data, bgImagePath);
+                const data = await extractFileFromZipBuffer(this.#data, bgImagePath, { budget: this.#extractionBudget });
                 if (data) {
                     const existingIndex = backgrounds.findIndex(bg => bg.data.compare(data) === 0);
                     if (existingIndex !== -1) {
@@ -308,7 +312,7 @@ export class ByafParser {
      * @private
      */
     async getManifest() {
-        const manifestBuffer = await extractFileFromZipBuffer(this.#data, 'manifest.json');
+        const manifestBuffer = await extractFileFromZipBuffer(this.#data, 'manifest.json', { budget: this.#extractionBudget });
         if (!manifestBuffer) {
             throw new Error('Failed to extract manifest.json from BYAF file');
         }

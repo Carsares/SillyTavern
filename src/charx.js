@@ -3,7 +3,7 @@ import path from 'node:path';
 import _ from 'lodash';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
-import { extractFileFromZipBuffer, extractFilesFromZipBuffer, normalizeZipEntryPath, ensureDirectory } from './util.js';
+import { extractFileFromZipBuffer, extractFilesFromZipBuffer, normalizeZipEntryPath, ensureDirectory, ZipExtractionBudget } from './util.js';
 import { DEFAULT_AVATAR_PATH } from './constants.js';
 
 // 'embeded://' is intentional - RisuAI exports use this misspelling
@@ -50,6 +50,7 @@ function findZipStart(buffer) {
 
 export class CharXParser {
     #data;
+    #extractionBudget = new ZipExtractionBudget();
 
     /**
      * @param {ArrayBuffer|Buffer} data
@@ -65,7 +66,7 @@ export class CharXParser {
      */
     async parse() {
         console.info('Importing from CharX');
-        const cardBuffer = await extractFileFromZipBuffer(this.#data, 'card.json');
+        const cardBuffer = await extractFileFromZipBuffer(this.#data, 'card.json', { budget: this.#extractionBudget });
 
         if (!cardBuffer) {
             throw new Error('Failed to extract card.json from CharX file');
@@ -94,7 +95,7 @@ export class CharXParser {
 
         let extractedBuffers = new Map();
         if (archivePaths.size > 0) {
-            extractedBuffers = await extractFilesFromZipBuffer(this.#data, [...archivePaths]);
+            extractedBuffers = await extractFilesFromZipBuffer(this.#data, [...archivePaths], { budget: this.#extractionBudget });
         }
 
         /** @type {string|Buffer} */
