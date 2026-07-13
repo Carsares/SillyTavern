@@ -60,6 +60,7 @@ let abortControllerOnClientClose;
 let setConfigFilePath;
 let runPodGenerateHandler;
 let sdWebUiGenerateHandler;
+let electronHubSizesHandler;
 let hordeGenerateHandler;
 let chatCompletionGenerateHandler;
 let googleVideoHandler;
@@ -86,13 +87,15 @@ beforeAll(async () => {
     const route = runPodRouter?.stack.find(layer => layer.route?.path === '/generate')?.route;
     runPodGenerateHandler = route?.stack.at(-1)?.handle;
     sdWebUiGenerateHandler = stableDiffusionRouter.stack.find(layer => layer.route?.path === '/generate')?.route?.stack.at(-1)?.handle;
+    const electronHubRouter = stableDiffusionRouter.stack.find(layer => String(layer.regexp).includes('electronhub'))?.handle;
+    electronHubSizesHandler = electronHubRouter?.stack.find(layer => layer.route?.path === '/sizes')?.route?.stack.at(-1)?.handle;
     hordeGenerateHandler = hordeRouter.stack.find(layer => layer.route?.path === '/generate-image')?.route?.stack.at(-1)?.handle;
     chatCompletionGenerateHandler = chatCompletionRouter.stack.find(layer => layer.route?.path === '/generate')?.route?.stack.at(-1)?.handle;
     const zaiRouter = stableDiffusionRouter.stack.find(layer => String(layer.regexp).includes('zai'))?.handle;
     zaiVideoHandler = zaiRouter?.stack.find(layer => layer.route?.path === '/generate-video')?.route?.stack.at(-1)?.handle;
     googleVideoHandler = googleRouter.stack.find(layer => layer.route?.path === '/generate-video')?.route?.stack.at(-1)?.handle;
     openAiVideoHandler = openAiRouter.stack.find(layer => layer.route?.path === '/generate-video')?.route?.stack.at(-1)?.handle;
-    if (!runPodGenerateHandler || !sdWebUiGenerateHandler || !hordeGenerateHandler || !chatCompletionGenerateHandler || !googleVideoHandler || !openAiVideoHandler || !zaiVideoHandler) {
+    if (!runPodGenerateHandler || !sdWebUiGenerateHandler || !electronHubSizesHandler || !hordeGenerateHandler || !chatCompletionGenerateHandler || !googleVideoHandler || !openAiVideoHandler || !zaiVideoHandler) {
         throw new Error('Request lifecycle test handler not found');
     }
 });
@@ -189,6 +192,16 @@ async function expectVideoFetchSignals(handler, request, responses) {
 }
 
 describe('request lifecycle safety', () => {
+    test('returns an error response when Electron Hub size lookup rejects', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        fetchMock.mockRejectedValueOnce(new Error('provider unavailable'));
+        const response = createResponse();
+
+        await expect(electronHubSizesHandler({ body: { model: 'test-model' } }, response)).resolves.toBe(500);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+    });
+
     test('aborts an outbound request only when the client disconnects before completion', () => {
         const activeResponse = createResponse();
         const activeController = new AbortController();

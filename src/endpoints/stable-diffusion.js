@@ -1343,29 +1343,34 @@ electronhub.post('/generate', async (request, response) => {
 });
 
 electronhub.post('/sizes', async (request, response) => {
-    const result = await fetch(`https://api.electronhub.ai/v1/models/${request.body.model}`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
+    try {
+        const result = await fetch(`https://api.electronhub.ai/v1/models/${request.body.model}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
 
-    if (!result.ok) {
-        console.warn('Electron Hub returned an error.');
+        if (!result.ok) {
+            console.warn('Electron Hub returned an error.');
+            return response.sendStatus(500);
+        }
+
+        /** @type {any} */
+        const data = await result.json();
+
+        const sizes = data.sizes;
+
+        if (!sizes) {
+            console.warn('Electron Hub returned invalid data.');
+            return response.sendStatus(500);
+        }
+
+        return response.send({ sizes });
+    } catch (error) {
+        console.error(error);
         return response.sendStatus(500);
     }
-
-    /** @type {any} */
-    const data = await result.json();
-
-    const sizes = data.sizes;
-
-    if (!sizes) {
-        console.warn('Electron Hub returned invalid data.');
-        return response.sendStatus(500);
-    }
-
-    return response.send({ sizes });
 });
 
 const chutes = express.Router();

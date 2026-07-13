@@ -124,6 +124,29 @@ function seedCharacter(directories, internalName) {
 }
 
 describe('character name safety', () => {
+    test('serializes duplicate character deletion without rejecting either request', async () => {
+        const directories = createDirectories();
+        const avatarPath = path.join(directories.characters, 'Duplicate.png');
+        fs.writeFileSync(avatarPath, 'character');
+        const firstResponse = createResponse();
+        const secondResponse = createResponse();
+        const request = {
+            body: { avatar_url: 'Duplicate.png' },
+            user: { directories },
+        };
+
+        await expect(Promise.all([
+            getRouteHandler('/delete')(request, firstResponse),
+            getRouteHandler('/delete')(request, secondResponse),
+        ])).resolves.toBeDefined();
+
+        const statuses = [firstResponse, secondResponse]
+            .flatMap(response => response.sendStatus.mock.calls.map(([status]) => status))
+            .toSorted();
+        expect(statuses).toEqual([200, 400]);
+        expect(fs.existsSync(avatarPath)).toBe(false);
+    });
+
     test('keeps both concurrent same-name creations without avatars', async () => {
         const directories = createDirectories();
         const firstResponse = createResponse();

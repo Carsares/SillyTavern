@@ -1520,42 +1520,51 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
 });
 
 router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
-    if (!request.body || !request.body.avatar_url) {
-        return response.sendStatus(400);
-    }
-
-    if (request.body.avatar_url !== sanitize(request.body.avatar_url)) {
-        console.error('Malicious filename prevented');
-        return response.sendStatus(403);
-    }
-
-    const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
-    if (!fs.existsSync(avatarPath)) {
-        return response.sendStatus(400);
-    }
-
-    // Serialize by avatar path so a concurrent edit/replace of the same avatar file can't race the delete
-    await CHARACTER_AVATAR_QUEUE.run(avatarPath, async () => {
-        fs.unlinkSync(avatarPath);
-    });
-    invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
-    let dir_name = (request.body.avatar_url.replace('.png', ''));
-
-    if (!dir_name.length) {
-        console.error('Malicious dirname prevented');
-        return response.sendStatus(403);
-    }
-
-    if (request.body.delete_chats == true) {
-        try {
-            await fs.promises.rm(path.join(request.user.directories.chats, sanitize(dir_name)), { recursive: true, force: true });
-        } catch (err) {
-            console.error(err);
-            return response.sendStatus(500);
+    try {
+        if (!request.body || !request.body.avatar_url) {
+            return response.sendStatus(400);
         }
-    }
 
-    return response.sendStatus(200);
+        if (request.body.avatar_url !== sanitize(request.body.avatar_url)) {
+            console.error('Malicious filename prevented');
+            return response.sendStatus(403);
+        }
+
+        const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        // Serialize the existence decision with deletion so duplicate requests cannot race after a stale pre-check.
+        const deleted = await CHARACTER_AVATAR_QUEUE.run(avatarPath, async () => {
+            try {
+                await fsPromises.unlink(avatarPath);
+                return true;
+            } catch (error) {
+                if (error?.code === 'ENOENT') {
+                    return false;
+                }
+                throw error;
+            }
+        });
+
+        if (!deleted) {
+            return response.sendStatus(400);
+        }
+
+        invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
+        let dir_name = (request.body.avatar_url.replace('.png', ''));
+
+        if (!dir_name.length) {
+            console.error('Malicious dirname prevented');
+            return response.sendStatus(403);
+        }
+
+        if (request.body.delete_chats == true) {
+            await fs.promises.rm(path.join(request.user.directories.chats, sanitize(dir_name)), { recursive: true, force: true });
+        }
+
+        return response.sendStatus(200);
+    } catch (error) {
+        console.error('Character deletion failed', error);
+        return response.sendStatus(500);
+    }
 });
 
 /**
