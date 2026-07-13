@@ -72,13 +72,14 @@ export function redirectDeprecatedEndpoints(app) {
      * Redirect a deprecated API endpoint URL to its replacement. Because fetch, form submissions, and $.ajax follow
      * redirects, this is transparent to client-side code.
      * @param {string} src The URL to redirect from.
-     * @param {string} destination The URL to redirect to.
+     * @param {string|((request: import('express').Request) => string)} destination The URL to redirect to or a request-aware URL builder.
      */
     function redirect(src, destination) {
         app.use(src, (req, res) => {
-            console.warn(`API endpoint ${src} is deprecated; use ${destination} instead`);
+            const target = typeof destination === 'function' ? destination(req) : destination;
+            console.warn(`API endpoint ${src} is deprecated; use ${target} instead`);
             // HTTP 301 causes the request to become a GET. 308 preserves the request method.
-            res.redirect(308, destination);
+            res.redirect(308, target);
         });
     }
 
@@ -126,7 +127,11 @@ export function redirectDeprecatedEndpoints(app) {
     redirect('/deletequickreply', '/api/quick-replies/delete');
     redirect('/savequickreply', '/api/quick-replies/save');
     redirect('/uploadimage', '/api/images/upload');
-    redirect('/listimgfiles/:folder', '/api/images/list/:folder');
+    redirect('/listimgfiles/:folder', (request) => {
+        const queryIndex = request.originalUrl.indexOf('?');
+        const query = queryIndex === -1 ? '' : request.originalUrl.slice(queryIndex);
+        return `/api/images/list/${encodeURIComponent(request.params.folder)}${query}`;
+    });
     redirect('/api/content/import', '/api/content/importURL');
     redirect('/savemovingui', '/api/moving-ui/save');
     redirect('/api/serpapi/search', '/api/search/serpapi');
