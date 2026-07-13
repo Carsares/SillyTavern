@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { MAX_USER_AVATAR_DATA_URL_BYTES } from '../src/user-profile.js';
 
 const getUser = jest.fn();
 const removeUser = jest.fn();
@@ -33,7 +34,7 @@ jest.unstable_mockModule('../src/users.js', () => ({
     validateUserDataRoot,
     createBackupArchive,
     ensurePublicDirectoriesExist: jest.fn(),
-    toAvatarKey: jest.fn(),
+    toAvatarKey: handle => `avatar:${handle}`,
     getAccountVersion: jest.fn(),
 }));
 
@@ -49,6 +50,8 @@ jest.unstable_mockModule('../src/util.js', () => ({
 }));
 
 let backupHandler;
+let changeAvatarHandler;
+let changeNameHandler;
 let createHandler;
 let deleteHandler;
 
@@ -58,6 +61,8 @@ beforeAll(async () => {
         import('../src/endpoints/users-admin.js'),
     ]);
     backupHandler = privateRouter.stack.find(layer => layer.route?.path === '/backup').route.stack.at(-1).handle;
+    changeAvatarHandler = privateRouter.stack.find(layer => layer.route?.path === '/change-avatar').route.stack.at(-1).handle;
+    changeNameHandler = privateRouter.stack.find(layer => layer.route?.path === '/change-name').route.stack.at(-1).handle;
     createHandler = adminRouter.stack.find(layer => layer.route?.path === '/create').route.stack.at(-1).handle;
     deleteHandler = adminRouter.stack.find(layer => layer.route?.path === '/delete').route.stack.at(-1).handle;
 });
@@ -94,6 +99,60 @@ function createResponse() {
 }
 
 describe('user filesystem routes', () => {
+    test('accepts a bounded avatar and rejects one byte beyond the persistence limit', async () => {
+        const prefix = 'data:image/png;base64,';
+        const boundedAvatar = prefix + 'a'.repeat(MAX_USER_AVATAR_DATA_URL_BYTES - prefix.length);
+        getUser.mockResolvedValue({ handle: 'target' });
+        const acceptedResponse = createResponse();
+
+        await changeAvatarHandler({ body: { handle: 'target', avatar: boundedAvatar }, user: { profile: { handle: 'target' } } }, acceptedResponse);
+
+        expect(acceptedResponse.statusCode).toBe(204);
+        expect(setUser).toHaveBeenCalledWith('avatar:target', boundedAvatar);
+
+        setUser.mockClear();
+        const rejectedResponse = createResponse();
+        await changeAvatarHandler({ body: { handle: 'target', avatar: `${boundedAvatar}a` }, user: { profile: { handle: 'target' } } }, rejectedResponse);
+
+        expect(rejectedResponse.statusCode).toBe(413);
+        expect(setUser).not.toHaveBeenCalled();
+    });
+
+    test('keeps empty avatar clearing within the existing API contract', async () => {
+        getUser.mockResolvedValue({ handle: 'target' });
+        const response = createResponse();
+
+        await changeAvatarHandler({ body: { handle: 'target', avatar: '' }, user: { profile: { handle: 'target' } } }, response);
+
+        expect(response.statusCode).toBe(204);
+        expect(setUser).toHaveBeenCalledWith('avatar:target', '');
+    });
+
+    test('counts display-name limits by Unicode code point for edits and account creation', async () => {
+        const boundedName = '🙂'.repeat(128);
+        const oversizedName = `${boundedName}🙂`;
+        getUser.mockResolvedValue({ handle: 'target', name: 'Original' });
+        const acceptedResponse = createResponse();
+
+        await changeNameHandler({ body: { handle: 'target', name: boundedName }, user: { profile: { handle: 'target' } } }, acceptedResponse);
+
+        expect(acceptedResponse.statusCode).toBe(204);
+        expect(setUser).toHaveBeenCalledWith('user:target', expect.objectContaining({ name: boundedName }));
+
+        setUser.mockClear();
+        const rejectedEditResponse = createResponse();
+        await changeNameHandler({ body: { handle: 'target', name: oversizedName }, user: { profile: { handle: 'target' } } }, rejectedEditResponse);
+
+        expect(rejectedEditResponse.statusCode).toBe(400);
+        expect(setUser).not.toHaveBeenCalled();
+
+        const rejectedCreateResponse = createResponse();
+        await createHandler({ body: { handle: 'new-user', name: oversizedName }, user: { profile: { handle: 'admin', admin: true } } }, rejectedCreateResponse);
+
+        expect(rejectedCreateResponse.statusCode).toBe(400);
+        expect(setUser).not.toHaveBeenCalled();
+    });
+
     test('allows only one concurrent create for the same normalized handle', async () => {
         const handles = new Set();
         getAllUserHandles.mockImplementation(async () => [...handles]);

@@ -18,6 +18,7 @@ import {
 } from '../users.js';
 import { DEFAULT_USER } from '../constants.js';
 import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
+import { isValidUserName, MAX_USER_NAME_CODE_POINTS } from '../user-profile.js';
 
 const USER_CREATE_QUEUE = new KeyedPromiseQueue();
 
@@ -178,6 +179,11 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
         if (!request.body.handle || !request.body.name) {
             console.warn('Create user failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
+        }
+
+        if (!isValidUserName(request.body.name)) {
+            console.warn('Create user failed: Invalid display name');
+            return response.status(400).json({ error: `Display name must not exceed ${MAX_USER_NAME_CODE_POINTS} characters` });
         }
 
         const handle = slugify(request.body.handle);

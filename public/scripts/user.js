@@ -2,7 +2,7 @@ import { getRequestHeaders } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
 import { canViewSecrets } from './secrets.js';
 import { renderTemplateAsync } from './templates.js';
-import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
+import { createThumbnail, ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
 
 /**
  * @type {import('../../src/users.js').UserViewModel} Logged in user
@@ -748,9 +748,10 @@ async function cropAndUploadAvatar(handle, file) {
         return;
     }
 
-    await changeAvatar(handle, String(croppedImage));
+    const avatar = await createThumbnail(String(croppedImage), 512, 512);
+    await changeAvatar(handle, avatar);
 
-    return String(croppedImage);
+    return avatar;
 }
 
 /**

@@ -1,11 +1,13 @@
-import { beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
 const getUser = jest.fn();
+const getUsers = jest.fn();
+const getUserAvatar = jest.fn();
 
 jest.unstable_mockModule('node-persist', () => ({
     default: {
         getItem: getUser,
-        values: jest.fn(),
+        values: getUsers,
         setItem: jest.fn(),
     },
 }));
@@ -23,7 +25,7 @@ jest.unstable_mockModule('../src/util.js', () => ({
 
 jest.unstable_mockModule('../src/users.js', () => ({
     KEY_PREFIX: 'user:',
-    getUserAvatar: jest.fn(),
+    getUserAvatar,
     toKey: handle => `user:${handle}`,
     getPasswordHash: password => password,
     getPasswordSalt: jest.fn(),
@@ -31,10 +33,18 @@ jest.unstable_mockModule('../src/users.js', () => ({
 }));
 
 let loginHandler;
+let listHandler;
 
 beforeAll(async () => {
     const { router } = await import('../src/endpoints/users-public.js');
     loginHandler = router.stack.find(layer => layer.route?.path === '/login').route.stack[0].handle;
+    listHandler = router.stack.find(layer => layer.route?.path === '/list').route.stack[0].handle;
+});
+
+beforeEach(() => {
+    getUser.mockReset();
+    getUsers.mockReset();
+    getUserAvatar.mockReset();
 });
 
 function createResponse() {
@@ -67,6 +77,23 @@ async function login(handle, password) {
 }
 
 describe('user login rate limiting', () => {
+    test('keeps bounded user avatars unchanged in the public list contract', async () => {
+        const avatar = 'data:image/png;base64,bounded-avatar';
+        getUsers.mockResolvedValue([{ handle: 'target', name: 'Target', enabled: true, created: 1, password: '' }]);
+        getUserAvatar.mockResolvedValue(avatar);
+        const response = createResponse();
+
+        await listHandler({}, response);
+
+        expect(response.json).toHaveBeenCalledWith([{
+            handle: 'target',
+            name: 'Target',
+            created: 1,
+            avatar,
+            password: false,
+        }]);
+    });
+
     test('a successful login only clears attempts for the same account', async () => {
         getUser.mockImplementation(async key => {
             if (key === 'user:target') {

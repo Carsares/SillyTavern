@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 import storage from 'node-persist';
 import express from 'express';
@@ -9,6 +10,7 @@ import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArc
 import { SETTINGS_FILE } from '../constants.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
 import { color, Cache, getConfigValue } from '../util.js';
+import { isValidUserName, MAX_USER_AVATAR_DATA_URL_BYTES, MAX_USER_NAME_CODE_POINTS } from '../user-profile.js';
 
 const RESET_CACHE = new Cache(5 * 60 * 1000);
 
@@ -57,7 +59,7 @@ router.get('/me', async (request, response) => {
 
 router.post('/change-avatar', async (request, response) => {
     try {
-        if (!request.body.handle) {
+        if (!request.body.handle || typeof request.body.avatar !== 'string') {
             console.warn('Change avatar failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
         }
@@ -67,7 +69,12 @@ router.post('/change-avatar', async (request, response) => {
             return response.status(403).json({ error: 'Unauthorized' });
         }
 
-        // Avatar is not a data URL or not an empty string
+        if (Buffer.byteLength(request.body.avatar, 'utf8') > MAX_USER_AVATAR_DATA_URL_BYTES) {
+            console.warn('Change avatar failed: Avatar is too large');
+            return response.status(413).json({ error: 'Avatar is too large' });
+        }
+
+        // Avatar is not a data URL or an empty string used to clear the avatar.
         if (!request.body.avatar.startsWith('data:image/') && request.body.avatar !== '') {
             console.warn('Change avatar failed: Invalid data URL');
             return response.status(400).json({ error: 'Invalid data URL' });
@@ -201,9 +208,14 @@ router.post('/reset-settings', async (request, response) => {
 
 router.post('/change-name', async (request, response) => {
     try {
-        if (!request.body.name || !request.body.handle) {
+        if (!request.body.handle || !request.body.name) {
             console.warn('Change name failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
+        }
+
+        if (!isValidUserName(request.body.name)) {
+            console.warn('Change name failed: Invalid display name');
+            return response.status(400).json({ error: `Display name must not exceed ${MAX_USER_NAME_CODE_POINTS} characters` });
         }
 
         if (request.body.handle !== request.user.profile.handle && !request.user.profile.admin) {

@@ -23,6 +23,7 @@ import { getContentOfType } from './endpoints/content-manager.js';
 import { serverDirectory } from './server-directory.js';
 import { filterValidIpPatterns, getIpFromRequest } from './express-common.js';
 import { extensionsEnabledFeatureGuard } from './endpoints/extensions.js';
+import { MAX_USER_AVATAR_DATA_URL_BYTES } from './user-profile.js';
 
 export const KEY_PREFIX = 'user:';
 const AVATAR_PREFIX = 'avatar:';
@@ -734,7 +735,7 @@ export async function getUserAvatar(handle) {
         const avatarKey = toAvatarKey(handle);
         const avatar = await storage.getItem(avatarKey);
 
-        if (avatar) {
+        if (typeof avatar === 'string' && avatar && Buffer.byteLength(avatar, 'utf8') <= MAX_USER_AVATAR_DATA_URL_BYTES) {
             return avatar;
         }
 
