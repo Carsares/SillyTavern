@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 
-/* global document, localStorage */
+/* global document, localStorage, requestAnimationFrame */
 
 function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/i, '');
@@ -421,6 +421,68 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveCount(0);
         await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}')?.cursors?.['mock.png::unread-chat']?.messageCount)).toBe(3);
+    });
+
+    test('keeps a chat unread when another chat is selected before its messages load', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'existing-chat', file_name: 'existing-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now + 2000 },
+            { file_id: 'unread-chat', file_name: 'unread-chat.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 1000 },
+            { file_id: 'other-chat', file_name: 'other-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now },
+        ];
+        fixture.messagesByChat['unread-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'unread context', send_date: now - 2000 },
+            { name: 'Mock Character', is_user: false, mes: 'unread reply one', send_date: now - 1000 },
+            { name: 'Mock Character', is_user: false, mes: 'unread reply two', send_date: now },
+        ];
+        fixture.messagesByChat['other-chat'] = [
+            { name: 'Modern User', is_user: true, mes: 'other context', send_date: now - 1000 },
+            { name: 'Mock Character', is_user: false, mes: 'other current reply', send_date: now },
+        ];
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::existing-chat': { messageCount: 2, lastMes: now - 3000 },
+                    'mock.png::unread-chat': { messageCount: 1, lastMes: now - 2000 },
+                    'mock.png::other-chat': { messageCount: 2, lastMes: now },
+                },
+                contexts: { 'mock.png': true },
+            },
+        });
+        const unreadResponseGate = createDeferred();
+        let unreadLoadStarted = false;
+        await mockModernChatWorkspace(page, fixture, {
+            beforeChatResponse: payload => {
+                if (stripJsonlExtension(payload.file_name) === 'unread-chat') {
+                    unreadLoadStarted = true;
+                    return unreadResponseGate.promise;
+                }
+            },
+        });
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveText('2');
+        await page.locator('[data-select-chat="unread-chat"]').click();
+        await expect.poll(() => unreadLoadStarted).toBe(true);
+
+        await page.locator('[data-select-chat="other-chat"]').click();
+        await expect(page.locator('[data-select-chat="other-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('other current reply');
+
+        const unreadResponse = page.waitForResponse(response => response.url().endsWith('/api/chats/get') && stripJsonlExtension(response.request().postDataJSON().file_name) === 'unread-chat');
+        unreadResponseGate.resolve();
+        await unreadResponse;
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveText('2');
+        const readState = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}'));
+        expect(readState.cursors['mock.png::unread-chat']).toMatchObject({ messageCount: 1 });
+        await expect(page.locator('[data-select-chat="other-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('other current reply');
     });
 
     test('keeps total unread count across character and group chat modes', async ({ page }) => {

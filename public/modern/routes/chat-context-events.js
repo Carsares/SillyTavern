@@ -51,9 +51,18 @@ export function createChatContextEvents(ctx) {
         if (chatButton) {
             const resourceListScrollTop = getScrollTop(chatResourceListSelector);
             const chatFileListScrollTop = getScrollTop(chatFileListSelector);
-            state.selected.chat = chatButton.dataset.selectChat;
+            const chatId = chatButton.dataset.selectChat;
+            const groupMode = state.chatMode === 'group';
+            const entity = getSelectedChatEntity();
+            const entityId = groupMode ? entity?.id : entity?.avatar;
+            const isContextCurrent = () => {
+                const currentEntity = getSelectedChatEntity();
+                const currentEntityId = groupMode ? currentEntity?.id : currentEntity?.avatar;
+                return state.chatMode === (groupMode ? 'group' : 'character') && state.selected.chat === chatId && currentEntityId === entityId;
+            };
+            state.selected.chat = chatId;
             clearChatTransientState();
-            await loadChatMessages(getSelectedChatEntity(), state.selected.chat);
+            await loadChatMessages(entity, chatId, { groupMode, isContextCurrent });
             closeChatSidebarForMobileSelection();
             render();
             restoreScrollTop(chatResourceListSelector, resourceListScrollTop);
