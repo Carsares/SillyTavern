@@ -2,10 +2,10 @@ These are master copies of the default content files and are managed by SillyTav
 
 Editing any of these files would not only have no effect, but will also cause merge conflicts during update pulls.
 
-You should edit their respective copies instead, for example:
+Edit the active copy instead, for example:
 
 1. /default/config.yaml => /config.yaml
-2. /default/public/css/user.css => /public/css/user.css
+2. For user CSS, see /public/css/!USER-CSS-README.md
 etc.
 
 Any questions? You're always welcome at our official documentation website:

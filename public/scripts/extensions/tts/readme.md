@@ -1,81 +1,106 @@
-# Provider Requirements.
-Because I don't know how, or if you can, and/or maybe I am just too lazy to implement interfaces in JS, here's the requirements of a provider that the extension needs to operate.
+# TTS Provider Contract
 
-### class YourTtsProvider
-#### Required
-Exported for use in extension index.js, and added to providers list in index.js
-1. generateTts(text, voiceId)
-2. fetchTtsVoiceObjects()
-3. onRefreshClick()
-4. checkReady()
-5. loadSettings(settingsObject)
-6. settings field
-7. settingsHtml field
+This document describes the contract consumed by `public/scripts/extensions/tts/index.js`. That module is the source of truth when the provider API changes.
 
-#### Optional
-1. previewTtsVoice()
-2. separator field
-3. processText(text)
-4. dispose()
+## Registration
 
-# Requirement Descriptions
-### generateTts(text, voiceId)
-Must return `audioData.type in ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/webm']`
-Must take text to be rendered and the voiceId to identify the voice to be used
+Built-in providers are imported and added to the `ttsProviders` map in `index.js`.
 
-### fetchTtsVoiceObjects()
-Required.
-Used by the TTS extension to get a list of voice objects from the provider.
-Must return an list of voice objects representing the available voices.
-1. name: a friendly user facing name to assign to characters. Shows in dropdown list next to user.
-2. voice_id: the provider specific id of the voice used in fetchTtsGeneration() call
-3. preview_url: a URL to a local audio file that will be used to sample voices
-4. lang: OPTIONAL language string
+Runtime providers can call:
 
-### getVoice(voiceName)
-Required.
-Must return a single voice object matching the provided voiceName. The voice object must have the following at least:
-1. name: a friendly user facing name to assign to characters. Shows in dropdown list next to user.
-2. voice_id: the provider specific id of the voice used in fetchTtsGeneration() call
-3. preview_url: a URL to a local audio file that will be used to sample voices
-4. lang: OPTIONAL language indicator
+```js
+registerTtsProvider('Provider name', YourTtsProvider);
+```
 
-### onRefreshClick()
-Required.
-Users click this button to reconnect/reinit the selected provider.
-Responds to the user clicking the refresh button, which is intended to re-initialize the Provider into a working state, like retrying connections or checking if everything is loaded.
+The registered value must be a constructible class. Provider names must be unique.
 
-### checkReady()
-Required.
-Return without error to let TTS extension know that the provider is ready.
-Return an error to block the main TTS extension for initializing the provider and UI. The error will be put in the TTS extension UI directly.
+## Required fields
 
-### loadSettings(settingsObject)
-Required.
-Handle the input settings from the TTS extension on provider load.
-Put code in here to load your provider settings.
+### `settings`
 
-### settings field
-Required, used for storing any provider state that needs to be saved.
-Anything stored in this field is automatically persisted under extension_settings[providerName] by the main extension in `saveTtsProviderSettings()`, as well as loaded when the provider is selected in `loadTtsProvider(provider)`.
-TTS extension doesn't expect any specific contents.
+An object containing provider state that should persist. The extension stores it under `extension_settings.tts[providerName]` when settings are saved or refreshed.
 
-### settingsHtml field
-Required, injected into the TTS extension UI. Besides adding it, not relied on by TTS extension directly.
+### `settingsHtml`
 
-### previewTtsVoice()
-Optional.
-Function to handle playing previews of voice samples if no direct preview_url is available in fetchTtsVoiceObjects() response
+An HTML string inserted into `#tts_provider_settings` before `loadSettings()` is called.
 
-### separator field
-Optional.
-Used when narrate quoted text is enabled.
-Defines the string of characters used to introduce separation between between the groups of extracted quoted text sent to the provider. The provider will use this to introduce pauses by default using `...`
+## Required methods
 
-### processText(text)
-Optional.
-A function applied to the input text before passing it to the TTS generator. Can be async.
+### `loadSettings(settingsObject)`
 
-### dispose()
-Optional.
-Function to handle cleanup of provider resources when the provider is switched.
+Load persisted settings and initialize provider controls. The extension awaits this method, so it may be synchronous or asynchronous.
+
+### `checkReady()`
+
+Resolve when the provider is ready. Throw or reject with a user-facing reason when it is unavailable. The extension catches the error and displays it in the TTS status area.
+
+### `onRefreshClick()`
+
+Apply current UI settings or reconnect the provider. The extension awaits it, persists `settings`, and then rebuilds the voice map.
+
+### `fetchTtsVoiceObjects()`
+
+Return an array of voice objects. The method may be synchronous or asynchronous.
+
+Each voice object must contain:
+
+- `name`: user-facing name used by the voice map;
+- `voice_id`: provider-specific identifier passed to `generateTts()`.
+
+Optional voice fields:
+
+- `preview_url`: directly playable audio URL;
+- `lang`: language label displayed in the voice browser.
+
+### `getVoice(voiceName)`
+
+Return the voice object selected by its saved user-facing name. The extension awaits this method and reads `voice_id`; therefore both synchronous and asynchronous implementations are supported.
+
+If a saved voice no longer exists, either return a deliberate provider fallback or throw a useful error.
+
+### `generateTts(text, voiceId, voiceMapKey)`
+
+Generate audio for the supplied text and voice.
+
+- `text`: normalized text after extension-level filtering and optional `processText()`.
+- `voiceId`: value returned by `getVoice()`.
+- `voiceMapKey`: full character/segment key. It can include qualifiers such as `Character ("Quotes")`. Providers that do not need it may ignore it.
+
+Return one of:
+
+- a Fetch `Response` whose body produces an `audio/*` Blob;
+- a string that can be assigned to an audio element as its source;
+- an async iterable yielding either supported value for chunked playback.
+
+Do not return `null` or `undefined`. HTTP responses with non-audio Blob types are rejected.
+
+## Optional members
+
+### `previewTtsVoice(voiceId)`
+
+Play or generate a preview when a voice has no `preview_url`. A provider whose voices always expose directly playable preview URLs does not need this method.
+
+### `processText(text)`
+
+Perform provider-specific text transformation before generation. The extension awaits this method.
+
+### `separator`
+
+A string used to join extracted quoted blocks. The default is ` ... `.
+
+### `dispose()`
+
+Release workers, sockets, audio resources, or other provider state when the user switches providers. The current caller invokes it synchronously, so start any asynchronous cleanup internally.
+
+## Lifecycle
+
+1. The extension constructs the selected provider.
+2. It inserts `settingsHtml`.
+3. It awaits `loadSettings(savedSettings)`.
+4. When TTS is enabled, it awaits `checkReady()` and `fetchTtsVoiceObjects()`.
+5. For each segment, it awaits `getVoice()` and then `generateTts()`.
+6. It processes a single result or each chunk of an async iterable.
+7. On refresh, it awaits `onRefreshClick()` and persists `settings`.
+8. On provider change, it calls `dispose()` when present.
+
+Keep provider errors actionable and never log API keys, cookies, bearer tokens, or generated private text unnecessarily.

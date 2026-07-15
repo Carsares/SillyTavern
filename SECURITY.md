@@ -1,25 +1,47 @@
 # Security Policy
 
-We take the security of this project seriously. If you discover any security vulnerabilities or have concerns regarding the security of this repository, please reach out to us immediately. We appreciate your efforts in responsibly disclosing the issue and will make every effort to address it promptly.
+## Supported code
 
-## Reporting a Vulnerability
+This fork supports the current `master` branch. Upstream `staging` and `release` branches are not maintained in this repository.
 
-To report a security vulnerability, please follow these steps:
+Security reports should identify the commit tested, deployment mode, operating system, Node.js version, and whether the issue also reproduces in upstream SillyTavern.
 
-1. Go to the **Security** tab of this repository on GitHub.
-2. Click on **"Report a vulnerability"**.
-3. Provide a clear description of the vulnerability and its potential impact. Be as detailed as possible.
-4. If applicable, include steps or a PoC (Proof of Concept) to reproduce the vulnerability.
-5. Submit the report.
+## Report a vulnerability
 
-Once we receive the private report notification, we will promptly investigate and assess the reported vulnerability.
+Use the repository's GitHub **Security** tab and choose **Report a vulnerability** when private vulnerability reporting is available.
 
-Please do not disclose any potential vulnerabilities in public repositories, issue trackers, or forums until we have had a chance to review and address the issue.
+Include:
+
+- affected commit and files;
+- impact and realistic attack conditions;
+- minimal reproduction steps or proof of concept;
+- relevant configuration with all secrets removed;
+- suggested mitigation, if known.
+
+Do not publish an exploitable vulnerability, API key, cookie, token, private chat, user data, or unredacted log in a public issue, discussion, or pull request.
+
+If GitHub private reporting is unavailable, contact the repository maintainer privately before sharing exploit details. General upstream vulnerabilities should also follow the upstream SillyTavern disclosure process.
 
 ## Scope
 
-This security policy applies to all the code and files within this repository and its dependencies actively maintained by us. If you encounter a security issue in a dependency that is not directly maintained by us, please follow responsible disclosure practices and report it to the respective project.
+In scope:
 
-While we strive to ensure the security of this project, please note that there may be limitations on resources, response times, and mitigations.
+- code maintained by this repository;
+- the `/modern/` frontend and its hidden legacy bridge;
+- backend routes and data handling changed by this fork;
+- authentication, authorization, secret storage, import/download validation, and path handling;
+- bundled dependencies when the repository can directly mitigate the risk.
 
-Thank you for your help in making this project more secure.
+Out of scope:
+
+- third-party model providers, resource sites, extensions, reverse proxies, or deployment platforms not maintained here;
+- availability failures or content changes on external sites;
+- vulnerabilities that require publishing real user secrets or destructive tests.
+
+For dependency or upstream issues, report to the responsible project as well. A fork-specific mitigation can still be proposed when this repository is affected.
+
+## Handling expectations
+
+Maintainers will validate the report, assess affected code, and coordinate a fix where possible. Response and remediation time depend on severity, reproducibility, upstream dependencies, and maintainer availability.
+
+Keep details private until maintainers confirm that disclosure is safe.
