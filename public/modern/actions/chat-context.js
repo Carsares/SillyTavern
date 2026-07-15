@@ -27,6 +27,8 @@ export function createChatContextActions({
         getChatMessageCount,
         getChatModeLabel,
         getChatUnreadCount,
+        getLatestUnreadChat,
+        getLatestUnreadChatTarget,
         getGroupAvatarUrl,
         getCurrentDraftKey,
         getCurrentMessageLimit,
@@ -204,12 +206,32 @@ export function createChatContextActions({
         getChatContextKey,
         getChatId,
         getChatMessageCount,
+        getLatestUnreadChat,
         getSelectedChatEntity,
         isGroupChatMode,
         markChatRead,
         sortChats,
         syncChatReadStateForList,
     });
+
+    function selectLatestUnreadChatTarget() {
+        const target = getLatestUnreadChatTarget();
+        if (!target) {
+            return false;
+        }
+
+        state.chatMode = target.groupMode ? 'group' : 'character';
+        localStorage.setItem('st-modern-chat-mode', state.chatMode);
+        if (target.groupMode) {
+            state.selected.group = target.entity.id;
+        } else {
+            state.selected.character = target.entity.avatar;
+        }
+        state.selected.chat = target.chatId;
+        clearChatTransientState();
+        clearChatSearch();
+        return true;
+    }
 
     function useChatMode(mode, { resetChat = false } = {}) {
         const nextMode = mode === 'group' ? 'group' : 'character';
@@ -624,6 +646,7 @@ export function createChatContextActions({
         deleteModernChatFile,
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
+        selectLatestUnreadChatTarget,
         createModernChatFile,
         moveChatReadState,
         deleteChatReadState,

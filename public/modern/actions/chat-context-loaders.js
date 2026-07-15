@@ -7,6 +7,7 @@ export function createChatContextLoaderActions({
     getChatContextKey,
     getChatId = chat => String(chat?.file_id || chat?.file_name || '').replace(/\.jsonl$/i, ''),
     getChatMessageCount = chat => Number(chat?.chat_items ?? chat?.message_count ?? 0),
+    getLatestUnreadChat = () => null,
     getSelectedChatEntity,
     isGroupChatMode,
     markChatRead = () => {},
@@ -237,7 +238,13 @@ export function createChatContextLoaderActions({
         }
     }
 
-    function useFirstAvailableChat(chats) {
+    function selectAvailableChat(chats, contextKey, preferUnread) {
+        const unreadChat = preferUnread ? getLatestUnreadChat(contextKey, chats) : null;
+        if (unreadChat) {
+            state.selected.chat = getChatId(unreadChat);
+            return;
+        }
+
         const selectedChatId = getChatId({ file_id: state.selected.chat, file_name: state.selected.chat });
         if (selectedChatId && chats.some(chat => getChatId(chat) === selectedChatId)) {
             state.selected.chat = selectedChatId;
@@ -247,7 +254,7 @@ export function createChatContextLoaderActions({
         state.selected.chat = getChatId(chats[0]) || '';
     }
 
-    async function prepareChatForSelectedContext({ forceList = false, quiet = false, isCurrent = () => true } = {}) {
+    async function prepareChatForSelectedContext({ forceList = false, quiet = false, preferUnread = false, isCurrent = () => true } = {}) {
         const groupMode = isGroupChatMode();
         const entity = getSelectedChatEntity();
         const contextKey = getChatContextKey(entity, groupMode);
@@ -264,7 +271,7 @@ export function createChatContextLoaderActions({
             return;
         }
 
-        useFirstAvailableChat(chats);
+        selectAvailableChat(chats, contextKey, preferUnread);
 
         await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent, isLoadCurrent: isCurrent });
     }

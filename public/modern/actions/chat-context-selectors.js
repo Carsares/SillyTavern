@@ -75,6 +75,10 @@ export function createChatContextSelectorHelpers({
         return Number(chat?.chat_items ?? chat?.message_count ?? 0);
     }
 
+    function getChatSortTime(chat) {
+        return new Date(chat?.last_mes || 0).getTime() || Number(chat?.last_mes || 0) || 0;
+    }
+
     function getVisibleChatList(entity = getSelectedChatEntity()) {
         const search = state.chatSearch;
         const contextKey = getChatContextKey(entity);
@@ -118,6 +122,37 @@ export function createChatContextSelectorHelpers({
         return getChatUnreadCountForContext(getChatContextKey(entity), chat);
     }
 
+    function getLatestUnreadChat(contextKey, chats = state.chatLists[contextKey] || []) {
+        if (!contextKey || !Array.isArray(chats)) {
+            return null;
+        }
+
+        return sortChats(chats).find(chat => getChatUnreadCountForContext(contextKey, chat) > 0) || null;
+    }
+
+    function getLatestUnreadChatTarget() {
+        let latestTarget = null;
+        let latestTime = Number.NEGATIVE_INFINITY;
+        for (const [contextKey, chats] of Object.entries(state.chatLists)) {
+            const groupMode = contextKey.startsWith('group:');
+            const entity = groupMode
+                ? state.groups.find(group => `group:${group.id}` === contextKey)
+                : state.characters.find(character => character.avatar === contextKey);
+            const chat = entity ? getLatestUnreadChat(contextKey, chats) : null;
+            if (!chat) {
+                continue;
+            }
+
+            const chatTime = getChatSortTime(chat);
+            if (!latestTarget || chatTime > latestTime) {
+                latestTarget = { entity, groupMode, chatId: getChatId(chat) };
+                latestTime = chatTime;
+            }
+        }
+
+        return latestTarget;
+    }
+
     function getEntityUnreadCount(entity = getSelectedChatEntity()) {
         const contextKey = getChatContextKey(entity);
         const chats = state.chatLists[contextKey] || [];
@@ -147,11 +182,7 @@ export function createChatContextSelectorHelpers({
     }
 
     function sortChats(chats) {
-        return [...chats].sort((a, b) => {
-            const bTime = new Date(b.last_mes || 0).getTime() || Number(b.last_mes || 0);
-            const aTime = new Date(a.last_mes || 0).getTime() || Number(a.last_mes || 0);
-            return bTime - aTime;
-        });
+        return [...chats].sort((a, b) => getChatSortTime(b) - getChatSortTime(a));
     }
 
     function getCurrentDraftKey() {
@@ -219,6 +250,8 @@ export function createChatContextSelectorHelpers({
         getChatMessageCount,
         getChatModeLabel,
         getChatUnreadCount,
+        getLatestUnreadChat,
+        getLatestUnreadChatTarget,
         getGroupAvatarUrl,
         getCurrentDraftKey,
         getCurrentMessageLimit,

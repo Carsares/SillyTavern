@@ -121,6 +121,7 @@ const {
     loadWorldDetail,
     prepareChatForSelectedContext,
     refreshSelectedChatUnreadState,
+    selectLatestUnreadChatTarget,
     selectPreset,
     toggleChatSidebar,
 } = createActionRegistry({
@@ -267,6 +268,7 @@ const { handleClick } = createRouter({
     loadData,
     loadWorldDetail,
     prepareChatForSelectedContext,
+    selectLatestUnreadChatTarget,
     clearChatSearch,
     clearChatTransientState,
     getBackgroundFilename,

@@ -423,6 +423,59 @@ test.describe('Modern chat files', () => {
         await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-read-state:v1') || '{}')?.cursors?.['mock.png::unread-chat']?.messageCount)).toBe(3);
     });
 
+    test('opens the latest unread chat when selecting an unread character', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'read-chat', file_name: 'read-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 3000 },
+            { file_id: 'latest-unread', file_name: 'latest-unread.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 2000 },
+            { file_id: 'older-unread', file_name: 'older-unread.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'read-chat': [
+                { name: 'Modern User', is_user: true, mes: 'read context', send_date: now - 4000 },
+                { name: 'Mock Character', is_user: false, mes: 'read reply', send_date: now - 3000 },
+            ],
+            'latest-unread': [
+                { name: 'Modern User', is_user: true, mes: 'latest unread context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'latest unread reply one', send_date: now - 2000 },
+                { name: 'Mock Character', is_user: false, mes: 'latest unread reply two', send_date: now - 1000 },
+            ],
+            'older-unread': [
+                { name: 'Modern User', is_user: true, mes: 'older unread context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'older unread reply', send_date: now - 2000 },
+            ],
+        };
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::read-chat': { messageCount: 2, lastMes: now - 3000 },
+                    'mock.png::latest-unread': { messageCount: 1, lastMes: now - 3000 },
+                    'mock.png::older-unread': { messageCount: 1, lastMes: now - 3000 },
+                },
+                contexts: { 'mock.png': true },
+            },
+        });
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="read-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('3');
+
+        await page.locator('[data-select-character="mock.png"]').click();
+
+        await expect(page.locator('[data-select-chat="latest-unread"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('latest unread reply two');
+        await expect(page.locator('[data-select-chat="latest-unread"] .unread-badge')).toHaveCount(0);
+        await expect(page.locator('[data-select-chat="older-unread"] .unread-badge')).toHaveText('1');
+        await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('1');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('1');
+    });
+
     test('keeps a chat unread when another chat is selected before its messages load', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();
@@ -548,10 +601,84 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-select-chat="group-unread"] .unread-badge')).toHaveText('2');
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('4');
 
-        await page.locator('[data-select-chat="group-unread"]').click();
+        await page.locator('[data-select-group="group-alpha"]').click();
 
+        await expect(page.locator('[data-select-chat="group-unread"]')).toHaveClass(/active/);
         await expect(page.locator('.chat-thread')).toContainText('group unread reply');
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
+    });
+
+    test('opens global unread chats in newest-first order from the chat navigation', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.groups = [{
+            id: 'group-alpha',
+            name: 'Mock Group',
+            members: ['mock.png'],
+            chats: ['group-chat', 'group-unread'],
+            chat_id: 'group-chat',
+        }];
+        fixture.chats = [
+            { file_id: 'character-chat', file_name: 'character-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 4000 },
+            { file_id: 'character-unread', file_name: 'character-unread.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 3000 },
+        ];
+        fixture.groupChats = [
+            { file_id: 'group-chat', file_name: 'group-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 2000 },
+            { file_id: 'group-unread', file_name: 'group-unread.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'character-chat': [
+                { name: 'Modern User', is_user: true, mes: 'character context', send_date: now - 4000 },
+                { name: 'Mock Character', is_user: false, mes: 'character reply', send_date: now - 3000 },
+            ],
+            'character-unread': [
+                { name: 'Modern User', is_user: true, mes: 'character unread context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'character unread reply one', send_date: now - 2000 },
+                { name: 'Mock Character', is_user: false, mes: 'character unread reply two', send_date: now - 1000 },
+            ],
+            'group-chat': [
+                { name: 'Modern User', is_user: true, mes: 'group context', send_date: now - 4000 },
+                { name: 'Mock Group', is_user: false, mes: 'group reply', send_date: now - 3000 },
+            ],
+            'group-unread': [
+                { name: 'Modern User', is_user: true, mes: 'group unread context', send_date: now - 2000 },
+                { name: 'Mock Group', is_user: false, mes: 'group unread reply', send_date: now - 1000 },
+            ],
+        };
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::character-chat': { messageCount: 2, lastMes: now - 3000 },
+                    'mock.png::character-unread': { messageCount: 1, lastMes: now - 3000 },
+                    'group:group-alpha::group-chat': { messageCount: 2, lastMes: now - 3000 },
+                    'group:group-alpha::group-unread': { messageCount: 0, lastMes: now - 3000 },
+                },
+                contexts: { 'mock.png': true, 'group:group-alpha': true },
+            },
+        });
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-chat-mode="group"]').click();
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('4');
+        await page.locator('[data-route="dashboard"]').click();
+
+        await page.locator('.sidebar [data-route="chat"]').click();
+
+        await expect(page.locator('[data-chat-mode="character"]')).toHaveClass(/active/);
+        await expect(page.locator('[data-select-chat="character-unread"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('character unread reply two');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('2');
+
+        await page.locator('.sidebar [data-route="chat"]').click();
+
+        await expect(page.locator('[data-chat-mode="group"]')).toHaveClass(/active/);
+        await expect(page.locator('[data-select-chat="group-unread"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('group unread reply');
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveCount(0);
     });
 
     test('refreshes unread counts without reloading the page', async ({ page }) => {

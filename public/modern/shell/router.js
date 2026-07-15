@@ -12,6 +12,7 @@ export function createRouter({
     loadData,
     loadWorldDetail,
     prepareChatForSelectedContext,
+    selectLatestUnreadChatTarget,
     clearChatSearch,
     clearChatTransientState,
     beginCharacterCreate,
@@ -101,21 +102,26 @@ export function createRouter({
 
         const routeButton = event.target.closest('button[data-route], a[data-route]');
         if (routeButton) {
-            if (routeButton.dataset.openCharacterChat) {
+            const openCharacterChat = routeButton.dataset.openCharacterChat;
+            const openGroupChat = routeButton.dataset.openGroupChat;
+            if (openCharacterChat) {
                 state.chatMode = 'character';
                 localStorage.setItem('st-modern-chat-mode', 'character');
-                state.selected.character = routeButton.dataset.openCharacterChat;
+                state.selected.character = openCharacterChat;
                 state.selected.chat = '';
                 clearChatTransientState();
                 clearChatSearch();
             }
-            if (routeButton.dataset.openGroupChat) {
+            if (openGroupChat) {
                 state.chatMode = 'group';
                 localStorage.setItem('st-modern-chat-mode', 'group');
-                state.selected.group = routeButton.dataset.openGroupChat;
+                state.selected.group = openGroupChat;
                 state.selected.chat = '';
                 clearChatTransientState();
                 clearChatSearch();
+            }
+            if (routeButton.dataset.route === 'chat' && !openCharacterChat && !openGroupChat) {
+                selectLatestUnreadChatTarget();
             }
             await setRoute(routeButton.dataset.route);
             elements.app.querySelector('.sidebar')?.classList.remove('open');
@@ -132,7 +138,7 @@ export function createRouter({
             clearChatTransientState();
             clearChatSearch();
             if (state.route === 'chat') {
-                await prepareChatForSelectedContext({ forceList: true });
+                await prepareChatForSelectedContext({ forceList: true, preferUnread: true });
                 closeChatSidebarForMobileSelection();
             }
             if (state.route === 'characters' && routeModules.characters?.renderSelection?.()) {
@@ -153,7 +159,7 @@ export function createRouter({
             clearChatTransientState();
             clearChatSearch();
             if (state.route === 'chat') {
-                await prepareChatForSelectedContext({ forceList: true });
+                await prepareChatForSelectedContext({ forceList: true, preferUnread: true });
                 closeChatSidebarForMobileSelection();
             }
             render();
