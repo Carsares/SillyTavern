@@ -143,6 +143,14 @@ const groupSaveCoordinator = new KeyedTaskCoordinator(debounce_timeout.relaxed, 
     console.error(`Failed to save group ${groupId}`, error);
     toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group could not be saved`);
 });
+
+/**
+ * Whether any group still has a debounced or in-flight save.
+ * @returns {boolean}
+ */
+export function hasPendingGroupSaves() {
+    return groupSaveCoordinator.hasPendingTasks;
+}
 /** @type {Map<string, number>} */
 let groupChatQueueOrder = new Map();
 

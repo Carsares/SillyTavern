@@ -131,6 +131,19 @@ export class KeyedTaskCoordinator {
     }
 
     /**
+     * Whether any key still has a debounced task waiting or queued work in flight.
+     * @returns {boolean}
+     */
+    get hasPendingTasks() {
+        for (const state of this.#states.values()) {
+            if (state.timer !== null || state.task !== null || state.queue.hasPendingTasks) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Schedules the latest task for a key.
      * @param {string} key Task key
      * @param {() => Promise<unknown> | unknown} task Task to execute

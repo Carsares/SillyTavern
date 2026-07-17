@@ -74,6 +74,7 @@ import {
     getGroupBlock,
     getGroupCharacterCardsLazy,
     getGroupDepthPrompts,
+    hasPendingGroupSaves,
 } from './scripts/group-chats.js';
 
 import {
@@ -495,7 +496,8 @@ function hasPendingSave() {
         || pendingCharacterSaveRequest !== null
         || characterSaveQueue.hasPendingTasks
         || isDebouncePending(saveSettingsDebounced)
-        || settingsSaveQueue.hasPendingTasks,
+        || settingsSaveQueue.hasPendingTasks
+        || hasPendingGroupSaves(),
     );
 }
 
