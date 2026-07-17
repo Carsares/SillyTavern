@@ -106,6 +106,47 @@ test.describe('Branch and checkpoint persistence', () => {
         expect(saveRequests).toBe(2);
     });
 
+    test('drops the parent chat integrity when a checkpoint targets another file', async ({ page }) => {
+        const saved = [];
+        await page.route('**/api/chats/save', route => {
+            saved.push(JSON.parse(route.request().postData()));
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{"integrity":"new-rev"}' });
+        });
+        await setSoloChat(page);
+
+        await page.evaluate(async () => {
+            const script = await import('./script.js');
+            script.chat_metadata.integrity = 'parent-rev';
+            // Same-file save keeps the revision; a checkpoint (different file) must not carry it
+            await script.saveChat({ chatName: 'main-chat' });
+            await script.saveChat({ chatName: 'checkpoint-file' });
+        });
+
+        expect(saved).toHaveLength(2);
+        expect(saved[0].chat[0].chat_metadata.integrity).toBe('parent-rev');
+        expect(saved[1].chat[0].chat_metadata.integrity).toBeUndefined();
+    });
+
+    test('drops the parent chat integrity from a group checkpoint save', async ({ page }) => {
+        const saved = [];
+        await page.route('**/api/chats/group/save', route => {
+            saved.push(JSON.parse(route.request().postData()));
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        });
+        await page.route('**/api/groups/edit', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+
+        await page.evaluate(async () => {
+            const script = await import('./script.js');
+            const { groups, saveGroupBookmarkChat } = await import('./scripts/group-chats.js');
+            script.chat_metadata.integrity = 'parent-rev';
+            groups.splice(0, groups.length, { id: 'group-test', name: 'Group Test', chat_id: 'main-chat', chats: ['main-chat'] });
+            await saveGroupBookmarkChat('group-test', 'checkpoint-file', {}, 0, [{ name: 'Test', mes: 'Message', extra: {} }]);
+        });
+
+        expect(saved).toHaveLength(1);
+        expect(saved[0].chat[0].chat_metadata.integrity).toBeUndefined();
+    });
+
     test('saves a group child chat before publishing its group reference', async ({ page }) => {
         const requestOrder = [];
         await page.route('**/api/chats/group/save', route => {

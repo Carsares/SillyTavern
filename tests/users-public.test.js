@@ -1,3 +1,7 @@
+import { once } from 'node:events';
+
+import express from 'express';
+import bodyParser from 'body-parser';
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
 const getUser = jest.fn();
@@ -32,14 +36,15 @@ jest.unstable_mockModule('../src/users.js', () => ({
     getAccountVersion: user => user.handle,
 }));
 
+let publicRouter;
 let loginHandler;
 let listHandler;
 
 beforeAll(async () => {
-    const { router } = await import('../src/endpoints/users-public.js');
+    ({ router: publicRouter } = await import('../src/endpoints/users-public.js'));
     // The route stack starts with the per-route body parsers; the business handler is the last layer
-    loginHandler = router.stack.find(layer => layer.route?.path === '/login').route.stack.at(-1).handle;
-    listHandler = router.stack.find(layer => layer.route?.path === '/list').route.stack.at(-1).handle;
+    loginHandler = publicRouter.stack.find(layer => layer.route?.path === '/login').route.stack.at(-1).handle;
+    listHandler = publicRouter.stack.find(layer => layer.route?.path === '/list').route.stack.at(-1).handle;
 });
 
 beforeEach(() => {
@@ -116,5 +121,50 @@ describe('user login rate limiting', () => {
 
         const targetResponse = await login('target', 'wrong');
         expect(targetResponse.statusCode).toBe(429);
+    });
+});
+
+describe('public user router body limits', () => {
+    test('each public route carries its own body parsers rather than a shadowing router-level one', () => {
+        // A router-level (non-route) middleware would parse bodies for every /api/users/* path,
+        // including authenticated ones; the fix keeps parsers on the routes themselves.
+        const routerLevelLayers = publicRouter.stack.filter(layer => !layer.route);
+        expect(routerLevelLayers).toHaveLength(0);
+
+        for (const path of ['/list', '/login', '/recover-step1', '/recover-step2']) {
+            const route = publicRouter.stack.find(layer => layer.route?.path === path).route;
+            // Parser middleware precedes the single business handler
+            expect(route.stack.length).toBeGreaterThan(1);
+        }
+    });
+
+    test('a large body on an authenticated /api/users route is not rejected by the public parsers', async () => {
+        // Mirrors the src/server-main.js mount order: public router first, then the post-login
+        // large-limit parser, then the authenticated routes.
+        const app = express();
+        app.use('/api/users', publicRouter);
+        app.use(bodyParser.json({ limit: '500mb' }));
+        app.post('/api/users/change-avatar', (request, response) => {
+            response.json({ received: JSON.stringify(request.body).length });
+        });
+
+        const server = app.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        try {
+            const { port } = server.address();
+            // 300 KB — well above the default 100kb body-parser limit, within the 2MB avatar allowance
+            const avatar = 'x'.repeat(300 * 1024);
+            const response = await fetch(`http://127.0.0.1:${port}/api/users/change-avatar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ handle: 'target', avatar }),
+            });
+
+            expect(response.status).toBe(200);
+            const body = await response.json();
+            expect(body.received).toBeGreaterThan(300 * 1024);
+        } finally {
+            await new Promise(resolve => server.close(resolve));
+        }
     });
 });
