@@ -194,3 +194,214 @@
 12. 不大规模升级工具链（ESLint 9、Jest 30、Node 大版本）；锁版本，安全问题逼迫时才升且必须过 CI；
 13. 不引入正式发布流程；
 14. 不做未显形的性能优化（unread diff 与 chat 渲染收尾已列入背景项，其余等真实卡顿出现再议）。
+
+---
+
+# 执行计划（并行拆解）
+
+> 在第 3 节的里程碑之上，把 M1–M6 + 背景项拆成 44 个原子任务，标注硬依赖、文件触碰集、门禁要求，据此给出真实依赖 DAG、文件冲突热区、执行波次与可并行的 AI agent 批次。基于实际读代码得到的文件+行号触碰集，并经一轮对照代码的并行安全性验证修订。
+
+## 7. 怎么读这份计划
+
+- **第 3 节的 M1→M6 是优先级顺序，不是依赖顺序**。真实依赖图里有几条彼此独立的战线，一旦 CI 门禁（M1）与协议常量（M2.1）就位，就能并行推进。
+- **能否并行的真正约束 = 是否触碰同一文件/同一函数区域**，而非里程碑归属。最强瓶颈是 `public/script.js` 的 modernBridge 热区（约 5915–6126 行）：M2.1/M2.4.1/M2.3/M3.1.1/M3.2.1/M5.2/BG1 全都改这一段，**强制单写者串行，加 agent 也压不动**。
+- **门禁先行是政策约束，不是代码依赖**：改动生成链路核心（`needsGate=true` 的任务）必须在 M1.3 的 CI e2e 门禁变绿之后再**合入 master**；门禁就绪前只做链路外的任务，生成链路 bug 靠行为规避过渡。
+- 量级：S≈0.75 天、M≈2 天、L≈5.5 天（AI 辅助工作日）。
+
+## 8. 依赖 DAG 与关键路径
+
+关键路径（最长硬依赖链，11 节点，决定最短总工期）：
+
+```mermaid
+graph LR
+  subgraph gate["门禁 (链路外)"]
+    M11[M1.1 real-backend 隔离] --> M12[M1.2 playwright projects] --> M13[M1.3 e2e 进 CI]
+  end
+  subgraph hot["public/script.js 热区 — 单写者串行"]
+    M21[M2.1 协议常量] --> M241[M2.4.1 保存信号] --> M311[M3.1.1 reloadChat] --> M321[M3.2.1 reloadSettings]
+  end
+  subgraph stream["M5 流式链"]
+    M52[M5.2 广播增量] --> M54[M5.4 onProgress 接线] --> M55[M5.5 增量渲染原语] --> M56[M5.6 流式 e2e]
+  end
+  M13 --> M21
+  M321 --> M52
+  M54 -. 运行期硬依赖广播 .-> M52
+
+  IND1["独立流 · 远程资源 M6.2a→b→c→d"]:::ind
+  IND2["独立流 · 渲染 M6.1a→b→c (M6.1b 须早于 M5.5)"]:::ind
+  IND3["独立流 · 文档/审计 M2.5.2→M2.2.1→M2.5.1"]:::ind
+  IND4["独立流 · checkJs 1→2→3"]:::ind
+  M4["M4 配置闭环 (M3.2.1 后与 M5 分叉并行, 深度 2 不上关键路径)"]:::br
+  M321 --> M4
+
+  classDef ind fill:#eef,stroke:#88a;
+  classDef br fill:#efe,stroke:#8a8;
+```
+
+**关键路径为何是这个长度**：不由算力决定，而由两个「单写者瓶颈」+ 流式深度决定——(1) script.js 热区 7 个任务强制串行；(2) 政策门（门禁先于生产改动、协议契约先于事件通道、M5 流式在 M2/M3 之后）是 DAG 之外的排序约束，同样把热区钉成一条线。可压缩的部分全在链外。
+
+## 9. 原子任务分解
+
+硬依赖列为空表示无前置。门禁列 = 是否需 M1.3 就绪后才合入 master。
+
+### M1 回归门禁（链路外，最先做）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M1.1 | real-backend 套件改临时 dataRoot 专用 server 实例；全局扩展目录走快照校验+用例自清理 | — | tests/modern-real-backend-integration.e2e.js（L10-17 路径常量参数化+spawn server） | 否 | L |
+| M1.2 | playwright.config.js projects 分组（default/real-backend/external）+ webServer 自动拉起 + testIgnore 排除 frontend/Macro* | M1.1 | tests/playwright.config.js（整体重写） | 否 | M |
+| M1.2b | frontend 失养套件 README + 清理 tests/tests/test-results 误嵌套残留 | — | tests/frontend/README.md（新建）、tests/tests/test-results/ | 否 | S |
+| M1.3 | pr-checks.yml 新增 run-e2e job（--project=default --workers=1） | M1.2 | .github/workflows/pr-checks.yml（jobs 区） | 否 | M |
+
+### 文档/运维流 + checkJs（半独立，链路外）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M2.5.2 | 新增 MAINTENANCE.md 骨架（冻结基线/共享文件台账/巡检 SOP/不做清单/data 备份口径） | — | MAINTENANCE.md（新建） | 否 | M |
+| M2.2.1 | 生成会话期 settings 反写字段审计（只读分析→写审计表） | M2.5.2 | public/script.js（只读 8561-8630 等）、MAINTENANCE.md（append） | 否 | M |
+| M2.5.1 | 配置 upstream remote（只 fetch）+ 首次上游安全巡检记录 | M2.5.2 | MAINTENANCE.md（append）、git remote ops | 否 | S |
+| M2.5.3 | 当前稳定点打里程碑 tag（v1.18.0-mw.1），约定此后每里程碑打 tag | — | git tag | 否 | S |
+| checkJs.1 | 建 public/modern/tsconfig.json（core/**+shell/** checkJs）+ package.json typecheck 脚本 | — | public/modern/tsconfig.json（新建）、package.json | 否 | S |
+| checkJs.2 | 补 core/shell 关键模块 JSDoc typedef 至 tsc 通过 | checkJs.1 | core/state.js、api-client.js、legacy-bridge.js、constants.js、shell/* | 是 | L |
+| checkJs.3 | pr-checks.yml 新增 run-typecheck job | checkJs.1 | .github/workflows/pr-checks.yml（jobs 区，须晚于 M1.3） | 否 | S |
+
+### M2 Bridge 止血 + 契约化
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| **M2.1** | 抽双侧共享 bridge 协议常量模块（source/action/字段/超时），legacy 与 modern 双侧引用 | — | **public/modern/core/bridge-protocol.js（新建）**、script.js（5915/6069-6126 热区）、legacy-bridge.js（1/8-9）、chat-generation.js（114/166/221/395） | 是 | M |
+| M2.2.2 | bridge 模式 settings 反写短路/白名单收窄 | M2.2.1 | script.js（saveSettings 8561-8630） | 是 | S |
+| M2.3 | saveChat 完整性冲突 Popup 特判 + 关键 toastr 静默失败桥接为 RPC error | M2.1 | script.js（7963-7990/5768/5886/6122/8628 热区） | 是 | M |
+| M2.4.1 | legacy 侧 generate/swipe handler 采集保存信号放入 bridge result（saved 字段） | M2.1 | script.js（handleModernBridgeGenerate 6022-6030 / swipe 6045-6054 热区） | 是 | M |
+| M2.4.2 | modern 侧校验 bridge result 的 saved 字段 | M2.4.1 | chat-generation.js（166-186/221-240） | 否 | S |
+| M2.6 | headless e2e 补 settings 端点零写入与失败形态断言 | M2.2.2, M2.3, M2.4.1 | tests/modern-bridge-headless.e2e.js | 否 | M |
+
+### M3 同步通道
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M3.1.1 | legacy 侧 reloadChat/reloadCharacter handler + dispatch 分支 | M2.1 | script.js（dispatch 区 5915-6126 热区） | 是 | M |
+| M3.1.2 | modern 侧 chat 消息编辑/删除后触发 reloadChat | M3.1.1 | chat-messages.js、chat-action-registry.js（96-108） | 是 | S |
+| M3.1.3 | modern 侧角色卡编辑后触发 reloadCharacter | M3.1.1 | characters.js（81-91）、action-registry.js（137-144） | 是 | S |
+| **M3.2.1** | legacy 侧 getSettings 拆出可重入 applyLoadedSettings + reloadSettings handler | M2.1 | script.js（getSettings 8423-8558 + dispatch 热区；紧邻 saveSettings 8561） | 是 | M |
+| M3.2.2 | modern 侧设置快照恢复后触发 reloadSettings | M3.2.1 | settings.js（62-79）、action-registry.js（162-173） | 是 | S |
+| M3.2.3 | modern 侧预设保存/切换/删除/导入后触发 reloadSettings | M3.2.1 | presets.js（7 个写函数）、action-registry.js（62-73） | 是 | M |
+| M3.2.4 | modern 侧 persona 保存/设默认/删除后触发 reloadSettings | M3.2.1 | personas.js、action-registry.js（175-181） | 是 | S |
+| M3.e2e | headless e2e：逐 action reload 往返 + 幂等 + 错误形态 | M3.1.1, M3.2.1, M1.3 | tests/modern-bridge-headless.e2e.js | 否 | M |
+
+### M4 配置闭环（M3.2.1 后与 M5 分叉并行）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M4.1.1 | raw settings 编辑器：state + 带快照保护的读写 action | M3.2.1, M3.2.2 | settings.js、core/state.js | 是 | M |
+| M4.1.2 | raw settings 编辑器：组件 + 路由事件 + 新 section | M4.1.1 | components/settings.js、routes/settings-events.js | 是 | M |
+| M4.2.1 | prompt_order 排序/开关编辑：action 层 | M3.2.1, M3.2.3 | presets.js、openai-preset-fields.js | 是 | M |
+| M4.2.2 | prompt_order UI + instruct/context/sysprompt/reasoning 模板激活 | M4.2.1, M3.2.1 | components/preset-details.js、routes/presets-events.js、presets.js | 是 | L |
+
+### M5 流式输出（关键路径尾段）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M5.1 | 协议常量模块新增单向 progress/token 事件类型 | M2.1 | bridge-protocol.js（additive） | 否 | S |
+| M5.2 | legacy 侧订阅 STREAM_TOKEN_RECEIVED 并按 contextKey 广播增量 | M5.1 | script.js（dispatch 热区；emit ~4188 只读） | 是 | M |
+| M5.3 | legacy-bridge.js 支持单向 progress 事件订阅 | M5.1 | core/legacy-bridge.js（18-35/111-114） | 是 | M |
+| M5.4 | chat-generation.js 流式气泡状态 + onProgress 接线 | M5.3（+运行期硬依赖 M5.2 广播） | chat-generation.js（140-193）、state.js、app.js（52） | 是 | L |
+| M5.5 | chat-message 流式气泡渲染原语（定点 DOM 更新） | M5.4（+软前置 M6.1b） | components/chat-message.js（42-118） | 是 | M |
+| M5.6 | 流式 e2e + 本地 mock LLM SSE 契约用例 | M5.5 | tests/modern-bridge-headless.e2e.js、tests/util/* | 否 | M |
+
+### M6 渲染对齐 + 远程资源（两条独立流）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| M6.1a | modern 接入 showdown+DOMPurify 渲染封装（新模块） | — | core/message-markdown.js（新建）、public/lib.js（只读） | 否 | M |
+| M6.1b | 用 showdown+DOMPurify 重写消息渲染（须早于 M5.5） | M6.1a | components/chat-message-content.js（6-47） | 是 | M |
+| M6.1c | 渲染语义 + XSS 注入向量断言测试 | M6.1b | tests/modern-chat-files.e2e.js | 否 | S |
+| M6.2a | backend provider enabled 开关 + search 过滤 | — | provider-registry.js（74-113）、provider-preferences.js（新建）、endpoints/remote-resources.js | 是 | M |
+| M6.2b | 前端 provider enabled 开关 UI + action | M6.2a | actions/remote-resources.js、components/remote-resources.js（~182）、state.js | 是 | M |
+| M6.2c | preset 本地导入链路 + apiId 推断 + risu 非原生格式处理（产品决策点） | — | actions/remote-resources.js（173-224）、providers/risu-realm.js（只读）、endpoints/presets.js（只读） | 是 | M |
+| M6.2d | preset 导入 UI 按钮 + imports.json 已导入徽章 | M6.2c | components/remote-resources.js（122-160） | 是 | M |
+
+### 背景慢火项（不设截止）
+
+| 任务 | 说明 | 硬依赖 | 关键文件/区域 | 门禁 | 量级 |
+| --- | --- | --- | --- | --- | --- |
+| BG1 | 生成可观察性：itemized prompt 只读 bridge action + inspector 展示 | M2.1 | script.js（dispatch 热区只读 action）、shell/inspector-sections.js（53-61） | 是 | M |
+| BG2 | chat 渲染收尾：scroll/focus 单一原语 + unread 游标比对 | M5.5 | core/scroll-state.js、shell/events.js、chat-context.js（72） | 是 | M |
+
+## 10. 文件冲突热区（决定并行边界）
+
+| 文件/区域 | 抢占任务 | 影响与处置 |
+| --- | --- | --- |
+| **script.js modernBridge 热区 5915-6126** | M2.1, M2.4.1, M2.3, M3.1.1, M3.2.1, M5.2, BG1 | 全仓最强冲突点、真正工期瓶颈。**强制单写者串行**，顺序固定 M2.1→M2.4.1→M2.3→M3.1.1→M3.2.1→M5.2→BG1。禁止两个热区任务同波/同 batch；建议一个 agent 独占这条链，其他 agent 只碰非 script.js 文件。 |
+| script.js getSettings 8423-8558 ↔ saveSettings 8561 | M3.2.1 ↔ M2.2.2/M2.3 | **二者紧邻（仅隔 1 行）**，非"相隔远"。M3.2.1 拆 applyLoadedSettings 的插入点落在 git 3 行合并窗口内。必须保证 M2.2.2/M2.3 **严格早于** M3.2.1（波次已满足），且**不得**以"相隔远"为由与 M3.2.1 放进同一 worktree 波次。 |
+| **shell/action-registry.js 各 create\*Actions 块** | M3.1.3, M3.2.2, M3.2.3, M3.2.4 | 四处 callLegacyBridge 注入点仅相隔 1–2 行（如 173↔175），worktree 并行必产生无法自动合并的 hunk。**处置：先由一个 agent 单次合并注入这四处（含 M3.1.3），完成合入后**，再把 characters.js/settings.js/presets.js/personas.js 四个 body 分给不同 agent 并行。 |
+| core/legacy-bridge.js | M2.1, M5.3, checkJs.2 | 改不同函数，顺序 M2.1→M5.3→checkJs.2，checkJs.2 垫底一次性补 typedef。 |
+| actions/chat-generation.js | M2.1, M2.4.2, M5.4 | 同区，强制串行 M2.1→M2.4.2→M5.4。 |
+| actions/presets.js | M3.2.3, M4.2.1, M4.2.2 | 同 agent 顺序推进，避免重复注入 callLegacyBridge。 |
+| components/chat-message-content.js | M6.1b, M5.5 | M6.1b 重写渲染函数、M5.5 只读复用。**先落 M6.1b**，M5.5 直接消费新渲染器（M6.1b 是 M5.5 的软前置）。 |
+| .github/workflows/pr-checks.yml | M1.3, checkJs.3 | 同 jobs 段，checkJs.3 排在 M1.3 之后或并入同一 PR。 |
+| MAINTENANCE.md | M2.5.2, M2.2.1, M2.5.1 | 纯追加不同章节，M2.5.2 先定骨架，其余顺序 append，不放同一并行 batch。 |
+| core/state.js | M4.1.1, M5.4, M6.2b | 均为独立新增字段（additive），低风险可并行，合并时注意字段并列。 |
+
+## 11. 执行波次
+
+同一波内的任务无硬依赖、无严重文件冲突，可并发。`needsGate=true` 的生产改动从 wave4（M1.3 门禁绿）起才合入 master。
+
+| 波 | 名称 | 任务 |
+| --- | --- | --- |
+| 1 | 地基·无前置立即启动 | M1.1、M1.2b、M2.5.2、M2.5.3、checkJs.1、M6.1a、M6.2a |
+| 2 | 门禁装配 + 独立流第二层 + 审计 | M1.2、M2.2.1、M6.1b、M6.2b |
+| 3 | **门禁闭合** + 渲染/远程流收尾 | M1.3、M2.5.1、M6.1c、M6.2c |
+| 4 | 协议契约化（生成核心唯一入口） | M2.1、checkJs.3 |
+| 5 | M2 止血①：保存信号 + 反写收窄 | M2.4.1、M2.2.2、M5.1、checkJs.2 |
+| 6 | M2 止血②：失败路径 + 订阅底座 | M2.3、M2.4.2、M5.3 |
+| 7 | M2 退出 e2e + M3 reload 底座① | M2.6、M3.1.1 |
+| 8 | M3 reloadSettings 底座② + M3.1 接入 | M3.2.1、M3.1.2、M3.1.3 |
+| 9 | M3 reload 全量接入 + M3 e2e | （先合并注入 action-registry 四处）→ M3.2.2、M3.2.3、M3.2.4、M3.e2e |
+| 10 | **M4 与 M5 分叉并行** | M4.1.1、M4.2.1、M5.2 |
+| 11 | M4 闭环② + M5 事件接线 | M4.1.2、M4.2.2、M5.4 |
+| 12 | M5 流式渲染原语 + 可观察性 | M5.5、BG1 |
+| 13 | M5 测试 + 背景渲染收尾 | M5.6、BG2 |
+
+## 12. 独立并行流（与主线完全重叠，几乎不给关键路径加时）
+
+- **远程资源流 M6.2a→b→c→d**：与生成链路零交集，只碰 `src/remote-resources/*`、`endpoints/remote-resources.js`、`actions|components/remote-resources.js`、state.js(additive)。可从 t0 独立开发；因带后端活接口改动 `needsGate=true`，**合入 master 等 M1.3 门禁**。内部共写 actions/components 需串行。M6.2c 的 apiId 推断/risu 非原生格式是产品决策点，可能需停下确认。
+- **消息渲染流 M6.1a→b→c**：无上游硬依赖，t0 起。唯一外联点 M6.1b 须先于 M5.5 落地。带 XSS 面重写，`needsGate=true`，**合入等门禁**。
+- **文档/审计流 M2.5.2→M2.2.1→M2.5.1（+M2.5.3 tag）**：纯文档/git ops/只读分析，无生产代码改动，完全不受门禁与生成链路阻塞。M2.2.1 只读 script.js 产审计表，是 M2.2.2 收窄的依据。
+- **checkJs 流 1→2→3**：checkJs.1 纯配置 t0 可启；checkJs.2 触及 legacy-bridge/constants，宜排 M2.1 之后一次性补；checkJs.3 共写 pr-checks.yml 须晚于 M1.3。仅注释级改动，不阻塞主线。
+
+## 13. 并行 AI agent 批次（worktree 隔离）
+
+受文件冲突约束，非简单等同于波次。批次内可安全同时跑；跨批次串行。
+
+| 批 | 可同时跑 | 隔离说明 |
+| --- | --- | --- |
+| 1 | M1.1, M1.2b, M2.5.2, M2.5.3, checkJs.1, M6.1a, M6.2a | **7 路完全隔离，最大并行度峰值** |
+| 2 | M1.2, M2.2.1, M6.1b, M6.2b | 文件互不相交；M2.2.1 只读 script.js 不争抢 |
+| 3 | M1.3, M2.5.1, M6.1c, M6.2c | checkJs.3 因共写 pr-checks.yml 押后至批 4 |
+| 4 | M2.1, checkJs.3, M6.2d | 门禁绿后开启生成链路；M2.1 独占 script.js 热区 |
+| 5 | M2.4.1, M2.2.2, M5.1, checkJs.2 | M2.4.1(5992-6055) 与 M2.2.2(8561-8630) 同文件远区，worktree 需人工核对 hunk |
+| 6 | M2.3, M2.4.2, M5.3 | M2.3 独占 script.js；另两者各在 chat-generation/legacy-bridge |
+| 7 | M2.6, M3.1.1 | 测试文件 + script.js 热区，隔离 |
+| 8 | M3.2.1, M3.1.2, M3.1.3 | M3.2.1 独占 script.js 热区；另两者不同 registry 文件 |
+| 9 | **先单任务：合并注入 action-registry 四处**；再并行 M3.2.2 / M3.2.3 / M3.2.4 的 body；M3.e2e 独立 | 四处 callLegacyBridge 注入相隔 1–2 行，不可 worktree 并行；合并注入后 body 文件才可分派 |
+| 10 | M4.1.1, M4.2.1, M5.2 | **关键并行窗口**：M4 与 M5 分叉，三文件不相交 |
+| 11 | M4.1.2, M4.2.2, M5.4 | 文件不相交；presets.js 由 M4.2.1→M4.2.2 同 agent 持有 |
+| 12 | M5.5, BG1 | M5.5(chat-message) + BG1(script.js 只读 action，inspector 建议独立文件) |
+| 13 | M5.6, BG2 | 测试 + scroll/events 收敛，隔离 |
+
+## 14. 工期估计
+
+- **关键路径 ≈ 27 个 AI 辅助工作日（约 5.5 周集中投入）**：M1.1→M1.2→M1.3→M2.1→M2.4.1→M3.1.1→M3.2.1→M5.2→M5.4→M5.5→M5.6。
+- **单人纯串行跑完全部 44 个任务** 粗估 60+ 工作日（约 12+ 周）。
+- **用 worktree 隔离 4–6 个并发 agent** 收敛到关键路径 ~5.5 周，压缩约一半。
+- **再加 agent 收益递减**：热区串行与流式链深度是硬下限。批 1 的 7 路并行是峰值，此后每波有效并发多在 2–3 路（一个 script.js 热区任务 + 若干链外/下游任务）。
+
+## 15. 本计划的验证修正
+
+经一轮对照代码的并行安全性验证，已修正 4 处（均有行号证据）：
+
+1. **M6.1/M6.2 独立流措辞**：改为"可 t0 独立开发、但合入 master 须等 M1.3 门禁"——二者 `needsGate=true`（含 M6.1b 的 XSS 面渲染重写、M6.2a 的后端活接口），不可在门禁前落 master。
+2. **saveSettings 与 M3.2.1 的 getSettings 紧邻**（8558↔8561 仅隔 1 行），非"相隔 2600 行"：必须保证 M2.2.2/M2.3 严格早于 M3.2.1，不得据"相隔远"与 M3.2.1 同波 worktree 并行。
+3. **action-registry.js 四处注入相隔 1–2 行**（173↔175）：批 9 不可四路并行，须先单次合并注入再拆 body 文件。
+4. **M5.4 补一条指向 M5.2 的运行期依赖边**：onProgress 接线在无 M5.2 广播时收不到事件、无法验证，M5.2 是 M5.4 的验收硬前置。
