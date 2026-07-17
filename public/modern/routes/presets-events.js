@@ -29,6 +29,22 @@ export function createPresetsEvents(ctx) {
             return;
         }
 
+        const presetGroupSummary = event.target.closest('[data-preset-group] > summary');
+        if (presetGroupSummary) {
+            // The native <details> toggle runs as this click's default action; record the resulting
+            // open state so a later render (filter, delete, etc.) doesn't re-expand a group the user collapsed
+            const presetGroup = presetGroupSummary.parentElement;
+            const groupId = presetGroup.dataset.presetGroup;
+            const expanded = new Set(state.presetExpandedGroups);
+            if (presetGroup.open) {
+                expanded.delete(groupId);
+            } else {
+                expanded.add(groupId);
+            }
+            state.presetExpandedGroups = [...expanded];
+            return;
+        }
+
         const selectPresetButton = event.target.closest('[data-select-preset]');
         if (selectPresetButton) {
             selectPreset(selectPresetButton.dataset.presetApi, selectPresetButton.dataset.selectPreset);
