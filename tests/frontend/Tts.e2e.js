@@ -96,6 +96,48 @@ test.describe('TTS settings', () => {
         expect(result.hostileRenderedAsText).toBe(true);
     });
 
+    test('does not crash the voice map when the provider fails to return voices', async ({ page }) => {
+        const outcome = await page.evaluate(async () => {
+            const { extension_settings } = await import('./scripts/extensions.js');
+            const { registerTtsProvider, initVoiceMap } = await import('./scripts/extensions/tts/index.js');
+
+            class FailingTtsProvider {
+                settings = {};
+                get settingsHtml() { return '<div id="failing_tts_provider"></div>'; }
+                async loadSettings(settings) { this.settings = settings; }
+                async checkReady() {}
+                async fetchTtsVoiceObjects() { throw new Error('provider offline'); }
+                async getVoice(voiceId) { return { voice_id: voiceId }; }
+                async generateTts() { return ''; }
+            }
+
+            const providerName = 'Failing Test';
+            extension_settings.tts[providerName] = { voiceMap: {} };
+            registerTtsProvider(providerName, FailingTtsProvider);
+
+            const enabled = document.getElementById('tts_enabled');
+            if (!enabled.checked) {
+                enabled.click();
+            }
+            const provider = document.getElementById('tts_provider');
+            provider.value = providerName;
+            provider.dispatchEvent(new Event('change', { bubbles: true }));
+
+            await new Promise(resolve => setTimeout(resolve, 100));
+            let error = null;
+            try {
+                await initVoiceMap(true);
+            } catch (caught) {
+                error = String(caught);
+            }
+            return { error, chars: document.querySelectorAll('#tts_voicemap_block .tts_voicemap_block_char').length };
+        });
+
+        // Without the guard, addUI iterates undefined voice ids and throws; the map should just stay empty
+        expect(outcome.error).toBeNull();
+        expect(outcome.chars).toBe(0);
+    });
+
     test('discards provider results from playback that was reset', async ({ page }) => {
         await page.evaluate(async () => {
             const { chat, eventSource, event_types } = await import('./script.js');

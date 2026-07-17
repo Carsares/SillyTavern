@@ -383,7 +383,9 @@ async function playAudioData(audioJob) {
         }
         console.debug('Starting TTS playback');
         audioElement.playbackRate = extension_settings.tts.playback_rate;
-        audioElement.play();
+        // play() rejects on autoplay restrictions or if playback is interrupted; swallow it so it
+        // doesn't surface as an unhandled rejection
+        audioElement.play().catch(error => console.error('TTS playback could not start', error));
     }, { once: true });
     audioElement.src = srcUrl;
 }
@@ -819,7 +821,18 @@ async function processTtsQueue() {
     text = text.replace(/!\[.*?]\([^)]*\)/g, '');
 
     if (typeof ttsProvider?.processText === 'function') {
-        text = await ttsProvider.processText(text);
+        try {
+            text = await ttsProvider.processText(text);
+        } catch (error) {
+            // This runs before the try/catch below, so a provider failure here would otherwise leave
+            // currentTtsJob set and stall the whole queue until the next reset
+            if (isCurrentTtsJob(ttsJob, playbackRevision)) {
+                toastr.error(error.toString());
+                console.error(error);
+                clearCurrentTtsJob(ttsJob, playbackRevision);
+            }
+            return;
+        }
         if (!isCurrentTtsJob(ttsJob, playbackRevision)) {
             return;
         }
@@ -1660,6 +1673,11 @@ async function initVoiceMapInternal(unrestricted) {
         voiceIdsFromProvider = await ttsProvider.fetchTtsVoiceObjects();
     } catch {
         toastr.error('TTS Provider failed to return voice ids.');
+    }
+
+    if (!Array.isArray(voiceIdsFromProvider)) {
+        // Provider errored or returned nothing; stop before addUI iterates undefined voice ids
+        return;
     }
 
     // Build UI using VoiceMapEntry objects
