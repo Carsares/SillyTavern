@@ -2402,9 +2402,14 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
         return false;
     }
 
+    // The checkpoint targets another file; the source chat's revision must not gate that write,
+    // or re-creating a same-named group checkpoint always fails the server integrity check.
+    const headerMetadata = { ...chat_metadata, ...(metadata || {}) };
+    delete headerMetadata.integrity;
+
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: { ...chat_metadata, ...(metadata || {}) },
+        chat_metadata: headerMetadata,
         user_name: 'unused',
         character_name: 'unused',
     };

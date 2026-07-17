@@ -7787,6 +7787,12 @@ export async function renameCharacter(name = null, { silent = false, renameChats
                     await reloadCurrentChat();
                     toastr.success(t`Character renamed and past chats updated!`, t`Rename Character`);
                 } else {
+                    if (selected_group) {
+                        // renameGroupMember already rewrote this group's chat files on disk (rotating their
+                        // server revisions), so reload to pick up the new names and revision; otherwise the
+                        // next save of the open group chat trips the integrity check and reverts the rename.
+                        await reloadCurrentChat();
+                    }
                     toastr.success(t`Character renamed!`, t`Rename Character`);
                 }
             } else {
@@ -7894,6 +7900,12 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
 
     const metadata = { ...(context?.metadata ?? chat_metadata), ...(withMetadata || {}) };
     const fileName = chatName ?? context?.chatId ?? characters[this_chid]?.chat;
+    // A checkpoint/branch save targets another file; the source chat's revision must not gate that
+    // write, or re-creating a same-named checkpoint always fails the server integrity check.
+    const ownChatFile = context?.chatId ?? characters[this_chid]?.chat;
+    if (fileName && String(fileName) !== String(ownChatFile ?? '')) {
+        delete metadata.integrity;
+    }
 
     if (!fileName && name2 === neutralCharacterName) {
         // TODO: Do something for a temporary chat with no character.
