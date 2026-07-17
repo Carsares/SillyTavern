@@ -1,7 +1,8 @@
 import { getScrollTop, restoreScrollTop } from '../core/scroll-state.js';
 
-const chatResourceListSelector = '.chat-browser .chat-browser-panel:first-child .resource-list';
-const chatFileListSelector = '.chat-browser .chat-browser-panel:nth-child(2) .resource-list';
+// Shared with the unread poll in app.js: these two lists scroll independently of the document
+export const chatResourceListSelector = '.chat-browser .chat-browser-panel:first-child .resource-list';
+export const chatFileListSelector = '.chat-browser .chat-browser-panel:nth-child(2) .resource-list';
 
 export function createChatContextEvents(ctx) {
     const {

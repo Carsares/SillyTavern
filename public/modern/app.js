@@ -9,7 +9,8 @@ import {
 import { createApiClient } from './core/api-client.js';
 import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
-import { getElementScrollTop, restoreElementScrollTop } from './core/scroll-state.js';
+import { getElementScrollTop, getScrollTop, restoreElementScrollTop, restoreScrollTop } from './core/scroll-state.js';
+import { chatFileListSelector, chatResourceListSelector } from './routes/chat-context-events.js';
 import { createCommonComponents } from './components/common.js';
 import { createActionRegistry } from './shell/action-registry.js';
 import { createDataLoader } from './shell/data-loader.js';
@@ -306,10 +307,15 @@ async function pollChatUnreadState() {
             return;
         }
 
-        // render() rebuilds #content and the chat view scrolls the document, so preserve the reader's scroll position
+        // render() rebuilds #content; the chat view scrolls the document AND keeps two independently
+        // scrolling lists (characters + chat files), so preserve all three positions
         const documentScrollTop = getElementScrollTop(document.scrollingElement);
+        const resourceListScrollTop = getScrollTop(chatResourceListSelector);
+        const chatFileListScrollTop = getScrollTop(chatFileListSelector);
         render();
         restoreElementScrollTop(document.scrollingElement, documentScrollTop);
+        restoreScrollTop(chatResourceListSelector, resourceListScrollTop);
+        restoreScrollTop(chatFileListSelector, chatFileListScrollTop);
     } catch (error) {
         state.errors.push({ key: 'chat-unread-poll', message: error.message });
     } finally {

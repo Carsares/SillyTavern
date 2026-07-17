@@ -386,7 +386,9 @@ export function createChatContextActions({
     }
 
     async function refreshSelectedChatUnreadState() {
-        await refreshCachedChatLists({ quiet: true });
+        // Poll-driven refresh: silent errors and no loading indicators, so a skipped
+        // re-render can never leave stale loading UI behind
+        await refreshCachedChatLists({ quiet: true, background: true });
     }
 
     const chatFileOperationQueue = new KeyedPromiseQueue();

@@ -18,7 +18,7 @@ export function createChatContextLoaderActions({
     const chatMessageLoadTokens = new Map();
     let chatSearchToken = null;
 
-    async function loadCharacterChats(character, { force = false, quiet = false, isCurrent = () => true } = {}) {
+    async function loadCharacterChats(character, { force = false, quiet = false, background = false, isCurrent = () => true } = {}) {
         if (!character?.avatar) {
             return [];
         }
@@ -28,7 +28,10 @@ export function createChatContextLoaderActions({
 
         const loadToken = Symbol(character.avatar);
         chatListLoadTokens.set(character.avatar, loadToken);
-        state.loadingChats[character.avatar] = true;
+        // Background polls refresh silently; only user-visible loads flip the loading indicator
+        if (!background) {
+            state.loadingChats[character.avatar] = true;
+        }
         try {
             const result = await apiFetch('/api/characters/chats', {
                 body: {
@@ -59,7 +62,7 @@ export function createChatContextLoaderActions({
         }
     }
 
-    async function loadGroupChats(group, { force = false, quiet = false, isCurrent = () => true } = {}) {
+    async function loadGroupChats(group, { force = false, quiet = false, background = false, isCurrent = () => true } = {}) {
         if (!group?.id) {
             return [];
         }
@@ -71,7 +74,10 @@ export function createChatContextLoaderActions({
 
         const loadToken = Symbol(contextKey);
         chatListLoadTokens.set(contextKey, loadToken);
-        state.loadingChats[contextKey] = true;
+        // Background polls refresh silently; only user-visible loads flip the loading indicator
+        if (!background) {
+            state.loadingChats[contextKey] = true;
+        }
         try {
             const result = await apiFetch('/api/chats/search', {
                 body: {
@@ -273,23 +279,28 @@ export function createChatContextLoaderActions({
 
         selectAvailableChat(chats, contextKey, preferUnread);
 
-        await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent, isLoadCurrent: isCurrent });
+        // Only the chat still selected when its messages land may be marked read; the user can
+        // click another chat of the same entity while this load is in flight
+        const chosenChatId = state.selected.chat;
+        const isChatCurrent = () => isContextCurrent() && state.selected.chat === chosenChatId;
+
+        await loadChatMessages(entity, chosenChatId, { groupMode, isContextCurrent: isChatCurrent, isLoadCurrent: isCurrent });
     }
 
-    async function refreshSelectedChatList(entity, { quiet = false, groupMode = isGroupChatMode() } = {}) {
+    async function refreshSelectedChatList(entity, { quiet = false, background = false, groupMode = isGroupChatMode() } = {}) {
         if (groupMode) {
-            await loadGroupChats(entity, { force: true, quiet });
+            await loadGroupChats(entity, { force: true, quiet, background });
         } else {
-            await loadCharacterChats(entity, { force: true, quiet });
+            await loadCharacterChats(entity, { force: true, quiet, background });
         }
     }
 
-    async function refreshCachedChatLists({ quiet = false } = {}) {
+    async function refreshCachedChatLists({ quiet = false, background = false } = {}) {
         const contextKeys = Object.keys(state.chatLists);
         if (!contextKeys.length) {
             const entity = getSelectedChatEntity();
             if (entity) {
-                await refreshSelectedChatList(entity, { quiet });
+                await refreshSelectedChatList(entity, { quiet, background });
             }
             return;
         }
@@ -297,11 +308,11 @@ export function createChatContextLoaderActions({
         await Promise.all(contextKeys.map(contextKey => {
             if (contextKey.startsWith('group:')) {
                 const group = state.groups.find(item => `group:${item.id}` === contextKey);
-                return group ? loadGroupChats(group, { force: true, quiet }) : Promise.resolve([]);
+                return group ? loadGroupChats(group, { force: true, quiet, background }) : Promise.resolve([]);
             }
 
             const character = state.characters.find(item => item.avatar === contextKey);
-            return character ? loadCharacterChats(character, { force: true, quiet }) : Promise.resolve([]);
+            return character ? loadCharacterChats(character, { force: true, quiet, background }) : Promise.resolve([]);
         }));
     }
 
