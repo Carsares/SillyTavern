@@ -37,8 +37,9 @@ let listHandler;
 
 beforeAll(async () => {
     const { router } = await import('../src/endpoints/users-public.js');
-    loginHandler = router.stack.find(layer => layer.route?.path === '/login').route.stack[0].handle;
-    listHandler = router.stack.find(layer => layer.route?.path === '/list').route.stack[0].handle;
+    // The route stack starts with the per-route body parsers; the business handler is the last layer
+    loginHandler = router.stack.find(layer => layer.route?.path === '/login').route.stack.at(-1).handle;
+    listHandler = router.stack.find(layer => layer.route?.path === '/list').route.stack.at(-1).handle;
 });
 
 beforeEach(() => {

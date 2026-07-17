@@ -262,8 +262,9 @@ app.use(webpackMiddleware);
 app.use(userCssMiddleware);
 app.use(express.static(path.join(serverDirectory, 'public'), {}));
 
-// Public API
-app.use('/api/users', bodyParser.json(), bodyParser.urlencoded({ extended: true }), usersPublicRouter);
+// Public API. The router parses its own (small) bodies per route, so this prefix mount doesn't
+// shadow authenticated /api/users/* routes that rely on the post-login 500mb parsers below.
+app.use('/api/users', usersPublicRouter);
 
 // Everything below this line requires authentication
 app.use(requireLoginMiddleware);

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import storage from 'node-persist';
 import express from 'express';
+import bodyParser from 'body-parser';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { getIpAddress, retryAfter } from '../express-common.js';
 import { color, Cache, getConfigValue } from '../util.js';
@@ -16,6 +17,10 @@ const MFA_CACHE = new Cache(5 * 60 * 1000);
 const generateRecoveryCode = () => Array.from({ length: 6 }, () => crypto.randomInt(0, 10)).join('');
 
 export const router = express.Router();
+// These pre-auth routes parse their own small default-limit bodies. Attaching the parsers per route
+// (instead of at the /api/users mount) keeps authenticated /api/users/* requests on the post-login
+// large-limit parsers, e.g. change-avatar accepts data URLs far beyond the default 100kb.
+const publicBodyParsers = [bodyParser.json(), bodyParser.urlencoded({ extended: true })];
 const loginLimiter = new RateLimiterMemory({
     points: LOGIN_POINTS > 0 ? LOGIN_POINTS : Number.MAX_SAFE_INTEGER,
     duration: 60,
@@ -25,7 +30,7 @@ const recoverLimiter = new RateLimiterMemory({
     duration: 300,
 });
 
-router.post('/list', async (_request, response) => {
+router.post('/list', publicBodyParsers, async (_request, response) => {
     try {
         if (DISCREET_LOGIN) {
             return response.sendStatus(204);
@@ -58,7 +63,7 @@ router.post('/list', async (_request, response) => {
     }
 });
 
-router.post('/login', async (request, response) => {
+router.post('/login', publicBodyParsers, async (request, response) => {
     try {
         if (!request.body.handle) {
             console.warn('Login failed: Missing required fields');
@@ -109,7 +114,7 @@ router.post('/login', async (request, response) => {
     }
 });
 
-router.post('/recover-step1', async (request, response) => {
+router.post('/recover-step1', publicBodyParsers, async (request, response) => {
     try {
         if (!request.body.handle) {
             console.warn('Recover step 1 failed: Missing required fields');
@@ -149,7 +154,7 @@ router.post('/recover-step1', async (request, response) => {
     }
 });
 
-router.post('/recover-step2', async (request, response) => {
+router.post('/recover-step2', publicBodyParsers, async (request, response) => {
     try {
         if (!request.body.handle || !request.body.code) {
             console.warn('Recover step 2 failed: Missing required fields');
