@@ -100,6 +100,29 @@ describe('save coordinators', () => {
         jest.useRealTimers();
     });
 
+    test('keyed coordinator reports debounced and in-flight work as pending', async () => {
+        jest.useFakeTimers();
+        const coordinator = new KeyedTaskCoordinator(100);
+        expect(coordinator.hasPendingTasks).toBe(false);
+
+        // A scheduled-but-not-yet-fired debounced task counts as pending
+        coordinator.schedule('group-a', async () => {});
+        expect(coordinator.hasPendingTasks).toBe(true);
+
+        // After the debounce fires, the queued execution still counts as pending until it settles
+        let releaseWork;
+        coordinator.schedule('group-b', () => new Promise(resolve => { releaseWork = resolve; }));
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        expect(coordinator.hasPendingTasks).toBe(true);
+
+        jest.useRealTimers();
+        releaseWork();
+        await coordinator.flush('group-b');
+        await coordinator.flush('group-a');
+        expect(coordinator.hasPendingTasks).toBe(false);
+    });
+
     test('blocking rejects new work but still flushes work scheduled before deletion', async () => {
         jest.useFakeTimers();
         const coordinator = new KeyedTaskCoordinator(100);

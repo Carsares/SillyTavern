@@ -100,8 +100,10 @@ function createDirectories() {
 
 function createResponse() {
     return {
+        statusCode: 200,
         send: jest.fn(value => value),
-        sendStatus: jest.fn(value => value),
+        sendStatus: jest.fn(function (code) { this.statusCode = code; return this; }),
+        status: jest.fn(function (code) { this.statusCode = code; return this; }),
     };
 }
 
@@ -383,5 +385,69 @@ describe('character name safety', () => {
         expect(fs.existsSync(path.join(chatsPath, 'chat.jsonl'))).toBe(true);
         expect(fs.existsSync(path.join(directories.characters, 'Renamed.png'))).toBe(false);
         expect(fs.existsSync(path.join(directories.chats, 'Renamed'))).toBe(false);
+    });
+});
+
+describe('character write failure contract', () => {
+    test('POST /edit reports a failed write as 500 instead of 200', async () => {
+        const directories = createDirectories();
+        seedCharacter(directories, 'Hero');
+        const response = createResponse();
+        writeCharacterCard.mockImplementationOnce(() => {
+            throw new Error('disk full');
+        });
+
+        await getRouteHandler('/edit')({
+            body: { ch_name: 'Hero', avatar_url: 'Hero.png', chat: 'chat', create_date: '2024-01-01' },
+            query: {},
+            user: { profile: { handle: 'test-user' }, directories },
+        }, response);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+        expect(response.sendStatus).not.toHaveBeenCalledWith(200);
+    });
+
+    test('POST /edit-attribute reports a failed write as 500 instead of 200', async () => {
+        const directories = createDirectories();
+        seedCharacter(directories, 'Hero');
+        const response = createResponse();
+        writeCharacterCard.mockImplementationOnce(() => {
+            throw new Error('disk full');
+        });
+
+        await getRouteHandler('/edit-attribute')({
+            body: { ch_name: 'Hero', avatar_url: 'Hero.png', field: 'description', value: 'updated' },
+            query: {},
+            user: { profile: { handle: 'test-user' }, directories },
+        }, response);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+        expect(response.sendStatus).not.toHaveBeenCalledWith(200);
+    });
+
+    test('POST /merge-attributes reports a failed write as 500, not a 400 validation error', async () => {
+        const directories = createDirectories();
+        seedCharacter(directories, 'Hero');
+        const response = createResponse();
+        writeCharacterCard.mockImplementationOnce(() => {
+            throw new Error('disk full');
+        });
+
+        await getRouteHandler('/merge-attributes')({
+            // Fill the remaining required v2 fields so the merged card validates and the write is actually attempted
+            body: {
+                avatar: 'Hero.png',
+                data: {
+                    description: 'merged',
+                    creator_notes: '', system_prompt: '', post_history_instructions: '',
+                    alternate_greetings: [], creator: '', character_version: '',
+                },
+            },
+            query: {},
+            user: { profile: { handle: 'test-user' }, directories },
+        }, response);
+
+        expect(response.status).toHaveBeenCalledWith(500);
+        expect(response.status).not.toHaveBeenCalledWith(400);
     });
 });

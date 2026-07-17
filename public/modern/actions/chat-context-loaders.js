@@ -245,7 +245,9 @@ export function createChatContextLoaderActions({
     }
 
     function selectAvailableChat(chats, contextKey, preferUnread) {
-        const unreadChat = preferUnread ? getLatestUnreadChat(contextKey, chats) : null;
+        // Only auto-open the latest unread chat when nothing is selected yet; a chat the user clicked
+        // while this list was loading (state.selected.chat set) must not be reverted to the unread one
+        const unreadChat = (preferUnread && !state.selected.chat) ? getLatestUnreadChat(contextKey, chats) : null;
         if (unreadChat) {
             state.selected.chat = getChatId(unreadChat);
             return;

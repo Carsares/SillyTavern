@@ -35,6 +35,67 @@ test.describe('TTS settings', () => {
         await expect(page.locator('#tts_status')).toContainText('TTS Provider Loaded');
     });
 
+    test('renders a character name in the voice map as text, not HTML', async ({ page }) => {
+        const hostileName = '<img src=x onerror="window.testTtsXssFired = true">';
+        await page.evaluate(async (hostileName) => {
+            const { characters } = await import('./script.js');
+            const { extension_settings } = await import('./scripts/extensions.js');
+            const { registerTtsProvider } = await import('./scripts/extensions/tts/index.js');
+
+            window.testTtsXssFired = false;
+            characters.push({ name: hostileName, avatar: 'xss.png' });
+
+            class ReadyTtsProvider {
+                settings = {};
+                get settingsHtml() { return '<div id="xss_tts_provider"></div>'; }
+                async loadSettings(settings) { this.settings = settings; }
+                async checkReady() {}
+                async fetchTtsVoiceObjects() { return [{ name: 'Voice', voice_id: 'v', preview_url: false, lang: 'en-US' }]; }
+                async getVoice(voiceId) { return { voice_id: voiceId }; }
+                async generateTts() { return ''; }
+            }
+
+            const providerName = 'XSS Test';
+            extension_settings.tts[providerName] = { voiceMap: {} };
+            registerTtsProvider(providerName, ReadyTtsProvider);
+
+            const enabled = document.getElementById('tts_enabled');
+            if (!enabled.checked) {
+                enabled.click();
+            }
+            const provider = document.getElementById('tts_provider');
+            provider.value = providerName;
+            provider.dispatchEvent(new Event('change', { bubbles: true }));
+        }, hostileName);
+        await expect(page.locator('#xss_tts_provider')).toBeAttached();
+
+        // Rebuild the voice map over every character until the injected one is rendered
+        // (initVoiceMap coalesces with any in-flight restricted rebuild, so retry until it takes)
+        await expect.poll(async () => page.evaluate(async () => {
+            const { initVoiceMap } = await import('./scripts/extensions/tts/index.js');
+            const enabled = document.getElementById('tts_enabled');
+            if (!enabled.checked) {
+                enabled.click();
+            }
+            await initVoiceMap(true);
+            return document.querySelectorAll('#tts_voicemap_block .tts_voicemap_block_char').length;
+        })).toBeGreaterThan(1);
+
+        const result = await page.evaluate((hostileName) => {
+            const block = document.getElementById('tts_voicemap_block');
+            const spans = Array.from(block.querySelectorAll('.tts_voicemap_block_char > span'));
+            return {
+                xssFired: window.testTtsXssFired,
+                injectedImgCount: block.querySelectorAll('img').length,
+                hostileRenderedAsText: spans.some(span => span.textContent === hostileName),
+            };
+        }, hostileName);
+
+        expect(result.xssFired).toBe(false);
+        expect(result.injectedImgCount).toBe(0);
+        expect(result.hostileRenderedAsText).toBe(true);
+    });
+
     test('discards provider results from playback that was reset', async ({ page }) => {
         await page.evaluate(async () => {
             const { chat, eventSource, event_types } = await import('./script.js');
