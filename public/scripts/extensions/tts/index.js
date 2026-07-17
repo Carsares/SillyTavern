@@ -1552,14 +1552,16 @@ class VoiceMapEntry {
         let defaultOption = this.name === DEFAULT_VOICE_MARKER ?
             `<option>${DISABLED_VOICE_MARKER}</option>` :
             `<option>${DEFAULT_VOICE_MARKER}</option><option>${DISABLED_VOICE_MARKER}</option>`;
-        let template = `
+        // The character name is untrusted input (imported cards); render it as text, never as HTML
+        const template = $(`
             <div class='tts_voicemap_block_char flex-container flexGap5'>
-                <span id='tts_voicemap_char_${sanitizedName}'>${this.name}</span>
+                <span id='tts_voicemap_char_${sanitizedName}'></span>
                 <select id='tts_voicemap_char_${sanitizedName}_voice'>
                     ${defaultOption}
                 </select>
             </div>
-        `;
+        `);
+        template.find('span').text(this.name);
         $('#tts_voicemap_block').append(template);
 
         // Populate voice ID select list
