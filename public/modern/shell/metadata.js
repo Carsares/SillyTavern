@@ -32,8 +32,9 @@ export function createShellMetadata({
         const chatSource = api === 'kobold'
             ? (settings.api_server || '')
             : (settings.chat_completion_source || oaiSettings.chat_completion_source || '');
-        // kobold's chatSource is a server URL, not a completion source, so skip the chat-completion model lookup
-        const chatModel = (chatSource && api !== 'kobold') ? getChatCompletionModel(oaiSettings, chatSource) : '';
+        // Only a chat-completion main API uses the chat-completion model; a lingering chat_completion_source
+        // must not shadow the novel/horde/textgen model fields below (mirrors api-state.js getApiProfiles)
+        const chatModel = (api === 'openai' && chatSource) ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
             || (api === 'novel' ? settings.model_novel : '')
             || (api === 'koboldhorde' ? (settings.horde_settings?.models || []).join('、') : '')
