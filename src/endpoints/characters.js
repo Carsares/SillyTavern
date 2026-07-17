@@ -1213,13 +1213,19 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         // Serialize by avatar path so this write can't race a concurrent delete/edit of the same avatar file
         await CHARACTER_AVATAR_QUEUE.run(avatarPath, async () => {
             if (!request.file) {
-                await writeCharacterData(avatarPath, char, targetFile, request);
+                const writeSucceeded = await writeCharacterData(avatarPath, char, targetFile, request);
+                if (!writeSucceeded) {
+                    throw new Error(`Failed to write character file: ${request.body.avatar_url}`);
+                }
             } else {
                 const crop = tryParse(request.query.crop);
                 const newAvatarPath = path.join(request.file.destination, request.file.filename);
                 invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
-                await writeCharacterData(newAvatarPath, char, targetFile, request, crop);
+                const writeSucceeded = await writeCharacterData(newAvatarPath, char, targetFile, request, crop);
                 fs.unlinkSync(newAvatarPath);
+                if (!writeSucceeded) {
+                    throw new Error(`Failed to write character file: ${request.body.avatar_url}`);
+                }
 
                 // Bust cache to reload the new avatar
                 cacheBuster.bust(request, response);
@@ -1320,7 +1326,10 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
             char.data[request.body.field] = request.body.value;
             let newCharJSON = JSON.stringify(char);
             const targetFile = (request.body.avatar_url).replace('.png', '');
-            await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
+            const writeSucceeded = await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
+            if (!writeSucceeded) {
+                throw new Error(`Failed to write character file: ${request.body.avatar_url}`);
+            }
             return true;
         });
         if (!fieldExists) {
@@ -1404,7 +1413,12 @@ async function mergeCharacterUpdate(avatarPath, avatar, updateData, request, sho
         }
 
         const targetImg = avatar.replace('.png', '');
-        await writeCharacterData(avatarPath, JSON.stringify(character), targetImg, request);
+        // A disk write failure must surface as an exception (single mode -> 500, bulk mode -> failed),
+        // not as ok:false which the route reports as a 400 validation error
+        const writeSucceeded = await writeCharacterData(avatarPath, JSON.stringify(character), targetImg, request);
+        if (!writeSucceeded) {
+            throw new Error(`Failed to write character file: ${avatar}`);
+        }
         return { ok: true };
     });
 }
