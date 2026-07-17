@@ -1125,63 +1125,70 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
             const newAvatarPath = path.join(request.user.directories.characters, newAvatarName);
             const newChatsPath = path.join(request.user.directories.chats, newInternalName);
-            let newCharacterCreated = false;
-            let newChatsCreated = false;
 
-            try {
-                // Read old file, replace name in it
-                const rawOldData = await readCharacterData(oldAvatarPath);
-                if (rawOldData === undefined) throw new Error('Failed to read character file');
+            // Serialize the old avatar's read-modify-unlink against concurrent /edit, /edit-attribute,
+            // /merge-attributes and /delete on the same file, or an in-flight edit can rewrite the old
+            // path after this rename removed it and resurrect an orphaned card. The name queue is always
+            // acquired before this avatar queue, so the two-queue lock order can't deadlock.
+            return await CHARACTER_AVATAR_QUEUE.run(oldAvatarPath, async () => {
+                let newCharacterCreated = false;
+                let newChatsCreated = false;
 
-                const oldData = getCharaCardV2(JSON.parse(rawOldData), request.user.directories);
-                _.set(oldData, 'data.name', newName);
-                _.set(oldData, 'name', newName);
-                const newData = JSON.stringify(oldData);
+                try {
+                    // Read old file, replace name in it
+                    const rawOldData = await readCharacterData(oldAvatarPath);
+                    if (rawOldData === undefined) throw new Error('Failed to read character file');
 
-                const writeSucceeded = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
-                if (!writeSucceeded) {
-                    throw new Error(`Failed to write renamed character file: ${newAvatarName}`);
-                }
-                newCharacterCreated = true;
+                    const oldData = getCharaCardV2(JSON.parse(rawOldData), request.user.directories);
+                    _.set(oldData, 'data.name', newName);
+                    _.set(oldData, 'name', newName);
+                    const newData = JSON.stringify(oldData);
 
-                // Keep the source chats until the old character file is removed successfully.
-                if (fs.existsSync(oldChatsPath)) {
-                    fs.mkdirSync(newChatsPath);
-                    newChatsCreated = true;
-                    fs.cpSync(oldChatsPath, newChatsPath, { recursive: true });
-                }
-
-                fs.unlinkSync(oldAvatarPath);
-
-                if (fs.existsSync(oldChatsPath)) {
-                    try {
-                        fs.rmSync(oldChatsPath, { recursive: true, force: true });
-                    } catch (cleanupError) {
-                        console.warn(`Failed to remove old chats after character rename: ${oldChatsPath}`, cleanupError);
+                    const writeSucceeded = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
+                    if (!writeSucceeded) {
+                        throw new Error(`Failed to write renamed character file: ${newAvatarName}`);
                     }
-                }
+                    newCharacterCreated = true;
 
-                return response.send({ avatar: newAvatarName });
-            } catch (error) {
-                // The original card and chats are still authoritative until oldAvatarPath is removed.
-                if (fs.existsSync(oldAvatarPath)) {
-                    if (newCharacterCreated && fs.existsSync(newAvatarPath)) {
+                    // Keep the source chats until the old character file is removed successfully.
+                    if (fs.existsSync(oldChatsPath)) {
+                        fs.mkdirSync(newChatsPath);
+                        newChatsCreated = true;
+                        fs.cpSync(oldChatsPath, newChatsPath, { recursive: true });
+                    }
+
+                    fs.unlinkSync(oldAvatarPath);
+
+                    if (fs.existsSync(oldChatsPath)) {
                         try {
-                            fs.unlinkSync(newAvatarPath);
+                            fs.rmSync(oldChatsPath, { recursive: true, force: true });
                         } catch (cleanupError) {
-                            console.warn(`Failed to remove renamed character after rename failure: ${newAvatarPath}`, cleanupError);
+                            console.warn(`Failed to remove old chats after character rename: ${oldChatsPath}`, cleanupError);
                         }
                     }
-                    if (newChatsCreated && fs.existsSync(newChatsPath)) {
-                        try {
-                            fs.rmSync(newChatsPath, { recursive: true, force: true });
-                        } catch (cleanupError) {
-                            console.warn(`Failed to remove copied chats after rename failure: ${newChatsPath}`, cleanupError);
+
+                    return response.send({ avatar: newAvatarName });
+                } catch (error) {
+                    // The original card and chats are still authoritative until oldAvatarPath is removed.
+                    if (fs.existsSync(oldAvatarPath)) {
+                        if (newCharacterCreated && fs.existsSync(newAvatarPath)) {
+                            try {
+                                fs.unlinkSync(newAvatarPath);
+                            } catch (cleanupError) {
+                                console.warn(`Failed to remove renamed character after rename failure: ${newAvatarPath}`, cleanupError);
+                            }
+                        }
+                        if (newChatsCreated && fs.existsSync(newChatsPath)) {
+                            try {
+                                fs.rmSync(newChatsPath, { recursive: true, force: true });
+                            } catch (cleanupError) {
+                                console.warn(`Failed to remove copied chats after rename failure: ${newChatsPath}`, cleanupError);
+                            }
                         }
                     }
+                    throw error;
                 }
-                throw error;
-            }
+            });
         });
     } catch (err) {
         console.error(err);
