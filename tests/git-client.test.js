@@ -17,6 +17,10 @@ const systemGit = {
     branchLocal: jest.fn(),
     checkout: jest.fn(),
     clone: jest.fn(),
+    checkIsRepo: jest.fn(),
+    branch: jest.fn(),
+    revparse: jest.fn(),
+    getRemotes: jest.fn(),
 };
 const simpleGit = jest.fn(() => systemGit);
 const httpClient = { request: jest.fn() };
@@ -92,6 +96,15 @@ describe('git client network transport', () => {
             await expect(operation()).rejects.toThrow('System git backend is incompatible with the enabled private request filter');
         }
         expect(simpleGit).not.toHaveBeenCalled();
+    });
+
+    test('reports an empty system-git repo (no commits or bare) as null instead of throwing', async () => {
+        systemGit.checkIsRepo.mockResolvedValue(true);
+        systemGit.branch.mockResolvedValue({ current: '' });
+        systemGit.revparse.mockRejectedValue(new Error('fatal: ambiguous argument \'HEAD\''));
+        const client = createGitClient({ backend: 'system', requireFilteredNetwork: false });
+
+        await expect(client.getRepositoryStatus('/tmp/repository')).resolves.toBeNull();
     });
 
     test('still allows local branch switching with system git when the request filter is enabled', async () => {

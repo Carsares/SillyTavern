@@ -160,8 +160,17 @@ class SimpleGitClient {
             return null;
         }
 
-        const currentBranchName = (await repository.branch()).current;
-        const currentCommitHash = await repository.revparse(['HEAD']);
+        let currentBranchName;
+        let currentCommitHash;
+        try {
+            currentBranchName = (await repository.branch()).current;
+            currentCommitHash = await repository.revparse(['HEAD']);
+        } catch {
+            // No commits yet, or a bare repo: report an empty status like the isomorphic-git backend,
+            // so /version stays 200 instead of throwing a 500
+            return null;
+        }
+
         const remotes = await repository.getRemotes(true);
         if (remotes.length === 0) {
             return { currentBranchName, currentCommitHash, isUpToDate: true, remoteUrl: '' };
