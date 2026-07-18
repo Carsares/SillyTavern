@@ -6074,6 +6074,45 @@ async function handleModernBridgeExtensionBranchSwitched() {
     return { ok: true };
 }
 
+// 同步通道：modern 侧编辑/删除消息后，强制在 iframe 内重开当前聊天文件，刷新内存中的 chat 与 integrity，
+// 从源头消除下次生成时的完整性冲突（区别于 useModernBridgeChatContext 仅在 chat 名变化时才重开）。
+async function handleModernBridgeReloadChat(payload = {}) {
+    const { avatar, groupId, chat: chatName } = payload || {};
+    await waitForModernBridgeReady();
+    const nextChatName = formatModernBridgeChatName(chatName);
+
+    if (groupId) {
+        const group = groups.find(x => x.id === groupId);
+        if (!group) {
+            throw new Error('原版生成引擎找不到当前选择的群聊。');
+        }
+        if (selected_group !== groupId) {
+            await openGroupById(groupId);
+        }
+        if (nextChatName) {
+            await openGroupChat(groupId, nextChatName);
+        }
+        return { ok: true };
+    }
+
+    const characterId = await getModernBridgeCharacterId(avatar);
+    if (characterId < 0) {
+        throw new Error('原版生成引擎找不到当前选择的角色。');
+    }
+    await selectCharacterById(characterId, { switchMenu: false });
+    if (nextChatName) {
+        await openCharacterChat(nextChatName);
+    }
+    return { ok: true };
+}
+
+// 同步通道：modern 侧编辑角色卡后，重载 iframe 内的角色列表，使后续生成看到最新角色数据。
+async function handleModernBridgeReloadCharacter() {
+    await waitForModernBridgeReady();
+    await getCharacters();
+    return { ok: true };
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -6123,6 +6162,14 @@ window.addEventListener('message', async (event) => {
         }
         if (action === BRIDGE_ACTIONS.EXTENSION_BRANCH_SWITCHED) {
             postModernBridgeResult(event, id, await handleModernBridgeExtensionBranchSwitched());
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.RELOAD_CHAT) {
+            postModernBridgeResult(event, id, await handleModernBridgeReloadChat(payload));
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.RELOAD_CHARACTER) {
+            postModernBridgeResult(event, id, await handleModernBridgeReloadCharacter());
             return;
         }
 

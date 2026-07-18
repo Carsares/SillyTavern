@@ -13,6 +13,9 @@ export const BRIDGE_ACTIONS = {
     STATUS: 'status',
     EXTENSION_INSTALLED: 'extensionInstalled',
     EXTENSION_BRANCH_SWITCHED: 'extensionBranchSwitched',
+    // 同步通道：modern 侧改动后通知 iframe 从后端重载，消除跨 frame 的陈旧快照。
+    RELOAD_CHAT: 'reloadChat',
+    RELOAD_CHARACTER: 'reloadCharacter',
 };
 
 // 各链路的超时档位（毫秒）。LOAD 为 iframe 加载超时；DEFAULT 覆盖 generate/swipe 这类重生成动作。
