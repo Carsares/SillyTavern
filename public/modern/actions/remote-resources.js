@@ -388,6 +388,22 @@ export function createRemoteResourceActions({
         state.remoteResources.credentialDrafts[`${providerId}:${credentialId}`] = value;
     }
 
+    // Persist a per-provider enabled preference so a broken resource site can be disabled globally.
+    async function toggleProviderEnabled(providerId, enabled) {
+        state.remoteResources.providerToggling = providerId;
+        render();
+        try {
+            const result = await apiFetch('/api/remote-resources/providers/preferences', {
+                body: { providerId, enabled },
+            });
+            state.remoteResources.providers = Array.isArray(result?.providers) ? result.providers : state.remoteResources.providers;
+            showToast(enabled ? '资源站已启用' : '资源站已禁用', providerId);
+        } finally {
+            state.remoteResources.providerToggling = '';
+            render();
+        }
+    }
+
     async function deleteRemoteRecord(id) {
         await apiFetch(`/api/remote-resources/records/${encodeURIComponent(id)}`, { method: 'DELETE' });
         state.remoteResources.records = state.remoteResources.records.filter(record => record.id !== id);
@@ -489,6 +505,7 @@ export function createRemoteResourceActions({
         setRemoteResourceTab,
         setRemoteResourceType,
         setRemoteUrlImport,
+        toggleProviderEnabled,
         toggleRemoteProvider,
     };
 }

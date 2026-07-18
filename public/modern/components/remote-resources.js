@@ -87,12 +87,16 @@ export function createRemoteResourceComponents(ctx) {
                 </button>
             </div>
             <div class="remote-provider-row">
-                ${searchableProviders.map(provider => `
-                    <label class="check-row remote-provider-check">
+                ${searchableProviders.map(provider => {
+        // A disabled provider is skipped by the backend search, so grey it out and annotate it here.
+        const enabled = provider.enabled !== false;
+        return `
+                    <label class="check-row remote-provider-check ${enabled ? '' : 'remote-provider-disabled'}">
                         <input type="checkbox" data-remote-provider="${escapeHtml(provider.id)}" ${remote.selectedProviders.includes(provider.id) ? 'checked' : ''}>
-                        <span>${escapeHtml(provider.name)}</span>
+                        <span>${escapeHtml(provider.name)}${enabled ? '' : ' · 已禁用'}</span>
                     </label>
-                `).join('') || '<span class="muted">暂无可搜索资源站</span>'}
+                `;
+    }).join('') || '<span class="muted">暂无可搜索资源站</span>'}
             </div>
             ${remote.errors.length ? `<div class="remote-resource-warning"><i class="fa-solid fa-triangle-exclamation"></i>${escapeHtml(remote.errors.join('；'))}</div>` : ''}
         </section>
@@ -172,19 +176,29 @@ export function createRemoteResourceComponents(ctx) {
             </button>
         </section>
         <div class="remote-provider-grid">
-            ${remote.providers.map(provider => `
-                <article class="resource-card remote-provider-card">
-                    <div class="card-head">
-                        <div>
-                            <h2 class="card-title">${escapeHtml(provider.name)}</h2>
-                            <div class="card-meta">${escapeHtml(provider.authMode === 'none' ? '匿名' : provider.authMode)} · ${escapeHtml(getProviderCapabilityLabel(provider))}</div>
-                        </div>
-                        <i class="fa-solid ${provider.supportsSearch ? 'fa-magnifying-glass' : 'fa-link'}"></i>
-                    </div>
-                    <p class="remote-description">${escapeHtml(provider.description)}</p>
-                </article>
-            `).join('')}
+            ${remote.providers.map(provider => renderProviderManageCard(provider)).join('')}
         </div>
+    `;
+    }
+
+    function renderProviderManageCard(provider) {
+        const enabled = provider.enabled !== false;
+        const toggling = state.remoteResources.providerToggling === provider.id;
+        return `
+        <article class="resource-card remote-provider-card ${enabled ? '' : 'remote-provider-disabled'}">
+            <div class="card-head">
+                <div>
+                    <h2 class="card-title">${escapeHtml(provider.name)}</h2>
+                    <div class="card-meta">${escapeHtml(provider.authMode === 'none' ? '匿名' : provider.authMode)} · ${escapeHtml(getProviderCapabilityLabel(provider))}</div>
+                </div>
+                <i class="fa-solid ${provider.supportsSearch ? 'fa-magnifying-glass' : 'fa-link'}"></i>
+            </div>
+            <p class="remote-description">${escapeHtml(provider.description)}</p>
+            <label class="check-row remote-provider-enable">
+                <input type="checkbox" data-toggle-provider-enabled data-provider-id="${escapeHtml(provider.id)}" ${enabled ? 'checked' : ''} ${toggling ? 'disabled' : ''}>
+                <span>${toggling ? '更新中…' : enabled ? '已启用' : '已禁用'}</span>
+            </label>
+        </article>
     `;
     }
 

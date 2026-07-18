@@ -16,6 +16,7 @@ export function createRemoteResourceEvents(ctx) {
         setRemoteResourceTab,
         setRemoteResourceType,
         setRemoteUrlImport,
+        toggleProviderEnabled,
         toggleRemoteProvider,
     } = ctx;
 
@@ -104,6 +105,13 @@ export function createRemoteResourceEvents(ctx) {
 
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-remote-provider]')) {
             toggleRemoteProvider(event.target.dataset.remoteProvider, event.target.checked);
+            return;
+        }
+
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-toggle-provider-enabled]')) {
+            const providerId = event.target.dataset.providerId;
+            const enabled = event.target.checked;
+            runRemoteAction('remote-provider-toggle', '资源站启用状态更新失败', () => toggleProviderEnabled(providerId, enabled));
             return;
         }
 

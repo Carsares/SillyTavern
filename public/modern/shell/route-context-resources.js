@@ -248,6 +248,7 @@ export function createRemoteResourceRouteContext(remoteResources) {
         setRemoteResourceTab,
         setRemoteResourceType,
         setRemoteUrlImport,
+        toggleProviderEnabled,
         toggleRemoteProvider,
     } = remoteResources;
 
@@ -266,6 +267,7 @@ export function createRemoteResourceRouteContext(remoteResources) {
         setRemoteResourceTab,
         setRemoteResourceType,
         setRemoteUrlImport,
+        toggleProviderEnabled,
         toggleRemoteProvider,
     };
 }

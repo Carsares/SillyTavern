@@ -309,6 +309,7 @@ export function createModernState() {
             },
             credentialDrafts: {},
             credentialSaving: '',
+            providerToggling: '',
         },
         settingsSnapshots: {
             loaded: false,
