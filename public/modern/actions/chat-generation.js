@@ -64,10 +64,20 @@ export function createChatGenerationActions({
     function updateStreamBubble(text) {
         const value = String(text ?? '');
         state.engine.streaming.text = value;
+        // 仅当气泡属于当前正查看的聊天时才定点更新，避免生成期切到别的聊天后把本段生成写进错误视图。
+        if (state.engine.streaming.chatId !== state.selected.chat) {
+            return;
+        }
         const bodyEl = document.querySelector('[data-streaming-bubble] .message-body');
-        if (bodyEl) {
-            bodyEl.textContent = value;
-            bodyEl.closest('[data-streaming-bubble]')?.scrollIntoView({ block: 'end' });
+        if (!bodyEl) {
+            return;
+        }
+        bodyEl.textContent = value;
+        // 仅当用户仍在跟读底部（气泡尚在视口附近）时才滚动，避免生成期上滑看历史被每 token 反复拉回底部。用视口坐标判断，与滚动容器无关。
+        const bubble = bodyEl.closest('[data-streaming-bubble]');
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        if (bubble && bubble.getBoundingClientRect().top < viewportHeight + 400) {
+            bubble.scrollIntoView({ block: 'end' });
         }
     }
 
@@ -170,8 +180,8 @@ export function createChatGenerationActions({
             throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
 
-        // 生成开始前置流式气泡状态，beginGeneration 的 render() 会一次性把气泡插入 DOM
-        state.engine.streaming = { active: true, text: '' };
+        // 生成开始前置流式气泡状态并绑定发起生成的 chatId，beginGeneration 的 render() 会一次性把气泡插入 DOM
+        state.engine.streaming = { active: true, text: '', chatId };
         const token = beginGeneration('生成中', `${entityName} · ${chatId}`);
         // onProgress 只做定点 DOM 更新，不触发 render()，避免每 token 全量重建；stale 守卫按 token 丢弃旧流
         const unsubscribe = subscribeProgress((data) => {
@@ -216,7 +226,7 @@ export function createChatGenerationActions({
         } finally {
             // 取消订阅并关闭气泡；syncGeneratedChat 已带真实消息全量重渲染收尾，finishGeneration 的 render() 移除气泡
             unsubscribe();
-            state.engine.streaming = { active: false, text: '' };
+            state.engine.streaming = { active: false, text: '', chatId: '' };
             finishGeneration(token);
         }
     }

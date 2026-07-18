@@ -16,8 +16,9 @@ function inferPresetApiId(preset) {
     if (has('chat_completion_source') || has('openai_model') || (has('prompts') && has('prompt_order'))) {
         return 'openai';
     }
-    // textgenerationwebui：文本补全采样字段（已排除 openai 信号）
-    if (has('sampler_order') || has('dynatemp') || has('max_tokens_second') || has('rep_pen')) {
+    // textgenerationwebui：仅用 textgen 独有强信号；sampler_order/rep_pen 与 KoboldAI 共享，属弱信号，
+    // 命中即返回会把 KoboldAI 预设误判进 textgen 目录，故交用户选择而非强判。
+    if (has('dynatemp') || has('max_tokens_second')) {
         return 'textgenerationwebui';
     }
     // instruct：指令模板同时含输入与输出序列
@@ -334,7 +335,19 @@ export function createRemoteResourceActions({
 
     async function savePresetImport(item, preset, apiId) {
         const name = (item.title || item.id || 'preset').trim();
-        const saved = await apiFetch('/api/presets/save', { body: { name, preset, apiId } });
+        // 预设导入默认非破坏性：先以 overwrite:false 试写，命中同名（409）时需用户确认才覆盖，避免静默销毁本地定制预设。
+        let saved;
+        try {
+            saved = await apiFetch('/api/presets/save', { body: { name, preset, apiId, overwrite: false } });
+        } catch (error) {
+            if (error?.status !== 409) {
+                throw error;
+            }
+            if (!confirmAction(`同名预设“${name}”已存在，继续导入将覆盖现有内容。是否继续？`)) {
+                throw new Error('已取消预设覆盖。');
+            }
+            saved = await apiFetch('/api/presets/save', { body: { name, preset, apiId, overwrite: true } });
+        }
         const savedName = saved?.name || name;
         await saveRemoteRecord({
             providerId: item.providerId,

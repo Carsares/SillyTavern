@@ -247,7 +247,7 @@ export function createModernState() {
             ready: false,
             detail: '生成引擎会在首次发送时自动加载。',
             // 流式输出气泡状态：active 为真时在消息列表末尾追加流式气泡，text 保存到当前的累积文本用于重渲染兜底
-            streaming: { active: false, text: '' },
+            streaming: { active: false, text: '', chatId: '' },
         },
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),
@@ -257,6 +257,7 @@ export function createModernState() {
             itemizedPrompt: {
                 loading: false,
                 loaded: false,
+                chatId: '',
                 expanded: true,
                 error: '',
                 data: null,

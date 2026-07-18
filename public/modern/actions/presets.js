@@ -255,31 +255,44 @@ export function createPresetActions({
     }
 
     // 编辑指定 OpenAI 预设的 prompt_order（启用切换 / 顺序调整）。mutate 就地改写激活角色的 order 数组，
+    // prompt_order 保存的 in-flight 标志，防止快速连点造成并发陈旧读互相覆盖。
+    let promptOrderSaving = false;
+
     // 复用 savePresetFile 落盘；若编辑的是当前生效预设，同步写回运行态 oai_settings.prompt_order，
     // 因为 reloadSettings 从 settings（而非预设文件）读取 prompt_order，不同步则改动不会立即生效。
     async function saveOpenAiPromptOrder(presetName, mutate) {
-        const preset = parsePreset(getPresetContent('openai', presetName));
-        const orderEntry = getOpenAiPromptOrderEntry(preset);
-        if (!orderEntry) {
-            throw new Error('该预设没有可编辑的 prompt 排序数据。');
+        // in-flight 守卫：丢弃保存进行中的并发点击。否则两次 handler 都读到 loadData 刷新前的旧持久态、
+        // 各自 mutate 后互相覆盖，导致快速连点丢失一次切换。
+        if (promptOrderSaving) {
+            return;
         }
+        promptOrderSaving = true;
+        try {
+            const preset = parsePreset(getPresetContent('openai', presetName));
+            const orderEntry = getOpenAiPromptOrderEntry(preset);
+            if (!orderEntry) {
+                throw new Error('该预设没有可编辑的 prompt 排序数据。');
+            }
 
-        mutate(orderEntry.order);
-        const savedName = await savePresetFile('openai', presetName, preset);
+            mutate(orderEntry.order);
+            const savedName = await savePresetFile('openai', presetName, preset);
 
-        if (getOaiSettings().preset_settings_openai === presetName) {
-            state.settings.oai_settings = state.settings.oai_settings || {};
-            state.settings.oai_settings.prompt_order = structuredClone(preset.prompt_order);
-            await saveSettingsSerialized(apiFetch, state.settings);
+            if (getOaiSettings().preset_settings_openai === presetName) {
+                state.settings.oai_settings = state.settings.oai_settings || {};
+                state.settings.oai_settings.prompt_order = structuredClone(preset.prompt_order);
+                await saveSettingsSerialized(apiFetch, state.settings);
+            }
+
+            state.presetSelection = { apiId: 'openai', name: savedName };
+            state.presetEditor = { apiId: '', name: '', json: '', error: '' };
+            await loadData({ silent: true });
+            showToast('Prompt 顺序已更新', savedName);
+            // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+            await reloadSettings();
+            render();
+        } finally {
+            promptOrderSaving = false;
         }
-
-        state.presetSelection = { apiId: 'openai', name: savedName };
-        state.presetEditor = { apiId: '', name: '', json: '', error: '' };
-        await loadData({ silent: true });
-        showToast('Prompt 顺序已更新', savedName);
-        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
-        await reloadSettings();
-        render();
     }
 
     async function togglePromptOrderEntry(presetName, identifier) {

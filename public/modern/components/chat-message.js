@@ -43,7 +43,8 @@ export function createChatMessageComponents({
     // 流式气泡：生成期间追加在消息列表末尾，onProgress 定点更新其 message-body；text 用于全量重渲染时的兜底恢复
     function renderStreamingBubble() {
         const streaming = state.engine.streaming;
-        if (!streaming?.active) {
+        // 仅在气泡属于当前正查看的聊天时渲染，避免生成期切换聊天把上段生成泄漏到别的聊天视图。
+        if (!streaming?.active || streaming.chatId !== state.selected.chat) {
             return '';
         }
 

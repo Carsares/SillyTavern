@@ -137,6 +137,14 @@ export function createSettingsActions({
             throw new Error(`JSON 格式错误：${error.message}`);
         }
 
+        // settings.json 必须是对象；数组/基础类型会覆盖后写坏配置（oai_settings 等变 undefined），此处在快照/写入前拦截。
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            const message = '设置必须是一个 JSON 对象（不能是数组或其它类型）。';
+            state.rawSettingsEditor.error = message;
+            render();
+            throw new Error(message);
+        }
+
         state.rawSettingsEditor.saving = true;
         state.rawSettingsEditor.error = '';
         render();

@@ -19,6 +19,8 @@ export function createInspectorItemizedActions({ state, callLegacyBridge, render
         try {
             const snapshot = await callLegacyBridge(BRIDGE_ACTIONS.GET_ITEMIZED_PROMPT, {}, BRIDGE_TIMEOUTS.STATUS);
             view.loaded = true;
+            // 记录快照所属聊天，切换聊天后据此判定为过期并重新拉取，避免展示别的聊天的旧分解。
+            view.chatId = state.selected.chat;
             view.data = snapshot?.available ? snapshot : null;
         } catch (error) {
             view.error = error.message;
@@ -31,7 +33,11 @@ export function createInspectorItemizedActions({ state, callLegacyBridge, render
     // inspector 打开时按需首拉：仅在 chat 路由且尚未拉取过时触发，后续更新由刷新按钮驱动，避免重复重算 token。
     function refreshItemizedPromptOnInspectorOpen() {
         const view = getView();
-        if (state.route !== 'chat' || view.loaded || view.loading) {
+        if (state.route !== 'chat' || view.loading) {
+            return;
+        }
+        // 已加载且仍是同一聊天才跳过；切换聊天后 chatId 不匹配，重新拉取当前聊天的分解。
+        if (view.loaded && view.chatId === state.selected.chat) {
             return;
         }
         refreshItemizedPrompt();
