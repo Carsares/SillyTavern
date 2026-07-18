@@ -127,6 +127,7 @@
         "start:no-csrf": "node server.js --disableCsrf",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
+        "typecheck:modern": "tsc -p public/modern/tsconfig.json --noEmit",
         "plugins:update": "node plugins update",
         "plugins:install": "node plugins install"
     },
