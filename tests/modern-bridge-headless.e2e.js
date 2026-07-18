@@ -81,4 +81,35 @@ test.describe('Modern legacy bridge headless entry', () => {
         expect(status.result).toBeTruthy();
         expect(errors).toEqual([]);
     });
+
+    // The hidden iframe holds a boot-time settings snapshot, so any settings write-back would revert
+    // what the modern UI just saved. saveSettings is short-circuited in bridge mode; assert that even an
+    // explicit debounced save never reaches /api/settings/save.
+    test('never writes settings back from the bridge iframe', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        let settingsSaveCount = 0;
+        await page.route('**/api/settings/save', route => {
+            settingsSaveCount++;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+
+        // Force an immediate settings save through the exposed context; the bridge guard must swallow it.
+        await page.evaluate(async () => {
+            const save = window.SillyTavern?.getContext?.().saveSettingsDebounced;
+            if (typeof save === 'function') {
+                save();
+                if (typeof save.flush === 'function') {
+                    save.flush();
+                }
+            }
+        });
+        // Intentional wait: we assert the ABSENCE of a settings POST, so allow the debounce window to elapse.
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(2500);
+
+        expect(settingsSaveCount).toBe(0);
+    });
 });
