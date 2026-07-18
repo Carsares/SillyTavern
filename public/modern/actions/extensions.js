@@ -1,3 +1,5 @@
+import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
+
 export function createExtensionActions({
     state,
     apiFetch,
@@ -86,7 +88,7 @@ export function createExtensionActions({
             await loadData({ silent: true });
             showToast('扩展已安装', result?.display_name || result?.folderName || parsedUrl.pathname.split('/').pop());
             try {
-                await callLegacyBridge('extensionInstalled', { response: result }, 60000);
+                await callLegacyBridge(BRIDGE_ACTIONS.EXTENSION_INSTALLED, { response: result }, BRIDGE_TIMEOUTS.EXTENSION);
             } catch (error) {
                 showToast('扩展已安装，请刷新页面完成初始化', error.message);
             }
@@ -198,7 +200,7 @@ export function createExtensionActions({
                 },
             });
             try {
-                await callLegacyBridge('extensionBranchSwitched', {}, 60000);
+                await callLegacyBridge(BRIDGE_ACTIONS.EXTENSION_BRANCH_SWITCHED, {}, BRIDGE_TIMEOUTS.EXTENSION);
             } catch (error) {
                 showToast('扩展设置同步失败，请刷新页面', error.message);
             }

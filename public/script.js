@@ -13,6 +13,7 @@ import {
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
+import { BRIDGE_SOURCE, BRIDGE_ACTIONS } from './modern/core/bridge-protocol.js';
 import {
     generateKoboldWithStreaming,
     kai_settings,
@@ -5912,7 +5913,7 @@ export function stopGeneration() {
     return stopped;
 }
 
-const modernBridgeSource = 'sillytavern-modern-bridge';
+const modernBridgeSource = BRIDGE_SOURCE;
 
 function formatModernBridgeChatName(chatName) {
     return String(chatName || '').replace(/\.jsonl$/i, '');
@@ -6086,19 +6087,19 @@ window.addEventListener('message', async (event) => {
     }
 
     try {
-        if (action === 'generate') {
+        if (action === BRIDGE_ACTIONS.GENERATE) {
             postModernBridgeResult(event, id, await handleModernBridgeGenerate(payload));
             return;
         }
-        if (action === 'swipe') {
+        if (action === BRIDGE_ACTIONS.SWIPE) {
             postModernBridgeResult(event, id, await handleModernBridgeSwipe(payload));
             return;
         }
-        if (action === 'stop') {
+        if (action === BRIDGE_ACTIONS.STOP) {
             postModernBridgeResult(event, id, { stopped: stopGeneration() });
             return;
         }
-        if (action === 'status') {
+        if (action === BRIDGE_ACTIONS.STATUS) {
             const context = payload?.groupId || payload?.avatar ? await useModernBridgeChatContext(payload) : {};
             const group = context.group || (selected_group ? groups.find(x => x.id === selected_group) : null);
             postModernBridgeResult(event, id, {
@@ -6109,11 +6110,11 @@ window.addEventListener('message', async (event) => {
             });
             return;
         }
-        if (action === 'extensionInstalled') {
+        if (action === BRIDGE_ACTIONS.EXTENSION_INSTALLED) {
             postModernBridgeResult(event, id, await handleModernBridgeExtensionInstalled(payload));
             return;
         }
-        if (action === 'extensionBranchSwitched') {
+        if (action === BRIDGE_ACTIONS.EXTENSION_BRANCH_SWITCHED) {
             postModernBridgeResult(event, id, await handleModernBridgeExtensionBranchSwitched());
             return;
         }

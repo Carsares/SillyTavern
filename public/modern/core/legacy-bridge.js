@@ -1,12 +1,12 @@
-const defaultBridgeSource = 'sillytavern-modern-bridge';
+import { BRIDGE_SOURCE, BRIDGE_TIMEOUTS } from './bridge-protocol.js';
 
 export function createLegacyBridge({
-    source = defaultBridgeSource,
+    source = BRIDGE_SOURCE,
     frameSrc = '/index.html?modernBridge=1',
     frameTitle = 'SillyTavern legacy generation engine',
     origin = window.location.origin,
-    loadTimeoutMs = 30000,
-    defaultTimeoutMs = 180000,
+    loadTimeoutMs = BRIDGE_TIMEOUTS.LOAD,
+    defaultTimeoutMs = BRIDGE_TIMEOUTS.DEFAULT,
 } = {}) {
     const bridge = {
         frame: null,

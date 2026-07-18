@@ -1,3 +1,4 @@
+import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
 import { downloadFile } from '../core/utils.js';
 
 const remoteResourceTypes = new Set(['', 'character', 'worldbook', 'extension', 'asset', 'preset']);
@@ -466,7 +467,7 @@ export function createRemoteResourceActions({
             await loadData({ silent: true });
             showToast('扩展已安装', result?.display_name || result?.folderName || item.title);
             try {
-                await callLegacyBridge('extensionInstalled', { response: result }, 60000);
+                await callLegacyBridge(BRIDGE_ACTIONS.EXTENSION_INSTALLED, { response: result }, BRIDGE_TIMEOUTS.EXTENSION);
             } catch (error) {
                 showToast('扩展已安装，请刷新页面完成初始化', error.message);
             }

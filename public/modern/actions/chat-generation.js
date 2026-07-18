@@ -1,3 +1,4 @@
+import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
 import { stripJsonlExtension } from '../core/utils.js';
 
 export function createChatGenerationActions({
@@ -111,11 +112,11 @@ export function createChatGenerationActions({
         render();
 
         try {
-            const result = await callLegacyBridge('status', {
+            const result = await callLegacyBridge(BRIDGE_ACTIONS.STATUS, {
                 avatar: isGroupChatMode() ? null : entity?.avatar,
                 groupId: isGroupChatMode() ? entity?.id : null,
                 chat: state.selected.chat || '',
-            }, 60000);
+            }, BRIDGE_TIMEOUTS.STATUS);
             const messageCount = Number(result?.messageCount || 0);
             state.engine.ready = true;
             state.engine.status = '引擎就绪';
@@ -163,7 +164,7 @@ export function createChatGenerationActions({
                 if (stoppedGenerationTokens.has(token)) {
                     throw new Error('生成已停止');
                 }
-                const result = await callLegacyBridge('generate', {
+                const result = await callLegacyBridge(BRIDGE_ACTIONS.GENERATE, {
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
                     chat: chatId,
@@ -218,7 +219,7 @@ export function createChatGenerationActions({
                 if (stoppedGenerationTokens.has(token)) {
                     throw new Error('生成已停止');
                 }
-                const result = await callLegacyBridge('swipe', {
+                const result = await callLegacyBridge(BRIDGE_ACTIONS.SWIPE, {
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
                     chat: chatId,
@@ -392,7 +393,7 @@ export function createChatGenerationActions({
         state.engine.detail = '正在向生成引擎发送停止请求。';
         render();
         try {
-            await callLegacyBridge('stop', {}, 15000);
+            await callLegacyBridge(BRIDGE_ACTIONS.STOP, {}, BRIDGE_TIMEOUTS.STOP);
             if (activeGenerationToken === token) {
                 state.engine.detail = '停止请求已发送，正在等待生成任务结束。';
             }
