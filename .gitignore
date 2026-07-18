@@ -58,3 +58,6 @@ public/scripts/extensions/third-party
 yarn.lock
 *.code-workspace
 test-results/
+
+# Claude Code local tooling (agent worktrees, settings) — not part of the project
+.claude/
