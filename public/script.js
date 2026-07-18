@@ -6113,6 +6113,53 @@ async function handleModernBridgeReloadCharacter() {
     return { ok: true };
 }
 
+// 同步通道：modern 侧改预设/模型/设置后，重新拉取并只应用「生成相关配置」子集，让下次生成生效。
+// 刻意跳过一次性初始化，避免重复调用 getSettings 造成副作用：initMacros（会重复注册 GENERATION_* 监听
+// 并累积）、accountStorage.init、setUserControls、loadExtensionSettings、onboarding/firstRun，以及
+// SETTINGS_LOADED_BEFORE/AFTER/SETTINGS_LOADED 事件重放（会触发一次性订阅者）。
+// 注：loadTextGenSettings 会在 textgen URL 控件上重绑 input 监听，但隐藏 iframe 无输入事件触发，实际无副作用。
+async function handleModernBridgeReloadSettings() {
+    await waitForModernBridgeReady();
+    const response = await fetch('/api/settings/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+        cache: 'no-cache',
+    });
+    if (!response.ok) {
+        throw new Error('原版生成引擎无法重新加载设置。');
+    }
+    const data = await response.json();
+    if (data.result === 'file not find' || !data.settings) {
+        return { ok: true };
+    }
+
+    settings = JSON.parse(data.settings);
+    amount_gen = settings.amount_gen;
+    if (settings.max_context !== undefined) {
+        max_context = parseInt(settings.max_context);
+    }
+
+    loadKoboldSettings(data, settings.kai_settings ?? settings, settings);
+    loadNovelSettings(data, settings.nai_settings ?? settings);
+    await loadTextGenSettings(data, settings);
+    loadOpenAISettings(data, settings.oai_settings ?? settings);
+    loadHordeSettings(settings);
+    await loadPowerUserSettings(settings, data);
+    applyPowerUserSettings();
+    setWorldInfoSettings(settings.world_info_settings ?? settings, data);
+
+    if (settings.main_api) {
+        main_api = settings.main_api === 'poe' ? 'openai' : settings.main_api;
+        $('#main_api').val(main_api);
+        changeMainAPI();
+    }
+    $('#max_context').val(max_context);
+    $('#amount_gen').val(amount_gen);
+    await validateDisabledSamplers();
+    return { ok: true };
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -6170,6 +6217,10 @@ window.addEventListener('message', async (event) => {
         }
         if (action === BRIDGE_ACTIONS.RELOAD_CHARACTER) {
             postModernBridgeResult(event, id, await handleModernBridgeReloadCharacter());
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.RELOAD_SETTINGS) {
+            postModernBridgeResult(event, id, await handleModernBridgeReloadSettings());
             return;
         }
 

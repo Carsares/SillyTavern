@@ -112,4 +112,40 @@ test.describe('Modern legacy bridge headless entry', () => {
 
         expect(settingsSaveCount).toBe(0);
     });
+
+    // The sync channel lets the modern UI push reloads into the iframe. reloadSettings re-applies the
+    // generation config subset and reloadCharacter reloads the character list; both must complete without
+    // error in the real engine (reloadChat needs a selected chat context and is exercised elsewhere).
+    test('answers reload sync actions without error', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+
+        const roundTrip = action => page.evaluate(bridgeAction => new Promise((resolve, reject) => {
+            const source = 'sillytavern-modern-bridge';
+            const id = `reload-smoke-${bridgeAction}`;
+            const timer = setTimeout(() => reject(new Error(`bridge ${bridgeAction} timeout`)), 60000);
+            window.addEventListener('message', function onMessage(event) {
+                if (event.data && event.data.source === source && event.data.id === id && !('action' in event.data)) {
+                    window.removeEventListener('message', onMessage);
+                    clearTimeout(timer);
+                    resolve({ error: event.data.error, result: event.data.result });
+                }
+            });
+            window.postMessage({ source, id, action: bridgeAction, payload: {} }, location.origin);
+        }), action);
+
+        const settingsReload = await roundTrip('reloadSettings');
+        expect(settingsReload.error).toBeFalsy();
+        expect(settingsReload.result).toMatchObject({ ok: true });
+
+        const characterReload = await roundTrip('reloadCharacter');
+        expect(characterReload.error).toBeFalsy();
+        expect(characterReload.result).toMatchObject({ ok: true });
+
+        expect(errors).toEqual([]);
+    });
 });
