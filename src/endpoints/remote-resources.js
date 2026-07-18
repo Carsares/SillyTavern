@@ -3,6 +3,7 @@ import express from 'express';
 import { getRemoteResourceProviders, searchRemoteResources, downloadRemoteResource } from '../remote-resources/provider-registry.js';
 import { addRemoteImportRecord, deleteRemoteImportRecord, readRemoteImportRecords } from '../remote-resources/import-records.js';
 import { removeRemoteCredential, saveRemoteCredential } from '../remote-resources/credentials.js';
+import { setProviderEnabled } from '../remote-resources/provider-preferences.js';
 
 export const router = express.Router();
 
@@ -12,6 +13,17 @@ router.get('/providers', async (request, response) => {
     } catch (error) {
         console.error('Failed to list remote resource providers:', error);
         return response.sendStatus(500);
+    }
+});
+
+router.post('/providers/preferences', (request, response) => {
+    try {
+        const { providerId, enabled } = request.body || {};
+        setProviderEnabled(request.user.directories, providerId, enabled);
+        return response.send({ providers: getRemoteResourceProviders(request.user.directories) });
+    } catch (error) {
+        console.error('Failed to update remote resource provider preference:', error);
+        return response.status(400).send(error.message);
     }
 });
 

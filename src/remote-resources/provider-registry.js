@@ -33,6 +33,7 @@ import { blobfish23NeocitiesProvider } from './providers/blobfish23-neocities.js
 import { malliebotsProvider } from './providers/malliebots.js';
 import { snomblerNeocitiesProvider } from './providers/snombler-neocities.js';
 import { getRemoteCredentialState } from './credentials.js';
+import { providerEnabledFromMap, readProviderPreferences } from './provider-preferences.js';
 
 const PROVIDERS = [
     officialContentProvider,
@@ -73,6 +74,7 @@ const PROVIDERS = [
 
 export function getRemoteResourceProviders(directories) {
     const credentialState = getRemoteCredentialState(directories);
+    const preferences = readProviderPreferences(directories);
     return PROVIDERS.map(provider => ({
         id: provider.id,
         name: provider.name,
@@ -82,17 +84,20 @@ export function getRemoteResourceProviders(directories) {
         supportsDownload: Boolean(provider.supportsDownload),
         supportsInstall: Boolean(provider.supportsInstall),
         supportsUrlImport: Boolean(provider.supportsUrlImport),
+        enabled: providerEnabledFromMap(preferences, provider.id),
         credentials: credentialState[provider.id] || [],
     }));
 }
 
 export async function searchRemoteResources(params, directories) {
+    const preferences = readProviderPreferences(directories);
     const providerIds = Array.isArray(params.providers) && params.providers.length ? params.providers : PROVIDERS.filter(provider => provider.supportsSearch).map(provider => provider.id);
     const resourceType = params.resourceType || '';
     // A provider can only be searched once per request, even if a crafted client repeats its ID.
+    // Disabled providers are skipped even if a client requests them explicitly.
     const searches = [...new Set(providerIds)]
         .map(id => PROVIDERS.find(provider => provider.id === id))
-        .filter(provider => provider?.supportsSearch)
+        .filter(provider => provider?.supportsSearch && providerEnabledFromMap(preferences, provider.id))
         .map(provider => searchProvider(provider, { ...params, resourceType }, directories));
 
     const results = await Promise.allSettled(searches);
