@@ -8,6 +8,7 @@ import {
 } from './core/constants.js';
 import { createApiClient } from './core/api-client.js';
 import { createBridgeReload } from './core/bridge-reload.js';
+import { createInspectorItemizedActions } from './actions/inspector-itemized.js';
 import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
 import { getElementScrollTop, getScrollTop, restoreElementScrollTop, restoreScrollTop } from './core/scroll-state.js';
@@ -181,6 +182,15 @@ const { renderInspector, toggleInspector } = createInspector({
     isGroupChatMode,
     renderKeyValue,
 });
+const {
+    refreshItemizedPrompt,
+    refreshItemizedPromptOnInspectorOpen,
+    toggleItemizedPrompt,
+} = createInspectorItemizedActions({
+    state,
+    callLegacyBridge,
+    renderInspector,
+});
 const { closePalette, openPalette, renderPalette } = createPalette({
     state,
     elements,
@@ -283,6 +293,9 @@ const { handleClick } = createRouter({
     selectPreset,
     toggleInspector,
     toggleChatSidebar,
+    refreshItemizedPromptOnInspectorOpen,
+    refreshItemizedPrompt,
+    toggleItemizedPrompt,
     closePalette,
     closeChatSidebarForMobileSelection,
 });
@@ -297,6 +310,24 @@ function render() {
 
 let chatUnreadPolling = false;
 
+// Compact per-chat signature (id, last message time, message count) stands in for a full
+// JSON.stringify of every chat list; these are the only fields the unread poll reacts to,
+// so the string changes exactly when a badge or the list ordering would
+function buildChatListsSignature() {
+    const parts = [];
+    for (const contextKey of Object.keys(state.chatLists).sort()) {
+        const chats = state.chatLists[contextKey];
+        if (!Array.isArray(chats)) {
+            continue;
+        }
+        parts.push(`${contextKey}#${chats.length}`);
+        for (const chat of chats) {
+            parts.push(`${getChatId(chat)}:${chat?.last_mes ?? ''}:${getChatMessageCount(chat)}`);
+        }
+    }
+    return parts.join('|');
+}
+
 async function pollChatUnreadState() {
     if (!state.loaded || document.hidden || chatUnreadPolling) {
         return;
@@ -305,9 +336,9 @@ async function pollChatUnreadState() {
     chatUnreadPolling = true;
     try {
         // Snapshot the poll-visible chat data first; an unchanged poll skips the re-render so reading isn't interrupted
-        const chatListsSignature = JSON.stringify(state.chatLists);
+        const chatListsSignature = buildChatListsSignature();
         await refreshSelectedChatUnreadState();
-        if (JSON.stringify(state.chatLists) === chatListsSignature) {
+        if (buildChatListsSignature() === chatListsSignature) {
             return;
         }
 

@@ -53,6 +53,25 @@
     font-size: 14px;
 }
 
+.inspector-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.inspector-section-head .inspector-title {
+    margin: 0;
+}
+
+.inspector-section-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+}
+
 .kv-list {
     display: grid;
     gap: 8px;

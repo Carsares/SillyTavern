@@ -21,6 +21,9 @@ export function createRouter({
     selectPreset,
     toggleInspector,
     toggleChatSidebar,
+    refreshItemizedPromptOnInspectorOpen,
+    refreshItemizedPrompt,
+    toggleItemizedPrompt,
     closePalette,
     closeChatSidebarForMobileSelection,
     getBackgroundFilename,
@@ -92,6 +95,19 @@ export function createRouter({
     async function handleClick(event) {
         if (event.target.closest('[data-toggle-inspector]')) {
             toggleInspector();
+            if (state.inspectorOpen) {
+                refreshItemizedPromptOnInspectorOpen();
+            }
+            return;
+        }
+
+        if (event.target.closest('[data-refresh-itemized-prompt]')) {
+            await refreshItemizedPrompt();
+            return;
+        }
+
+        if (event.target.closest('[data-toggle-itemized-prompt]')) {
+            toggleItemizedPrompt();
             return;
         }
 

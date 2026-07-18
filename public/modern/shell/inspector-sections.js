@@ -1,5 +1,5 @@
 import { routeLabels } from '../core/constants.js';
-import { formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
+import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
 import { createInspectorAssetSection } from './inspector-asset-section.js';
 
 export function createInspectorSections({
@@ -62,6 +62,61 @@ export function createInspectorSections({
             ['生成状态', state.engine.status],
             ['备份面板', state.chatBackups.open ? '已打开' : '未打开'],
         ]);
+    }
+
+    function renderItemizedPromptBody(view) {
+        if (view.loading) {
+            return '<p class="muted">正在读取提示词分解…</p>';
+        }
+        if (view.error) {
+            return `<p class="muted">读取失败：${escapeHtml(view.error)}</p>`;
+        }
+        if (!view.loaded) {
+            return '<p class="muted">展开上下文抽屉后自动读取，或点击刷新。</p>';
+        }
+
+        const data = view.data;
+        if (!data) {
+            return '<p class="muted">暂无最近生成的提示词分解数据。</p>';
+        }
+
+        const metaRows = [
+            ['主 API', data.apiFriendlyName || data.mainApi || '未知'],
+            ['模型', data.modelUsed || '未知'],
+            ['预设', data.presetName || '未知'],
+            ['分词器', data.tokenizer || '未知'],
+            ['最大上下文', `${formatNumber(data.maxContext)} tokens`],
+            ['提示词总量', `${formatNumber(data.totalTokens)} tokens`],
+        ];
+        const partRows = data.parts.map(part => [part.name, `${formatNumber(part.tokens)} tokens`]);
+
+        return `
+            <div class="kv-list">
+                ${metaRows.map(([label, value]) => renderKeyValue(label, value)).join('')}
+            </div>
+            <div class="kv-list">
+                ${partRows.map(([label, value]) => renderKeyValue(label, value)).join('')}
+            </div>
+        `;
+    }
+
+    // 只读展示：本次生成提示词分解 section，可折叠、带刷新按钮；数据全部来自 legacy bridge 的只读快照。
+    function renderItemizedPromptSection() {
+        const view = state.inspector?.itemizedPrompt || {};
+        return `
+            <section class="inspector-section">
+                <div class="inspector-section-head" data-toggle-itemized-prompt role="button" tabindex="0" aria-expanded="${view.expanded ? 'true' : 'false'}">
+                    <h2 class="inspector-title">本次生成提示词分解</h2>
+                    <div class="inspector-section-actions">
+                        <button class="icon-button mini" type="button" data-refresh-itemized-prompt title="刷新提示词分解"${view.loading ? ' disabled' : ''}>
+                            <i class="fa-solid fa-rotate${view.loading ? ' fa-spin' : ''}"></i>
+                        </button>
+                        <i class="fa-solid ${view.expanded ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
+                    </div>
+                </div>
+                ${view.expanded ? renderItemizedPromptBody(view) : ''}
+            </section>
+        `;
     }
 
     function renderApiContextSection(provider) {
@@ -220,7 +275,7 @@ export function createInspectorSections({
             case 'dashboard':
                 return renderDashboardContextSection(provider);
             case 'chat':
-                return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat);
+                return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat) + renderItemizedPromptSection();
             case 'api':
                 return renderApiContextSection(provider);
             case 'worldbooks':

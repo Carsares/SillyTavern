@@ -6160,6 +6160,71 @@ async function handleModernBridgeReloadSettings() {
     return { ok: true };
 }
 
+// 只读观测：把 itemizedParams 算出的 token 明细收敛成可序列化的提示词分解快照（各部分名称+token 与总量）。
+// 按主 API 形态挑选可读分段，名称保持与原版 itemize 面板一致的业务语义；全程只读，不改任何生成状态。
+function buildModernBridgeItemizedSnapshot(params, mesId) {
+    const toTokens = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : 0;
+    };
+    const isOpenAi = params.this_main_api === 'openai';
+
+    const parts = isOpenAi
+        ? [
+            ['起始 / 系统', params.oaiStartTokens],
+            ['主提示词', params.oaiPromptTokens],
+            ['角色主内容', params.oaiMainTokens],
+            ['世界书', params.worldInfoStringTokens],
+            ['示例对话', params.examplesStringTokens],
+            ['聊天历史', params.ActualChatHistoryTokens],
+            ['提示偏置', params.oaiBiasTokens],
+            ['越狱', params.oaiJailbreakTokens],
+            ['轻推', params.oaiNudgeTokens],
+        ]
+        : [
+            ['角色定义', params.storyStringTokens],
+            ['世界书', params.worldInfoStringTokens],
+            ['示例对话', params.examplesStringTokens],
+            ['聊天历史', params.ActualChatHistoryTokens],
+            ['锚点 / 作者注释', params.allAnchorsTokens],
+            ['提示偏置', params.promptBiasTokens],
+        ];
+
+    return {
+        available: true,
+        mesId,
+        mainApi: params.this_main_api || '',
+        apiFriendlyName: params.mainApiFriendlyName || params.this_main_api || '',
+        modelUsed: params.modelUsed || '',
+        presetName: params.presetName || '',
+        tokenizer: params.selectedTokenizer || '',
+        maxContext: toTokens(params.thisPrompt_max_context),
+        totalTokens: toTokens(isOpenAi ? params.finalPromptTokens : params.totalTokensInPrompt),
+        parts: parts.map(([name, tokens]) => ({ name, tokens: toTokens(tokens) })),
+    };
+}
+
+// 只读观测：按 payload.mesId（缺省取 itemizedPrompts 里 mesId 最大即最近一次）取出该次生成的提示词分解快照。
+// 直接 findIndex 定位，不复用 findItemizedPromptSet（其会写模块级 raw 展示游标），确保对生成状态零副作用。
+async function handleModernBridgeGetItemizedPrompt(payload = {}) {
+    await waitForModernBridgeReady();
+    if (!Array.isArray(itemizedPrompts) || itemizedPrompts.length === 0) {
+        return { available: false };
+    }
+
+    const requestedMesId = Number(payload?.mesId);
+    const latestMesId = itemizedPrompts.reduce((max, item) => Math.max(max, Number(item.mesId)), -Infinity);
+    const targetMesId = Number.isInteger(requestedMesId) ? requestedMesId : latestMesId;
+
+    const promptSetIndex = itemizedPrompts.findIndex(item => Number(item.mesId) === targetMesId);
+    if (promptSetIndex < 0) {
+        return { available: false };
+    }
+
+    const params = await itemizedParams(itemizedPrompts, promptSetIndex, targetMesId);
+    return buildModernBridgeItemizedSnapshot(params, targetMesId);
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -6221,6 +6286,10 @@ window.addEventListener('message', async (event) => {
         }
         if (action === BRIDGE_ACTIONS.RELOAD_SETTINGS) {
             postModernBridgeResult(event, id, await handleModernBridgeReloadSettings());
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.GET_ITEMIZED_PROMPT) {
+            postModernBridgeResult(event, id, await handleModernBridgeGetItemizedPrompt(payload));
             return;
         }
 

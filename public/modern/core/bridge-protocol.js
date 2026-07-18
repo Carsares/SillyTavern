@@ -17,6 +17,8 @@ export const BRIDGE_ACTIONS = {
     RELOAD_CHAT: 'reloadChat',
     RELOAD_CHARACTER: 'reloadCharacter',
     RELOAD_SETTINGS: 'reloadSettings',
+    // 只读观测：读取最近一次生成的 itemized 提示词分解快照（各部分 token 与总量），不触碰任何生成状态。
+    GET_ITEMIZED_PROMPT: 'getItemizedPrompt',
 };
 
 // 各链路的超时档位（毫秒）。LOAD 为 iframe 加载超时；DEFAULT 覆盖 generate/swipe 这类重生成动作。

@@ -252,6 +252,16 @@ export function createModernState() {
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),
         inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
+        // 只读观测：inspector 里「本次生成提示词分解」的展示状态，data 为 legacy bridge 回传的只读快照。
+        inspector: {
+            itemizedPrompt: {
+                loading: false,
+                loaded: false,
+                expanded: true,
+                error: '',
+                data: null,
+            },
+        },
         settingsSection: localStorage.getItem('st-modern-settings-section') || 'preferences',
         activityFilter: '',
         activitySort: localStorage.getItem('st-modern-activity-sort') || 'recent',
