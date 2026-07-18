@@ -8,6 +8,7 @@ export function createSettingsActions({
     setTheme,
     getChatModeLabel,
     numberInput,
+    reloadSettings,
 }) {
     async function loadSettingsSnapshots({ force = false } = {}) {
         if (state.settingsSnapshots.loaded && !force) {
@@ -72,6 +73,8 @@ export function createSettingsActions({
             state.settingsSnapshots.restoreConfirm = '';
             await loadData({ silent: true });
             showToast('设置已恢复', name);
+            // 设置快照已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+            await reloadSettings();
         } finally {
             state.settingsSnapshots.restoring = false;
             render();

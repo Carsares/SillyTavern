@@ -40,6 +40,7 @@ export function createActionRegistry({
     setTheme,
     matchesQuery,
     callLegacyBridge,
+    bridgeReload,
 }) {
     const apiConnectionActions = createApiConnectionActions({
         state,
@@ -70,6 +71,7 @@ export function createActionRegistry({
         parsePreset,
         downloadFile,
         matchesQuery,
+        reloadSettings: bridgeReload.reloadSettings,
     });
     const {
         getPresetGroups,
@@ -141,6 +143,7 @@ export function createActionRegistry({
         loadData,
         render,
         showToast,
+        reloadCharacter: bridgeReload.reloadCharacter,
     });
     const {
         getCharacterAvatarUrl,
@@ -155,6 +158,7 @@ export function createActionRegistry({
         render,
         showToast,
         callLegacyBridge,
+        bridgeReload,
         getCharacterAvatarUrl,
     });
     const { getChatModeLabel } = chatRegistry;
@@ -170,6 +174,7 @@ export function createActionRegistry({
         getChatModeLabel,
         numberInput,
         formatBytes,
+        reloadSettings: bridgeReload.reloadSettings,
     });
 
     const personaActions = createPersonaActions({
@@ -178,6 +183,7 @@ export function createActionRegistry({
         loadData,
         render,
         showToast,
+        reloadSettings: bridgeReload.reloadSettings,
     });
     const { getPersonas } = personaActions;
 

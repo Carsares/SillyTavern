@@ -13,6 +13,7 @@ export function createPresetActions({
     parsePreset,
     downloadFile,
     matchesQuery,
+    reloadSettings,
 }) {
     const {
         getPresetGroups,
@@ -93,6 +94,8 @@ export function createPresetActions({
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
         showToast('预设已保存', savedName);
+        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
     }
 
     function getPresetGroup(apiId) {
@@ -157,6 +160,8 @@ export function createPresetActions({
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
         showToast('预设已导入', `${getPresetGroup(apiId)?.label || apiId} / ${savedName}`);
+        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 
@@ -183,6 +188,8 @@ export function createPresetActions({
         state.presetEditor = { apiId, name: savedName, json: JSON.stringify(preset, null, 2), error: '' };
         await loadData({ silent: true });
         showToast('预设已保存', savedName);
+        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 
@@ -242,6 +249,8 @@ export function createPresetActions({
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         await loadData({ silent: true });
         showToast('预设已删除', name);
+        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 
@@ -259,6 +268,8 @@ export function createPresetActions({
         await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
         showToast('预设已切换', `当前聊天补全预设：${presetName}`);
+        // 预设切换已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
     }
 
     return {

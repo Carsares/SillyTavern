@@ -12,6 +12,7 @@ export function createCharacterActions({
     loadData,
     render,
     showToast,
+    reloadCharacter,
 }) {
     const {
         characterCreatePayload,
@@ -94,6 +95,8 @@ export function createCharacterActions({
         await loadData({ silent: true });
         await loadCharacterDetail(avatar, { force: true });
         showToast('角色卡已保存', form.name.trim());
+        // 角色卡已落盘，通知 iframe 生成引擎重载角色列表，使后续生成看到最新角色数据。
+        await reloadCharacter();
         render();
     }
 

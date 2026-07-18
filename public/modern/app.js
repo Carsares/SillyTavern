@@ -7,6 +7,7 @@ import {
     worldEntrySelectiveLogicOptions,
 } from './core/constants.js';
 import { createApiClient } from './core/api-client.js';
+import { createBridgeReload } from './core/bridge-reload.js';
 import { createLegacyBridge } from './core/legacy-bridge.js';
 import { backgroundPageSize, createModernState } from './core/state.js';
 import { getElementScrollTop, getScrollTop, restoreElementScrollTop, restoreScrollTop } from './core/scroll-state.js';
@@ -50,6 +51,7 @@ const apiClient = createApiClient({
 const apiFetch = apiClient.apiFetch;
 const apiFetchResponse = apiClient.apiFetchResponse;
 const { callLegacyBridge } = createLegacyBridge();
+const bridgeReload = createBridgeReload(callLegacyBridge);
 
 const elements = createShellElements();
 
@@ -136,6 +138,7 @@ const {
     setTheme,
     matchesQuery,
     callLegacyBridge,
+    bridgeReload,
 });
 
 const commonComponents = createCommonComponents({

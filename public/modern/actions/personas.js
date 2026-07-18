@@ -6,6 +6,7 @@ export function createPersonaActions({
     loadData,
     render,
     showToast,
+    reloadSettings,
 }) {
     function getPowerUserSettingsForWrite(settings = state.settings) {
         const source = settings.power_user || settings;
@@ -157,6 +158,8 @@ export function createPersonaActions({
         state.personaEditing = { avatarId: '', form: {} };
         await loadData({ silent: true });
         showToast('用户人设已保存', form.name.trim());
+        // 人设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 
@@ -170,6 +173,8 @@ export function createPersonaActions({
         await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
         showToast('默认人设已更新', powerUser.personas[avatarId]);
+        // 默认人设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 
@@ -212,6 +217,8 @@ export function createPersonaActions({
         state.personaEditing = { avatarId: '', form: {} };
         await loadData({ silent: true });
         showToast('用户人设已删除', name);
+        // 人设删除已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
         render();
     }
 

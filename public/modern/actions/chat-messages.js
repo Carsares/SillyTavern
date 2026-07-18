@@ -10,7 +10,13 @@ export function createChatMessageActions({
     isGroupChatMode,
     updateModernChat,
     refreshSelectedChatList,
+    reloadChat,
 }) {
+    // 同步通道：消息编辑/删除保存成功后，用当前选中实体口径（与生成引擎 generate 一致）通知 iframe 重载当前聊天。
+    function buildReloadChatPayload(entity, groupMode, chatId) {
+        return groupMode ? { groupId: entity.id, chat: chatId } : { avatar: entity.avatar, chat: chatId };
+    }
+
     function findQueuedMessageIndex(messages, originalMessage, originalIndex) {
         if (!originalMessage?.send_date) {
             return originalIndex < messages.length ? originalIndex : -1;
@@ -79,6 +85,8 @@ export function createChatMessageActions({
         await refreshSelectedChatList(entity, { groupMode });
         state.chatMessageDeleteConfirm = { key: '', index: -1 };
         showToast('消息已删除', deletedMessage?.name || '当前聊天');
+        // 删除已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照。
+        await reloadChat(buildReloadChatPayload(entity, groupMode, chatId));
         render();
     }
 
@@ -216,6 +224,8 @@ export function createChatMessageActions({
         await refreshSelectedChatList(entity, { groupMode });
         state.chatEditing = { key: '', index: -1, text: '' };
         showToast('消息已保存', nextMessage.name || '当前聊天');
+        // 编辑已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照。
+        await reloadChat(buildReloadChatPayload(entity, groupMode, chatId));
         render();
     }
 

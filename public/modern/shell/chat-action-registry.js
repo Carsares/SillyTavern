@@ -13,6 +13,7 @@ export function createChatActionRegistry({
     render,
     showToast,
     callLegacyBridge,
+    bridgeReload,
     getCharacterAvatarUrl,
 }) {
     const chatContextActions = createChatContextActions({
@@ -105,6 +106,7 @@ export function createChatActionRegistry({
         isGroupChatMode,
         updateModernChat,
         refreshSelectedChatList,
+        reloadChat: bridgeReload.reloadChat,
     });
 
     const chatGenerationActions = createChatGenerationActions({

@@ -45,6 +45,7 @@ test.describe('Modern action helpers', () => {
             loadData: async () => {},
             render: () => {},
             showToast: () => {},
+            reloadSettings: () => {},
         });
 
         await expect(actions.confirmPersonaDelete()).rejects.toThrow('settings save failed');
@@ -86,6 +87,7 @@ test.describe('Modern action helpers', () => {
             loadData: async () => loadCount++,
             render: () => {},
             showToast: () => {},
+            reloadSettings: () => {},
         });
 
         await actions.confirmPersonaDelete();
