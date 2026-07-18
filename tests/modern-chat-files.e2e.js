@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 
-/* global document, localStorage, requestAnimationFrame */
+/* global document, localStorage, requestAnimationFrame, window */
 
 function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/i, '');
@@ -959,6 +959,24 @@ test.describe('Modern chat files', () => {
         const characterMessage = page.locator('.message').nth(1);
         await expect(characterMessage.locator('.message-body')).toContainText('gentle action "plain dialogue" quiet thought');
         await expect(characterMessage.locator('.message-body em')).toHaveCount(0);
+    });
+
+    test('sanitizes unsafe markup and renders code blocks in the modern workspace', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        fixture.messagesByChat['existing-chat'][1] = {
+            ...fixture.messagesByChat['existing-chat'][1],
+            mes: 'Danger <script>window.__modernXss = 1;</script> <img src="x" onerror="window.__modernXss = 1"> [evil](javascript:alert(1)) **bold survives**\n\n```js\nconst code = 1;\n```',
+        };
+
+        await page.goto('/modern/?view=chat');
+
+        const messageBody = page.locator('.message').nth(1).locator('.message-body');
+        await expect(messageBody.locator('script')).toHaveCount(0);
+        await expect(messageBody.locator('img[onerror]')).toHaveCount(0);
+        await expect(messageBody.locator('a[href^="javascript:"]')).toHaveCount(0);
+        await expect(messageBody.locator('strong')).toContainText('bold survives');
+        await expect(messageBody.locator('pre code')).toContainText('const code = 1;');
+        expect(await page.evaluate(() => window.__modernXss)).toBeUndefined();
     });
 
     test('collapses the first character message as an opening message', async ({ page }) => {
