@@ -7974,6 +7974,15 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
             throw new Error(result.statusText);
         }
 
+        // bridge 模式：隐藏 iframe 无人应答确认框（cancelButton:false 会永久挂起，约 180s 才超时），
+        // 页面 reload 也会打断生成。完整性冲突通常源于 modern 侧刚编辑消息（bump 了 integrity），
+        // 此处不弹框、不 reload、不强制覆盖（强制覆盖会用 iframe 陈旧状态盖掉 modern 的编辑），
+        // 直接返回保存失败，由上层 saved 信号暴露给 modern；根因由 M3 的 reloadChat 在生成前同步 integrity 消除。
+        if (isModernBridgeMode) {
+            console.warn('Chat integrity check failed in modern bridge mode; reporting save failure without prompting.');
+            return false;
+        }
+
         const popupResult = await Popup.show.input(
             t`ERROR: Chat integrity check failed while saving the file.`,
             t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
