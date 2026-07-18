@@ -6,6 +6,8 @@ export function createPresetsEvents(ctx) {
         saveOpenAiPresetFromForm,
         selectPreset,
         savePresetJsonFromEditor,
+        togglePromptOrderEntry,
+        movePromptOrderEntry,
         useOpenAiPreset,
         duplicatePreset,
         exportPreset,
@@ -57,6 +59,18 @@ export function createPresetsEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'preset-json-save', message: error.message });
                 showToast('预设保存失败', error.message);
+                render();
+            }
+            return;
+        }
+
+        const movePromptOrderButton = event.target.closest('[data-move-prompt-order]');
+        if (movePromptOrderButton) {
+            try {
+                await movePromptOrderEntry(movePromptOrderButton.dataset.presetName, movePromptOrderButton.dataset.movePromptOrder, movePromptOrderButton.dataset.moveDirection);
+            } catch (error) {
+                state.errors.push({ key: 'preset-prompt-order', message: error.message });
+                showToast('Prompt 顺序更新失败', error.message);
                 render();
             }
             return;
@@ -148,6 +162,17 @@ export function createPresetsEvents(ctx) {
     }
 
     async function handlePresetsChange(event) {
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-toggle-prompt-order]')) {
+            try {
+                await togglePromptOrderEntry(event.target.dataset.presetName, event.target.dataset.togglePromptOrder);
+            } catch (error) {
+                state.errors.push({ key: 'preset-prompt-order', message: error.message });
+                showToast('Prompt 启用切换失败', error.message);
+                render();
+            }
+            return;
+        }
+
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-preset-import-file]')) {
             try {
                 await importPresetFile(event.target.files?.[0]);

@@ -109,3 +109,24 @@ export function useOpenAiPresetFields(settings, preset) {
         settings.extensions = structuredClone(preset.extensions);
     }
 }
+
+// chat completion 的 PromptManager 采用 global 策略，激活的 prompt_order 归属 dummyId 100001
+// （见 legacy public/scripts/openai.js 的 promptManager 配置）。只有该条目会影响实际生成顺序。
+export const OPENAI_PROMPT_ORDER_CHARACTER_ID = 100001;
+
+// 取出预设中当前生效角色的 prompt_order 条目；缺失时返回 null，调用方据此跳过排序编辑。
+export function getOpenAiPromptOrderEntry(preset) {
+    if (!Array.isArray(preset?.prompt_order)) {
+        return null;
+    }
+    const entry = preset.prompt_order.find(item => item?.character_id === OPENAI_PROMPT_ORDER_CHARACTER_ID);
+    return Array.isArray(entry?.order) ? entry : null;
+}
+
+// 按 identifier 解析 prompt 展示名，未命中 prompts 定义时回退到 identifier 本身。
+export function getOpenAiPromptName(preset, identifier) {
+    const prompts = Array.isArray(preset?.prompts) ? preset.prompts : [];
+    const match = prompts.find(item => item?.identifier === identifier);
+    const name = typeof match?.name === 'string' ? match.name.trim() : '';
+    return name || identifier;
+}

@@ -84,6 +84,8 @@ export function createPresetRouteContext(presets) {
         saveOpenAiPresetFromForm,
         selectPreset,
         savePresetJsonFromEditor,
+        togglePromptOrderEntry,
+        movePromptOrderEntry,
         useOpenAiPreset,
         duplicatePreset,
         exportPreset,
@@ -104,6 +106,8 @@ export function createPresetRouteContext(presets) {
         saveOpenAiPresetFromForm,
         selectPreset,
         savePresetJsonFromEditor,
+        togglePromptOrderEntry,
+        movePromptOrderEntry,
         useOpenAiPreset,
         duplicatePreset,
         exportPreset,
@@ -126,6 +130,10 @@ export function createSettingsRouteContext(settings) {
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
         confirmSettingsSnapshotRestore,
+        openRawSettingsEditor,
+        updateRawSettingsEditorValue,
+        closeRawSettingsEditor,
+        saveRawSettingsFromEditor,
     } = settings;
 
     return {
@@ -137,5 +145,9 @@ export function createSettingsRouteContext(settings) {
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
         confirmSettingsSnapshotRestore,
+        openRawSettingsEditor,
+        updateRawSettingsEditorValue,
+        closeRawSettingsEditor,
+        saveRawSettingsFromEditor,
     };
 }

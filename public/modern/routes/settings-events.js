@@ -10,10 +10,14 @@ export function createSettingsEvents(ctx) {
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
         confirmSettingsSnapshotRestore,
+        openRawSettingsEditor,
+        updateRawSettingsEditorValue,
+        closeRawSettingsEditor,
+        saveRawSettingsFromEditor,
     } = ctx;
 
     async function setSettingsSection(section, { loadSnapshots = true } = {}) {
-        state.settingsSection = ['preferences', 'status', 'snapshots', 'diagnostics'].includes(section) ? section : 'preferences';
+        state.settingsSection = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics'].includes(section) ? section : 'preferences';
         localStorage.setItem('st-modern-settings-section', state.settingsSection);
         if (loadSnapshots && state.settingsSection === 'snapshots' && !state.settingsSnapshots.loaded && !state.settingsSnapshots.loading) {
             await loadSettingsSnapshots();
@@ -98,10 +102,43 @@ export function createSettingsEvents(ctx) {
             return true;
         }
 
+        if (event.target.closest('[data-open-raw-settings]')) {
+            try {
+                await openRawSettingsEditor();
+            } catch (error) {
+                state.errors.push({ key: 'raw-settings-open', message: error.message });
+                showToast('原始设置加载失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-save-raw-settings]')) {
+            try {
+                await saveRawSettingsFromEditor();
+            } catch (error) {
+                state.errors.push({ key: 'raw-settings-save', message: error.message });
+                showToast('原始设置保存失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-cancel-raw-settings]')) {
+            closeRawSettingsEditor();
+            return true;
+        }
+
         return false;
     }
 
     function handleSettingsInput(event) {
+        // 原始设置编辑器：仅同步 value，不触发重渲染以保留光标位置。
+        if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-raw-settings-input]')) {
+            updateRawSettingsEditorValue(event.target.value);
+            return true;
+        }
+
         if (!(event.target instanceof HTMLInputElement) || !event.target.matches('[data-settings-snapshot-search]')) {
             return false;
         }

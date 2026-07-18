@@ -54,6 +54,42 @@
     flex-wrap: wrap;
 }
 
+.prompt-order-list {
+    display: grid;
+    gap: 6px;
+}
+
+.prompt-order-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.prompt-order-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.prompt-order-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.prompt-order-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 6px;
+}
+
 .preset-json-editor {
     width: 100%;
     min-height: 380px;

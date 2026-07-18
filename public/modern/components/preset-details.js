@@ -1,3 +1,5 @@
+import { getOpenAiPromptOrderEntry, getOpenAiPromptName } from '../actions/openai-preset-fields.js';
+
 export function createPresetDetailComponents(ctx) {
     const {
         state,
@@ -72,6 +74,7 @@ export function createPresetDetailComponents(ctx) {
             </div>
         ` : ''}
         ${isOpenAi ? renderOpenAiPresetTools() : ''}
+        ${isOpenAi ? renderPromptOrderSection(parsedPreset, item.name) : ''}
         <section class="form-section">
             <div>
                 <h3 class="form-section-title">摘要</h3>
@@ -122,6 +125,48 @@ export function createPresetDetailComponents(ctx) {
                     <i class="fa-solid fa-floppy-disk"></i>
                     保存当前配置为预设
                 </button>
+            </div>
+        </section>
+    `;
+    }
+
+    // 渲染当前生效角色的 prompt_order：每项含启用复选框与上移/下移按钮，操作即走保存链路持久化。
+    function renderPromptOrderSection(preset, presetName) {
+        const orderEntry = getOpenAiPromptOrderEntry(preset);
+        if (!orderEntry) {
+            return '';
+        }
+
+        const order = orderEntry.order;
+        const rows = order.map((entry, index) => {
+            const identifier = typeof entry?.identifier === 'string' ? entry.identifier : '';
+            const name = getOpenAiPromptName(preset, identifier);
+            const enabled = entry?.enabled !== false;
+            return `
+            <div class="prompt-order-row">
+                <label class="prompt-order-toggle">
+                    <input type="checkbox" ${enabled ? 'checked' : ''} data-toggle-prompt-order="${escapeHtml(identifier)}" data-preset-name="${escapeHtml(presetName)}">
+                    <span class="prompt-order-name">${escapeHtml(name)}</span>
+                </label>
+                <div class="prompt-order-actions">
+                    <button class="icon-button mini" type="button" title="上移" data-move-prompt-order="${escapeHtml(identifier)}" data-move-direction="up" data-preset-name="${escapeHtml(presetName)}" ${index === 0 ? 'disabled' : ''}>
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </button>
+                    <button class="icon-button mini" type="button" title="下移" data-move-prompt-order="${escapeHtml(identifier)}" data-move-direction="down" data-preset-name="${escapeHtml(presetName)}" ${index === order.length - 1 ? 'disabled' : ''}>
+                        <i class="fa-solid fa-arrow-down"></i>
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+
+        return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">Prompt 顺序与启用</h3>
+                <p class="panel-subtitle">切换启用或调整顺序即保存到该预设，并同步当前生效配置；作用于当前生效角色的提示词排序。</p>
+            </div>
+            <div class="prompt-order-list">
+                ${rows}
             </div>
         </section>
     `;

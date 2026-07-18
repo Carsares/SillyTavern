@@ -323,6 +323,13 @@ export function createModernState() {
             previewText: '',
             restoreConfirm: '',
         },
+        rawSettingsEditor: {
+            open: false,
+            loading: false,
+            value: '',
+            saving: false,
+            error: '',
+        },
         selected: {
             character: '',
             group: '',

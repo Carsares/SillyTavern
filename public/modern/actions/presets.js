@@ -1,4 +1,4 @@
-import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from './openai-preset-fields.js';
+import { buildOpenAiPresetFromSettings, useOpenAiPresetFields, getOpenAiPromptOrderEntry } from './openai-preset-fields.js';
 import { createPresetListHelpers } from './preset-list.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
@@ -254,6 +254,59 @@ export function createPresetActions({
         render();
     }
 
+    // 编辑指定 OpenAI 预设的 prompt_order（启用切换 / 顺序调整）。mutate 就地改写激活角色的 order 数组，
+    // 复用 savePresetFile 落盘；若编辑的是当前生效预设，同步写回运行态 oai_settings.prompt_order，
+    // 因为 reloadSettings 从 settings（而非预设文件）读取 prompt_order，不同步则改动不会立即生效。
+    async function saveOpenAiPromptOrder(presetName, mutate) {
+        const preset = parsePreset(getPresetContent('openai', presetName));
+        const orderEntry = getOpenAiPromptOrderEntry(preset);
+        if (!orderEntry) {
+            throw new Error('该预设没有可编辑的 prompt 排序数据。');
+        }
+
+        mutate(orderEntry.order);
+        const savedName = await savePresetFile('openai', presetName, preset);
+
+        if (getOaiSettings().preset_settings_openai === presetName) {
+            state.settings.oai_settings = state.settings.oai_settings || {};
+            state.settings.oai_settings.prompt_order = structuredClone(preset.prompt_order);
+            await saveSettingsSerialized(apiFetch, state.settings);
+        }
+
+        state.presetSelection = { apiId: 'openai', name: savedName };
+        state.presetEditor = { apiId: '', name: '', json: '', error: '' };
+        await loadData({ silent: true });
+        showToast('Prompt 顺序已更新', savedName);
+        // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
+        render();
+    }
+
+    async function togglePromptOrderEntry(presetName, identifier) {
+        await saveOpenAiPromptOrder(presetName, order => {
+            const target = order.find(item => item?.identifier === identifier);
+            if (!target) {
+                throw new Error('未找到对应的提示词条目。');
+            }
+            target.enabled = !target.enabled;
+        });
+    }
+
+    async function movePromptOrderEntry(presetName, identifier, direction) {
+        await saveOpenAiPromptOrder(presetName, order => {
+            const index = order.findIndex(item => item?.identifier === identifier);
+            if (index < 0) {
+                throw new Error('未找到对应的提示词条目。');
+            }
+            const targetIndex = direction === 'up' ? index - 1 : index + 1;
+            if (targetIndex < 0 || targetIndex >= order.length) {
+                // 已在边界，保持不动（对应按钮也已禁用）。
+                return;
+            }
+            [order[index], order[targetIndex]] = [order[targetIndex], order[index]];
+        });
+    }
+
     async function useOpenAiPreset(presetName) {
         const group = getPresetGroups().find(item => item.id === 'openai');
         const presetIndex = group?.names.indexOf(presetName) ?? -1;
@@ -283,6 +336,8 @@ export function createPresetActions({
         updatePresetEditorText,
         saveOpenAiPresetFromForm,
         savePresetJsonFromEditor,
+        togglePromptOrderEntry,
+        movePromptOrderEntry,
         useOpenAiPreset,
         duplicatePreset,
         exportPreset,

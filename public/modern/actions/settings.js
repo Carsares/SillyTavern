@@ -1,3 +1,5 @@
+import { saveSettingsSerialized } from '../core/keyed-queue.js';
+
 export function createSettingsActions({
     state,
     elements,
@@ -81,6 +83,63 @@ export function createSettingsActions({
         }
     }
 
+    // 打开原始设置编辑器：拉取当前完整 settings.json 并格式化为可编辑文本。
+    async function openRawSettingsEditor() {
+        state.rawSettingsEditor.open = true;
+        state.rawSettingsEditor.loading = true;
+        state.rawSettingsEditor.error = '';
+        render();
+        try {
+            const result = await apiFetch('/api/settings/get', { body: {} });
+            // 与 legacy getSettings 一致：响应形如 { settings: '<json 字符串>' }，需再解析一层。
+            const settings = result?.settings ? JSON.parse(result.settings) : {};
+            state.rawSettingsEditor.value = JSON.stringify(settings, null, 2);
+        } finally {
+            state.rawSettingsEditor.loading = false;
+            render();
+        }
+    }
+
+    function updateRawSettingsEditorValue(value) {
+        state.rawSettingsEditor.value = value;
+    }
+
+    function closeRawSettingsEditor() {
+        state.rawSettingsEditor.open = false;
+        state.rawSettingsEditor.value = '';
+        state.rawSettingsEditor.error = '';
+        render();
+    }
+
+    // 保存原始设置：解析文本、写入前强制快照、经串行队列 POST 整份设置。
+    async function saveRawSettingsFromEditor() {
+        let parsed;
+        try {
+            parsed = JSON.parse(state.rawSettingsEditor.value);
+        } catch (error) {
+            state.rawSettingsEditor.error = `JSON 格式错误：${error.message}`;
+            render();
+            throw new Error(`JSON 格式错误：${error.message}`);
+        }
+
+        state.rawSettingsEditor.saving = true;
+        state.rawSettingsEditor.error = '';
+        render();
+        try {
+            // 写入前自动创建快照，任何失败都直接冒泡阻断，避免无保护写入。
+            await apiFetch('/api/settings/make-snapshot');
+            // 直接把编辑后的完整设置对象作为 body，复用串行队列保证写入不乱序。
+            await saveSettingsSerialized(apiFetch, parsed);
+            await loadData({ silent: true });
+            showToast('原始设置已保存', '已创建快照并写入 settings.json。');
+            // 设置已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+            await reloadSettings();
+        } finally {
+            state.rawSettingsEditor.saving = false;
+            render();
+        }
+    }
+
     function getRequestCompressionSettings() {
         return state.settingsBundle.request_compression || {};
     }
@@ -109,5 +168,9 @@ export function createSettingsActions({
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
         confirmSettingsSnapshotRestore,
+        openRawSettingsEditor,
+        updateRawSettingsEditorValue,
+        closeRawSettingsEditor,
+        saveRawSettingsFromEditor,
     };
 }

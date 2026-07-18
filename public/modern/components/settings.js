@@ -8,6 +8,7 @@ export function createSettingsComponents(ctx) {
         formatNumber,
         metricCard,
         pageHead,
+        escapeHtml,
         getRequestCompressionSettings,
         loadSettingsSnapshots,
         showToast,
@@ -56,12 +57,13 @@ export function createSettingsComponents(ctx) {
         ${activeSection === 'preferences' ? renderSettingsPreferencesSection(requestCompression, compressionEnabled) : ''}
         ${activeSection === 'status' ? renderSettingsStatusSection(bundle, savedSecrets, dataStatus, compressionEnabled, requestCompression) : ''}
         ${activeSection === 'snapshots' ? renderSettingsSnapshots() : ''}
+        ${activeSection === 'raw' ? renderRawSettingsEditorSection() : ''}
         ${activeSection === 'diagnostics' ? renderSettingsDiagnosticsSection(bundle, savedSecrets, dataStatus) : ''}
     `;
     }
 
     function getSettingsSection() {
-        return ['preferences', 'status', 'snapshots', 'diagnostics'].includes(state.settingsSection)
+        return ['preferences', 'status', 'snapshots', 'raw', 'diagnostics'].includes(state.settingsSection)
             ? state.settingsSection
             : 'preferences';
     }
@@ -71,6 +73,7 @@ export function createSettingsComponents(ctx) {
             ['preferences', 'fa-sliders', '界面与请求'],
             ['status', 'fa-gauge-high', '账户与资源'],
             ['snapshots', 'fa-clock-rotate-left', '设置快照'],
+            ['raw', 'fa-file-code', '原始设置'],
             ['diagnostics', 'fa-shield-halved', '安全诊断'],
         ];
         return `
@@ -110,6 +113,49 @@ export function createSettingsComponents(ctx) {
                 settingsSnapshotAutoLoadPending = false;
             }
         }, 0);
+    }
+
+    function renderRawSettingsEditorSection() {
+        const editor = state.rawSettingsEditor;
+        if (!editor.open) {
+            return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">原始设置编辑器</h3>
+                <p class="panel-subtitle">直接编辑完整 settings.json，覆盖现代界面尚未开放的高级设置。保存前会自动创建快照，可随时在设置快照页回滚。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="primary-button" type="button" data-open-raw-settings>
+                    <i class="fa-solid fa-file-code"></i>
+                    打开原始设置编辑器
+                </button>
+            </div>
+        </section>
+    `;
+        }
+
+        return `
+        <section class="form-section">
+            <div>
+                <h3 class="form-section-title">原始设置编辑器</h3>
+                <p class="panel-subtitle">编辑完整 settings.json；保存前自动创建快照，写入后生成引擎会自动重载。</p>
+            </div>
+            ${editor.loading
+        ? '<p class="panel-subtitle"><i class="fa-solid fa-circle-notch fa-spin"></i> 正在加载当前设置…</p>'
+        : `<textarea class="preset-json-editor" spellcheck="false" data-raw-settings-input ${editor.saving ? 'disabled' : ''}>${escapeHtml(editor.value)}</textarea>`}
+            ${editor.error ? `<p class="danger">${escapeHtml(editor.error)}</p>` : ''}
+            <div class="message-edit-actions">
+                <button class="primary-button" type="button" data-save-raw-settings ${editor.loading || editor.saving ? 'disabled' : ''}>
+                    <i class="fa-solid ${editor.saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}"></i>
+                    保存并快照
+                </button>
+                <button class="secondary-button" type="button" data-cancel-raw-settings ${editor.saving ? 'disabled' : ''}>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+            </div>
+        </section>
+    `;
     }
 
     return {
