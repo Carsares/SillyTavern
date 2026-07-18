@@ -1,6 +1,6 @@
 export function buildOpenAiPresetFromSettings({
     settings,
-    preset = {},
+    preset = /** @type {Record<string, any>} */ ({}),
     chatCompletionModelFields,
 }) {
     const source = settings.chat_completion_source || 'openai';
@@ -29,6 +29,7 @@ export function buildOpenAiPresetFromSettings({
 }
 
 export function useOpenAiPresetFields(settings, preset) {
+    /** @type {Record<string, [string, boolean]>} */
     const fieldMap = {
         temperature: ['temp_openai', false],
         frequency_penalty: ['freq_pen_openai', false],

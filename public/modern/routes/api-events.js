@@ -29,7 +29,7 @@ export function createApiEvents(ctx) {
             state.apiMainDraft = apiProfileButton.dataset.apiProfileMain;
             render();
             // render() replaces #content and drops focus to <body>; move it onto the editor the button revealed
-            document.querySelector('[data-api-main]')?.focus?.();
+            /** @type {HTMLElement | null} */ (document.querySelector('[data-api-main]'))?.focus?.();
             return true;
         }
 

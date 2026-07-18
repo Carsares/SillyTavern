@@ -43,7 +43,7 @@ export function createGroupActions({
         const members = Array.isArray(form.members) ? form.members : [];
         const avatarUrl = form.avatar_url.trim();
         const previousAvatarUrl = previous.avatar_url || '';
-        const persistentPrevious = { ...previous };
+        const persistentPrevious = /** @type {Record<string, any>} */ ({ ...previous });
         delete persistentPrevious.date_added;
         delete persistentPrevious.create_date;
         delete persistentPrevious.date_last_chat;

@@ -148,7 +148,7 @@ export function createAssetsBackgroundEvents(ctx) {
 
         if (event.target.closest('[data-select-visible-backgrounds]')) {
             const filenames = [...document.querySelectorAll('[data-background-select]')]
-                .map(input => input.dataset.backgroundSelect || '');
+                .map(input => /** @type {HTMLElement} */ (input).dataset.backgroundSelect || '');
             selectVisibleBackgrounds(filenames);
             return true;
         }

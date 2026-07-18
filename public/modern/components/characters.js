@@ -94,7 +94,7 @@ export function createCharactersComponents(ctx) {
         }
 
         document.querySelectorAll('[data-select-character]').forEach(button => {
-            button.classList.toggle('active', button.dataset.selectCharacter === state.selected.character);
+            button.classList.toggle('active', /** @type {HTMLElement} */ (button).dataset.selectCharacter === state.selected.character);
         });
         detailPanel.outerHTML = renderCharacterDetailPanel();
         return true;

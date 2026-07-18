@@ -64,7 +64,7 @@ export function createChatFileManagementActions({
         }
         const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
-        const result = await renameModernChatFile(contextKey, oldChatId, async ({ confirmUnchanged } = {}) => {
+        const result = await renameModernChatFile(contextKey, oldChatId, async ({ confirmUnchanged } = /** @type {{ confirmUnchanged?: () => void }} */ ({})) => {
             let renameResult;
             try {
                 renameResult = await apiFetch('/api/chats/rename', {
@@ -173,7 +173,7 @@ export function createChatFileManagementActions({
         }
         const isContextCurrent = () => isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
 
-        await deleteModernChatFile(contextKey, chatId, async ({ confirmUnchanged } = {}) => {
+        await deleteModernChatFile(contextKey, chatId, async ({ confirmUnchanged } = /** @type {{ confirmUnchanged?: () => void }} */ ({})) => {
             let result;
             try {
                 result = groupMode

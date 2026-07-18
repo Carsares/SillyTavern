@@ -318,7 +318,7 @@ export function createCharacterActions({
         showToast(title, message);
         render();
         window.setTimeout(() => {
-            document.querySelector(`[data-character-field="${field}"][data-character-scope="${scope}"]`)?.focus();
+            /** @type {HTMLElement | null} */ (document.querySelector(`[data-character-field="${field}"][data-character-scope="${scope}"]`))?.focus();
         }, 0);
     }
 

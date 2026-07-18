@@ -45,7 +45,7 @@ export function createExtensionActions({
         showToast('扩展安装失败', message);
         render();
         window.setTimeout(() => {
-            document.querySelector('[data-extension-install-url]')?.focus();
+            /** @type {HTMLElement | null} */ (document.querySelector('[data-extension-install-url]'))?.focus();
         }, 0);
     }
 

@@ -1,4 +1,4 @@
-export function createApiClient({ onTokenChange = () => {} } = {}) {
+export function createApiClient({ onTokenChange = /** @type {(token: string) => void} */ (() => {}) } = {}) {
     let csrfToken = '';
     let csrfTokenRequest = null;
 
@@ -60,7 +60,7 @@ export function createApiClient({ onTokenChange = () => {} } = {}) {
     async function fetchWithCsrf(path, options = {}, retry = true) {
         const method = options.method || 'POST';
         const token = await ensureCsrfToken();
-        const response = await fetch(path, createRequest(method, token, options));
+        const response = await fetch(path, /** @type {RequestInit} */ (createRequest(method, token, options)));
         if (response.status === 403 && retry) {
             setCsrfToken('');
             return fetchWithCsrf(path, options, false);
@@ -69,7 +69,7 @@ export function createApiClient({ onTokenChange = () => {} } = {}) {
             throw new Error('当前会话没有访问权限，请先登录。');
         }
         if (!response.ok) {
-            const error = new Error(`${path} failed: ${response.status}`);
+            const error = /** @type {Error & { status?: number }} */ (new Error(`${path} failed: ${response.status}`));
             error.status = response.status;
             throw error;
         }

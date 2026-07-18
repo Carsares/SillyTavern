@@ -66,7 +66,7 @@ export function createPresetListHelpers({
 
     function getPresetList(apiId) {
         return Array.from(document.querySelectorAll('[data-preset-group]'))
-            .find(group => group.dataset.presetGroup === apiId)
+            .find(group => /** @type {HTMLElement} */ (group).dataset.presetGroup === apiId)
             ?.querySelector('.preset-list') || null;
     }
 
@@ -74,7 +74,7 @@ export function createPresetListHelpers({
         const presetListScrollTop = getElementScrollTop(getPresetList(apiId));
         // Snapshot the groups the user has expanded so re-rendering after selection keeps them open
         state.presetExpandedGroups = Array.from(document.querySelectorAll('[data-preset-group][open]'))
-            .map(group => group.dataset.presetGroup);
+            .map(group => /** @type {HTMLElement} */ (group).dataset.presetGroup);
         state.presetSelection = { apiId, name };
         state.presetEditor = { apiId: '', name: '', json: '', error: '' };
         state.presetDeleteConfirm = { apiId: '', name: '' };

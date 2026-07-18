@@ -7,12 +7,12 @@ export function createChatContextLoaderActions({
     getChatContextKey,
     getChatId = chat => String(chat?.file_id || chat?.file_name || '').replace(/\.jsonl$/i, ''),
     getChatMessageCount = chat => Number(chat?.chat_items ?? chat?.message_count ?? 0),
-    getLatestUnreadChat = () => null,
+    getLatestUnreadChat = /** @type {(contextKey: string, chats: any[]) => any} */ (() => null),
     getSelectedChatEntity,
     isGroupChatMode,
-    markChatRead = () => {},
+    markChatRead = /** @type {(entity: any, chatId: string, messages: any[]) => void} */ (() => {}),
     sortChats,
-    syncChatReadStateForList = () => {},
+    syncChatReadStateForList = /** @type {(contextKey: string, chats: any[]) => void} */ (() => {}),
 }) {
     const chatListLoadTokens = new Map();
     const chatMessageLoadTokens = new Map();
@@ -178,8 +178,8 @@ export function createChatContextLoaderActions({
     async function loadChatMessages(entity, chatId, {
         force = false,
         groupMode = isGroupChatMode(),
-        isContextCurrent = () => true,
-        isLoadCurrent = () => true,
+        isContextCurrent = /** @type {() => boolean} */ (() => true),
+        isLoadCurrent = /** @type {() => boolean} */ (() => true),
     } = {}) {
         const contextKey = getChatContextKey(entity, groupMode);
         if (!contextKey || !chatId) {

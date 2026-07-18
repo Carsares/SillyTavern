@@ -1,5 +1,20 @@
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
+/**
+ * @param {{
+ *     state: any,
+ *     elements: any,
+ *     apiFetch: any,
+ *     loadData: any,
+ *     render: any,
+ *     showToast: any,
+ *     setTheme: any,
+ *     getChatModeLabel: any,
+ *     numberInput: any,
+ *     reloadSettings: any,
+ *     formatBytes?: (bytes: number) => string,
+ * }} deps
+ */
 export function createSettingsActions({
     state,
     elements,
