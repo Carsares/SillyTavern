@@ -1,24 +1,51 @@
 import { Buffer } from 'node:buffer';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, get } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
+import { test as base, expect } from '@playwright/test';
 import { gotoModern } from './modern-test-utils.js';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8000';
-const userDataRoot = path.resolve('data/default-user');
-const backupsDir = path.join(userDataRoot, 'backups');
-const assetsDir = path.join(userDataRoot, 'assets');
-const localExtensionsDir = path.join(userDataRoot, 'extensions');
-const globalExtensionsDir = path.resolve('public/scripts/extensions/third-party');
-const openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
-const statsFilePath = path.join(userDataRoot, 'stats.json');
+// Escape hatch: when either variable is set the suite runs against an externally
+// managed server (e.g. a nightly dedicated instance) and skips self-hosting;
+// otherwise beforeAll boots a throwaway server against a temporary data root.
+const externalBaseURL = process.env.MODERN_REAL_BACKEND_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || '';
+const selfHostServer = !externalBaseURL;
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Global extensions live under the server's public directory, so this stays
+// anchored to the repository regardless of where user data is rooted.
+const globalExtensionsDir = path.join(repoRoot, 'public', 'scripts', 'extensions', 'third-party');
+
+// Path bindings are reassigned to the temporary data root when self-hosting; the
+// helper functions below read them at call time (inside tests, after beforeAll).
+let baseURL = externalBaseURL;
+let userDataRoot = path.join(repoRoot, 'data', 'default-user');
+let backupsDir = path.join(userDataRoot, 'backups');
+let assetsDir = path.join(userDataRoot, 'assets');
+let localExtensionsDir = path.join(userDataRoot, 'extensions');
+let openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
+let statsFilePath = path.join(userDataRoot, 'stats.json');
+
+let serverProcess = null;
+let tmpDataRoot = '';
+let serverLog = '';
+const globalExtensionsBaseline = new Set();
+
 const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1S3PwAAAABJRU5ErkJggg==',
     'base64',
 );
+
+// Serve the module-level baseURL (resolved in beforeAll) so relative page
+// navigations in gotoModern target the same server as the API helpers.
+const test = base.extend({
+    // eslint-disable-next-line no-empty-pattern
+    baseURL: async ({}, use) => {
+        await use(baseURL);
+    },
+});
 
 test.describe.configure({ mode: 'serial' });
 
@@ -527,7 +554,133 @@ async function deleteNewSecrets(page, key, beforeIds) {
     }
 }
 
+function resolveUserDataPaths(root) {
+    userDataRoot = root;
+    backupsDir = path.join(userDataRoot, 'backups');
+    assetsDir = path.join(userDataRoot, 'assets');
+    localExtensionsDir = path.join(userDataRoot, 'extensions');
+    openAiSettingsDir = path.join(userDataRoot, 'OpenAI Settings');
+    statsFilePath = path.join(userDataRoot, 'stats.json');
+}
+
+async function acquireFreePort() {
+    const probe = createServer();
+    const port = await startServer(probe);
+    await closeServer(probe);
+    return port;
+}
+
+function probeServerStatus(port) {
+    return new Promise((resolve, reject) => {
+        const request = get({ host: '127.0.0.1', port, path: '/' }, response => {
+            response.resume();
+            resolve(response.statusCode || 0);
+        });
+        request.on('error', reject);
+        request.setTimeout(2000, () => request.destroy(new Error('probe timed out')));
+    });
+}
+
+async function waitForServerReady(port, timeoutMs = 60000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastError = 'no response';
+    while (Date.now() < deadline) {
+        if (serverProcess && serverProcess.exitCode !== null) {
+            throw new Error(`Real backend server exited early with code ${serverProcess.exitCode}.\n${serverLog}`);
+        }
+        try {
+            const status = await probeServerStatus(port);
+            if (status === 200 || status === 302) {
+                return;
+            }
+            lastError = `HTTP ${status}`;
+        } catch (error) {
+            lastError = error.message;
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    throw new Error(`Real backend server on port ${port} was not ready within ${timeoutMs}ms (${lastError}).\n${serverLog}`);
+}
+
+async function startRealBackend() {
+    tmpDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'st-realbackend-'));
+    const port = await acquireFreePort();
+    serverProcess = spawn('node', [
+        'server.js',
+        '--dataRoot', tmpDataRoot,
+        '--configPath', path.join(tmpDataRoot, 'config.yaml'),
+        '--port', String(port),
+        '--listen=false',
+        '--browserLaunchEnabled=false',
+    ], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    serverProcess.stdout.on('data', chunk => { serverLog += chunk.toString(); });
+    serverProcess.stderr.on('data', chunk => { serverLog += chunk.toString(); });
+
+    try {
+        await waitForServerReady(port);
+    } catch (error) {
+        await stopRealBackend();
+        throw error;
+    }
+
+    baseURL = `http://127.0.0.1:${port}`;
+    resolveUserDataPaths(path.join(tmpDataRoot, 'default-user'));
+}
+
+async function stopRealBackend() {
+    if (serverProcess && serverProcess.exitCode === null) {
+        await new Promise(resolve => {
+            const killTimer = setTimeout(() => serverProcess.kill('SIGKILL'), 5000);
+            serverProcess.once('exit', () => {
+                clearTimeout(killTimer);
+                resolve();
+            });
+            serverProcess.kill('SIGTERM');
+        });
+    }
+    serverProcess = null;
+    if (tmpDataRoot) {
+        fs.rmSync(tmpDataRoot, { recursive: true, force: true });
+        tmpDataRoot = '';
+    }
+}
+
+// The global third-party extensions directory is not relocated by --dataRoot, so
+// move-to-global tests write into the real repository. Remove only entries this
+// suite created, never anything present before it ran.
+function cleanupGlobalExtensions() {
+    if (!fs.existsSync(globalExtensionsDir)) {
+        return;
+    }
+    for (const entry of fs.readdirSync(globalExtensionsDir)) {
+        if (!globalExtensionsBaseline.has(entry)) {
+            fs.rmSync(path.join(globalExtensionsDir, entry), { recursive: true, force: true });
+        }
+    }
+}
+
 test.describe('Modern real backend integration', () => {
+    test.beforeAll(async () => {
+        if (selfHostServer) {
+            await startRealBackend();
+        }
+        const existingEntries = fs.existsSync(globalExtensionsDir) ? fs.readdirSync(globalExtensionsDir) : [];
+        for (const entry of existingEntries) {
+            globalExtensionsBaseline.add(entry);
+        }
+    });
+
+    test.afterEach(() => {
+        cleanupGlobalExtensions();
+    });
+
+    test.afterAll(async () => {
+        cleanupGlobalExtensions();
+        if (selfHostServer) {
+            await stopRealBackend();
+        }
+    });
+
     test('loads bootstrap data and rebuilds stats from the UI against the real backend', async ({ page }) => {
         const tracker = trackApiRequests(page);
         const statsBefore = fs.existsSync(statsFilePath) ? fs.readFileSync(statsFilePath, 'utf8') : null;
