@@ -27,3 +27,9 @@ export const BRIDGE_TIMEOUTS = {
     STOP: 15000,
     EXTENSION: 60000,
 };
+
+// legacy → modern 的单向事件（不带 id、无响应）。生成期流式增量经此推送，modern 定点渲染。
+// 消息形如 { source, event: STREAM_PROGRESS, text }，用 event 字段与 request/response 区分。
+export const BRIDGE_EVENTS = {
+    STREAM_PROGRESS: 'streamProgress',
+};

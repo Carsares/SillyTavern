@@ -1,4 +1,4 @@
-import { BRIDGE_SOURCE, BRIDGE_TIMEOUTS } from './bridge-protocol.js';
+import { BRIDGE_EVENTS, BRIDGE_SOURCE, BRIDGE_TIMEOUTS } from './bridge-protocol.js';
 
 export function createLegacyBridge({
     source = BRIDGE_SOURCE,
@@ -12,11 +12,24 @@ export function createLegacyBridge({
         frame: null,
         loadPromise: null,
         pending: new Map(),
+        progressSubscribers: new Set(),
         nextId: 1,
     };
 
     function handleMessage(event) {
         if (event.origin !== origin || event.data?.source !== source) {
+            return;
+        }
+
+        // 单向流式增量事件（无 id、无响应）：按 event 字段分发给订阅者，不走 pending 请求匹配。
+        if (event.data.event === BRIDGE_EVENTS.STREAM_PROGRESS) {
+            bridge.progressSubscribers.forEach((callback) => {
+                try {
+                    callback(event.data);
+                } catch (error) {
+                    console.warn('Bridge progress subscriber failed', error);
+                }
+            });
             return;
         }
 
@@ -99,10 +112,17 @@ export function createLegacyBridge({
         return responsePromise;
     }
 
+    // 订阅 legacy 侧的单向流式增量；返回取消订阅函数。生成期间订阅、结束即取消，避免累积。
+    function subscribeProgress(callback) {
+        bridge.progressSubscribers.add(callback);
+        return () => bridge.progressSubscribers.delete(callback);
+    }
+
     function disposeLegacyBridge() {
         window.removeEventListener('message', handleMessage);
         bridge.pending.forEach(request => window.clearTimeout(request.timer));
         bridge.pending.clear();
+        bridge.progressSubscribers.clear();
         bridge.frame?.remove();
         bridge.frame = null;
         bridge.loadPromise = null;
@@ -110,6 +130,7 @@ export function createLegacyBridge({
 
     return {
         callLegacyBridge,
+        subscribeProgress,
         disposeLegacyBridge,
     };
 }

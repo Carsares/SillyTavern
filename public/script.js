@@ -13,7 +13,7 @@ import {
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
-import { BRIDGE_SOURCE, BRIDGE_ACTIONS } from './modern/core/bridge-protocol.js';
+import { BRIDGE_SOURCE, BRIDGE_ACTIONS, BRIDGE_EVENTS } from './modern/core/bridge-protocol.js';
 import {
     generateKoboldWithStreaming,
     kai_settings,
@@ -6230,6 +6230,18 @@ window.addEventListener('message', async (event) => {
         postModernBridgeResult(event, id, null, error);
     }
 });
+
+// 流式增量单向推送：bridge 模式下订阅 STREAM_TOKEN_RECEIVED（每 token 携带累积文本），转发给父窗口（modern）
+// 做定点增量渲染。只注册一次，只在 iframe 内（window.parent !== window）向父窗口 post，避免顶层页误发。
+if (isModernBridgeMode && window.parent && window.parent !== window) {
+    eventSource.on(event_types.STREAM_TOKEN_RECEIVED, (text) => {
+        window.parent.postMessage({
+            source: modernBridgeSource,
+            event: BRIDGE_EVENTS.STREAM_PROGRESS,
+            text: String(text ?? ''),
+        }, location.origin);
+    });
+}
 
 /**
  * Injects extension prompts into chat messages.
