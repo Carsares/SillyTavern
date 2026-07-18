@@ -1,31 +1,14 @@
+import { renderMessageMarkdown } from '../core/message-markdown.js';
+
 export function createChatMessageContentComponents({
     escapeHtml,
     formatBytes,
     formatNumber,
 }) {
-    function renderInlineMessageText(value) {
-        return escapeHtml(value)
-            .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-            .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*([^*\n]+)\*/g, '$1')
-            .replace(/(^|[\s([{<"'])_([^_\n]+)_($|[\s)\]}>.,!?;:"'])/g, '$1$2$3')
-            .replace(/\n/g, '<br>');
-    }
-
+    // 渲染委托 showdown（Markdown，含代码块/表格/段落），XSS 由 DOMPurify 白名单兜底；
+    // stripEmphasis 保留新版既定的 RP 阅读风格：*动作*/_心声_ 渲染成纯文本（粗体仍保留），空消息用占位兜底。
     function renderMessageText(value) {
-        const text = String(value || '[空消息]');
-        const parts = text.split(/```([\s\S]*?)```/g);
-        return parts.map((part, index) => {
-            if (index % 2 === 1) {
-                const code = part.replace(/^\n|\n$/g, '');
-                return `<pre><code>${escapeHtml(code)}</code></pre>`;
-            }
-
-            return part
-                .split(/\n{2,}/)
-                .map(paragraph => paragraph.trim() ? `<p>${renderInlineMessageText(paragraph)}</p>` : '')
-                .join('');
-        }).join('');
+        return renderMessageMarkdown(String(value || '[空消息]'), { stripEmphasis: true });
     }
 
     function getMessageReasoning(message) {

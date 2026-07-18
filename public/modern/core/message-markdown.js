@@ -9,21 +9,24 @@ import { DOMPurify, showdown } from '../../lib.js';
 /**
  * @typedef {object} RenderMarkdownOptions
  * @property {boolean} [inline] 内联模式：去掉最外层 <p> 包裹，用于单行/行内文本
+ * @property {boolean} [stripEmphasis] 剥掉斜体强调标签（em/i）只保留其文字，用于 RP 场景把单星号动作与单下划线心声渲染成纯文本；strong 粗体不受影响
  * @property {object} [sanitizerOverrides] DOMPurify 白名单覆盖项，与默认配置浅合并
  */
 
-// 对齐 legacy reloadMarkdownProcessor 的关键阅读选项子集（斜体、下划线、删除线、表格、软换行、代码块）。
-// legacy 的自定义扩展（下划线/dinkus）不在此复刻，RP 文本阅读体验以标准 Markdown 为准。
+// 关键阅读选项子集（表格、软换行、删除线、代码块）。不启用 underline：其会把单下划线 _x_ 留成字面下划线，
+// 与「强调符渲染成纯文本」相冲突；关闭后 _x_ 走标准 <em>，再由 stripEmphasis 统一剥成纯文本。
 const converterOptions = {
     literalMidWordUnderscores: true,
     parseImgDimensions: true,
     tables: true,
-    underline: true,
     simpleLineBreaks: true,
     strikethrough: true,
     disableForced4SpacesIndentedSublists: true,
     ghCodeBlocks: true,
 };
+
+// 斜体强调标签：stripEmphasis 时移出白名单，DOMPurify 会剥标签保留其文字内容。<strong>/<b> 粗体保留。
+const emphasisTags = ['em', 'i'];
 
 // RP 常见格式与代码块所需的标签白名单；未列出的标签一律被 DOMPurify 剥离。
 const allowedTags = [
@@ -63,10 +66,12 @@ function getConverter() {
 /**
  * 构造 DOMPurify 净化配置，允许调用方浅合并覆盖白名单。
  * @param {object} [overrides]
+ * @param {boolean} [stripEmphasis] 是否把斜体强调标签移出白名单（剥标签保留文字）
  */
-function buildSanitizerConfig(overrides = {}) {
+function buildSanitizerConfig(overrides = {}, stripEmphasis = false) {
+    const tags = stripEmphasis ? allowedTags.filter(tag => !emphasisTags.includes(tag)) : allowedTags;
     return {
-        ALLOWED_TAGS: allowedTags,
+        ALLOWED_TAGS: tags,
         ALLOWED_ATTR: allowedAttr,
         ALLOW_DATA_ATTR: false,
         RETURN_DOM: false,
@@ -101,7 +106,7 @@ export function renderMessageMarkdown(text, options = {}) {
     }
 
     const rawHtml = getConverter().makeHtml(source).trim();
-    const cleanHtml = String(DOMPurify.sanitize(rawHtml, buildSanitizerConfig(options.sanitizerOverrides)));
+    const cleanHtml = String(DOMPurify.sanitize(rawHtml, buildSanitizerConfig(options.sanitizerOverrides, options.stripEmphasis)));
     return options.inline ? unwrapParagraph(cleanHtml) : cleanHtml;
 }
 
