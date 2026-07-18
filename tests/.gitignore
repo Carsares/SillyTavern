@@ -1,0 +1,2 @@
+# Throwaway data root for the managed Playwright mock server (playwright.config.js)
+.e2e-data/
