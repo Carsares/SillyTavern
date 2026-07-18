@@ -6147,7 +6147,8 @@ async function handleModernBridgeReloadSettings() {
     loadHordeSettings(settings);
     await loadPowerUserSettings(settings, data);
     applyPowerUserSettings();
-    setWorldInfoSettings(settings.world_info_settings ?? settings, data);
+    // 刻意不调 setWorldInfoSettings：它每次都注册 CHAT_CHANGED 等 eventSource 监听且无 .off()，随 reload 次数无界累积；
+    // WI 全局配置改动少见，需要时刷新页面即可，避免在隐藏 iframe 内堆积重复 handler。
 
     if (settings.main_api) {
         main_api = settings.main_api === 'poe' ? 'openai' : settings.main_api;
@@ -8156,7 +8157,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         // bridge 模式：隐藏 iframe 无人应答确认框（cancelButton:false 会永久挂起，约 180s 才超时），
         // 页面 reload 也会打断生成。完整性冲突通常源于 modern 侧刚编辑消息（bump 了 integrity），
         // 此处不弹框、不 reload、不强制覆盖（强制覆盖会用 iframe 陈旧状态盖掉 modern 的编辑），
-        // 直接返回保存失败，由上层 saved 信号暴露给 modern；根因由 M3 的 reloadChat 在生成前同步 integrity 消除。
+        // 直接返回保存失败，由上层 saved 信号暴露给 modern。M3 的 reloadChat 在编辑后异步同步 integrity，
+        // 能显著降低此冲突，但它是 fire-and-forget、未与下次生成串行，故极窄窗口内仍可能偶发（由 saved 信号兜住）。
         if (isModernBridgeMode) {
             console.warn('Chat integrity check failed in modern bridge mode; reporting save failure without prompting.');
             return false;
