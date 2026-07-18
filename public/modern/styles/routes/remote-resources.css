@@ -114,6 +114,24 @@
     font-size: 12px;
 }
 
+.remote-imported-badge {
+    margin-top: 6px;
+    background: var(--success-soft, var(--surface-muted));
+    color: var(--success, var(--text));
+}
+
+.remote-preset-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 10px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--surface-muted);
+    font-size: 13px;
+}
+
 .remote-url-panel {
     grid-template-columns: minmax(260px, 1fr) auto;
     align-items: end;

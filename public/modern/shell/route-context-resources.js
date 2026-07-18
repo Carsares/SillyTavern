@@ -234,9 +234,11 @@ export function createPersonaRouteContext(personas) {
 
 export function createRemoteResourceRouteContext(remoteResources) {
     const {
+        cancelPresetImport,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
+        importPresetWithType,
         importRemoteResource,
         importRemoteUrl,
         loadRemoteResources,
@@ -253,9 +255,11 @@ export function createRemoteResourceRouteContext(remoteResources) {
     } = remoteResources;
 
     return {
+        cancelPresetImport,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
+        importPresetWithType,
         importRemoteResource,
         importRemoteUrl,
         loadRemoteResources,

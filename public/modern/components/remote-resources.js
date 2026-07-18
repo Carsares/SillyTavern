@@ -127,7 +127,11 @@ export function createRemoteResourceComponents(ctx) {
         const running = state.remoteResources.operation.key === operationKey && state.remoteResources.operation.running;
         const typeLabel = getTypeLabel(item.resourceType);
         const stats = Object.entries(item.stats || {}).filter(([, value]) => value !== '').slice(0, 3);
-        const actionLabel = item.resourceType === 'extension' ? '安装' : item.resourceType === 'asset' ? '下载到素材' : ['character', 'worldbook'].includes(item.resourceType) ? '导入' : '下载';
+        const actionLabel = item.resourceType === 'extension' ? '安装' : item.resourceType === 'asset' ? '下载到素材' : ['character', 'worldbook', 'preset'].includes(item.resourceType) ? '导入' : '下载';
+        // M6.2d：按 remoteId + providerId 匹配已有导入记录，命中则显示「已导入」徽章。
+        const imported = state.remoteResources.records.some(record => record.remoteId === item.id && record.providerId === item.providerId);
+        // 预设类型推断失败时，本卡片进入内联选择状态。
+        const presetPromptActive = state.remoteResources.presetPrompt?.key === operationKey;
 
         return `
         <article class="resource-card remote-resource-card">
@@ -136,6 +140,7 @@ export function createRemoteResourceComponents(ctx) {
                 <div class="remote-card-title">
                     <h2>${escapeHtml(item.title)}</h2>
                     <div class="card-meta">${escapeHtml(item.providerName)} · ${escapeHtml(typeLabel)}${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div>
+                    ${imported ? '<span class="tag remote-imported-badge">已导入</span>' : ''}
                 </div>
             </div>
             ${item.description ? `<p class="remote-description">${escapeHtml(item.description)}</p>` : ''}
@@ -159,7 +164,42 @@ export function createRemoteResourceComponents(ctx) {
                     </a>
                 ` : ''}
             </div>
+            ${presetPromptActive ? renderPresetTypePrompt(index) : ''}
         </article>
+    `;
+    }
+
+    // 预设类型无法自动识别时的内联回退：让用户从合法 apiId 中选一个再确认导入。
+    function renderPresetTypePrompt(index) {
+        const options = [
+            ['', '请选择类型'],
+            ['openai', 'Chat Completion (OpenAI)'],
+            ['textgenerationwebui', 'Text Completion'],
+            ['kobold', 'KoboldAI'],
+            ['koboldhorde', 'KoboldAI Horde'],
+            ['novel', 'NovelAI'],
+            ['instruct', '指令模板 (Instruct)'],
+            ['context', '上下文模板 (Context)'],
+            ['sysprompt', '系统提示词'],
+            ['reasoning', '推理模板'],
+        ];
+        return `
+        <div class="remote-preset-prompt">
+            <span class="muted">无法自动识别预设类型，请选择后导入：</span>
+            <div class="row-actions">
+                <select class="text-input" data-preset-apiid>
+                    ${options.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}
+                </select>
+                <button class="primary-button" type="button" data-confirm-preset-import="${index}">
+                    <i class="fa-solid fa-file-import"></i>
+                    导入
+                </button>
+                <button class="secondary-button" type="button" data-cancel-preset-import>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+            </div>
+        </div>
     `;
     }
 

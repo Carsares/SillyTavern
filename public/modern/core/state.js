@@ -303,6 +303,7 @@ export function createModernState() {
                 key: '',
                 running: false,
             },
+            presetPrompt: null,
             urlImport: {
                 url: '',
                 running: false,

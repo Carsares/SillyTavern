@@ -2,6 +2,35 @@ import { downloadFile } from '../core/utils.js';
 
 const remoteResourceTypes = new Set(['', 'character', 'worldbook', 'extension', 'asset', 'preset']);
 
+// 后端 /api/presets/save 认可的 apiId 集合，非该集合的值会被后端拒绝。
+const presetApiIds = new Set(['kobold', 'koboldhorde', 'novel', 'textgenerationwebui', 'openai', 'instruct', 'context', 'sysprompt', 'reasoning']);
+
+// 仅在强信号命中时返回具体 apiId，弱信号或无判据一律返回 null，交给用户在卡片内联选择，避免误判。
+function inferPresetApiId(preset) {
+    if (!preset || typeof preset !== 'object') {
+        return null;
+    }
+    const has = key => Object.prototype.hasOwnProperty.call(preset, key);
+    // openai：Chat Completion 专有字段，或同时具备提示词编排结构
+    if (has('chat_completion_source') || has('openai_model') || (has('prompts') && has('prompt_order'))) {
+        return 'openai';
+    }
+    // textgenerationwebui：文本补全采样字段（已排除 openai 信号）
+    if (has('sampler_order') || has('dynatemp') || has('max_tokens_second') || has('rep_pen')) {
+        return 'textgenerationwebui';
+    }
+    // instruct：指令模板同时含输入与输出序列
+    if (has('input_sequence') && has('output_sequence')) {
+        return 'instruct';
+    }
+    // context：上下文模板同时含 story_string 与 chat_start
+    if (has('story_string') && has('chat_start')) {
+        return 'context';
+    }
+    // 其余（sysprompt/novel/kobold/reasoning 等弱信号）交给用户选择
+    return null;
+}
+
 export function createRemoteResourceActions({
     state,
     apiFetch,
@@ -186,6 +215,11 @@ export function createRemoteResourceActions({
             return;
         }
 
+        if (item.resourceType === 'preset') {
+            await importRemotePreset(index);
+            return;
+        }
+
         if (!['character', 'worldbook'].includes(item.resourceType)) {
             await downloadRemoteResource(index);
             return;
@@ -221,6 +255,99 @@ export function createRemoteResourceActions({
             state.remoteResources.operation = { key: '', running: false };
             render();
         }
+    }
+
+    // 远程预设导入：先按字段特征自动推断 apiId，推不出再让用户在卡片内联选择类型。
+    async function importRemotePreset(index) {
+        const item = state.remoteResources.results[index];
+        if (!item) {
+            throw new Error('远程资源不存在，请重新搜索。');
+        }
+
+        // RisuAI 的预设是 preset-risu-v1 专有格式，非 ST 原生，直接提示不支持，不落盘。
+        if (item.providerId === 'risu-realm') {
+            showToast('暂不支持导入', '该来源为 RisuAI 专有格式');
+            return;
+        }
+
+        state.remoteResources.operation = { key: itemKey(item), running: true };
+        render();
+        try {
+            const preset = await downloadRemotePreset(item);
+            const apiId = inferPresetApiId(preset);
+            if (!apiId) {
+                // 推断不出类型时记录待选状态，卡片会渲染内联 select 让用户选，本轮不落盘。
+                state.remoteResources.presetPrompt = { key: itemKey(item), index };
+                return;
+            }
+            await savePresetImport(item, preset, apiId);
+        } finally {
+            state.remoteResources.operation = { key: '', running: false };
+            render();
+        }
+    }
+
+    // 用户在内联 select 选定类型后确认导入的入口。
+    async function importPresetWithType(index, apiId) {
+        if (!presetApiIds.has(apiId)) {
+            throw new Error('请选择有效的预设类型。');
+        }
+        const item = state.remoteResources.results[index];
+        if (!item) {
+            throw new Error('远程资源不存在，请重新搜索。');
+        }
+
+        state.remoteResources.presetPrompt = null;
+        state.remoteResources.operation = { key: itemKey(item), running: true };
+        render();
+        try {
+            const preset = await downloadRemotePreset(item);
+            await savePresetImport(item, preset, apiId);
+        } finally {
+            state.remoteResources.operation = { key: '', running: false };
+            render();
+        }
+    }
+
+    function cancelPresetImport() {
+        state.remoteResources.presetPrompt = null;
+        render();
+    }
+
+    async function downloadRemotePreset(item) {
+        const response = await apiFetchResponse('/api/remote-resources/download', {
+            body: {
+                providerId: item.providerId,
+                resourceId: item.id,
+                resourceType: item.resourceType,
+            },
+        });
+        const blob = await response.blob();
+        const text = await blob.text();
+        try {
+            return JSON.parse(text);
+        } catch {
+            throw new Error('预设文件解析失败，返回内容不是有效 JSON。');
+        }
+    }
+
+    async function savePresetImport(item, preset, apiId) {
+        const name = (item.title || item.id || 'preset').trim();
+        const saved = await apiFetch('/api/presets/save', { body: { name, preset, apiId } });
+        const savedName = saved?.name || name;
+        await saveRemoteRecord({
+            providerId: item.providerId,
+            providerName: item.providerName,
+            remoteId: item.id,
+            resourceType: item.resourceType,
+            title: item.title,
+            sourceUrl: item.sourceUrl,
+            localType: 'preset',
+            localId: savedName,
+            action: 'import',
+            metadata: item.metadata,
+        });
+        showToast('预设已导入', savedName);
     }
 
     async function downloadRemoteResource(index) {
@@ -490,10 +617,12 @@ export function createRemoteResourceActions({
     }
 
     return {
+        cancelPresetImport,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
         getRemoteResourceCount,
+        importPresetWithType,
         importRemoteResource,
         importRemoteUrl,
         loadRemoteResources,

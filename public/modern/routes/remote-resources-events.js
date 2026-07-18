@@ -3,9 +3,11 @@ export function createRemoteResourceEvents(ctx) {
         state,
         render,
         showToast,
+        cancelPresetImport,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
+        importPresetWithType,
         importRemoteResource,
         importRemoteUrl,
         refreshRemoteResources,
@@ -51,6 +53,22 @@ export function createRemoteResourceEvents(ctx) {
         const downloadButton = event.target.closest('[data-download-remote-resource]');
         if (downloadButton) {
             await runRemoteAction('remote-download', '远程资源下载失败', () => downloadRemoteResource(Number(downloadButton.dataset.downloadRemoteResource)));
+            return;
+        }
+
+        const confirmPresetButton = event.target.closest('[data-confirm-preset-import]');
+        if (confirmPresetButton) {
+            const index = Number(confirmPresetButton.dataset.confirmPresetImport);
+            // 读同卡片内联 select 选定的 apiId，再确认导入。
+            const card = confirmPresetButton.closest('.remote-resource-card');
+            const select = card ? card.querySelector('[data-preset-apiid]') : null;
+            const apiId = select ? select.value : '';
+            await runRemoteAction('remote-preset-import', '预设导入失败', () => importPresetWithType(index, apiId));
+            return;
+        }
+
+        if (event.target.closest('[data-cancel-preset-import]')) {
+            cancelPresetImport();
             return;
         }
 
