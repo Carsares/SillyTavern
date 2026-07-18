@@ -8560,6 +8560,14 @@ export async function getSettings(initLoaderHandle = null) {
 
 //MARK: saveSettings()
 export async function saveSettings(loopCounter = 0) {
+    // bridge 模式下 legacy iframe 的 settings 是启动快照，任何来源的回写都会用陈旧全量 payload
+    // 覆盖 modern 侧刚保存的配置（saveSettingsDebounced 也经此函数）。生成期回写白名单为空
+    // （见 MAINTENANCE.md 审计），故整体短路，绝不 POST /api/settings/save；聊天写路径
+    // （/api/chats/save、/api/chats/group/save）不经此函数，不受影响。
+    if (isModernBridgeMode) {
+        return true;
+    }
+
     if (!settingsReady) {
         console.warn('Settings not ready, scheduling another save');
         saveSettingsDebounced();
