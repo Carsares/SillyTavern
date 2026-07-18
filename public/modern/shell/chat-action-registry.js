@@ -13,6 +13,7 @@ export function createChatActionRegistry({
     render,
     showToast,
     callLegacyBridge,
+    subscribeProgress,
     bridgeReload,
     getCharacterAvatarUrl,
 }) {
@@ -114,6 +115,7 @@ export function createChatActionRegistry({
         render,
         showToast,
         callLegacyBridge,
+        subscribeProgress,
         formatNumber,
         getSelectedChatEntity,
         getChatContextKey,

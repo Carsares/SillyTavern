@@ -1730,6 +1730,7 @@ test.describe('Modern action helpers', () => {
             state,
             render: () => {},
             showToast: () => {},
+            subscribeProgress: () => () => {},
             callLegacyBridge: async (action, payload) => {
                 bridgeRequests.push({ action, payload });
                 return { chat: payload.chat };
@@ -1803,6 +1804,7 @@ test.describe('Modern action helpers', () => {
             state,
             render: () => {},
             showToast: () => {},
+            subscribeProgress: () => () => {},
             callLegacyBridge: async (action) => {
                 bridgeActions.push(action);
                 if (action === 'generate') {

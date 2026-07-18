@@ -6,6 +6,7 @@ export function createChatGenerationActions({
     render,
     showToast,
     callLegacyBridge,
+    subscribeProgress,
     formatNumber,
     getSelectedChatEntity,
     getChatContextKey,
@@ -56,6 +57,18 @@ export function createChatGenerationActions({
         activeGenerationToken = 0;
         state.engine.generating = false;
         render();
+    }
+
+    // 流式增量收到的是到当前为止的完整累积文本，用纯文本整体替换气泡内容（textContent，非追加、天然防注入）；
+    // 同时写入 state 以备全量重渲染兜底恢复。用纯文本预览而非 markdown，是为了不把 lib.js 拉进 app 启动核心导入图。
+    function updateStreamBubble(text) {
+        const value = String(text ?? '');
+        state.engine.streaming.text = value;
+        const bodyEl = document.querySelector('[data-streaming-bubble] .message-body');
+        if (bodyEl) {
+            bodyEl.textContent = value;
+            bodyEl.closest('[data-streaming-bubble]')?.scrollIntoView({ block: 'end' });
+        }
     }
 
     async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
@@ -157,7 +170,15 @@ export function createChatGenerationActions({
             throw new Error(groupMode ? '请先选择群聊和聊天文件' : '请先选择角色和聊天文件');
         }
 
+        // 生成开始前置流式气泡状态，beginGeneration 的 render() 会一次性把气泡插入 DOM
+        state.engine.streaming = { active: true, text: '' };
         const token = beginGeneration('生成中', `${entityName} · ${chatId}`);
+        // onProgress 只做定点 DOM 更新，不触发 render()，避免每 token 全量重建；stale 守卫按 token 丢弃旧流
+        const unsubscribe = subscribeProgress((data) => {
+            if (activeGenerationToken === token) {
+                updateStreamBubble(data?.text);
+            }
+        });
 
         try {
             await runModernChatFileOperation(entity, chatId, async () => {
@@ -193,6 +214,9 @@ export function createChatGenerationActions({
             failGeneration(token, error, error.message.includes('停止') ? '已停止' : '生成失败');
             throw error;
         } finally {
+            // 取消订阅并关闭气泡；syncGeneratedChat 已带真实消息全量重渲染收尾，finishGeneration 的 render() 移除气泡
+            unsubscribe();
+            state.engine.streaming = { active: false, text: '' };
             finishGeneration(token);
         }
     }

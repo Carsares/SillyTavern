@@ -50,7 +50,7 @@ const apiClient = createApiClient({
 });
 const apiFetch = apiClient.apiFetch;
 const apiFetchResponse = apiClient.apiFetchResponse;
-const { callLegacyBridge } = createLegacyBridge();
+const { callLegacyBridge, subscribeProgress } = createLegacyBridge();
 const bridgeReload = createBridgeReload(callLegacyBridge);
 
 const elements = createShellElements();
@@ -138,6 +138,7 @@ const {
     setTheme,
     matchesQuery,
     callLegacyBridge,
+    subscribeProgress,
     bridgeReload,
 });
 

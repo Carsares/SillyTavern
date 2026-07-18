@@ -1087,6 +1087,34 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
     });
 
+    test('streams progress into a live bubble that disappears when generation finishes', async ({ page }) => {
+        const fixture = await mockModernChatWorkspace(page);
+        const bridgeResponse = createDeferred();
+        await mockLegacyGenerationBridge(page, fixture, { beforeGenerateResponse: () => bridgeResponse.promise });
+
+        await page.goto('/modern/?view=chat');
+
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        await page.locator('[data-chat-input]').fill('hello streaming');
+        await page.locator('[data-send-message]').click();
+
+        // 生成挂起期间流式气泡应出现在消息列表末尾
+        await expect.poll(() => fixture.requests.bridge.map(request => request.action)).toContain('generate');
+        await expect(page.locator('[data-streaming-bubble]')).toBeVisible();
+
+        // 注入递增的累积文本，气泡内容应随之整体替换（text 为完整累积文本，非增量拼接）
+        await page.evaluate(() => window.postMessage({ source: 'sillytavern-modern-bridge', event: 'streamProgress', text: '部分文本' }, location.origin));
+        await expect(page.locator('[data-streaming-bubble] .message-body')).toContainText('部分文本');
+
+        await page.evaluate(() => window.postMessage({ source: 'sillytavern-modern-bridge', event: 'streamProgress', text: '部分文本继续扩展的更多内容' }, location.origin));
+        await expect(page.locator('[data-streaming-bubble] .message-body')).toContainText('部分文本继续扩展的更多内容');
+
+        // 生成结束：气泡消失，真实消息全量重渲染收尾
+        bridgeResponse.resolve();
+        await expect(page.locator('[data-streaming-bubble]')).toHaveCount(0);
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to hello streaming');
+    });
+
     test('keeps a newly selected group context when a character generation finishes', async ({ page }) => {
         const fixture = createChatFixture();
         const now = Date.now();

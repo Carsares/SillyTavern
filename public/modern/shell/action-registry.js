@@ -40,6 +40,7 @@ export function createActionRegistry({
     setTheme,
     matchesQuery,
     callLegacyBridge,
+    subscribeProgress,
     bridgeReload,
 }) {
     const apiConnectionActions = createApiConnectionActions({
@@ -158,6 +159,7 @@ export function createActionRegistry({
         render,
         showToast,
         callLegacyBridge,
+        subscribeProgress,
         bridgeReload,
         getCharacterAvatarUrl,
     });

@@ -136,6 +136,44 @@
     border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
+/* 流式气泡：生成期间的临时预览，轻量淡入 + 打字光标提示正在输出 */
+.message-streaming {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    animation: message-streaming-fade 160ms ease-out;
+}
+
+/* 流式气泡内容为纯文本预览，保留换行与空白 */
+.message-streaming .message-body {
+    white-space: pre-wrap;
+}
+
+.message-streaming .message-body::after {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: var(--accent);
+    animation: message-streaming-caret 1s steps(1) infinite;
+}
+
+@keyframes message-streaming-fade {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes message-streaming-caret {
+    50% {
+        opacity: 0;
+    }
+}
+
 .message-meta,
 .message-foot {
     display: flex;

@@ -35,7 +35,24 @@ export function createChatMessageComponents({
                 </button>
             ` : ''}
             ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index)).join('')}
+            ${renderStreamingBubble()}
         </div>
+    `;
+    }
+
+    // 流式气泡：生成期间追加在消息列表末尾，onProgress 定点更新其 message-body；text 用于全量重渲染时的兜底恢复
+    function renderStreamingBubble() {
+        const streaming = state.engine.streaming;
+        if (!streaming?.active) {
+            return '';
+        }
+
+        // 流式期间用纯文本预览（避免在 app 启动期把 lib.js/markdown 拉进核心导入图）；结束后由真实消息走完整 markdown 渲染。
+        const body = streaming.text ? escapeHtml(String(streaming.text)) : '';
+        return `
+        <article class="message message-streaming" data-streaming-bubble>
+            <div class="message-body">${body}</div>
+        </article>
     `;
     }
 
