@@ -173,6 +173,10 @@ export function createChatGenerationActions({
                     // Manual group activation: only forwarded when a specific member is forced, so other flows are unchanged
                     ...(groupMode && forceAvatar ? { forceAvatar } : {}),
                 });
+                // 保存失败时不再同步：从后端重载会拿到未保存的旧状态而丢消息，直接暴露为失败。
+                if (result?.saved === false) {
+                    throw new Error('生成结果未能保存到聊天文件，请重试或刷新后再试。');
+                }
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
                 await syncGeneratedChat({
                     entity,
@@ -226,6 +230,9 @@ export function createChatGenerationActions({
                     messageIndex: index,
                     direction,
                 });
+                if (result?.saved === false) {
+                    throw new Error('候选切换未能保存到聊天文件，请重试或刷新后再试。');
+                }
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
                 const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
                 await syncGeneratedChat({

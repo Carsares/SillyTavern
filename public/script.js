@@ -6020,6 +6020,9 @@ async function handleModernBridgeGenerate(payload = {}) {
     if (type === 'normal' && chat.length <= messageCountBefore) {
         throw new Error('原版生成引擎未生成新消息，请检查 API 连接状态。');
     }
+    // continue/regenerate/swipe 不改变消息数，normal 的 messageCount 校验对它们失效；用一次确定性
+    // saveChatConditional 的布尔作为「结果已持久化」信号回传 modern（旧引擎内部保存失败会被静默吞掉）。
+    const saved = await saveChatConditional();
     const group = context.group ? groups.find(x => x.id === context.group.id) : null;
     return {
         avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
@@ -6027,6 +6030,7 @@ async function handleModernBridgeGenerate(payload = {}) {
         chat: group?.chat_id || characters[this_chid]?.chat || '',
         message: String(result || ''),
         messageCount: chat.length,
+        saved,
         type,
     };
 }
@@ -6043,6 +6047,8 @@ async function handleModernBridgeSwipe(payload = {}) {
     const direction = params.direction === 'left' ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
     await swipe(null, direction, { source: SWIPE_SOURCE.SWIPE_PICKER, repeated: false, forceMesId: messageId });
     const message = chat[messageId] || {};
+    // 同 generate：swipe 不改变消息数，用确定性保存的布尔作为持久化信号回传 modern。
+    const saved = await saveChatConditional();
     const group = context.group ? groups.find(x => x.id === context.group.id) : null;
     return {
         avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
@@ -6052,6 +6058,7 @@ async function handleModernBridgeSwipe(payload = {}) {
         messageIndex: messageId,
         swipeId: message.swipe_id ?? 0,
         swipeCount: Array.isArray(message.swipes) ? message.swipes.length : 0,
+        saved,
     };
 }
 
