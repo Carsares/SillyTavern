@@ -160,18 +160,18 @@ export function maskEndpoint(value) {
 export function formatDurationMs(value) {
     const ms = Number(value || 0);
     if (!ms) {
-        return '0s';
+        return '0 秒';
     }
     if (ms < 1000) {
-        return `${formatNumber(ms)}ms`;
+        return `${formatNumber(ms)} 毫秒`;
     }
     const seconds = Math.round(ms / 1000);
     if (seconds < 60) {
-        return `${formatNumber(seconds)}s`;
+        return `${formatNumber(seconds)} 秒`;
     }
     const minutes = Math.floor(seconds / 60);
     const rest = seconds % 60;
-    return `${formatNumber(minutes)}m ${formatNumber(rest)}s`;
+    return `${formatNumber(minutes)} 分 ${formatNumber(rest)} 秒`;
 }
 
 // 群组会话数以后端统计的「有文件的会话」为准（chat_count）；旧后端没有该字段时退回登记数。

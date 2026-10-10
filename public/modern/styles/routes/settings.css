@@ -8,6 +8,30 @@
     margin: 0 0 14px;
 }
 
-.settings-summary-grid {
-    margin-top: 12px;
+/* Startup config shown for reference: a dashed frame and a lock badge set it apart from the editable form */
+.settings-readonly-section {
+    border-style: dashed;
+}
+
+.settings-readonly-section .form-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-readonly-section .form-section-title .badge {
+    gap: 5px;
+    min-height: 22px;
+    padding: 1px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Read-only values read as displayed config rather than greyed-out form fields */
+.settings-readonly-section .text-input:disabled {
+    border-style: dashed;
+    background: transparent;
+    color: var(--text);
+    cursor: default;
+    opacity: 1;
 }

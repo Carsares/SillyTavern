@@ -123,6 +123,7 @@ async function mockModernDashboardActivityWorkspace(page, settingsOverride = nul
     await page.route('**/api/secrets/settings', route => fulfillJson(route, { allowKeysExposure: false }));
     await page.route('**/api/secrets/read', route => fulfillJson(route, {}));
     await page.route('**/api/stats/get', route => fulfillJson(route, stats));
+    await page.route('**/api/remote-resources/records', route => fulfillJson(route, []));
     await page.route('**/api/characters/chats', route => {
         const payload = route.request().postDataJSON();
         const avatar = payload.avatar_url || 'alice.png';
@@ -275,6 +276,52 @@ test.describe('Modern dashboard and activity', () => {
 
         await expect(page).toHaveURL(/\/modern\/\?view=api/);
         await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+    });
+
+    test('labels activity metrics in Chinese', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page);
+
+        await page.goto('/modern/?view=activity');
+
+        // Fixture totals: 1,140 words and 3 swipes across the three stats entries
+        const messages = page.locator('.metric-card', { hasText: '消息总量' });
+        const size = page.locator('.metric-card', { hasText: '聊天体积' });
+        await expect(messages).toContainText('1,140 词');
+        await expect(size).toContainText('3 个候选');
+        await expect(page.locator('.metrics-grid')).not.toContainText(/words|swipes/);
+    });
+
+    test('wraps dashboard quick-entry descriptions instead of truncating them', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page);
+
+        for (const viewport of [{ width: 1440, height: 900 }, { width: 1280, height: 800 }]) {
+            await page.setViewportSize(viewport);
+            await page.goto('/modern/?view=dashboard');
+            await expect(page.locator('.action-card')).toHaveCount(8);
+
+            const cards = await page.locator('.action-card').evaluateAll(elements => elements.map(card => {
+                const cardBox = card.getBoundingClientRect();
+                const title = card.querySelector('.action-body strong');
+                const detail = card.querySelector('.action-body span');
+                const badge = card.querySelector('.badge');
+                const titleBox = title.getBoundingClientRect();
+                const detailBox = detail.getBoundingClientRect();
+                const badgeBox = badge.getBoundingClientRect();
+                return {
+                    detail: detail.textContent,
+                    detailFits: detail.scrollHeight <= detail.clientHeight + 1 && detail.scrollWidth <= detail.clientWidth + 1
+                        && detailBox.right <= cardBox.right + 0.5,
+                    badgeRight: badgeBox.left >= titleBox.left && badgeBox.right <= cardBox.right + 0.5
+                        && badgeBox.right >= detailBox.right - 0.5 && badgeBox.bottom <= detailBox.top + 0.5,
+                };
+            }));
+
+            const label = `${viewport.width}x${viewport.height}`;
+            for (const card of cards) {
+                expect(card.detailFits, `${label} 「${card.detail}」 is shown in full`).toBe(true);
+                expect(card.badgeRight, `${label} 「${card.detail}」 keeps its badge on the right`).toBe(true);
+            }
+        }
     });
 
     test('keeps activity cards inside the page at desktop and tablet widths', async ({ page }) => {

@@ -328,6 +328,8 @@ export function createModernState() {
                 cancelled: false,
             },
             records: [],
+            // True once the startup data load read the import records (navigation badge), before the route loads
+            recordsLoaded: false,
             operation: {
                 key: '',
                 running: false,

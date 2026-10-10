@@ -137,7 +137,7 @@ export function createDashboardComponents(ctx) {
                 <strong>${escapeHtml(title)}</strong>
                 <span>${escapeHtml(detail)}</span>
             </span>
-            <span class="badge">${escapeHtml(meta)}</span>
+            <span class="badge" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
         </button>
     `;
     }

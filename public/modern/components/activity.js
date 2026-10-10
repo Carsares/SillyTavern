@@ -41,8 +41,8 @@ export function createActivityComponents(ctx) {
         `)}
         <div class="metrics-grid">
             ${metricCard('统计对象', formatNumber(visibleEntries.length), `${formatNumber(entries.length)} 个总对象`, 'fa-id-card')}
-            ${metricCard('消息总量', formatNumber(summary.messages), `${formatNumber(summary.words)} words`, 'fa-message')}
-            ${metricCard('聊天体积', formatBytes(summary.size), `${formatNumber(summary.swipes)} swipes`, 'fa-database')}
+            ${metricCard('消息总量', formatNumber(summary.messages), `${formatNumber(summary.words)} 词`, 'fa-message')}
+            ${metricCard('聊天体积', formatBytes(summary.size), `${formatNumber(summary.swipes)} 个候选`, 'fa-database')}
             ${metricCard('最近活动', statsUpdatedAt ? formatDate(statsUpdatedAt) : '未生成', summary.last ? `最近聊天 ${formatDate(summary.last)}` : '无聊天记录', 'fa-clock')}
         </div>
         ${entries.length ? `

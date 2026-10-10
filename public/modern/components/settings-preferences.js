@@ -2,18 +2,16 @@ export function createSettingsPreferenceComponents(ctx) {
     const {
         state,
         escapeHtml,
-        formatBytes,
-        renderKeyValue,
-        getChatModeLabel,
     } = ctx;
 
-    function renderSettingsPreferencesSection(requestCompression, compressionEnabled) {
+    // The account & resource tab carries the read-only summaries; this tab only holds the forms
+    function renderSettingsPreferencesSection(requestCompression) {
         return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
-                    <h2 class="panel-title">可编辑设置</h2>
-                    <p class="panel-subtitle">现代页本地偏好与 settings.json 中的请求压缩参数。</p>
+                    <h2 class="panel-title">界面与请求设置</h2>
+                    <p class="panel-subtitle">界面偏好可在此修改；请求压缩来自 config.yaml，只在此展示。</p>
                 </div>
             </div>
             <div class="settings-edit-grid">
@@ -21,28 +19,6 @@ export function createSettingsPreferenceComponents(ctx) {
                 ${renderRequestCompressionForm(requestCompression)}
             </div>
         </section>
-        <div class="grid-list settings-summary-grid">
-            <article class="resource-card">
-                <h2 class="card-title">现代界面</h2>
-                <p class="card-meta">新版工作区本地偏好。</p>
-                <div class="kv-list">
-                    ${renderKeyValue('主题', state.theme)}
-                    ${renderKeyValue('聊天类型', getChatModeLabel())}
-                    ${renderKeyValue('聊天列表', state.chatSidebarOpen ? '展开' : '收起')}
-                    ${renderKeyValue('上下文抽屉', state.inspectorOpen ? '展开' : '收起')}
-                    ${renderKeyValue('入口', '/modern/')}
-                </div>
-            </article>
-            <article class="resource-card">
-                <h2 class="card-title">请求压缩</h2>
-                <p class="card-meta">控制大请求的压缩边界。</p>
-                <div class="kv-list">
-                    ${renderKeyValue('启用', compressionEnabled ? '是' : '否')}
-                    ${renderKeyValue('最小载荷', formatBytes(requestCompression.minPayloadSize))}
-                    ${renderKeyValue('最大载荷', formatBytes(requestCompression.maxPayloadSize))}
-                </div>
-            </article>
-        </div>
     `;
     }
 
@@ -98,10 +74,13 @@ export function createSettingsPreferenceComponents(ctx) {
 
     function renderRequestCompressionForm(requestCompression) {
         return `
-            <section class="form-section">
+            <section class="form-section settings-readonly-section" data-request-compression-readonly>
                 <div>
-                    <h3 class="form-section-title">请求压缩</h3>
-                    <p class="panel-subtitle">来自 config.yaml 的启动配置，运行中不可在现代页修改。</p>
+                    <h3 class="form-section-title">
+                        请求压缩
+                        <span class="badge" title="运行中不可修改"><i class="fa-solid fa-lock"></i>只读</span>
+                    </h3>
+                    <p class="panel-subtitle">来自 config.yaml 的启动配置，运行中不可在现代页修改；如需调整，请编辑 config.yaml 后重启服务。</p>
                 </div>
                 <label class="checkbox-card compact-checkbox">
                     <input type="checkbox" data-request-compression-enabled ${requestCompression.enabled ? 'checked' : ''} disabled>
@@ -109,12 +88,12 @@ export function createSettingsPreferenceComponents(ctx) {
                 </label>
                 <div class="form-grid two-columns">
                     <label class="field-label">
-                        <span>最小载荷 Byte</span>
-                        <input class="text-input" type="number" min="0" step="1" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}" disabled>
+                        <span>最小载荷（字节）</span>
+                        <input class="text-input" type="number" data-request-compression-min value="${escapeHtml(requestCompression.minPayloadSize ?? 0)}" disabled>
                     </label>
                     <label class="field-label">
-                        <span>最大载荷 Byte</span>
-                        <input class="text-input" type="number" min="0" step="1" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}" disabled>
+                        <span>最大载荷（字节）</span>
+                        <input class="text-input" type="number" data-request-compression-max value="${escapeHtml(requestCompression.maxPayloadSize ?? 0)}" disabled>
                     </label>
                 </div>
             </section>

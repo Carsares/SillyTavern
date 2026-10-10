@@ -44,7 +44,7 @@ export function createSettingsStatusComponents(ctx) {
                 <h2 class="card-title">现代界面</h2>
                 <p class="card-meta">新版工作区本地偏好。</p>
                 <div class="kv-list">
-                    ${renderKeyValue('主题', state.theme)}
+                    ${renderKeyValue('主题', state.theme === 'dark' ? '深色' : '浅色')}
                     ${renderKeyValue('聊天类型', getChatModeLabel())}
                     ${renderKeyValue('聊天列表', state.chatSidebarOpen ? '展开' : '收起')}
                     ${renderKeyValue('上下文抽屉', state.inspectorOpen ? '展开' : '收起')}
@@ -58,14 +58,15 @@ export function createSettingsStatusComponents(ctx) {
                     ${renderKeyValue('角色', formatNumber(state.characters.length))}
                     ${renderKeyValue('群聊', formatNumber(state.groups.length))}
                     ${renderKeyValue('世界书', formatNumber(state.worldbooks.length || (state.settingsBundle.world_names || []).length))}
-                    ${renderKeyValue('素材', formatNumber(getAssetCount()))}
+                    ${renderKeyValue('背景', formatNumber(Array.isArray(state.backgrounds?.images) ? state.backgrounds.images.length : 0))}
+                    ${renderKeyValue('资产文件', formatNumber(getAssetCount()))}
                 </div>
             </article>
             <article class="resource-card">
                 <h2 class="card-title">请求安全</h2>
                 <p class="card-meta">现代页请求令牌和密钥状态。</p>
                 <div class="kv-list">
-                    ${renderKeyValue('CSRF', state.csrfToken ? '已获取' : '未获取')}
+                    ${renderKeyValue('CSRF 令牌', state.csrfToken ? '已获取' : '未获取')}
                     ${renderKeyValue('密钥状态', savedSecrets ? `${formatNumber(savedSecrets)} 个已保存` : '未读取到')}
                     ${renderKeyValue('错误状态', dataStatus)}
                 </div>
@@ -85,7 +86,7 @@ export function createSettingsStatusComponents(ctx) {
                     </div>
                 </div>
                 <div class="kv-list">
-                    ${renderKeyValue('CSRF', state.csrfToken ? '已获取' : '未获取')}
+                    ${renderKeyValue('CSRF 令牌', state.csrfToken ? '已获取' : '未获取')}
                     ${renderKeyValue('密钥状态', savedSecrets ? `${formatNumber(savedSecrets)} 个已保存` : '未读取到')}
                     ${renderKeyValue('账户系统', bundle.enable_accounts ? '开启' : '关闭')}
                     ${renderKeyValue('扩展系统', bundle.enable_extensions ? '开启' : '关闭')}

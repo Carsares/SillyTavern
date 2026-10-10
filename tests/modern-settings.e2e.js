@@ -121,16 +121,18 @@ test.describe('Modern settings page', () => {
         const requests = fixture.requests.settingsSnapshots;
 
         await gotoModern(page, 'settings', '设置中心');
+        // The metrics row reads the snapshot count on route entry; the button reads the list again
+        await expect.poll(() => requests.lists.length).toBe(1);
 
         await page.locator('[data-load-settings-snapshots]').click();
 
-        await expect.poll(() => requests.lists.length).toBe(1);
+        await expect.poll(() => requests.lists.length).toBe(2);
         await expect(page.locator('.backup-row', { hasText: 'settings-older.json' })).toBeVisible();
 
         await page.locator('[data-create-settings-snapshot]').click();
 
         await expect.poll(() => requests.creates.length).toBe(1);
-        await expect.poll(() => requests.lists.length).toBe(2);
+        await expect.poll(() => requests.lists.length).toBe(3);
         await expect(page.locator('.backup-row', { hasText: 'settings-created.json' })).toBeVisible();
 
         await page.locator('[data-preview-settings-snapshot="settings-older.json"]').click();
@@ -158,6 +160,75 @@ test.describe('Modern settings page', () => {
         await expect(page.locator('[data-request-compression-min]')).toBeDisabled();
         await expect(page.locator('[data-request-compression-max]')).toHaveValue('1024');
         await expect(page.locator('[data-request-compression-max]')).toBeDisabled();
+    });
+
+    test('shows the snapshot count on route entry without opening the snapshots section', async ({ page }) => {
+        const fixture = await mockModernSettingsWorkspace(page);
+        const requests = fixture.requests.settingsSnapshots;
+        await page.addInitScript(() => {
+            globalThis.localStorage.setItem('st-modern-settings-section', 'preferences');
+        });
+
+        await gotoModern(page, 'settings', '设置中心');
+
+        const metric = page.locator('.metric-card', { hasText: '设置快照' });
+        await expect(metric).toContainText('1');
+        await expect(metric).toContainText('本地备份');
+        await expect(metric).not.toContainText('—');
+        await expect(metric).not.toContainText('尚未读取');
+        expect(requests.lists).toHaveLength(1);
+        await expect(page.locator('[data-settings-section="preferences"]')).toHaveAttribute('aria-selected', 'true');
+    });
+
+    test('reports a failed snapshot count read once instead of an em dash', async ({ page }) => {
+        const fixture = await mockModernSettingsWorkspace(page);
+        const requests = fixture.requests.settingsSnapshots;
+        await page.route('**/api/settings/get-snapshots', route => {
+            requests.lists.push({ at: Date.now() });
+            return fulfillJson(route, { error: 'snapshot directory unreadable' }, 500);
+        });
+
+        await gotoModern(page, 'settings', '设置中心');
+
+        const metric = page.locator('.metric-card', { hasText: '设置快照' });
+        await expect(metric).toContainText('未读取');
+        await expect(metric).toContainText('读取失败');
+        await expect(metric).not.toContainText('—');
+
+        // Re-rendering the route does not retry the failed automatic read
+        await page.locator('[data-settings-section="status"]').click();
+        await expect(page.locator('[data-settings-section="status"]')).toHaveAttribute('aria-selected', 'true');
+        expect(requests.lists).toHaveLength(1);
+    });
+
+    test('keeps summaries off the preferences tab and shows request compression as read-only config', async ({ page }) => {
+        await mockModernSettingsWorkspace(page);
+        await page.addInitScript(() => {
+            globalThis.localStorage.setItem('st-modern-settings-section', 'preferences');
+            globalThis.localStorage.setItem('st-modern-theme', 'light');
+        });
+
+        await gotoModern(page, 'settings', '设置中心');
+
+        await expect(page.locator('.form-section-title', { hasText: '现代界面偏好' })).toBeVisible();
+        await expect(page.locator('.resource-card .card-title', { hasText: '现代界面' })).toHaveCount(0);
+        await expect(page.locator('.resource-card .card-title', { hasText: '请求压缩' })).toHaveCount(0);
+
+        const compression = page.locator('[data-request-compression-readonly]');
+        await expect(compression.locator('.form-section-title')).toContainText('只读');
+        await expect(compression).toContainText('config.yaml');
+        await expect(compression).toContainText('最小载荷（字节）');
+        await expect(compression).not.toContainText('Byte');
+        await expect(compression.locator('[data-request-compression-min]')).toBeDisabled();
+        await expect(compression.locator('[data-request-compression-max]')).toBeDisabled();
+        await expect(compression.locator('[data-request-compression-enabled]')).toBeDisabled();
+
+        await page.locator('[data-settings-section="status"]').click();
+
+        const modernCard = page.locator('.resource-card', { has: page.locator('.card-title', { hasText: '现代界面' }) });
+        await expect(modernCard).toHaveCount(1);
+        await expect(modernCard).toContainText('浅色');
+        await expect(page.locator('.resource-card .card-title', { hasText: '请求压缩' })).toHaveCount(1);
     });
 
     test('filters settings snapshots by local query', async ({ page }) => {

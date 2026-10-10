@@ -395,6 +395,10 @@ export async function mockModernWorkspace(page, fixture = createModernResourceFi
     await page.route('**/api/secrets/settings', route => fulfillJson(route, fixture.secrets));
     await page.route('**/api/secrets/read', route => fulfillJson(route, fixture.secretState));
     await page.route('**/api/stats/get', route => fulfillJson(route, fixture.stats));
+    // The startup load reads the import records for the navigation badge; route suites override this
+    await page.route('**/api/remote-resources/records', route => (route.request().method() === 'GET'
+        ? fulfillJson(route, fixture.remoteResourceRecords || [])
+        : route.fallback()));
 }
 
 export async function gotoModern(page, view, title) {

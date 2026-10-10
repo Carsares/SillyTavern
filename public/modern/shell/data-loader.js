@@ -33,14 +33,21 @@ export function createDataLoader({
                 secretState: apiFetch('/api/secrets/read'),
                 stats: apiFetch('/api/stats/get'),
             };
+            // Only the navigation badge needs the import records up front, so a failure leaves that count
+            // unknown instead of reporting the workspace data as partially failed
+            const remoteRecordsRequest = apiFetch('/api/remote-resources/records', { method: 'GET' })
+                .catch(() => null);
 
-            const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
-                try {
-                    return [key, await promise, null];
-                } catch (error) {
-                    return [key, null, error];
-                }
-            }));
+            const [entries, remoteRecords] = await Promise.all([
+                Promise.all(Object.entries(requests).map(async ([key, promise]) => {
+                    try {
+                        return [key, await promise, null];
+                    } catch (error) {
+                        return [key, null, error];
+                    }
+                })),
+                remoteRecordsRequest,
+            ]);
             if (epoch !== loadEpoch) {
                 return;
             }
@@ -55,6 +62,10 @@ export function createDataLoader({
                 state[key] = value;
             }
             state.errors = errors;
+            if (Array.isArray(remoteRecords)) {
+                state.remoteResources.records = remoteRecords;
+                state.remoteResources.recordsLoaded = true;
+            }
 
             try {
                 state.settings = state.settingsBundle?.settings ? JSON.parse(state.settingsBundle.settings) : {};

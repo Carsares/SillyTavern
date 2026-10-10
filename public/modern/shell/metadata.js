@@ -57,7 +57,6 @@ export function createShellMetadata({
     function getRouteCount(routeId) {
         switch (routeId) {
             case 'characters':
-            case 'chat':
                 return state.characters.length;
             case 'groups':
                 return state.groups.length;
