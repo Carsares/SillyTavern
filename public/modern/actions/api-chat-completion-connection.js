@@ -132,7 +132,27 @@ export function createApiChatCompletionConnectionActions({
         return '';
     }
 
-    function extractAssistantText(response) {
+    // Mirrors the chat-completion shapes read by extractReasoningFromData in public/scripts/reasoning.js:
+    // OpenAI-compatible reasoning_content / reasoning fields, plus Claude and Mistral "thinking" parts.
+    function extractReasoningText(response) {
+        const choice = response?.choices?.[0];
+        const message = choice?.message;
+        const thinkingText = [message?.content, response?.content]
+            .filter(Array.isArray)
+            .flat()
+            .filter(part => part?.type === 'thinking')
+            .map(part => responseContentToText(part.thinking))
+            .join('\n');
+
+        return [
+            message?.reasoning_content,
+            message?.reasoning,
+            choice?.reasoning,
+            thinkingText,
+        ].map(responseContentToText).find(text => text.trim()) || '';
+    }
+
+    function readConnectionTestReply(response) {
         if (response?.error) {
             throw new Error(response.error.message || String(response.error));
         }
@@ -144,11 +164,17 @@ export function createApiChatCompletionConnectionActions({
             || responseContentToText(response?.message?.content)
             || responseContentToText(response?.content);
 
-        if (!text.trim()) {
-            throw new Error('模型没有返回可显示内容。');
+        if (text.trim()) {
+            return { text: text.trim(), reasoningOnly: false };
         }
 
-        return text.trim();
+        // Reasoning models can spend the whole (deliberately small) test token budget on reasoning.
+        // The request still reached the model and got a valid reply, so the connection itself works.
+        if (extractReasoningText(response).trim()) {
+            return { text: '', reasoningOnly: true };
+        }
+
+        throw new Error('模型没有返回可显示内容。');
     }
 
     function createChatCompletionRequestBody(settings, messages) {
@@ -210,11 +236,14 @@ export function createApiChatCompletionConnectionActions({
 
         try {
             const response = await apiFetch('/api/backends/chat-completions/generate', { body });
-            const text = extractAssistantText(response);
+            const reply = readConnectionTestReply(response);
+            const replyDetail = reply.reasoningOnly
+                ? '连接正常：模型只返回了推理内容（测试请求的 token 上限较低）'
+                : reply.text.slice(0, 80);
             state.apiTest = {
                 running: false,
                 status: '可用',
-                detail: `${settings.model}: ${text.slice(0, 80)}`,
+                detail: `${settings.model}: ${replyDetail}`,
             };
             recordApiTestResult('可用', state.apiTest.detail, settings);
             showToast('连接测试成功', state.apiTest.detail);

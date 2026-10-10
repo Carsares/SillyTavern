@@ -484,6 +484,91 @@ test.describe('Modern API page', () => {
         await expect(page.locator('.api-history-panel')).toContainText('OK from custom');
     });
 
+    test('treats a reasoning-only chat completion test reply as a working connection', async ({ page }) => {
+        const generateBodies = [];
+        const generateResponses = [
+            // Reasoning model spent the whole test token budget on reasoning (DeepSeek-style payload).
+            {
+                choices: [{
+                    message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to reply OK, so' },
+                    finish_reason: 'length',
+                }],
+            },
+            // Truly empty reply without any reasoning is still a failure.
+            {
+                choices: [{
+                    message: { role: 'assistant', content: '' },
+                    finish_reason: 'stop',
+                }],
+            },
+            // Backend error payloads keep their original message.
+            {
+                error: { message: 'Unauthorized' },
+            },
+        ];
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                oai_settings: {
+                    chat_completion_source: 'custom',
+                    custom_model: 'deepseek-v4-flash',
+                    custom_url: 'https://api.deepseek.com',
+                    openai_max_tokens: 300,
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle, {
+            api_key_custom: [{ id: 'saved', value: '********seek', label: 'saved', active: true }],
+        });
+
+        await page.route('**/api/backends/chat-completions/generate', route => {
+            generateBodies.push(route.request().postDataJSON());
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify(generateResponses[generateBodies.length - 1]),
+            });
+        });
+
+        await page.goto('/modern/?view=api');
+        await expect(page.locator('[data-api-source]')).toHaveValue('custom');
+        await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-v4-flash');
+
+        const historyRows = page.locator('.api-history-panel .resource-row');
+        const reasoningOnlyDetail = '连接正常：模型只返回了推理内容（测试请求的 token 上限较低）';
+
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试成功' })).toContainText(reasoningOnlyDetail);
+        await expect(historyRows).toHaveCount(1);
+        await expect(historyRows.nth(0)).toContainText(`deepseek-v4-flash: ${reasoningOnlyDetail}`);
+        await expect(historyRows.nth(0).locator('.success')).toHaveText('可用');
+        expect(generateBodies[0]).toMatchObject({
+            chat_completion_source: 'custom',
+            model: 'deepseek-v4-flash',
+            custom_url: 'https://api.deepseek.com',
+            max_tokens: 20,
+            stream: false,
+        });
+
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试失败' })).toContainText('模型没有返回可显示内容。');
+        await expect(historyRows).toHaveCount(2);
+        await expect(historyRows.nth(0)).toContainText('模型没有返回可显示内容。');
+        await expect(historyRows.nth(0).locator('.danger')).toHaveText('失败');
+
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试失败' }).filter({ hasText: 'Unauthorized' })).toBeVisible();
+        await expect(historyRows).toHaveCount(3);
+        await expect(historyRows.nth(0)).toContainText('Unauthorized');
+        await expect(historyRows.nth(0).locator('.danger')).toHaveText('失败');
+        expect(generateBodies).toHaveLength(3);
+    });
+
     test('keeps supported chat completion sources outside the short list', async ({ page }) => {
         let savedSettings = null;
         const settingsBundle = {
