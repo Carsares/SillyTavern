@@ -171,7 +171,27 @@
 
     .chat-tools-drawer {
         width: min(560px, calc(100vw - 24px));
+        overflow: auto;
         padding: 12px;
+    }
+
+    /* 窄屏下备份抽屉整体滚动：列表和预览上下排列，列表自身限高 */
+    .chat-tool-panel,
+    .backup-layout {
+        flex: none;
+    }
+
+    .chat-tool-header {
+        flex-wrap: wrap;
+    }
+
+    .backup-list {
+        max-height: 50vh;
+    }
+
+    .backup-preview textarea {
+        min-height: 240px;
+        resize: vertical;
     }
 
     .checkbox-grid {

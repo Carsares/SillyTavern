@@ -73,12 +73,7 @@ export function createChatGenerationActions({
             return;
         }
         bodyEl.textContent = value;
-        // 仅当用户仍在跟读底部（气泡尚在视口附近）时才滚动，避免生成期上滑看历史被每 token 反复拉回底部。用视口坐标判断，与滚动容器无关。
-        const bubble = bodyEl.closest('[data-streaming-bubble]');
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-        if (bubble && bubble.getBoundingClientRect().top < viewportHeight + 400) {
-            bubble.scrollIntoView({ block: 'end' });
-        }
+        // 不在这里滚动：是否贴底跟随由 routes/chat-scroll.js 统一判断（用户上滑看历史时不拉回底部）。
     }
 
     async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
@@ -104,6 +99,7 @@ export function createChatGenerationActions({
             force: true,
             groupMode,
             isContextCurrent: () => isGenerationContextCurrent(contextKey, nextChatId),
+            rememberAsLastUsed: true,
         });
         if (!isGenerationContextCurrent(contextKey, nextChatId)) {
             state.engine.detail = `${nextChatId} · 原聊天已更新，当前上下文保持不变`;
@@ -135,15 +131,20 @@ export function createChatGenerationActions({
         render();
 
         try {
-            const result = await callLegacyBridge(BRIDGE_ACTIONS.STATUS, {
+            const chatId = state.selected.chat || '';
+            // Without a selected chat only the engine itself is checked: switching the engine to the entity would
+            // open its default legacy chat, and the engine saves a greeting-only file when that chat does not exist
+            const result = await callLegacyBridge(BRIDGE_ACTIONS.STATUS, chatId ? {
                 avatar: isGroupChatMode() ? null : entity?.avatar,
                 groupId: isGroupChatMode() ? entity?.id : null,
-                chat: state.selected.chat || '',
-            }, BRIDGE_TIMEOUTS.STATUS);
+                chat: chatId,
+            } : {}, BRIDGE_TIMEOUTS.STATUS);
             const messageCount = Number(result?.messageCount || 0);
             state.engine.ready = true;
             state.engine.status = '引擎就绪';
-            state.engine.detail = `${result?.chat || state.selected.chat || '未选择聊天'} · ${formatNumber(messageCount)} 条上下文消息`;
+            state.engine.detail = chatId
+                ? `${result?.chat || chatId} · ${formatNumber(messageCount)} 条上下文消息`
+                : '未选择聊天';
             if (!quiet) {
                 showToast('生成引擎已就绪', state.engine.detail);
             }

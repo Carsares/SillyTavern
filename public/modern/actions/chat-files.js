@@ -130,7 +130,7 @@ export function createChatFileActions({
         const importedChatId = getChatId({ file_name: importedFileNames[0] });
         if (isContextCurrent()) {
             state.selected.chat = importedChatId;
-            await loadChatMessages(entity, importedChatId, { force: true, groupMode, isContextCurrent });
+            await loadChatMessages(entity, importedChatId, { force: true, groupMode, isContextCurrent, rememberAsLastUsed: true });
         }
         showToast('聊天已导入', `${formatNumber(importedFileNames.length)} 个文件`);
         render();

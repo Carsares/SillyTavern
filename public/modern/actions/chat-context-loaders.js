@@ -7,10 +7,12 @@ export function createChatContextLoaderActions({
     getChatContextKey,
     getChatId = chat => String(chat?.file_id || chat?.file_name || '').replace(/\.jsonl$/i, ''),
     getChatMessageCount = chat => Number(chat?.chat_items ?? chat?.message_count ?? 0),
+    getLastUsedChat = /** @type {(contextKey: string) => string} */ (() => ''),
     getLatestUnreadChat = /** @type {(contextKey: string, chats: any[]) => any} */ (() => null),
     getSelectedChatEntity,
     isGroupChatMode,
     markChatRead = /** @type {(entity: any, chatId: string, messages: any[]) => void} */ (() => {}),
+    rememberLastUsedChat = /** @type {(contextKey: string, chatId: string) => void} */ (() => {}),
     sortChats,
     syncChatReadStateForList = /** @type {(contextKey: string, chats: any[]) => void} */ (() => {}),
 }) {
@@ -180,6 +182,7 @@ export function createChatContextLoaderActions({
         groupMode = isGroupChatMode(),
         isContextCurrent = /** @type {() => boolean} */ (() => true),
         isLoadCurrent = /** @type {() => boolean} */ (() => true),
+        rememberAsLastUsed = false,
     } = {}) {
         const contextKey = getChatContextKey(entity, groupMode);
         if (!contextKey || !chatId) {
@@ -187,6 +190,11 @@ export function createChatContextLoaderActions({
         }
 
         const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
+        // An explicit choice (clicking the chat, importing it) makes it the chat to reopen for this context,
+        // independent of whether its messages load successfully
+        if (rememberAsLastUsed && isContextCurrent()) {
+            rememberLastUsedChat(contextKey, normalizedChatId);
+        }
         const cacheKey = getChatCacheKey(contextKey, normalizedChatId);
         if (!force && state.chatMessages[cacheKey]) {
             const cachedMessages = state.chatMessages[cacheKey];
@@ -245,17 +253,27 @@ export function createChatContextLoaderActions({
     }
 
     function selectAvailableChat(chats, contextKey, preferUnread) {
-        // Only auto-open the latest unread chat when nothing is selected yet; a chat the user clicked
-        // while this list was loading (state.selected.chat set) must not be reverted to the unread one
-        const unreadChat = (preferUnread && !state.selected.chat) ? getLatestUnreadChat(contextKey, chats) : null;
-        if (unreadChat) {
-            state.selected.chat = getChatId(unreadChat);
+        const hasChat = chatId => !!chatId && chats.some(chat => getChatId(chat) === chatId);
+
+        // A chat the user clicked while this list was loading (state.selected.chat set) must not be replaced
+        const selectedChatId = getChatId({ file_id: state.selected.chat, file_name: state.selected.chat });
+        if (hasChat(selectedChatId)) {
+            state.selected.chat = selectedChatId;
             return;
         }
 
-        const selectedChatId = getChatId({ file_id: state.selected.chat, file_name: state.selected.chat });
-        if (selectedChatId && chats.some(chat => getChatId(chat) === selectedChatId)) {
-            state.selected.chat = selectedChatId;
+        // Re-entering a context resumes the chat the user last used there; an unread chat elsewhere in the
+        // list keeps its badge but must not take over the selection
+        const lastUsedChatId = getLastUsedChat(contextKey);
+        if (hasChat(lastUsedChatId)) {
+            state.selected.chat = lastUsedChatId;
+            return;
+        }
+
+        // Without a usable last-used chat, auto-open the latest unread chat only when nothing is selected yet
+        const unreadChat = (preferUnread && !selectedChatId) ? getLatestUnreadChat(contextKey, chats) : null;
+        if (unreadChat) {
+            state.selected.chat = getChatId(unreadChat);
             return;
         }
 

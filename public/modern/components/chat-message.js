@@ -26,16 +26,24 @@ export function createChatMessageComponents({
         const startIndex = Math.max(messages.length - limit, 0);
         const hiddenCount = startIndex;
 
+        // data-chat-key / data-first-index let the chat route tell a chat switch or a "load earlier"
+        // prepend apart from an in-place update when it restores the scroll position after render.
         return `
-        <div class="message-list">
-            ${hiddenCount ? `
-                <button class="secondary-button load-earlier-button" type="button" data-load-earlier-messages>
-                    <i class="fa-solid fa-clock-rotate-left"></i>
-                    加载更早消息 ${formatNumber(hiddenCount)}
-                </button>
-            ` : ''}
-            ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index)).join('')}
-            ${renderStreamingBubble()}
+        <div class="message-list-frame">
+            <div class="message-list" data-message-list data-chat-key="${escapeHtml(getCurrentDraftKey())}" data-first-index="${startIndex}">
+                ${hiddenCount ? `
+                    <button class="secondary-button load-earlier-button" type="button" data-load-earlier-messages>
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        加载更早消息 ${formatNumber(hiddenCount)}
+                    </button>
+                ` : ''}
+                ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index)).join('')}
+                ${renderStreamingBubble()}
+            </div>
+            <button class="secondary-button compact-button message-jump-latest" type="button" data-scroll-to-latest hidden>
+                <i class="fa-solid fa-arrow-down"></i>
+                最新消息
+            </button>
         </div>
     `;
     }

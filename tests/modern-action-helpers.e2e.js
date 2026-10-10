@@ -2115,7 +2115,7 @@ test.describe('Modern action helpers', () => {
             apiFetch: async (url, options = {}) => {
                 requests.push({ url, body: options.body });
                 if (url === '/api/backups/chat/get') {
-                    return [{ file_name: 'backup.jsonl', last_mes: '2026-01-01T00:00:00Z' }];
+                    return [{ file_name: 'chat_alice_20260101-120000.jsonl', last_mes: '2026-01-01T00:00:00Z' }];
                 }
                 if (url === '/api/backups/chat/delete') {
                     return { ok: true };
@@ -2141,17 +2141,25 @@ test.describe('Modern action helpers', () => {
         expect(state.chatBackups.open).toBe(true);
         expect(state.chatBackups.items).toHaveLength(1);
 
-        await helpers.viewChatBackup('backup.jsonl');
-        expect(state.chatBackups.previewName).toBe('backup.jsonl');
+        await helpers.viewChatBackup('chat_alice_20260101-120000.jsonl');
+        expect(state.chatBackups.previewName).toBe('chat_alice_20260101-120000.jsonl');
         expect(state.chatBackups.previewText).toContain('backup reply');
 
-        await helpers.restoreChatBackup('backup.jsonl');
-        expect(importedFiles).toEqual(['backup.jsonl']);
+        await helpers.restoreChatBackup('chat_alice_20260101-120000.jsonl');
+        expect(importedFiles).toEqual(['chat_alice_20260101-120000.jsonl']);
         expect(state.chatBackups.restoring).toBe('');
 
-        helpers.beginChatBackupDelete('backup.jsonl');
+        // Another character's backup only restores after an explicit confirmation
+        expect(await helpers.restoreChatBackup('chat_bob_20260101-120000.jsonl')).toBe(false);
+        expect(state.chatBackups.restoreConfirm).toBe('chat_bob_20260101-120000.jsonl');
+        expect(importedFiles).toHaveLength(1);
+        expect(await helpers.restoreChatBackup('chat_bob_20260101-120000.jsonl', { confirmed: true })).toBe(true);
+        expect(importedFiles).toEqual(['chat_alice_20260101-120000.jsonl', 'chat_bob_20260101-120000.jsonl']);
+        expect(state.chatBackups.restoreConfirm).toBe('');
+
+        helpers.beginChatBackupDelete('chat_alice_20260101-120000.jsonl');
         await helpers.confirmChatBackupDelete();
-        expect(requests).toContainEqual({ url: '/api/backups/chat/delete', body: { name: 'backup.jsonl' } });
+        expect(requests).toContainEqual({ url: '/api/backups/chat/delete', body: { name: 'chat_alice_20260101-120000.jsonl' } });
         expect(state.chatBackups.items).toEqual([]);
     });
 
@@ -2194,13 +2202,13 @@ test.describe('Modern action helpers', () => {
             sortChats,
         });
 
-        const restoring = helpers.restoreChatBackup('backup.jsonl');
+        const restoring = helpers.restoreChatBackup('chat_alice_20260101-120000.jsonl');
         selectedEntity = bob;
         finishDownload();
 
         await restoring;
         expect(imports).toHaveLength(1);
-        expect(imports[0].files[0].name).toBe('backup.jsonl');
+        expect(imports[0].files[0].name).toBe('chat_alice_20260101-120000.jsonl');
         expect(imports[0].target).toEqual({ entity: alice, entityName: 'Alice', groupMode: false, contextKey: 'alice.png' });
         expect(state.chatBackups.restoring).toBe('');
     });

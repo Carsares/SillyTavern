@@ -3,6 +3,22 @@ import { createChatContextSelectorHelpers } from './chat-context-selectors.js';
 import { chatReadStateStorageKey } from '../core/state.js';
 import { KeyedPromiseQueue } from '../core/keyed-queue.js';
 
+// 每个角色/群聊上次实际使用（点开、发送、生成、编辑、新建、导入）的聊天：重新进入该对象时优先打开它，
+// 避免未读标记把用户带到一份从没用过的聊天（例如旧引擎自动生成、只含开场白的文件）。
+const lastUsedChatStorageKey = 'st-modern-chat-last-used:v1';
+
+function loadLastUsedChats() {
+    try {
+        const value = JSON.parse(localStorage.getItem(lastUsedChatStorageKey) || '{}');
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            return Object.fromEntries(Object.entries(value).filter(([, chatId]) => typeof chatId === 'string' && chatId));
+        }
+    } catch {
+        // Invalid stored state only loses the preference; selection falls back to the chat list order.
+    }
+    return {};
+}
+
 export function createChatContextActions({
     state,
     apiFetch,
@@ -77,6 +93,29 @@ export function createChatContextActions({
 
     function getKnownChat(contextKey, chatId) {
         return (state.chatLists[contextKey] || []).find(chat => getChatId(chat) === chatId) || null;
+    }
+
+    const lastUsedChats = loadLastUsedChats();
+
+    function persistLastUsedChats() {
+        try {
+            localStorage.setItem(lastUsedChatStorageKey, JSON.stringify(lastUsedChats));
+        } catch {
+            // The last-used chat is a UI convenience; storage failures should not block chat actions.
+        }
+    }
+
+    function getLastUsedChat(contextKey) {
+        return contextKey ? lastUsedChats[contextKey] || '' : '';
+    }
+
+    function rememberLastUsedChat(contextKey, chatId) {
+        const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
+        if (!contextKey || !normalizedChatId || lastUsedChats[contextKey] === normalizedChatId) {
+            return;
+        }
+        lastUsedChats[contextKey] = normalizedChatId;
+        persistLastUsedChats();
     }
 
     function setChatReadCursor(contextKey, chatId, messageCount, lastMes = '') {
@@ -169,6 +208,10 @@ export function createChatContextActions({
             delete cursors[oldKey];
             persistChatReadState();
         }
+        if (lastUsedChats[contextKey] === oldId) {
+            lastUsedChats[contextKey] = newId;
+            persistLastUsedChats();
+        }
     }
 
     function deleteChatReadState(contextKey, chatId) {
@@ -178,6 +221,10 @@ export function createChatContextActions({
         if (cursors[cacheKey]) {
             delete cursors[cacheKey];
             persistChatReadState();
+        }
+        if (lastUsedChats[contextKey] === normalizedChatId) {
+            delete lastUsedChats[contextKey];
+            persistLastUsedChats();
         }
     }
 
@@ -206,10 +253,12 @@ export function createChatContextActions({
         getChatContextKey,
         getChatId,
         getChatMessageCount,
+        getLastUsedChat,
         getLatestUnreadChat,
         getSelectedChatEntity,
         isGroupChatMode,
         markChatRead,
+        rememberLastUsedChat,
         sortChats,
         syncChatReadStateForList,
     });
@@ -412,6 +461,8 @@ export function createChatContextActions({
             throw new Error('聊天文件已删除、重命名或正在变更，无法继续保存。');
         }
 
+        // Every accepted write (new chat, send/generate, swipe, message edit) marks the chat as the one in use for its context.
+        rememberLastUsedChat(contextKey, target.chatId);
         // Accept the operation before entering the queue. A later delete/rename waits for it, while newer saves are rejected by the barrier.
         return chatFileOperationQueue.run(target.key, () => operation({ contextKey, chatId: target.chatId }));
     }

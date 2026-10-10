@@ -1,3 +1,5 @@
+import { getChatBackupOwnerKey, getEntityChatBackupKeys } from './chat-backup-ownership.js';
+
 export function createChatBackupActions({
     state,
     apiFetch,
@@ -31,6 +33,7 @@ export function createChatBackupActions({
 
     async function toggleChatBackups() {
         state.chatBackups.open = !state.chatBackups.open;
+        state.chatBackups.restoreConfirm = '';
         if (state.chatBackups.open) {
             await loadChatBackups();
         }
@@ -43,8 +46,18 @@ export function createChatBackupActions({
         }
 
         state.chatBackups.open = false;
+        state.chatBackups.restoreConfirm = '';
         render();
         return true;
+    }
+
+    function isBackupOwnedByEntity(name, entity, groupMode, contextKey) {
+        const ownerKey = getChatBackupOwnerKey(name);
+        if (ownerKey === null) {
+            return false;
+        }
+        const chats = state.chatLists?.[contextKey] || [];
+        return getEntityChatBackupKeys({ entity, groupMode, chats }).has(ownerKey);
     }
 
     function formatBackupPreview(rawText) {
@@ -76,7 +89,9 @@ export function createChatBackupActions({
         render();
     }
 
-    async function restoreChatBackup(name) {
+    // A backup restored into a different character/group than the one it was saved from needs an
+    // explicit second click: the drawer shows both names, then the caller passes { confirmed: true }.
+    async function restoreChatBackup(name, { confirmed = false } = {}) {
         const entity = getSelectedChatEntity();
         const groupMode = isGroupChatMode();
         const contextKey = getChatContextKey(entity);
@@ -85,6 +100,14 @@ export function createChatBackupActions({
             throw new Error(groupMode ? '请先选择要恢复到的群聊。' : '请先选择要恢复到的角色。');
         }
 
+        if (!confirmed && !isBackupOwnedByEntity(name, entity, groupMode, contextKey)) {
+            state.chatBackups.restoreConfirm = name;
+            state.chatBackups.deleteConfirm = '';
+            render();
+            return false;
+        }
+
+        state.chatBackups.restoreConfirm = '';
         state.chatBackups.restoring = name;
         render();
         try {
@@ -95,6 +118,7 @@ export function createChatBackupActions({
             state.chatBackups.restoring = '';
             showToast('备份已恢复', `${name} 已导入到 ${entityName}`);
             render();
+            return true;
         } catch (error) {
             state.chatBackups.restoring = '';
             throw error;
@@ -103,6 +127,7 @@ export function createChatBackupActions({
 
     function beginChatBackupDelete(name) {
         state.chatBackups.deleteConfirm = name;
+        state.chatBackups.restoreConfirm = '';
         render();
     }
 

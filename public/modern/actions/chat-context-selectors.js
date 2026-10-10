@@ -110,7 +110,9 @@ export function createChatContextSelectorHelpers({
         const messageCount = getChatMessageCount(chat);
         const cursor = getChatReadCursor(contextKey, chatId);
         if (!cursor) {
-            return isChatReadContextInitialized(contextKey) ? messageCount : 0;
+            // A chat never opened here counts as unread only once it holds more than its opening greeting: a
+            // greeting-only file (e.g. auto-created by the legacy engine) has nothing new to read
+            return isChatReadContextInitialized(contextKey) && messageCount > 1 ? messageCount : 0;
         }
 
         const cursorCount = Number(cursor.messageCount);

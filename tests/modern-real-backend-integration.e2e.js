@@ -1521,7 +1521,9 @@ test.describe('Modern real backend integration', () => {
             });
             await expect(page.locator('.chat-thread')).toContainText(editedMessage);
 
-            chatBackupName = `${chatBackupPrefix}${Date.now()}.jsonl`;
+            // Same shape as src/endpoints/chats.js backupChat(): chat_<key>_<YYYYMMDD-HHMMSS>.jsonl. A fixed past
+            // timestamp cannot collide with the backups the server writes for this character while the test runs.
+            chatBackupName = `${chatBackupPrefix}20000101-000000.jsonl`;
             fs.mkdirSync(backupsDir, { recursive: true });
             fs.writeFileSync(path.join(backupsDir, chatBackupName), [
                 JSON.stringify({ chat_metadata: {}, user_name: 'Modern User', character_name: characterName }),

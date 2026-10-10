@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 
-/* global document, localStorage, requestAnimationFrame, window */
+/* global document, localStorage, location, requestAnimationFrame, window */
 
 function stripJsonlExtension(value) {
     return String(value || '').replace(/\.jsonl$/i, '');
@@ -56,8 +56,9 @@ function createChatFixture() {
                 { name: 'Mock Character', is_user: false, mes: 'reply', send_date: now },
             ],
         },
+        // Named like the backend's automatic backups (chat_<avatar key>_<timestamp>) so the drawer lists it for mock.png
         backups: [
-            { file_id: 'backup-chat', file_name: 'backup-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now },
+            { file_id: 'chat_mock_20260101-120000', file_name: 'chat_mock_20260101-120000.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now },
         ],
         requests: {
             characterChats: [],
@@ -474,6 +475,161 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-select-chat="older-unread"] .unread-badge')).toHaveText('1');
         await expect(page.locator('[data-select-character="mock.png"] .unread-badge')).toHaveText('1');
         await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveText('1');
+    });
+
+    // A second, chat-less character: switching to it and back makes each re-selection change the DOM, so the
+    // assertions wait for the real outcome instead of matching the state left over from before the click
+    async function mockSecondCharacter(page, fixture) {
+        const secondCharacter = {
+            avatar: 'second.png',
+            name: 'Second Character',
+            data: { name: 'Second Character', first_mes: 'Hello from the second character.', creator: 'Modern E2E' },
+        };
+        await page.route('**/api/characters/all', route => fulfillJson(route, [fixture.character, secondCharacter]));
+        await page.route('**/api/characters/chats', route => (route.request().postDataJSON()?.avatar_url === secondCharacter.avatar
+            ? fulfillJson(route, [])
+            : route.fallback()));
+    }
+
+    test('resumes the last-used chat when re-selecting a character even if another chat is unread', async ({ page }) => {
+        const fixture = createChatFixture();
+        const now = Date.now();
+        fixture.chats = [
+            { file_id: 'newest-chat', file_name: 'newest-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 3000 },
+            { file_id: 'unread-chat', file_name: 'unread-chat.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now + 2000 },
+            { file_id: 'used-chat', file_name: 'used-chat.jsonl', chat_items: 2, file_size: '2 KB', last_mes: now + 1000 },
+        ];
+        fixture.messagesByChat = {
+            'newest-chat': [
+                { name: 'Modern User', is_user: true, mes: 'newest context', send_date: now - 4000 },
+                { name: 'Mock Character', is_user: false, mes: 'newest reply', send_date: now - 3000 },
+            ],
+            'unread-chat': [
+                { name: 'Modern User', is_user: true, mes: 'unread context', send_date: now - 3000 },
+                { name: 'Mock Character', is_user: false, mes: 'unread reply one', send_date: now - 2000 },
+                { name: 'Mock Character', is_user: false, mes: 'unread reply two', send_date: now - 1000 },
+            ],
+            'used-chat': [
+                { name: 'Modern User', is_user: true, mes: 'used context', send_date: now - 2000 },
+                { name: 'Mock Character', is_user: false, mes: 'used reply', send_date: now - 1000 },
+            ],
+        };
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: {
+                cursors: {
+                    'mock.png::newest-chat': { messageCount: 2, lastMes: now - 3000 },
+                    'mock.png::unread-chat': { messageCount: 1, lastMes: now - 3000 },
+                    'mock.png::used-chat': { messageCount: 2, lastMes: now - 1000 },
+                },
+                contexts: { 'mock.png': true },
+            },
+        });
+        await mockModernChatWorkspace(page, fixture);
+        await mockSecondCharacter(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-select-chat="newest-chat"]')).toHaveClass(/active/);
+
+        await page.locator('[data-select-chat="used-chat"]').click();
+        await expect(page.locator('[data-select-chat="used-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('used reply');
+
+        await page.locator('[data-select-character="second.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Second Character');
+        await page.locator('[data-select-character="mock.png"]').click();
+
+        await expect(page.locator('[data-select-chat="used-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('used reply');
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveText('2');
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-last-used:v1') || '{}'))).toEqual({ 'mock.png': 'used-chat' });
+
+        await page.reload();
+
+        await expect(page.locator('[data-select-chat="used-chat"]')).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('used reply');
+        await expect(page.locator('[data-select-chat="unread-chat"] .unread-badge')).toHaveText('2');
+    });
+
+    test('creates exactly one chat file on the first send for a character without chats', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.chats = [];
+        fixture.messagesByChat = {};
+        await mockModernChatWorkspace(page, fixture);
+        await mockLegacyGenerationBridge(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-select-chat]')).toHaveCount(0);
+
+        await page.locator('[data-chat-input]').fill('first message to a character without chats');
+        await page.locator('[data-send-message]').click();
+
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to first message to a character without chats');
+        const generateRequests = fixture.requests.bridge.filter(request => request.action === 'generate');
+        expect(generateRequests).toHaveLength(1);
+        expect(fixture.requests.saves).toHaveLength(1);
+        const createdChatId = stripJsonlExtension(fixture.requests.saves[0].file_name);
+        expect(createdChatId).toMatch(/^Modern /);
+        expect(generateRequests[0].payload).toMatchObject({ avatar: 'mock.png', chat: createdChatId, type: 'normal' });
+        expect(fixture.requests.bridge.filter(request => request.payload?.chat && stripJsonlExtension(request.payload.chat) !== createdChatId)).toEqual([]);
+        await expect(page.locator('[data-select-chat]')).toHaveCount(1);
+        await expect(page.locator(`[data-select-chat="${createdChatId}"]`)).toHaveClass(/active/);
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-last-used:v1') || '{}'))).toEqual({ 'mock.png': createdChatId });
+    });
+
+    test('ignores a never-opened greeting-only chat for unread badges and chat selection', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.chats = [];
+        fixture.messagesByChat = {};
+        const greetingOnlyChatId = 'Mock Character - 2026-10-10@20h04m43s918ms';
+        await page.addInitScript(({ storageKey, readState }) => {
+            localStorage.setItem(storageKey, JSON.stringify(readState));
+        }, {
+            storageKey: 'st-modern-chat-read-state:v1',
+            readState: { cursors: {}, contexts: { 'mock.png': true } },
+        });
+        await mockModernChatWorkspace(page, fixture);
+        await mockLegacyGenerationBridge(page, fixture, {
+            // Reproduces the pre-fix engine: a greeting-only default chat lands next to the modern chat during
+            // generation, and it is the newest file so list order alone would pick it
+            beforeGenerateResponse: () => {
+                upsertChat(fixture, greetingOnlyChatId, [
+                    { name: 'Mock Character', is_user: false, mes: 'Hello Modern User.', send_date: Date.now() },
+                ]);
+                fixture.chats = fixture.chats.map(chat => chat.file_id === greetingOnlyChatId ? { ...chat, last_mes: Date.now() + 60000 } : chat);
+            },
+        });
+        await mockSecondCharacter(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-chat-input]').fill('first message before the greeting-only chat appears');
+        await page.locator('[data-send-message]').click();
+
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to first message before the greeting-only chat appears');
+        const modernChatId = stripJsonlExtension(fixture.requests.saves[0].file_name);
+        await expect(page.locator(`[data-select-chat="${greetingOnlyChatId}"]`)).toBeVisible();
+        await expect(page.locator(`[data-select-chat="${modernChatId}"]`)).toHaveClass(/active/);
+        await expect(page.locator(`[data-select-chat="${greetingOnlyChatId}"] .unread-badge`)).toHaveCount(0);
+        await expect(page.locator('[data-route="chat"] .nav-unread-badge')).toHaveCount(0);
+
+        // Leaving and re-entering the chat route: the navigation's unread jump is decided before the route renders
+        await page.locator('[data-route="dashboard"]').click();
+        await expect(page.locator('.page-title')).not.toHaveText('聊天工作区');
+        await page.locator('.sidebar [data-route="chat"]').click();
+        await expect(page.locator('.page-title')).toHaveText('聊天工作区');
+
+        await expect(page.locator(`[data-select-chat="${modernChatId}"]`)).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to first message before the greeting-only chat appears');
+
+        await page.locator('[data-select-character="second.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Second Character');
+        await page.locator('[data-select-character="mock.png"]').click();
+
+        await expect(page.locator(`[data-select-chat="${modernChatId}"]`)).toHaveClass(/active/);
+        await expect(page.locator('.chat-thread')).toContainText('generated reply to first message before the greeting-only chat appears');
+        expect(fixture.requests.chatGets.filter(request => stripJsonlExtension(request.file_name) === greetingOnlyChatId)).toEqual([]);
     });
 
     test('keeps a chat unread when another chat is selected before its messages load', async ({ page }) => {
@@ -1480,32 +1636,32 @@ test.describe('Modern chat files', () => {
 
         await page.locator('[data-chat-backups-toggle]').click();
         await expect(page.locator('.chat-tool-panel')).toBeVisible();
-        await expect(page.locator('.backup-row', { hasText: 'backup-chat.jsonl' })).toBeVisible();
+        await expect(page.locator('.backup-row', { hasText: 'chat_mock_20260101-120000.jsonl' })).toBeVisible();
         await page.keyboard.press('Escape');
         await expect(page.locator('.chat-tool-panel')).toHaveCount(0);
 
         await page.locator('[data-chat-backups-toggle]').click();
         await expect(page.locator('.chat-tool-panel')).toBeVisible();
-        await expect(page.locator('.backup-row', { hasText: 'backup-chat.jsonl' })).toBeVisible();
+        await expect(page.locator('.backup-row', { hasText: 'chat_mock_20260101-120000.jsonl' })).toBeVisible();
 
-        await page.locator('[data-view-chat-backup="backup-chat.jsonl"]').click();
+        await page.locator('[data-view-chat-backup="chat_mock_20260101-120000.jsonl"]').click();
         await expect.poll(() => fixture.requests.backupDownloads.length).toBe(1);
         await expect(page.locator('.backup-preview textarea')).toContainText('backup reply');
 
-        await page.locator('[data-restore-chat-backup="backup-chat.jsonl"]').click();
+        await page.locator('[data-restore-chat-backup="chat_mock_20260101-120000.jsonl"]').click();
         await expect.poll(() => fixture.requests.imports.length).toBe(2);
         expect(fixture.requests.backupDownloads).toHaveLength(2);
         expect(fixture.requests.imports[1]).toMatchObject({
-            fileName: 'backup-chat.jsonl',
+            fileName: 'chat_mock_20260101-120000.jsonl',
             fileType: 'jsonl',
             avatarUrl: 'mock.png',
         });
-        await expect(page.locator('[data-select-chat="backup-chat"]')).toBeVisible();
+        await expect(page.locator('[data-select-chat="chat_mock_20260101-120000"]')).toBeVisible();
 
-        await page.locator('[data-delete-chat-backup="backup-chat.jsonl"]').click();
+        await page.locator('[data-delete-chat-backup="chat_mock_20260101-120000.jsonl"]').click();
         await page.locator('[data-confirm-chat-backup-delete]').click();
         await expect.poll(() => fixture.requests.backupDeletes.length).toBe(1);
-        expect(fixture.requests.backupDeletes[0]).toEqual({ name: 'backup-chat.jsonl' });
-        await expect(page.locator('.backup-row', { hasText: 'backup-chat.jsonl' })).toHaveCount(0);
+        expect(fixture.requests.backupDeletes[0]).toEqual({ name: 'chat_mock_20260101-120000.jsonl' });
+        await expect(page.locator('.backup-row', { hasText: 'chat_mock_20260101-120000.jsonl' })).toHaveCount(0);
     });
 });

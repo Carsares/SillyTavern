@@ -63,7 +63,7 @@ export function createChatContextEvents(ctx) {
             };
             state.selected.chat = chatId;
             clearChatTransientState();
-            await loadChatMessages(entity, chatId, { groupMode, isContextCurrent });
+            await loadChatMessages(entity, chatId, { groupMode, isContextCurrent, rememberAsLastUsed: true });
             closeChatSidebarForMobileSelection();
             render();
             restoreScrollTop(chatResourceListSelector, resourceListScrollTop);

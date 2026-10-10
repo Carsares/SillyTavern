@@ -436,6 +436,8 @@ export let isChatSaving = false;
 let firstRun = false;
 const isModernBridgeMode = new URLSearchParams(location.search).has('modernBridge');
 export let settingsReady = false;
+// 首次角色列表（及随后加载的群组列表）是否已载入；bridge 动作须等它完成再读 characters/groups
+let initialCharactersLoaded = false;
 let currentVersion = '0.0.0';
 export let displayVersion = 'SillyTavern';
 
@@ -1046,6 +1048,7 @@ async function firstLoadInit() {
     initBookmarks();
     await getUserAvatars(true, user_avatar);
     await getCharacters();
+    initialCharactersLoaded = true;
     await getBackgrounds();
     await initTokenizers();
     initBackgrounds();
@@ -1590,9 +1593,10 @@ export async function getCharacters() {
         body: JSON.stringify({}),
     });
     if (response.ok) {
+        // Parse before clearing: concurrent readers must never observe an empty list while the response is read
+        const getData = await response.json();
         const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
         characters.splice(0, characters.length);
-        const getData = await response.json();
         for (let i = 0; i < getData.length; i++) {
             characters[i] = getData[i];
             characters[i].name = DOMPurify.sanitize(characters[i].name);
@@ -5933,6 +5937,11 @@ async function waitForModernBridgeReady() {
     if (!Array.isArray(world_names)) {
         await waitUntilCondition(() => Array.isArray(world_names), 30000, 100);
     }
+    // settingsReady 早于 firstLoadInit 里的首次 getCharacters()（群组列表也在其末尾才载入）。冷启动的 iframe 在此之前
+    // 处理动作会读到空的 characters/groups：按它切换群聊时 validateGroup 会把成员当成不存在而移出群聊并保存。
+    if (!initialCharactersLoaded) {
+        await waitUntilCondition(() => initialCharactersLoaded, 30000, 100);
+    }
 }
 
 async function getModernBridgeCharacterId(avatar) {
@@ -5945,24 +5954,96 @@ async function getModernBridgeCharacterId(avatar) {
     return characterId;
 }
 
-async function useModernBridgeChatContext(payload = {}) {
-    const { avatar, groupId, chat: chatName } = payload || {};
-    await waitForModernBridgeReady();
+// 切换角色时 selectCharacterById 会经 getChat() 打开角色卡记录的默认聊天；该文件不存在时（如角色从没聊过），
+// getChatResult 会立刻落盘一份只含开场白的新聊天，与 modern 已建好的聊天文件并存（UX-001 重复聊天文件）。
+// 已知目标聊天时先把它设为该角色的当前聊天，让切换直接载入目标文件。返回 true 表示预置改写了角色的当前聊天。
+async function selectModernBridgeCharacter(avatar, chatName) {
+    // 先排空排队中的角色卡保存：保存完成会用后端数据覆盖 characters[id]，必须早于下面的预置
+    await flushPendingCharacterSave();
+    const characterId = await getModernBridgeCharacterId(avatar);
+    if (characterId < 0) {
+        throw new Error('原版生成引擎找不到当前选择的角色。');
+    }
 
-    if (groupId) {
-        const group = groups.find(x => x.id === groupId);
+    const character = characters[characterId];
+    const previousChatName = character.chat;
+    const switching = Boolean(selected_group) || String(this_chid) !== String(characterId);
+    const presetChat = switching && Boolean(chatName) && previousChatName !== chatName;
+    if (presetChat) {
+        character.chat = chatName;
+    }
+
+    await selectCharacterById(characterId, { switchMenu: false, skipPendingCharacterSave: true });
+    if (this_chid === undefined || String(this_chid) !== String(characterId)) {
+        if (presetChat && character.chat === chatName) {
+            character.chat = previousChatName;
+        }
+        throw new Error('原版生成引擎无法切换到当前角色。');
+    }
+    return presetChat;
+}
+
+// 群聊同理：openGroupById 会经 getGroupChat() 打开 group.chat_id，该文件不存在时同样落盘一份只含开场白的聊天。
+// modern 可能在本 iframe 启动后才建了这个群聊或聊天文件，此时先从后端刷新群组元数据，避免按陈旧元数据切换失败。
+async function selectModernBridgeGroup(groupId, chatName) {
+    // 刷新只更新元数据；已载入群聊的 chat_id 仍须对应本 iframe 内存里的聊天，否则调用方会跳过切换、把旧聊天内容存进目标文件
+    const loadedChatId = selected_group === groupId ? groups.find(x => x.id === groupId)?.chat_id : undefined;
+    const findGroup = () => {
+        const found = groups.find(x => x.id === groupId);
+        if (found && loadedChatId !== undefined) {
+            found.chat_id = loadedChatId;
+        }
+        return found;
+    };
+
+    let group = findGroup();
+    if (!group || (chatName && !group.chats?.includes(chatName))) {
+        await getGroups();
+        group = findGroup();
+    }
+    if (!group) {
+        throw new Error('原版生成引擎找不到当前选择的群聊。');
+    }
+
+    // getGroupChat() 里的 validateGroup() 会把角色列表中找不到的成员移出群聊并立即保存。角色列表可能比群组旧
+    // （如成员是 iframe 启动后才建的角色），先整体刷新；仍缺成员就中止，绝不让 bridge 路径改写群聊成员。
+    if (getModernBridgeMissingGroupMembers(group).length) {
+        await getCharacters();
+        group = findGroup();
         if (!group) {
             throw new Error('原版生成引擎找不到当前选择的群聊。');
         }
+    }
+    const missingMembers = getModernBridgeMissingGroupMembers(group);
+    if (missingMembers.length) {
+        throw new Error(`原版生成引擎找不到群聊成员：${missingMembers.join('、')}。已停止生成，群聊未作修改；请刷新页面后重试，或在群组管理中检查成员。`);
+    }
 
-        if (selected_group !== groupId) {
-            const opened = await openGroupById(groupId);
-            if (!opened && selected_group !== groupId) {
-                throw new Error('原版生成引擎无法切换到当前群聊。');
-            }
+    if (selected_group !== groupId) {
+        if (chatName && group.chats?.includes(chatName)) {
+            group.chat_id = chatName;
         }
+        const opened = await openGroupById(groupId);
+        if (!opened && selected_group !== groupId) {
+            throw new Error('原版生成引擎无法切换到当前群聊。');
+        }
+    }
+    return groups.find(x => x.id === groupId) || group;
+}
 
-        const nextChatName = formatModernBridgeChatName(chatName);
+// 与 group-chats.js 的 validateGroup() 判定一致：按头像或名字在角色列表里找不到的成员
+function getModernBridgeMissingGroupMembers(group) {
+    const members = Array.isArray(group?.members) ? group.members : [];
+    return members.filter(member => !characters.some(character => character.avatar === member || character.name === member));
+}
+
+async function useModernBridgeChatContext(payload = {}) {
+    const { avatar, groupId, chat: chatName } = payload || {};
+    await waitForModernBridgeReady();
+    const nextChatName = formatModernBridgeChatName(chatName);
+
+    if (groupId) {
+        const group = await selectModernBridgeGroup(groupId, nextChatName);
         if (nextChatName && group.chat_id !== nextChatName) {
             await openGroupChat(groupId, nextChatName);
         }
@@ -5973,19 +6054,13 @@ async function useModernBridgeChatContext(payload = {}) {
         return { group: currentGroup || group };
     }
 
-    const characterId = await getModernBridgeCharacterId(avatar);
-    if (characterId < 0) {
-        throw new Error('原版生成引擎找不到当前选择的角色。');
-    }
-
-    await selectCharacterById(characterId, { switchMenu: false });
-    if (this_chid === undefined || String(this_chid) !== String(characterId)) {
-        throw new Error('原版生成引擎无法切换到当前角色。');
-    }
-
-    const nextChatName = formatModernBridgeChatName(chatName);
+    const presetChat = await selectModernBridgeCharacter(avatar, nextChatName);
     if (nextChatName && characters[this_chid]?.chat !== nextChatName) {
         await openCharacterChat(nextChatName);
+    } else if (presetChat) {
+        // 与 openCharacterChat 相同的收尾：把目标聊天记为角色卡的当前聊天
+        $('#selected_chat_pole').val(nextChatName);
+        await createOrEditCharacter(new CustomEvent('newChat'));
     }
     return { character: characters[this_chid] };
 }
@@ -6082,24 +6157,14 @@ async function handleModernBridgeReloadChat(payload = {}) {
     const nextChatName = formatModernBridgeChatName(chatName);
 
     if (groupId) {
-        const group = groups.find(x => x.id === groupId);
-        if (!group) {
-            throw new Error('原版生成引擎找不到当前选择的群聊。');
-        }
-        if (selected_group !== groupId) {
-            await openGroupById(groupId);
-        }
+        await selectModernBridgeGroup(groupId, nextChatName);
         if (nextChatName) {
             await openGroupChat(groupId, nextChatName);
         }
         return { ok: true };
     }
 
-    const characterId = await getModernBridgeCharacterId(avatar);
-    if (characterId < 0) {
-        throw new Error('原版生成引擎找不到当前选择的角色。');
-    }
-    await selectCharacterById(characterId, { switchMenu: false });
+    await selectModernBridgeCharacter(avatar, nextChatName);
     if (nextChatName) {
         await openCharacterChat(nextChatName);
     }

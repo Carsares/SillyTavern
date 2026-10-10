@@ -1,9 +1,10 @@
 .chat-layout {
     display: grid;
     grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 14px;
-    height: calc(100vh - 155px);
-    min-height: calc(100vh - 155px);
+    flex: 1 1 0;
+    min-height: 480px;
 }
 
 .chat-layout.chat-sidebar-collapsed {
@@ -21,7 +22,7 @@
 
 .chat-browser {
     display: grid;
-    grid-template-rows: minmax(380px, 1.45fr) minmax(220px, 0.55fr);
+    grid-template-rows: minmax(200px, 1.45fr) minmax(200px, 0.55fr);
     gap: 14px;
     min-height: 0;
 }
@@ -99,16 +100,36 @@
     gap: 8px;
 }
 
+.message-list-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
 .message-list {
     display: grid;
+    flex: 1 1 auto;
     align-content: start;
     gap: 10px;
-    min-height: clamp(360px, 54vh, 680px);
+    min-height: 0;
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: linear-gradient(180deg, color-mix(in srgb, var(--surface-muted) 88%, var(--surface)), var(--surface-muted));
+}
+
+.message-jump-latest {
+    position: absolute;
+    right: 18px;
+    bottom: 12px;
+    z-index: 2;
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 6px 18px rgba(18, 26, 36, 0.16);
 }
 
 .load-earlier-button {
@@ -385,8 +406,11 @@
 
 .backup-layout {
     display: grid;
-    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+    flex: 1 1 0;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 14px;
+    min-height: 0;
 }
 
 .chat-tools-scrim {
@@ -403,9 +427,12 @@
     top: 0;
     right: 0;
     z-index: 18;
-    width: min(720px, calc(100vw - 32px));
+    display: flex;
+    flex-direction: column;
+    width: min(760px, calc(100vw - 32px));
     height: 100vh;
-    overflow: auto;
+    height: 100dvh;
+    overflow: hidden;
     padding: 18px;
     background: color-mix(in srgb, var(--surface) 96%, var(--surface-muted));
     border-left: 1px solid var(--border);
@@ -413,20 +440,60 @@
 }
 
 .chat-tool-panel {
-    min-height: calc(100vh - 36px);
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
     padding: 16px;
 }
 
+.chat-tool-header {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+}
+
+.chat-tool-heading {
+    min-width: 0;
+}
+
+.backup-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.backup-search {
+    flex: 1 1 220px;
+    width: auto;
+    min-width: 0;
+}
+
+.backup-summary {
+    flex-basis: 100%;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .backup-list {
-    max-height: 460px;
+    align-content: start;
+    min-height: 0;
+    max-height: none;
     overflow: auto;
+    scrollbar-gutter: stable;
+}
+
+.backup-list .empty-state {
+    min-height: 200px;
+    padding: 16px;
+    text-align: center;
 }
 
 .backup-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
     padding: 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -438,14 +505,75 @@
     background: var(--accent-soft);
 }
 
+.backup-row.foreign {
+    border-style: dashed;
+}
+
+.backup-row-main {
+    display: grid;
+    gap: 3px;
+}
+
+/* 文件名完整换行显示（title 里也有全名），操作按钮单独占一行，二者不会重叠 */
+.backup-row-title {
+    display: block;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.backup-row-meta,
+.backup-row-owner {
+    display: block;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.backup-row-owner {
+    color: var(--warning);
+}
+
+.backup-row-actions {
+    gap: 6px;
+}
+
+.backup-restore-confirm {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--danger) 5%, var(--surface));
+    font-size: 12px;
+}
+
+.backup-restore-confirm p {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
 .backup-preview {
-    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.backup-preview .empty-state {
+    flex: 1 1 auto;
+    min-height: 200px;
+    padding: 16px;
+    text-align: center;
+}
+
+.backup-preview-title {
+    overflow-wrap: anywhere;
 }
 
 .backup-preview textarea {
+    flex: 1 1 auto;
     width: 100%;
-    min-height: 340px;
-    resize: vertical;
+    min-height: 200px;
+    resize: none;
     padding: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -459,10 +587,9 @@
     margin-bottom: 10px;
 }
 
+/* 输入框在聊天面板里排在消息列表之后（不再 sticky 浮在列表上），不会遮住最新消息 */
 .composer {
-    position: sticky;
-    bottom: 12px;
-    z-index: 3;
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 8px;
@@ -470,9 +597,8 @@
     padding: 8px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    box-shadow: 0 14px 34px rgba(18, 26, 36, 0.14);
-    backdrop-filter: blur(14px);
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(18, 26, 36, 0.05);
 }
 
 .composer textarea {
@@ -521,4 +647,42 @@
 .composer-manual-label {
     font-size: 12px;
     color: var(--text-muted);
+}
+
+/*
+ * 桌面宽度下聊天工作区恰好占满视口：页面本身不滚动，.message-list 是唯一的滚动容器，
+ * 输入框排在列表下方而不是浮在列表上。视口矮到放不下最小高度时才退回由页面滚动兜底。
+ * 移动端（≤860px）沿用 responsive.css 里的整页滚动布局。
+ */
+@media (min-width: 861px) {
+    .modern-app[data-current-route="chat"] .workspace {
+        height: 100vh;
+        height: 100dvh;
+    }
+
+    .modern-app[data-current-route="chat"] .content {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .modern-app[data-current-route="chat"] .content > :not(.chat-layout) {
+        flex: none;
+    }
+
+    .chat-thread {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .chat-thread > * {
+        flex: none;
+    }
+
+    .chat-thread > .message-list-frame,
+    .chat-thread > .empty-state {
+        flex: 1 1 0;
+        min-height: 160px;
+    }
 }
