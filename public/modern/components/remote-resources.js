@@ -1,7 +1,16 @@
+import { urlImportSupportedSites } from '../actions/remote-resources.js';
+
 // 每页渲染的结果卡片数：避免一次搜索把数百张卡片同时塞进 DOM。
 const REMOTE_RESULT_PAGE_SIZE = 24;
 // 进度区每类资源站名单最多列出的名称数，超出部分以「等」收尾。
 const PROGRESS_NAME_LIMIT = 6;
+
+// 资源站 authMode 的展示名；未知值原样显示。
+const remoteAuthModeLabels = {
+    none: '匿名',
+    token: '可选令牌',
+    cookie: '可选 Cookie',
+};
 
 export function createRemoteResourceComponents(ctx) {
     const {
@@ -350,6 +359,7 @@ export function createRemoteResourceComponents(ctx) {
                 <i class="fa-solid ${remote.urlImport.running ? 'fa-circle-notch fa-spin' : 'fa-file-import'}"></i>
                 导入
             </button>
+            <p class="panel-subtitle remote-url-hint" data-remote-url-import-hint>支持 ${escapeHtml(urlImportSupportedSites.join('、'))} 的角色卡 / 世界书链接；其他站点的 PNG 角色卡直链需先在 config.yaml 的 whitelistImportDomains 中放行。</p>
         </section>
         <div class="remote-provider-grid">
             ${remote.providers.map(provider => renderProviderManageCard(provider)).join('')}
@@ -365,7 +375,7 @@ export function createRemoteResourceComponents(ctx) {
             <div class="card-head">
                 <div>
                     <h2 class="card-title">${escapeHtml(provider.name)}</h2>
-                    <div class="card-meta">${escapeHtml(provider.authMode === 'none' ? '匿名' : provider.authMode)} · ${escapeHtml(getProviderCapabilityLabel(provider))}</div>
+                    <div class="card-meta">${escapeHtml(remoteAuthModeLabels[provider.authMode] || provider.authMode)} · ${escapeHtml(getProviderCapabilityLabel(provider))}</div>
                 </div>
                 <i class="fa-solid ${provider.supportsSearch ? 'fa-magnifying-glass' : 'fa-link'}"></i>
             </div>
@@ -392,9 +402,9 @@ export function createRemoteResourceComponents(ctx) {
                             <h2 class="card-title">${escapeHtml(record.title || record.remoteId)}</h2>
                             <div class="card-meta">${escapeHtml(record.providerName || record.providerId)} · ${escapeHtml(getTypeLabel(record.resourceType))} · ${escapeHtml(formatDate(record.importedAt))}</div>
                         </div>
-                        <span class="tag">${escapeHtml(record.action || 'import')}</span>
+                        <span class="tag" data-remote-record-action="${escapeHtml(record.action || 'import')}">${escapeHtml(getRecordActionLabel(record.action))}</span>
                     </div>
-                    <div class="remote-record-target">${escapeHtml(record.localType || '文件')} ${escapeHtml(record.localId || '')}</div>
+                    <div class="remote-record-target">${escapeHtml(record.localType ? getTypeLabel(record.localType) : '文件')} ${escapeHtml(record.localId || '')}</div>
                     <div class="row-actions">
                         ${record.sourceUrl ? `
                             <a class="secondary-button" href="${escapeHtml(record.sourceUrl)}" target="_blank" rel="noreferrer">
@@ -402,13 +412,35 @@ export function createRemoteResourceComponents(ctx) {
                                 打开
                             </a>
                         ` : ''}
-                        <button class="secondary-button danger-action" type="button" data-delete-remote-record="${escapeHtml(record.id)}">
+                        <button class="secondary-button danger-action" type="button" data-delete-remote-record="${escapeHtml(record.id)}" ${remote.recordDeleteConfirm === record.id ? 'disabled' : ''}>
                             <i class="fa-solid fa-trash"></i>
                             删除
                         </button>
                     </div>
+                    ${remote.recordDeleteConfirm === record.id ? renderRecordDeleteConfirm(record) : ''}
                 </article>
             `).join('')}
+        </div>
+    `;
+    }
+
+    function renderRecordDeleteConfirm(record) {
+        return `
+        <div class="settings-form inline-form danger-panel" data-remote-record-delete-confirm="${escapeHtml(record.id)}">
+            <div>
+                <strong>删除导入记录</strong>
+                <p class="panel-subtitle">只删除「${escapeHtml(record.title || record.remoteId)}」这条记录，已导入到本地的内容不受影响。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-cancel-remote-record-delete>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button danger-action" type="button" data-confirm-remote-record-delete="${escapeHtml(record.id)}">
+                    <i class="fa-solid fa-trash"></i>
+                    确认删除
+                </button>
+            </div>
         </div>
     `;
     }
@@ -495,6 +527,17 @@ function getTypeLabel(type) {
         asset: '素材',
         preset: '预设',
     }[type] || '资源';
+}
+
+// 导入记录的操作类型（后端保存的英文值）显示为中文；未知值原样显示，便于排查。
+function getRecordActionLabel(action) {
+    const value = action || 'import';
+    return {
+        import: '导入',
+        'import-url': '网址导入',
+        download: '下载',
+        install: '安装',
+    }[value] || value;
 }
 
 function getTypeIcon(type) {

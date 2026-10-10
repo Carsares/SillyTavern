@@ -50,7 +50,7 @@ export function createWorldbookEntryBulkActions({
             return;
         }
 
-        state.worldEntryList.selectedKeys = [];
+        // 批量启用 / 禁用后保留选择，便于紧接着做反向操作或删除；只有删除和切换世界书会清空选择。
         showToast(disabled ? '条目已批量禁用' : '条目已批量启用', `${formatNumber(result.changedCount)} 个条目`);
         render();
     }

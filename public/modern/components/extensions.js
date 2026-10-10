@@ -1,4 +1,4 @@
-import { createExtensionPanelComponents } from './extension-panels.js';
+import { createExtensionPanelComponents, getExtensionTypeLabel } from './extension-panels.js';
 
 export function createExtensionsComponents(ctx) {
     const {
@@ -20,7 +20,7 @@ export function createExtensionsComponents(ctx) {
     } = createExtensionPanelComponents(ctx);
 
     function renderExtensions() {
-        const matchingExtensions = state.extensions.filter(extension => matchesQuery(extension.name, extension.type));
+        const matchingExtensions = state.extensions.filter(extension => matchesQuery(extension.name, extension.type, getExtensionTypeLabel(extension.type)));
         const systemCount = matchingExtensions.filter(extension => extension.type === 'system').length;
         const localCount = matchingExtensions.filter(extension => extension.type === 'local').length;
         const globalCount = matchingExtensions.filter(extension => extension.type === 'global').length;
@@ -125,7 +125,7 @@ export function createExtensionsComponents(ctx) {
                         <span class="row-subtitle mono">${escapeHtml(extension.name)}</span>
                     </span>
                 </div>
-                <span class="tag">${escapeHtml(extension.type)}</span>
+                <span class="tag" data-extension-type-tag="${escapeHtml(extension.type)}">${escapeHtml(getExtensionTypeLabel(extension.type))}</span>
             </div>
             <div class="kv-list">
                 ${renderKeyValue('文件夹', name)}
@@ -148,9 +148,9 @@ export function createExtensionsComponents(ctx) {
                             ${extension.type === 'global' ? '移到本地' : '移到全局'}
                         </button>
                     ` : ''}
-                    <button class="secondary-button" type="button" data-extension-action="delete" data-extension-name="${escapeHtml(name)}" data-extension-type="${escapeHtml(extension.type)}">
-                        <i class="fa-solid fa-ellipsis"></i>
-                        管理
+                    <button class="secondary-button danger-action" type="button" data-extension-action="delete" data-extension-name="${escapeHtml(name)}" data-extension-type="${escapeHtml(extension.type)}">
+                        <i class="fa-solid fa-trash-can"></i>
+                        删除
                     </button>
                 ` : `
                     <span class="badge"><i class="fa-solid fa-lock"></i> 受保护</span>

@@ -28,6 +28,8 @@ export function createAssetsComponents(ctx) {
     function renderAssets() {
         const allBackgrounds = state.backgrounds?.images || [];
         const selectedBackground = state.selected.background;
+        // 从命令面板 / 仪表盘跳转来的背景置顶以便看到；在网格里点击查看的背景保持原位，避免卡片跳动。
+        const pinnedBackground = selectedBackground && selectedBackground !== state.backgroundGridFocus ? selectedBackground : '';
         const backgroundFolders = getBackgroundFolderData().folders;
         const folderCounts = getBackgroundFolderCounts();
         if (state.backgroundFolderFilter && !getBackgroundFolderById(state.backgroundFolderFilter)) {
@@ -39,7 +41,7 @@ export function createAssetsComponents(ctx) {
         const backgrounds = allBackgrounds
             .filter(background => matchesQuery(getBackgroundFilename(background)))
             .filter(background => !state.backgroundFolderFilter || getBackgroundFolderIds(getBackgroundFilename(background)).includes(state.backgroundFolderFilter))
-            .sort((a, b) => Number(getBackgroundFilename(b) === selectedBackground) - Number(getBackgroundFilename(a) === selectedBackground));
+            .sort((a, b) => Number(getBackgroundFilename(b) === pinnedBackground) - Number(getBackgroundFilename(a) === pinnedBackground));
         const visibleBackgrounds = backgrounds.slice(0, state.backgroundVisibleCount);
         const hasMoreBackgrounds = visibleBackgrounds.length < backgrounds.length;
         const selection = state.backgroundSelection;
@@ -58,9 +60,9 @@ export function createAssetsComponents(ctx) {
                 上传背景
                 <input class="visually-hidden" type="file" accept="image/*,.gif,.webp,.apng" data-background-upload-file>
             </label>
-            <button class="secondary-button" type="button" data-toggle-background-selection>
+            <button class="secondary-button" type="button" data-toggle-background-selection aria-pressed="${selection.active ? 'true' : 'false'}">
                 <i class="fa-solid ${selection.active ? 'fa-xmark' : 'fa-check-square'}"></i>
-                ${selection.active ? '退出选择' : '选择背景'}
+                ${selection.active ? '退出批量选择' : '批量选择'}
             </button>
             ${selection.active ? `
                 <button class="secondary-button danger-action" type="button" data-delete-selected-backgrounds ${selectedCount ? '' : 'disabled'}>
@@ -77,7 +79,7 @@ export function createAssetsComponents(ctx) {
             ${metricCard('背景', formatNumber(allBackgrounds.length), '背景图片', 'fa-image')}
             ${metricCard('资产文件', formatNumber(getAssetCount()), 'assets 目录', 'fa-folder-tree')}
             ${metricCard('背景文件夹', formatNumber(backgroundFolders.length), folderFilterName, 'fa-folder')}
-            ${metricCard('动画背景', formatNumber(allBackgrounds.filter(item => item.isAnimated).length), 'metadata 标记', 'fa-film')}
+            ${metricCard('动画背景', formatNumber(allBackgrounds.filter(item => item.isAnimated).length), '按文件元数据识别', 'fa-film')}
         </div>
         ${renderAssetTabs(assetTab, backgrounds.length, getAssetCount())}
         ${assetTab === 'backgrounds' ? `

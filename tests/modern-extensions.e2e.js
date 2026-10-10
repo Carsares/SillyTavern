@@ -180,7 +180,7 @@ test.describe('Modern extensions page', () => {
             global: true,
         });
         await expect(page.locator('.extension-card', { hasText: 'new-ext' })).toBeVisible();
-        await expect(page.locator('.extension-card', { hasText: 'new-ext' })).toContainText('global');
+        await expect(page.locator('.extension-card', { hasText: 'new-ext' }).locator('[data-extension-type-tag]')).toHaveText('全局');
     });
 
     test('shows inline validation for an empty extension install URL', async ({ page }) => {
@@ -260,10 +260,17 @@ test.describe('Modern extensions page', () => {
             source: 'local',
             destination: 'global',
         });
-        await expect(page.locator('.extension-card', { hasText: 'local-ext' })).toContainText('global');
+        await expect(page.locator('.extension-card', { hasText: 'local-ext' }).locator('[data-extension-type-tag]')).toHaveText('全局');
         await expect(page.locator('[data-extension-action="move"][data-extension-name="local-ext"][data-extension-type="global"]')).toContainText('移到本地');
 
-        await page.locator('[data-extension-action="delete"][data-extension-name="local-ext"][data-extension-type="global"]').click();
+        // 删除按钮直接写明「删除」并使用危险样式，点击后仍需在内联面板确认。
+        const deleteButton = page.locator('[data-extension-action="delete"][data-extension-name="local-ext"][data-extension-type="global"]');
+        await expect(deleteButton).toHaveText('删除');
+        await expect(deleteButton).toHaveClass(/danger-action/);
+        await expect(deleteButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deleteButton.click();
+        await expect(page.locator('.danger-panel', { hasText: '删除扩展' })).toContainText('全局扩展');
+        expect(requests.deletes).toHaveLength(0);
         await page.locator('[data-confirm-extension-operation]').click();
 
         await expect.poll(() => requests.deletes.length).toBe(1);

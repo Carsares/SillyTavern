@@ -17,7 +17,7 @@ export function createAssetBackgroundFolderComponents({
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">背景文件夹</h2>
-                    <p class="panel-subtitle">使用现有 image metadata 文件夹能力筛选和批量归档背景。</p>
+                    <p class="panel-subtitle">按文件夹筛选背景，或把选中的背景批量归档到文件夹。</p>
                 </div>
                 <button class="secondary-button" type="button" data-toggle-background-folder-create>
                     <i class="fa-solid ${creating.active ? 'fa-xmark' : 'fa-folder-plus'}"></i>

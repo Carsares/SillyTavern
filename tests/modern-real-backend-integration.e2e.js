@@ -771,6 +771,7 @@ test.describe('Modern real backend integration', () => {
             await page.locator('[data-remote-resource-tab="records"]').click();
             await expect(page.locator('.remote-record-card', { hasText: 'Contract Remote Resource' })).toBeVisible();
             await page.locator(`[data-delete-remote-record="${recordId}"]`).click();
+            await page.locator(`[data-confirm-remote-record-delete="${recordId}"]`).click();
             await expectFrontendRequest(tracker, `/api/remote-resources/records/${recordId}`, 'DELETE');
             await expect(page.locator('.remote-record-card', { hasText: 'Contract Remote Resource' })).toHaveCount(0);
             recordId = '';
@@ -1112,6 +1113,8 @@ test.describe('Modern real backend integration', () => {
             expect(disabledWorldbook.entries['1'].disable).toBe(true);
 
             const alphaEntryCard = page.locator('.world-entry-card', { hasText: `${worldbookName} alpha entry` });
+            // Bulk enable/disable keeps the selection; start the single-entry checks from a clean selection
+            await page.locator('[data-clear-world-entry-selection]').click();
             await alphaEntryCard.locator('[data-world-entry-select="0"]').click();
             await expect(alphaEntryCard).toContainText('已选择');
             await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 1');

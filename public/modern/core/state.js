@@ -171,6 +171,8 @@ export function createModernState() {
         backgroundFolderFilter: '',
         backgroundFolderAssignment: '',
         backgroundVisibleCount: backgroundPageSize,
+        // 在背景网格里点击查看的背景文件名：它保持原位，不像从命令面板 / 仪表盘跳转来的背景那样置顶
+        backgroundGridFocus: '',
         backgroundFolderCreating: {
             active: false,
             name: '',
@@ -342,6 +344,8 @@ export function createModernState() {
             credentialDrafts: {},
             credentialSaving: '',
             providerToggling: '',
+            // 正在确认删除的导入记录 id（内联确认面板）
+            recordDeleteConfirm: '',
         },
         settingsSnapshots: {
             loaded: false,

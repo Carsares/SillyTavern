@@ -158,6 +158,11 @@ export function createWorldbooksEvents(ctx) {
             return;
         }
 
+        if (event.target.closest('[data-clear-world-entry-selection]')) {
+            updateWorldEntryListField('selectedKeys', []);
+            return;
+        }
+
         if (event.target.closest('[data-delete-selected-world-entries]')) {
             try {
                 beginWorldEntryBulkDelete(state.selected.worldbook);

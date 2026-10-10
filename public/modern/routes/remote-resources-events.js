@@ -102,9 +102,23 @@ export function createRemoteResourceEvents(ctx) {
             return;
         }
 
+        // 删除导入记录先展开内联确认，与其他删除操作一致。
         const deleteRecordButton = event.target.closest('[data-delete-remote-record]');
         if (deleteRecordButton) {
-            await runRemoteAction('remote-record-delete', '导入记录删除失败', () => deleteRemoteRecord(deleteRecordButton.dataset.deleteRemoteRecord));
+            state.remoteResources.recordDeleteConfirm = deleteRecordButton.dataset.deleteRemoteRecord || '';
+            render();
+            return;
+        }
+
+        if (event.target.closest('[data-cancel-remote-record-delete]')) {
+            state.remoteResources.recordDeleteConfirm = '';
+            render();
+            return;
+        }
+
+        const confirmRecordDeleteButton = event.target.closest('[data-confirm-remote-record-delete]');
+        if (confirmRecordDeleteButton) {
+            await runRemoteAction('remote-record-delete', '导入记录删除失败', () => deleteRemoteRecord(confirmRecordDeleteButton.dataset.confirmRemoteRecordDelete));
             return;
         }
 

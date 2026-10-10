@@ -229,10 +229,12 @@ test.describe('Modern worldbooks page', () => {
         expect(requests.edits.at(-1).data.entries[1].disable).toBe(true);
         expect(requests.edits.at(-1).data.entries[2].disable).toBe(true);
         await expect(page.locator('.world-entry-card', { hasText: 'beta entry' })).toContainText('禁用');
-        await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 0');
-
-        await selectWorldEntry(page, '1', 1);
-        await selectWorldEntry(page, '2', 2);
+        await expect(page.locator('.metric-card', { hasText: '未禁用条目' }).locator('.metric-value')).toHaveText('1');
+        // 批量禁用后保留选择，可以直接接着批量启用，不必重新勾选。
+        await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 2');
+        await expect(page.locator('[data-world-entry-select="1"]')).toBeChecked();
+        await expect(page.locator('[data-world-entry-select="2"]')).toBeChecked();
+        await expect(page.locator('[data-world-entry-selection-summary]')).toContainText('已选择 2 个条目');
         await expect(page.locator('[data-bulk-world-entries="enable"]')).toBeEnabled();
         await page.locator('[data-bulk-world-entries="enable"]').click();
 
@@ -240,13 +242,32 @@ test.describe('Modern worldbooks page', () => {
         expect(requests.edits.at(-1).data.entries[1].disable).toBe(false);
         expect(requests.edits.at(-1).data.entries[2].disable).toBe(false);
         await expect(page.locator('.world-entry-card', { hasText: 'gamma entry' })).toContainText('启用');
+        await expect(page.locator('.metric-card', { hasText: '未禁用条目' }).locator('.metric-value')).toHaveText('3');
+        await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 2');
+
+        await page.locator('[data-world-entry-search]').fill('beta');
+        await expect(page.locator('.world-entry-card')).toHaveCount(1);
+        await expect(page.locator('[data-world-entry-selection-summary]')).toContainText('其中 1 个不在当前搜索结果中');
+        await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 2');
+        await page.locator('[data-world-entry-search]').fill('');
+        await expect(page.locator('.world-entry-card')).toHaveCount(3);
+
+        await page.locator('[data-clear-world-entry-selection]').click();
         await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 0');
+        await expect(page.locator('[data-world-entry-selection-summary]')).toHaveCount(0);
+        await expect(page.locator('[data-clear-world-entry-selection]')).toBeDisabled();
+        expect(requests.edits).toHaveLength(3);
+
+        await expect(page.locator('.metric-card', { hasText: '全部条目（含已禁用）' })).toBeVisible();
+        await expect(page.locator('.metric-card', { hasText: '世界书附加数据' })).toBeVisible();
+        await expect(page.locator('.world-entry-card', { hasText: 'alpha entry' })).toContainText('位置 角色前');
 
         await page.locator('[data-copy-world-entry="Lore"][data-world-entry-key="0"]').click();
 
         await expect.poll(() => requests.edits.length).toBe(4);
         expect(requests.edits.at(-1).data.entries[3]).toMatchObject({ uid: 3, comment: 'alpha entry' });
         await expect(page.locator('[data-world-entry-select="3"]')).toBeVisible();
+        await selectWorldEntry(page, '3', 1);
 
         const deleteEntryButton = page.locator('[data-delete-world-entry="Lore"][data-world-entry-key="3"]');
         await expect(deleteEntryButton).toHaveText('删除');
@@ -257,6 +278,8 @@ test.describe('Modern worldbooks page', () => {
         await expect.poll(() => requests.edits.length).toBe(5);
         expect(requests.edits.at(-1).data.entries[3]).toBeUndefined();
         await expect(page.locator('[data-world-entry-select="3"]')).toHaveCount(0);
+        // 已删除的条目从选择中剔除，计数与实际可操作条目一致。
+        await expect(page.locator('[data-delete-selected-world-entries]')).toContainText('删除所选 0');
 
         await selectWorldEntry(page, '1', 1);
         await selectWorldEntry(page, '2', 2);

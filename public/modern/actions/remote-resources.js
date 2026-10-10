@@ -30,6 +30,31 @@ const HTTP_STATUS_LABELS = {
 };
 const HTML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', '#39': '\'', '#039': '\'', nbsp: ' ' };
 
+// /api/content/importURL 能识别的站点：src/endpoints/content-manager.js 的 importURL 按域名分派到这些站点的下载器；
+// 其他域名只有在 config.yaml 的 whitelistImportDomains 里放行后，才能作为 PNG 角色卡直链导入。
+export const urlImportSupportedSites = ['Chub', 'RisuRealm', 'JanitorAI', 'Pygmalion', 'AICharacterCards', 'Perchance'];
+
+/**
+ * 把 /api/content/importURL 的失败转成可读原因。该接口失败时只返回状态码、没有说明文字：
+ * 404 表示网址不属于支持的站点（且不在白名单）、链接里认不出资源，或站点没有返回内容；5xx 表示下载过程出错。
+ * 其他错误（如登录失效）原样返回。保留状态码，便于对照服务端日志排查。
+ * @param {unknown} error apiFetchResponse 抛出的错误
+ * @returns {Error} 面向用户的错误
+ */
+export function describeUrlImportError(error) {
+    const status = Number(/** @type {{ status?: number }} */ (error)?.status);
+    if (status === 404) {
+        return new Error(`不支持这个网址，或链接里没有可识别的资源。请使用 ${urlImportSupportedSites.join('、')} 的角色卡 / 世界书链接（服务端返回 404）。`);
+    }
+    if (status === 400) {
+        return new Error('请求里没有网址，请重新输入后再导入（服务端返回 400）。');
+    }
+    if (status >= 500) {
+        return new Error(`服务端下载这个资源时出错，请确认链接能在浏览器中打开，或稍后重试（服务端返回 ${status}）。`);
+    }
+    return error instanceof Error ? error : new Error(String(error));
+}
+
 /**
  * 把错误文本整理成一行纯文本：去掉 script / style 块、注释和标签（含被截断的半个标签），解码常见实体并合并空白。
  * 后端已做同样处理，这里作为兜底，防止旧后端或其他来源把整页 HTML 带进提示。
@@ -413,7 +438,12 @@ export function createRemoteResourceActions({
         if (!url) {
             throw new Error('请输入远程资源 URL。');
         }
-        const parsedUrl = new URL(url);
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error('网址格式不正确，请输入以 http:// 或 https:// 开头的完整链接。');
+        }
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             throw new Error('远程资源 URL 只支持 HTTP 或 HTTPS。');
         }
@@ -421,7 +451,12 @@ export function createRemoteResourceActions({
         state.remoteResources.urlImport.running = true;
         render();
         try {
-            const response = await apiFetchResponse('/api/content/importURL', { body: { url } });
+            let response;
+            try {
+                response = await apiFetchResponse('/api/content/importURL', { body: { url } });
+            } catch (error) {
+                throw describeUrlImportError(error);
+            }
             const resourceType = response.headers.get('x-custom-content-type') === 'lorebook' ? 'worldbook' : response.headers.get('x-custom-content-type') || 'character';
             const blob = await response.blob();
             const fileName = getResponseFileName(response) || getFileNameFromUrl(url, resourceType === 'worldbook' ? 'remote-worldbook.json' : 'remote-character.png');
@@ -792,6 +827,7 @@ export function createRemoteResourceActions({
     async function deleteRemoteRecord(id) {
         await apiFetch(`/api/remote-resources/records/${encodeURIComponent(id)}`, { method: 'DELETE' });
         state.remoteResources.records = state.remoteResources.records.filter(record => record.id !== id);
+        state.remoteResources.recordDeleteConfirm = '';
         showToast('导入记录已删除', '');
         render();
     }

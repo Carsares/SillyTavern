@@ -176,9 +176,9 @@ export const worldEntrySelectiveLogicOptions = [
 
 export const worldEntryRoleOptions = [
     { value: '', label: '默认' },
-    { value: 0, label: 'System' },
-    { value: 1, label: 'User' },
-    { value: 2, label: 'Assistant' },
+    { value: 0, label: '系统（System）' },
+    { value: 1, label: '用户（User）' },
+    { value: 2, label: '助手（Assistant）' },
 ];
 
 export const worldEntryPageSize = 20;

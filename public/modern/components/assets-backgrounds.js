@@ -19,7 +19,9 @@ export function createAssetBackgroundComponents(ctx) {
     });
 
     function renderBackgroundLibraryPanel(folderFilterName, visibleBackgrounds, totalBackgrounds, selectedCount, selection, hasMoreBackgrounds) {
-        const selectionText = selection.active ? `已选择 ${formatNumber(selectedCount)} 个。` : '';
+        const selectionText = selection.active
+            ? `已选择 ${formatNumber(selectedCount)} 个，点击卡片可勾选或取消。`
+            : '点击卡片设为当前查看的背景。';
         const subtitle = `${folderFilterName} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(totalBackgrounds)} 个匹配项。${selectionText}`;
 
         return `

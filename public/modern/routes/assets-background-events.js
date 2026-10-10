@@ -33,6 +33,21 @@ export function createAssetsBackgroundEvents(ctx) {
             return true;
         }
 
+        const focusBackgroundButton = event.target.closest('[data-focus-background]');
+        if (focusBackgroundButton) {
+            const filename = focusBackgroundButton.dataset.focusBackground || '';
+            if (state.backgroundSelection.active) {
+                // 批量选择模式下点击卡片等同于勾选 / 取消勾选
+                toggleBackgroundSelection(filename, !state.backgroundSelection.filenames.includes(filename));
+                return true;
+            }
+            // 设为当前查看的背景：卡片高亮，「上下文」抽屉显示为当前背景；不改动聊天背景设置。
+            state.selected.background = filename;
+            state.backgroundGridFocus = filename;
+            render();
+            return true;
+        }
+
         const backgroundFolderFilterButton = event.target.closest('[data-background-folder-filter]');
         if (backgroundFolderFilterButton) {
             setBackgroundFolderFilter(backgroundFolderFilterButton.dataset.backgroundFolderFilter || '');

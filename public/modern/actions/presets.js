@@ -203,20 +203,70 @@ export function createPresetActions({
         showToast('预设导出已开始', name);
     }
 
+    // 预设是否有内置默认版本，决定「恢复默认」能否点击。/api/presets/restore 只读返回默认内容，
+    // 后端按名称匹配内置预设，同一 apiId + 名称的结论在本次会话内不变，因此按键缓存。
+    // 状态：checking（探测中）、available、unavailable、unknown（探测失败，不下结论）。
+    const presetRestoreStatus = new Map();
+
+    function getPresetRestoreKey(apiId, name) {
+        return `${apiId}\u0000${name}`;
+    }
+
+    function getPresetRestoreStatus(apiId, name) {
+        if (!apiId || !name) {
+            return 'unknown';
+        }
+        const key = getPresetRestoreKey(apiId, name);
+        const status = presetRestoreStatus.get(key);
+        if (status) {
+            return status;
+        }
+        presetRestoreStatus.set(key, 'checking');
+        probePresetRestore(apiId, name, key);
+        return 'checking';
+    }
+
+    async function probePresetRestore(apiId, name, key) {
+        try {
+            const result = await apiFetch('/api/presets/restore', { body: { apiId, name } });
+            presetRestoreStatus.set(key, result?.isDefault && result?.preset ? 'available' : 'unavailable');
+        } catch {
+            // 探测失败时保持按钮可用，点击后由 restorePreset 报告具体错误。
+            presetRestoreStatus.set(key, 'unknown');
+        }
+        render();
+    }
+
     async function restorePreset(apiId, name) {
         const result = await apiFetch('/api/presets/restore', { body: { apiId, name } });
         if (!result?.isDefault || !result?.preset) {
+            presetRestoreStatus.set(getPresetRestoreKey(apiId, name), 'unavailable');
             throw new Error('这个预设没有可恢复的内置默认版本。');
         }
 
+        presetRestoreStatus.set(getPresetRestoreKey(apiId, name), 'available');
         await savePresetFile(apiId, name, result.preset);
         await loadData({ silent: true });
         showToast('预设已恢复默认', name);
         render();
     }
 
+    // 删除后接替的预设：同类型里的第一个其他预设；没有时为空。确认面板和实际删除共用这一规则。
+    function getPresetDeleteFallbackName(apiId, name) {
+        return (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
+    }
+
+    function isCurrentOpenAiPreset(apiId, name) {
+        return apiId === 'openai' && getOaiSettings().preset_settings_openai === name;
+    }
+
     function beginPresetDelete(apiId, name) {
-        state.presetDeleteConfirm = { apiId, name };
+        state.presetDeleteConfirm = {
+            apiId,
+            name,
+            active: isCurrentOpenAiPreset(apiId, name),
+            fallbackName: getPresetDeleteFallbackName(apiId, name),
+        };
         render();
     }
 
@@ -231,8 +281,8 @@ export function createPresetActions({
             throw new Error('请先选择预设。');
         }
 
-        const nextName = (getPresetGroup(apiId)?.names || []).find(item => item !== name) || '';
-        const deletingCurrentOpenAiPreset = apiId === 'openai' && getOaiSettings().preset_settings_openai === name;
+        const nextName = getPresetDeleteFallbackName(apiId, name);
+        const deletingCurrentOpenAiPreset = isCurrentOpenAiPreset(apiId, name);
         if (deletingCurrentOpenAiPreset) {
             state.settings.oai_settings = state.settings.oai_settings || {};
             state.settings.oai_settings.preset_settings_openai = nextName;
@@ -354,6 +404,7 @@ export function createPresetActions({
         useOpenAiPreset,
         duplicatePreset,
         exportPreset,
+        getPresetRestoreStatus,
         restorePreset,
         beginPresetDelete,
         cancelPresetDelete,

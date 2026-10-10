@@ -75,12 +75,14 @@ export function createWorldbooksComponents(ctx) {
     function renderWorldbookDetail(worldbook) {
         const detail = state.worldDetails[worldbook.file_id];
         const entries = detail?.entries ? Object.entries(detail.entries) : [];
-        const listState = getWorldEntryListState(worldbook.file_id);
+        const listState = getWorldEntryListState(worldbook.file_id, detail ? entries : null);
         const visibleEntries = getVisibleWorldEntries(entries, listState);
         const totalPages = Math.max(1, Math.ceil(visibleEntries.length / worldEntryPageSize));
         listState.page = Math.min(Math.max(1, listState.page), totalPages);
         const pageEntries = visibleEntries.slice((listState.page - 1) * worldEntryPageSize, listState.page * worldEntryPageSize);
         const selectedCount = listState.selectedKeys.length;
+        const visibleEntryKeys = new Set(visibleEntries.map(([entryKey]) => String(entryKey)));
+        const hiddenSelectedCount = listState.selectedKeys.filter(entryKey => !visibleEntryKeys.has(String(entryKey))).length;
         const enabledEntries = entries.filter(([, entry]) => !entry.disable);
         const globalEnabled = isGlobalWorldEnabled(worldbook.file_id);
         const isDeleting = state.worldbookDeleteConfirm.worldbookId === worldbook.file_id;
@@ -120,9 +122,9 @@ export function createWorldbooksComponents(ctx) {
         ${isDeleting ? renderWorldbookDeletePanel(worldbook) : ''}
         ${detail ? `
             <div class="metrics-grid compact-metrics">
-                ${metricCard('条目', formatNumber(entries.length), '全部 entries', 'fa-list')}
+                ${metricCard('条目', formatNumber(entries.length), '全部条目（含已禁用）', 'fa-list')}
                 ${metricCard('启用', formatNumber(enabledEntries.length), '未禁用条目', 'fa-toggle-on')}
-                ${metricCard('扩展字段', formatNumber(Object.keys(detail.extensions || {}).length), 'metadata', 'fa-code-branch')}
+                ${metricCard('扩展字段', formatNumber(Object.keys(detail.extensions || {}).length), '世界书附加数据', 'fa-code-branch')}
             </div>
             ${isCreatingEntry ? renderWorldEntryCreatePanel(state.worldEntryEditing.entryKey) : ''}
             <div class="list-toolbar">
@@ -161,8 +163,17 @@ export function createWorldbooksComponents(ctx) {
                         <i class="fa-solid fa-trash"></i>
                         删除所选 ${formatNumber(selectedCount)}
                     </button>
+                    <button class="secondary-button" type="button" data-clear-world-entry-selection ${selectedCount ? '' : 'disabled'}>
+                        <i class="fa-solid fa-xmark"></i>
+                        清除选择
+                    </button>
                 </div>
             </div>
+            ${selectedCount ? `
+                <p class="panel-subtitle world-entry-selection-summary" data-world-entry-selection-summary>
+                    已选择 ${formatNumber(selectedCount)} 个条目${hiddenSelectedCount ? `，其中 ${formatNumber(hiddenSelectedCount)} 个不在当前搜索结果中` : ''}。批量启用或禁用后仍保留选择。
+                </p>
+            ` : ''}
             ${state.worldEntryBulkDeleteConfirm.worldbookId === worldbook.file_id ? renderWorldEntryBulkDeletePanel(selectedCount) : ''}
             <div class="world-entry-list">
                 ${pageEntries.map(([entryKey, entry]) => renderWorldEntryCard(worldbook, entryKey, entry)).join('') || renderInlineEmpty('没有条目')}

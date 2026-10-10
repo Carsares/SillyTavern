@@ -11,7 +11,37 @@ export function createPresetDetailComponents(ctx) {
         getPresetEditorText,
         getOaiSettings,
         getChatCompletionModel,
+        getPresetRestoreStatus,
     } = ctx;
+
+    // 「恢复默认」只对有内置默认版本的预设可用；其他预设（复制、导入或另存的）禁用并说明原因。
+    function renderPresetRestoreButton(group, item) {
+        const status = getPresetRestoreStatus(group.id, item.name);
+        const titles = {
+            checking: '正在检查这个预设是否有内置默认版本…',
+            available: '用内置默认版本覆盖这个预设的当前内容',
+            unavailable: '这个预设不是内置预设（例如复制、导入或另存的预设），没有可恢复的默认版本。',
+            unknown: '用内置默认版本覆盖这个预设的当前内容',
+        };
+        const disabled = status === 'checking' || status === 'unavailable';
+        return `
+                <button class="secondary-button" type="button" data-restore-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}" data-restore-status="${escapeHtml(status)}" title="${escapeHtml(titles[status] || titles.unknown)}" ${disabled ? 'disabled' : ''}>
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    恢复默认
+                </button>`;
+    }
+
+    function getPresetDeleteNotice(group, item) {
+        const confirm = state.presetDeleteConfirm;
+        const base = `将删除 ${group.label} / ${item.name}，此操作不可撤销。`;
+        if (!confirm.active) {
+            return base;
+        }
+        const fallback = confirm.fallbackName
+            ? `删除后，当前聊天补全预设会切换为「${confirm.fallbackName}」。`
+            : '删除后将没有当前聊天补全预设。';
+        return `${base}这是正在使用的聊天补全预设（标记为「当前」）；${fallback}`;
+    }
 
     function renderPresetDetail(group, item) {
         const isOpenAi = group.id === 'openai';
@@ -50,10 +80,7 @@ export function createPresetDetailComponents(ctx) {
                     <i class="fa-solid fa-file-export"></i>
                     导出
                 </button>
-                <button class="secondary-button" type="button" data-restore-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
-                    <i class="fa-solid fa-clock-rotate-left"></i>
-                    恢复默认
-                </button>
+                ${renderPresetRestoreButton(group, item)}
                 <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
                     <i class="fa-solid fa-trash-can"></i>
                     删除
@@ -64,7 +91,7 @@ export function createPresetDetailComponents(ctx) {
             <div class="settings-form inline-form danger-panel">
                 <div>
                     <strong>删除预设</strong>
-                    <p class="panel-subtitle">将删除 ${escapeHtml(group.label)} / ${escapeHtml(item.name)}。</p>
+                    <p class="panel-subtitle" data-preset-delete-notice>${escapeHtml(getPresetDeleteNotice(group, item))}</p>
                 </div>
                 <div class="message-edit-actions">
                     <button class="secondary-button" type="button" data-cancel-preset-delete>

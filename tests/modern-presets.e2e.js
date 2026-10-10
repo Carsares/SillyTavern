@@ -177,6 +177,11 @@ test.describe('Modern presets page', () => {
             },
         });
         await expect(page.locator('[data-select-preset="Preset B copy"][data-preset-api="openai"]')).toBeVisible();
+        // 复制出来的预设没有内置默认版本：「恢复默认」禁用并说明原因，而不是点了才报错。
+        const copyRestoreButton = page.locator('[data-restore-preset="Preset B copy"][data-preset-api="openai"]');
+        await expect(copyRestoreButton).toBeDisabled();
+        await expect(copyRestoreButton).toHaveAttribute('data-restore-status', 'unavailable');
+        await expect(copyRestoreButton).toHaveAttribute('title', /没有可恢复的默认版本/);
 
         const downloadPromise = page.waitForEvent('download');
         await page.locator('[data-export-preset="Preset B copy"][data-preset-api="openai"]').click();
@@ -184,10 +189,14 @@ test.describe('Modern presets page', () => {
         expect(download.suggestedFilename()).toBe('openai-Preset B copy.json');
 
         await page.locator('[data-select-preset="Preset B"][data-preset-api="openai"]').click();
-        await page.locator('[data-restore-preset="Preset B"][data-preset-api="openai"]').click();
+        const restoreButton = page.locator('[data-restore-preset="Preset B"][data-preset-api="openai"]');
+        await expect(restoreButton).toHaveAttribute('data-restore-status', 'available');
+        await expect(restoreButton).toBeEnabled();
+        const restoreRequestsBeforeClick = requests.restores.length;
+        await restoreButton.click();
 
-        await expect.poll(() => requests.restores.length).toBe(1);
-        expect(requests.restores[0]).toEqual({ apiId: 'openai', name: 'Preset B' });
+        await expect.poll(() => requests.restores.length).toBe(restoreRequestsBeforeClick + 1);
+        expect(requests.restores.at(-1)).toEqual({ apiId: 'openai', name: 'Preset B' });
         await expect.poll(() => requests.saves.length).toBe(3);
         expect(requests.saves[2]).toMatchObject({
             apiId: 'openai',
@@ -224,6 +233,7 @@ test.describe('Modern presets page', () => {
         expect(requests.deletes).toHaveLength(0);
 
         await page.locator('[data-delete-preset="Preset B copy"][data-preset-api="openai"]').click();
+        await expect(page.locator('[data-preset-delete-notice]')).not.toContainText('正在使用');
         await page.locator('[data-confirm-preset-delete]').click();
 
         await expect.poll(() => requests.deletes.length).toBe(1);
@@ -259,6 +269,9 @@ test.describe('Modern presets page', () => {
 
         await gotoModern(page, 'presets', '预设管理');
         await page.locator('[data-delete-preset="Preset A"][data-preset-api="openai"]').click();
+        // 删除正在使用的预设前，确认面板说明它是「当前」预设以及删除后改用哪个。
+        await expect(page.locator('[data-preset-delete-notice]')).toContainText('这是正在使用的聊天补全预设');
+        await expect(page.locator('[data-preset-delete-notice]')).toContainText('切换为「Preset B」');
         await page.locator('[data-confirm-preset-delete]').click();
 
         await expect(page.locator('.toast').filter({ hasText: '/api/settings/save failed: 500' }).first()).toBeVisible();

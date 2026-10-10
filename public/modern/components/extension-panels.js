@@ -1,3 +1,12 @@
+// 扩展类型（后端返回的 system / local / global）显示为中文，与筛选标签一致；未知值原样显示。
+export function getExtensionTypeLabel(type) {
+    return {
+        system: '内置',
+        local: '本地',
+        global: '全局',
+    }[type] || String(type || '');
+}
+
 export function createExtensionPanelComponents(ctx) {
     const {
         state,
@@ -127,7 +136,7 @@ export function createExtensionPanelComponents(ctx) {
         <div class="settings-form inline-form ${isDelete ? 'danger-panel' : ''}">
             <div>
                 <strong>${title}</strong>
-                <p class="panel-subtitle">${escapeHtml(getExtensionFolderName(extension))} · ${escapeHtml(extension.type)}。${escapeHtml(description)}</p>
+                <p class="panel-subtitle">${escapeHtml(getExtensionFolderName(extension))} · ${escapeHtml(getExtensionTypeLabel(extension.type))}扩展。${escapeHtml(description)}</p>
             </div>
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-cancel-extension-operation ${operation.running ? 'disabled' : ''}>

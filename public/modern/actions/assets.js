@@ -94,6 +94,13 @@ export function createAssetActions({
                 throw new Error('服务端未返回重命名后的背景文件名。');
             }
             state.backgroundRenaming = { filename: '', name: '', running: false };
+            // 当前查看的背景被重命名时跟随新文件名，卡片高亮和「上下文」抽屉不丢失。
+            if (state.selected.background === oldName) {
+                state.selected.background = savedName;
+            }
+            if (state.backgroundGridFocus === oldName) {
+                state.backgroundGridFocus = savedName;
+            }
             const backgroundSettings = state.settings?.background;
             const oldUrl = getBackgroundSettingsUrl(oldName);
             if (backgroundSettings && (backgroundSettings.name === oldName || backgroundSettings.url === oldUrl)) {
@@ -184,6 +191,9 @@ export function createAssetActions({
             throw error;
         }
         state.backgroundSelection = { active: false, filenames: [], deleteConfirm: false, deleting: false };
+        if (filenames.includes(state.selected.background)) {
+            state.selected.background = '';
+        }
         await loadData({ silent: true });
         showToast('背景已删除', `${formatNumber(filenames.length)} 个文件`);
         render();

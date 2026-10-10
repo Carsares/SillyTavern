@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createRemoteResourceActions, describeRemoteSearchError, summarizeRemoteError } from '../public/modern/actions/remote-resources.js';
+import { createRemoteResourceActions, describeRemoteSearchError, describeUrlImportError, summarizeRemoteError } from '../public/modern/actions/remote-resources.js';
 import { gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 function fulfillJson(route, body, status = 200) {
@@ -638,5 +638,85 @@ test.describe('Modern remote resources page', () => {
         await page.locator('[data-search-remote-resources]').click();
         await expect(topPager.locator('[data-remote-result-page-badge]')).toHaveText('1 / 2');
         await expect(cards).toHaveCount(24);
+    });
+});
+
+test.describe('Modern remote resources records and URL import', () => {
+    test('maps URL import status codes to readable reasons', () => {
+        const notFound = Object.assign(new Error('/api/content/importURL failed: 404'), { status: 404 });
+        expect(describeUrlImportError(notFound).message).toContain('不支持这个网址');
+        expect(describeUrlImportError(notFound).message).toContain('Chub');
+        expect(describeUrlImportError(notFound).message).toContain('服务端返回 404');
+        const serverError = Object.assign(new Error('/api/content/importURL failed: 500'), { status: 500 });
+        expect(describeUrlImportError(serverError).message).toContain('服务端返回 500');
+        const authError = new Error('当前会话没有访问权限，请先登录。');
+        expect(describeUrlImportError(authError)).toBe(authError);
+    });
+
+    test('shows a readable reason when a URL is not supported', async ({ page }) => {
+        const importRequests = [];
+        await mockRemoteResourcesWorkspace(page, { providers: [createProvider('a', 'Site A')], onSearch: () => ({ items: [], total: 0 }) });
+        await page.route('**/api/content/importURL', route => {
+            importRequests.push(route.request().postDataJSON());
+            return route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not Found' });
+        });
+
+        await openRemoteResources(page, 1);
+        await page.locator('[data-remote-resource-tab="url"]').click();
+        await expect(page.locator('[data-remote-url-import-hint]')).toContainText('RisuRealm');
+        await page.locator('[data-remote-url-import]').fill('https://example.com/not-supported');
+        await page.locator('[data-import-remote-url]').click();
+
+        await expect.poll(() => importRequests.length).toBe(1);
+        expect(importRequests[0]).toEqual({ url: 'https://example.com/not-supported' });
+        const toast = page.locator('.toast', { hasText: '远程 URL 导入失败' });
+        await expect(toast).toContainText('不支持这个网址');
+        await expect(toast).not.toContainText('failed: 404');
+        await expect(page.locator('[data-import-remote-url]')).toBeEnabled();
+    });
+
+    test('confirms before deleting an import record and labels record actions in Chinese', async ({ page }) => {
+        const records = [
+            { id: 'r1', providerId: 'chub', providerName: 'Chub', remoteId: 'alpha', resourceType: 'character', title: 'Alpha Card', sourceUrl: '', localType: 'character', localId: 'alpha.png', action: 'import', importedAt: '2026-10-01T00:00:00.000Z' },
+            { id: 'r2', providerId: 'a', providerName: 'Site A', remoteId: 'beta', resourceType: 'asset', title: 'Beta Asset', sourceUrl: '', localType: '', localId: '', action: 'download', importedAt: '2026-10-02T00:00:00.000Z' },
+            { id: 'r3', providerId: 'url', providerName: 'example.com', remoteId: 'gamma', resourceType: 'worldbook', title: 'Gamma Lore', sourceUrl: '', localType: 'worldbook', localId: 'Gamma', action: 'import-url', importedAt: '2026-10-03T00:00:00.000Z' },
+        ];
+        const deletes = [];
+        await mockModernWorkspace(page);
+        await page.route('**/api/remote-resources/providers', route => fulfillJson(route, [createProvider('a', 'Site A')]));
+        await page.route('**/api/remote-resources/records', route => fulfillJson(route, records));
+        await page.route('**/api/remote-resources/records/*', route => {
+            deletes.push({ method: route.request().method(), url: route.request().url() });
+            return route.fulfill({ status: 204, body: '' });
+        });
+
+        await openRemoteResources(page, 1);
+        await page.locator('[data-remote-resource-tab="records"]').click();
+
+        const alphaCard = page.locator('.remote-record-card', { hasText: 'Alpha Card' });
+        await expect(alphaCard.locator('.tag')).toHaveText('导入');
+        await expect(alphaCard.locator('.remote-record-target')).toContainText('角色卡 alpha.png');
+        await expect(page.locator('.remote-record-card', { hasText: 'Beta Asset' }).locator('.tag')).toHaveText('下载');
+        await expect(page.locator('.remote-record-card', { hasText: 'Gamma Lore' }).locator('.tag')).toHaveText('网址导入');
+
+        await alphaCard.locator('[data-delete-remote-record="r1"]').click();
+        const confirmPanel = page.locator('[data-remote-record-delete-confirm="r1"]');
+        await expect(confirmPanel).toContainText('已导入到本地的内容不受影响');
+        await expect(alphaCard.locator('[data-delete-remote-record="r1"]')).toBeDisabled();
+        expect(deletes).toHaveLength(0);
+
+        await page.locator('[data-cancel-remote-record-delete]').click();
+        await expect(confirmPanel).toHaveCount(0);
+        expect(deletes).toHaveLength(0);
+
+        await alphaCard.locator('[data-delete-remote-record="r1"]').click();
+        await page.locator('[data-confirm-remote-record-delete="r1"]').click();
+
+        await expect.poll(() => deletes.length).toBe(1);
+        expect(deletes[0].method).toBe('DELETE');
+        expect(deletes[0].url).toMatch(/\/api\/remote-resources\/records\/r1$/);
+        await expect(page.locator('.remote-record-card', { hasText: 'Alpha Card' })).toHaveCount(0);
+        await expect(page.locator('.remote-record-card')).toHaveCount(2);
+        await expect(page.locator('[data-remote-record-delete-confirm]')).toHaveCount(0);
     });
 });

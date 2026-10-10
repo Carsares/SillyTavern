@@ -339,6 +339,44 @@ test.describe('Modern assets page', () => {
         await expect(page.locator('[data-assign-selected-backgrounds]')).toBeDisabled();
     });
 
+    test('focuses a background card in place and toggles batch selection by clicking cards', async ({ page }) => {
+        await mockModernAssetsWorkspace(page);
+
+        await gotoModern(page, 'assets', '素材库');
+
+        const cardOrder = () => page.locator('.background-card').evaluateAll(cards => cards.map(card => /** @type {HTMLElement} */ (card).dataset.backgroundCard));
+        const initialOrder = await cardOrder();
+        expect(initialOrder).toEqual(['castle.png', 'city.png', 'forest.webp']);
+        await expect(page.locator('[data-toggle-background-selection]')).toHaveText('批量选择');
+
+        // 点击卡片设为当前查看的背景：卡片高亮并标记「查看中」，位置不变，「上下文」抽屉显示它。
+        await page.locator('[data-focus-background="forest.webp"]').click();
+        const forestCard = page.locator('.background-card[data-background-card="forest.webp"]');
+        await expect(forestCard).toHaveClass(/selected/);
+        await expect(forestCard).toContainText('查看中');
+        await expect(page.locator('[data-focus-background="forest.webp"]')).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.locator('.background-card.selected')).toHaveCount(1);
+        expect(await cardOrder()).toEqual(initialOrder);
+        await page.locator('[data-toggle-inspector][aria-label="上下文"]').click();
+        await expect(page.locator('#inspector')).toBeVisible();
+        await expect(page.locator('#inspector')).toContainText('forest.webp');
+
+        await page.locator('[data-focus-background="city.png"]').click();
+        await expect(page.locator('.background-card[data-background-card="city.png"]')).toHaveClass(/selected/);
+        await expect(forestCard).not.toHaveClass(/selected/);
+        expect(await cardOrder()).toEqual(initialOrder);
+
+        // 批量选择模式下点击卡片等同于勾选 / 取消勾选。
+        await page.locator('[data-toggle-background-selection]').click();
+        await expect(page.locator('[data-toggle-background-selection]')).toHaveText('退出批量选择');
+        await page.locator('[data-focus-background="castle.png"]').click();
+        await expect(page.locator('[data-background-select="castle.png"]')).toBeChecked();
+        await expect(page.locator('[data-delete-selected-backgrounds]')).toContainText('删除所选 1');
+        await page.locator('[data-focus-background="castle.png"]').click();
+        await expect(page.locator('[data-background-select="castle.png"]')).not.toBeChecked();
+        await expect(page.locator('[data-delete-selected-backgrounds]')).toBeDisabled();
+    });
+
     test('downloads and deletes managed asset files', async ({ page }) => {
         const fixture = await mockModernAssetsWorkspace(page);
         const requests = fixture.requests.assetWorkflows;

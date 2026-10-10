@@ -6,6 +6,7 @@ export function createWorldbookEntryComponents(ctx) {
         escapeHtml,
         formatNumber,
         getWorldEntryTitle,
+        worldEntryPositions,
     } = ctx;
     const {
         renderWorldEntryForm,
@@ -61,7 +62,7 @@ export function createWorldbookEntryComponents(ctx) {
             <div class="tag-row">
                 <span class="tag">#${escapeHtml(entryKey)}</span>
                 <span class="tag">顺序 ${escapeHtml(entry.order ?? 0)}</span>
-                <span class="tag">位置 ${escapeHtml(entry.position ?? '默认')}</span>
+                <span class="tag">位置 ${escapeHtml(getWorldEntryPositionLabel(entry.position))}</span>
                 ${entry.probability !== undefined ? `<span class="tag">概率 ${escapeHtml(entry.probability)}</span>` : ''}
                 ${entry.constant ? '<span class="tag">常驻</span>' : ''}
                 ${entry.selective ? '<span class="tag">关键词触发</span>' : ''}
@@ -88,6 +89,15 @@ export function createWorldbookEntryComponents(ctx) {
             ${isDeleting ? renderWorldEntryDeletePanel(entryKey, entry) : ''}
         </article>
     `;
+    }
+
+    // 卡片上显示插入位置的中文名称，而不是原始数字；未知值原样显示，便于排查。
+    function getWorldEntryPositionLabel(position) {
+        if (position === undefined || position === null || position === '') {
+            return '默认';
+        }
+        const option = (worldEntryPositions || []).find(item => item.value === Number(position));
+        return option ? option.label : String(position);
     }
 
     function renderWorldEntryDeletePanel(entryKey, entry) {

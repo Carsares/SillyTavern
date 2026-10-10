@@ -4,9 +4,18 @@ export function createWorldbookEntryListHelpers({
     getWorldEntryTitle,
     formatSearchText,
 }) {
-    function getWorldEntryListState(worldbookId) {
+    // entries 传入当前世界书的条目（[key, entry] 数组）时，顺带剔除已不存在的选中条目（被删除或刷新后消失），
+    // 让批量按钮上的计数始终等于实际可操作的条目数。
+    function getWorldEntryListState(worldbookId, entries = null) {
         if (state.worldEntryList.worldbookId !== worldbookId) {
             state.worldEntryList = { worldbookId, query: '', sort: 'order', page: 1, selectedKeys: [] };
+        }
+        if (Array.isArray(entries) && state.worldEntryList.selectedKeys.length) {
+            const existingKeys = new Set(entries.map(([entryKey]) => String(entryKey)));
+            const selectedKeys = state.worldEntryList.selectedKeys.filter(entryKey => existingKeys.has(String(entryKey)));
+            if (selectedKeys.length !== state.worldEntryList.selectedKeys.length) {
+                state.worldEntryList.selectedKeys = selectedKeys;
+            }
         }
         return state.worldEntryList;
     }

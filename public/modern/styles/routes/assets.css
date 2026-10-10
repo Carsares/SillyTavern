@@ -38,3 +38,33 @@
     font-size: 13px;
     font-weight: 760;
 }
+
+/* 背景卡片的缩略图和标题区域可点击：平时设为当前查看的背景，批量选择模式下切换勾选。 */
+.background-card-main {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.background-card-main:hover .background-thumb {
+    filter: brightness(0.96);
+}
+
+.background-card-main .card-title {
+    display: block;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.background-card-main .card-meta {
+    display: block;
+}
