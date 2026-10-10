@@ -1,55 +1,5 @@
+import { secretKeyByTextCompletionType, textCompletionModelFields, textCompletionTypeOptions } from '../core/connection-labels.js';
 import { createApiTextCompletionEditorComponents } from './api-text-completion-editor.js';
-
-const textCompletionTypeOptions = [
-    { id: 'ooba', label: 'Text Generation WebUI / Ooba' },
-    { id: 'generic', label: 'Generic OpenAI-compatible' },
-    { id: 'openrouter', label: 'OpenRouter' },
-    { id: 'ollama', label: 'Ollama' },
-    { id: 'vllm', label: 'vLLM' },
-    { id: 'aphrodite', label: 'Aphrodite' },
-    { id: 'tabby', label: 'TabbyAPI' },
-    { id: 'koboldcpp', label: 'KoboldCpp' },
-    { id: 'llamacpp', label: 'llama.cpp' },
-    { id: 'huggingface', label: 'Hugging Face' },
-    { id: 'mancer', label: 'Mancer' },
-    { id: 'togetherai', label: 'TogetherAI' },
-    { id: 'infermaticai', label: 'InfermaticAI' },
-    { id: 'dreamgen', label: 'DreamGen' },
-    { id: 'featherless', label: 'Featherless' },
-];
-
-const textCompletionModelFields = {
-    ooba: 'custom_model',
-    generic: 'generic_model',
-    openrouter: 'openrouter_model',
-    ollama: 'ollama_model',
-    vllm: 'vllm_model',
-    aphrodite: 'aphrodite_model',
-    tabby: 'tabby_model',
-    llamacpp: 'llamacpp_model',
-    mancer: 'mancer_model',
-    togetherai: 'togetherai_model',
-    infermaticai: 'infermaticai_model',
-    dreamgen: 'dreamgen_model',
-    featherless: 'featherless_model',
-};
-
-const secretKeyByTextCompletionType = {
-    ooba: 'api_key_ooba',
-    generic: 'api_key_generic',
-    openrouter: 'api_key_openrouter',
-    vllm: 'api_key_vllm',
-    aphrodite: 'api_key_aphrodite',
-    tabby: 'api_key_tabby',
-    llamacpp: 'api_key_llamacpp',
-    koboldcpp: 'api_key_koboldcpp',
-    mancer: 'api_key_mancer',
-    togetherai: 'api_key_togetherai',
-    infermaticai: 'api_key_infermaticai',
-    dreamgen: 'api_key_dreamgen',
-    featherless: 'api_key_featherless',
-    huggingface: 'api_key_huggingface',
-};
 
 export function createApiTextCompletionComponents(ctx) {
     const {

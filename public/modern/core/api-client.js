@@ -78,10 +78,9 @@ export function createApiClient({ onTokenChange = /** @type {(token: string) => 
 
     async function apiFetch(path, options = {}, retry = true) {
         const response = await fetchWithCsrf(path, options, retry);
-        if (response.status === 204) {
-            return null;
-        }
-
+        // Read the body even for 204 (it resolves to ''): Chromium reports a fetch whose empty body is never read
+        // as net::ERR_ABORTED although the server handled it, so successful writes such as make-snapshot,
+        // restore-snapshot and record deletes looked aborted in the network log
         const text = await response.text();
         if (!text) {
             return null;

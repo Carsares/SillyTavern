@@ -178,7 +178,12 @@ export function createSettingsActions({
         localStorage.setItem('st-modern-chat-mode', chatMode);
         localStorage.setItem('st-modern-chat-sidebar-open', String(chatSidebarOpen));
         localStorage.setItem('st-modern-inspector-open', String(inspectorOpen));
-        showToast('界面偏好已保存', `${theme} / ${getChatModeLabel()}`);
+        // Saving re-declares the drawer default: forget where the drawer was last left (the runtime state that
+        // shell/inspector.js records on every open and close) so the saved preference decides the next load.
+        // The drawer stays as it is in this view; the revision tells the inspector this click is not an outside click.
+        localStorage.removeItem('st-modern-inspector-state');
+        state.inspectorPreferenceRevision = (state.inspectorPreferenceRevision || 0) + 1;
+        showToast('界面偏好已保存', `${theme === 'dark' ? '深色' : '浅色'} / ${getChatModeLabel()}`);
         render();
     }
 

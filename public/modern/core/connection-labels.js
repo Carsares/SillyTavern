@@ -30,8 +30,8 @@ export const mainApiLabels = {
     koboldhorde: 'AI Horde',
 };
 
-// Text completion types and model fields; components/api-text-completion.js and
-// actions/api-text-completion-connection.js still keep their own copies of these tables
+// Text completion types, model fields and secret keys: the single source for the topbar/dashboard labels here,
+// the API page editor (components/api-text-completion.js) and its save action (actions/api-text-completion-connection.js)
 export const textCompletionTypeOptions = [
     { id: 'ooba', label: 'Text Generation WebUI / Ooba' },
     { id: 'generic', label: 'Generic OpenAI-compatible' },
@@ -64,6 +64,24 @@ export const textCompletionModelFields = {
     infermaticai: 'infermaticai_model',
     dreamgen: 'dreamgen_model',
     featherless: 'featherless_model',
+};
+
+// Secret storage key of each text completion type; types without an entry have no API key field
+export const secretKeyByTextCompletionType = {
+    ooba: 'api_key_ooba',
+    generic: 'api_key_generic',
+    openrouter: 'api_key_openrouter',
+    vllm: 'api_key_vllm',
+    aphrodite: 'api_key_aphrodite',
+    tabby: 'api_key_tabby',
+    llamacpp: 'api_key_llamacpp',
+    koboldcpp: 'api_key_koboldcpp',
+    mancer: 'api_key_mancer',
+    togetherai: 'api_key_togetherai',
+    infermaticai: 'api_key_infermaticai',
+    dreamgen: 'api_key_dreamgen',
+    featherless: 'api_key_featherless',
+    huggingface: 'api_key_huggingface',
 };
 
 const chatCompletionSourceLabels = Object.fromEntries(chatCompletionSourceOptions.map(option => [option.id, option.label]));

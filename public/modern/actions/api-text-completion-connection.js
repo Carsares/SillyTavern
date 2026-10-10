@@ -1,37 +1,5 @@
+import { secretKeyByTextCompletionType, textCompletionModelFields } from '../core/connection-labels.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
-
-const textCompletionModelFields = {
-    ooba: 'custom_model',
-    generic: 'generic_model',
-    openrouter: 'openrouter_model',
-    ollama: 'ollama_model',
-    vllm: 'vllm_model',
-    aphrodite: 'aphrodite_model',
-    tabby: 'tabby_model',
-    llamacpp: 'llamacpp_model',
-    mancer: 'mancer_model',
-    togetherai: 'togetherai_model',
-    infermaticai: 'infermaticai_model',
-    dreamgen: 'dreamgen_model',
-    featherless: 'featherless_model',
-};
-
-const secretKeyByTextCompletionType = {
-    ooba: 'api_key_ooba',
-    generic: 'api_key_generic',
-    openrouter: 'api_key_openrouter',
-    vllm: 'api_key_vllm',
-    aphrodite: 'api_key_aphrodite',
-    tabby: 'api_key_tabby',
-    llamacpp: 'api_key_llamacpp',
-    koboldcpp: 'api_key_koboldcpp',
-    mancer: 'api_key_mancer',
-    togetherai: 'api_key_togetherai',
-    infermaticai: 'api_key_infermaticai',
-    dreamgen: 'api_key_dreamgen',
-    featherless: 'api_key_featherless',
-    huggingface: 'api_key_huggingface',
-};
 
 const textCompletionSamplingDefaults = {
     temp: 0.7,

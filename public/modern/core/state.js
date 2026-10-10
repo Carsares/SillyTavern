@@ -256,6 +256,9 @@ export function createModernState() {
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),
         inspectorOpen: localStorage.getItem('st-modern-inspector-open') === 'true',
+        // Bumped by actions/settings.js whenever the「默认展开上下文抽屉」preference is saved; shell/inspector.js does
+        // not treat the click that saved it as an outside click
+        inspectorPreferenceRevision: 0,
         // 只读观测：inspector 里「本次生成提示词分解」的展示状态，data 为 legacy bridge 回传的只读快照。
         inspector: {
             itemizedPrompt: {

@@ -7,8 +7,8 @@ import { createInspectorSections } from './inspector-sections.js';
 //   so for upgrading users it still holds their last drawer state and keeps opening the drawer as before.
 // - st-modern-inspector-state ('open' | 'closed'): where the user last left the drawer. Every open and close
 //   (toggle, close button, Esc, outside click) writes it, and when present it wins over the preference.
+//   Saving the preference removes it (actions/settings.js), so the saved preference decides the next load.
 const inspectorStateKey = 'st-modern-inspector-state';
-const savePreferencesSelector = '[data-save-modern-preferences]';
 
 function readStoredInspectorState() {
     const value = localStorage.getItem(inspectorStateKey);
@@ -110,10 +110,6 @@ export function createInspector({
             || (node instanceof Element && node.matches('[data-toggle-inspector]')));
     }
 
-    function isPreferenceSave(path) {
-        return path.some(node => node instanceof Element && node.matches(savePreferencesSelector));
-    }
-
     // Bound on window so these run after the document-level handlers in events.js / router.js: an Esc
     // already consumed there (command palette, message edit, chat drawers) is defaultPrevented, and the
     // toggle buttons have already flipped the drawer by the time the click arrives here.
@@ -130,16 +126,21 @@ export function createInspector({
                 /** @type {HTMLElement | null} */ (elements.topbar?.querySelector('[data-toggle-inspector]'))?.focus();
             }
         });
+        // Captured before any click handler runs, so the bubbling listener below can tell whether this click
+        // saved the 默认展开 preference
+        let preferenceRevisionAtClick = state.inspectorPreferenceRevision;
+        window.addEventListener('click', () => {
+            preferenceRevisionAtClick = state.inspectorPreferenceRevision;
+        }, { capture: true });
         window.addEventListener('click', event => {
+            // The click that saved the preference re-declared the drawer default: it is not an outside click, and
+            // dismissing here would record a drawer state right after the save cleared it
+            if (state.inspectorPreferenceRevision !== preferenceRevisionAtClick) {
+                return;
+            }
             // composedPath() is fixed at dispatch time, so a click on a control that re-rendered the drawer
             // (and detached itself) still counts as inside
             const path = event.composedPath();
-            if (isPreferenceSave(path)) {
-                // Saving Modern preferences re-declares the default: forget the last drawer state so the saved
-                // preference decides the next load, and leave the drawer as it is in this view
-                localStorage.removeItem(inspectorStateKey);
-                return;
-            }
             if (!state.inspectorOpen || isInsideInspectorControls(path)) {
                 return;
             }

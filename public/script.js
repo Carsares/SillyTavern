@@ -969,6 +969,9 @@ export async function pingServer() {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
         });
+        // Read the empty 204 body: Chromium reports a fetch whose body is never read as net::ERR_ABORTED,
+        // which made the ping before every generation look aborted in the network log
+        await result.text();
 
         if (!result.ok) {
             return false;

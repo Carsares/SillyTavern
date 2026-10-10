@@ -909,6 +909,9 @@ async function extendUserSession() {
             headers: getRequestHeaders({ omitContentType: true }),
         });
 
+        // 读掉 204 空响应体，否则 Chromium 会把已成功的请求记为 net::ERR_ABORTED
+        await response.text();
+
         if (!response.ok) {
             throw new Error('Ping did not succeed', { cause: response.status });
         }
