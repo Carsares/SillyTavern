@@ -1,3 +1,4 @@
+import { formatCharacterCreator } from '../actions/character-data.js';
 import { createChatComposerComponents } from './chat-composer.js';
 import { createChatMessageComponents } from './chat-message.js';
 
@@ -37,7 +38,7 @@ export function createChatThreadComponents(ctx) {
         const memberCount = isGroupChatMode() && Array.isArray(entity?.members) ? entity.members.length : 0;
         const subtitle = isGroupChatMode()
             ? `${formatNumber(memberCount)} 个成员`
-            : (entity.data?.creator || entity.avatar || '角色卡');
+            : (formatCharacterCreator(entity.data?.creator) || entity.avatar || '角色卡');
 
         return `
         ${options.compactContext ? `
@@ -63,7 +64,6 @@ export function createChatThreadComponents(ctx) {
                     <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
                     <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
                     ${isGroupChatMode() ? `<span class="tag">${formatNumber(memberCount)} 个成员</span>` : ''}
-                    <span class="tag">${escapeHtml(state.engine.status)}</span>
                 </div>
             </div>
             ${selectedChat ? `

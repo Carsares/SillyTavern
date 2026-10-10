@@ -1,4 +1,19 @@
+import { MODERN_MESSAGE_SOURCE } from '../actions/chat-context-selectors.js';
 import { createChatMessageContentComponents } from './chat-message-content.js';
+
+// extra.api values that mark where a message came from rather than which API produced it: greetings the
+// Modern UI writes and messages inserted by slash commands (/sendas, /sys ...). They are not shown as a label.
+const internalMessageSources = new Set([MODERN_MESSAGE_SOURCE, 'manual']);
+
+// Label under a message: the model name when recorded, otherwise the API name unless it is an internal marker.
+function getMessageSourceLabel(extra) {
+    const model = String(extra?.model || '').trim();
+    if (model) {
+        return model;
+    }
+    const api = String(extra?.api || '').trim();
+    return internalMessageSources.has(api) ? '' : api;
+}
 
 export function createChatMessageComponents({
     state,
@@ -71,7 +86,7 @@ export function createChatMessageComponents({
         const name = message.name || (message.is_user ? 'You' : 'Character');
         const rawText = message.extra?.display_text || message.mes || '';
         const text = rawText || '[空消息]';
-        const model = message.extra?.model || message.extra?.api || '';
+        const model = getMessageSourceLabel(message.extra);
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
         const isDeleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
         const canSwipe = !message.is_user && !message.is_system && messageIndex === getSelectedChatMessages().length - 1;

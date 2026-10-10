@@ -2,7 +2,7 @@ import { createChatLayoutComponents } from '../components/chat-layout.js';
 import { createChatBackupEvents } from './chat-backup-events.js';
 import { createChatContextEvents } from './chat-context-events.js';
 import { createChatFileEvents } from './chat-file-events.js';
-import { createChatInputEvents } from './chat-input-events.js';
+import { createChatInputEvents, fitComposerInput } from './chat-input-events.js';
 import { createChatMessageEvents } from './chat-message-events.js';
 import { createChatScrollController } from './chat-scroll.js';
 
@@ -13,7 +13,13 @@ export function createChatRoute(ctx) {
     const { handleChatFileClick } = createChatFileEvents(ctx);
     const { handleChatInput, handleChatInputChange, handleChatInputKeydown } = createChatInputEvents(ctx);
     const { handleChatMessageClick } = createChatMessageEvents(ctx);
-    const chatScroll = createChatScrollController({ afterRender: bindChatBackupDom });
+    const chatScroll = createChatScrollController({
+        afterRender() {
+            // render 重建了输入框，按恢复出来的草稿重新定高（发送后草稿清空即缩回一行）
+            fitComposerInput(document.querySelector('[data-chat-input]'));
+            bindChatBackupDom();
+        },
+    });
 
     function render() {
         chatScroll.beforeRender();

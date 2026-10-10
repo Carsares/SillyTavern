@@ -68,6 +68,22 @@ export function createChatScrollController({ root = document, afterRender = () =
     // Lists whose active row is kept in view: set when the lists (re)appear (entering the chat route,
     // opening the sidebar) or show content without a remembered position; cleared by a reader scroll.
     const revealActive = new Set();
+    // scrollTop the message list got from this controller's last move to the newest message. Its scroll
+    // event can arrive after the list shrank again (the composer growing line by line between frames) and
+    // must not unpin the reader then.
+    /** @type {WeakMap<HTMLElement, number>} */
+    const followedScrollTop = new WeakMap();
+    // The list shrinks when the composer grows with a longer draft (and on window resizes) without a
+    // render or a scroll event; a reader pinned to the newest message stays there.
+    const listResizeObserver = typeof ResizeObserver === 'function'
+        ? new ResizeObserver(entries => {
+            for (const { target } of entries) {
+                if (target instanceof HTMLElement) {
+                    followIfPinned(target);
+                }
+            }
+        })
+        : null;
     const sidebarResizeObserver = typeof ResizeObserver === 'function'
         ? new ResizeObserver(entries => {
             for (const { target } of entries) {
@@ -206,12 +222,17 @@ export function createChatScrollController({ root = document, afterRender = () =
         }
     }
 
+    function followToBottom(list) {
+        scrollToBottom(list);
+        followedScrollTop.set(list, list.scrollTop);
+    }
+
     function followIfPinned(list) {
         if (list !== trackedList) {
             return;
         }
         if (pinned) {
-            scrollToBottom(list);
+            followToBottom(list);
         }
         updateJumpButton(list);
     }
@@ -223,6 +244,7 @@ export function createChatScrollController({ root = document, afterRender = () =
 
         trackedObserver?.disconnect();
         trackedObserver = null;
+        listResizeObserver?.disconnect();
         trackedList = list instanceof HTMLElement ? list : null;
         if (!trackedList) {
             return;
@@ -233,6 +255,11 @@ export function createChatScrollController({ root = document, afterRender = () =
             if (current !== trackedList) {
                 return;
             }
+            const followed = followedScrollTop.get(current) === current.scrollTop;
+            followedScrollTop.delete(current);
+            if (followed) {
+                return;
+            }
             pinned = isNearBottom(current);
             updateJumpButton(current);
         }, { passive: true });
@@ -240,6 +267,7 @@ export function createChatScrollController({ root = document, afterRender = () =
         current.addEventListener('load', () => followIfPinned(current), true);
         trackedObserver = new MutationObserver(() => followIfPinned(current));
         trackedObserver.observe(current, { childList: true, subtree: true, characterData: true });
+        listResizeObserver?.observe(current);
     }
 
     function restoreDeleteStep(openDeleteStepKey) {
@@ -273,12 +301,12 @@ export function createChatScrollController({ root = document, afterRender = () =
         const firstIndex = Number(list.dataset.firstIndex) || 0;
         if (!previous || previous.chatKey !== (list.dataset.chatKey || '')) {
             // Opened or switched to a chat: start at the newest message.
-            scrollToBottom(list);
+            followToBottom(list);
         } else if (firstIndex < previous.firstIndex) {
             // "加载更早消息" inserted messages above: keep the messages the reader was looking at in place.
             list.scrollTop = list.scrollHeight - list.clientHeight - previous.distanceFromBottom;
         } else if (previous.nearBottom) {
-            scrollToBottom(list);
+            followToBottom(list);
         } else {
             list.scrollTop = previous.scrollTop;
         }
@@ -309,7 +337,7 @@ export function createChatScrollController({ root = document, afterRender = () =
             return false;
         }
 
-        scrollToBottom(list);
+        followToBottom(list);
         pinned = true;
         updateJumpButton(list);
         return true;

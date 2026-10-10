@@ -1,5 +1,8 @@
 import { isValidGroupAvatarUrl, stripJsonlExtension } from '../core/utils.js';
 
+// extra.api of messages the Modern UI writes itself (new-chat greetings): a source marker, not an API name.
+export const MODERN_MESSAGE_SOURCE = 'modern';
+
 export function createChatContextSelectorHelpers({
     state,
     getCharacterAvatarUrl,
@@ -223,7 +226,7 @@ export function createChatContextSelectorHelpers({
             is_system: false,
             send_date: getMessageTimestamp(),
             mes: text,
-            extra: { api: 'modern', model },
+            extra: { api: MODERN_MESSAGE_SOURCE, model },
         };
     }
 

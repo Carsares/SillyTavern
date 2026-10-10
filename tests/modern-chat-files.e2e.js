@@ -1240,7 +1240,7 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('.chat-thread')).toContainText('generated reply to hello bridge generation');
         await expect(page.locator('[data-chat-input]')).toHaveValue('');
         await expect(page.locator('[data-send-message]')).toBeDisabled();
-        await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+        await expect(page.locator('[data-composer-status]')).toHaveCount(0);
     });
 
     test('streams progress into a live bubble that disappears when generation finishes', async ({ page }) => {
@@ -1551,11 +1551,10 @@ test.describe('Modern chat files', () => {
         await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
         await expect(page.locator('.detail-title')).toHaveText('Mock Character');
         await expect(page.locator('[data-send-message]')).toBeDisabled();
-        await expect(page.locator('[data-composer-status]')).toContainText('空消息不会提交');
+        await expect(page.locator('[data-composer-status]')).toHaveCount(0);
 
         await page.locator('[data-chat-input]').fill('hello modern composer');
         await expect(page.locator('[data-send-message]')).toBeEnabled();
-        await expect(page.locator('[data-composer-status]')).toContainText('准备发送');
         await page.locator('[data-chat-input]').fill('');
         await expect(page.locator('[data-send-message]')).toBeDisabled();
 

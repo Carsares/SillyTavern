@@ -1,3 +1,14 @@
+// 只在发送受阻或正在生成时显示状态行；空草稿的提示已由输入框占位符说明，不再常驻一行。
+function getComposerStatusText(state, hasTarget) {
+    if (!hasTarget) {
+        return '先选择角色或群聊。';
+    }
+    if (state.engine.generating) {
+        return state.engine.detail || '生成中，请等待当前回复完成。';
+    }
+    return '';
+}
+
 export function createChatComposerComponents({
     state,
     escapeHtml,
@@ -10,6 +21,7 @@ export function createChatComposerComponents({
         const entity = getSelectedChatEntity();
         const hasTarget = Boolean(entity);
         const canSend = !state.engine.generating && hasTarget && draftLength > 0;
+        const statusText = getComposerStatusText(state, hasTarget);
 
         // Manual group activation (strategy 2): let the user pick which enabled member speaks next
         const manualSpeakers = !state.engine.generating && entity && String(entity.activation_strategy) === '2' && Array.isArray(entity.members)
@@ -18,8 +30,8 @@ export function createChatComposerComponents({
 
         return `
         <div class="composer">
-            <textarea data-chat-input ${state.engine.generating ? 'disabled' : ''} placeholder="输入消息，按 Ctrl/⌘ + Enter 发送">${escapeHtml(draft)}</textarea>
-            <div class="composer-status" data-composer-status>${escapeHtml(getComposerStatusText(draftLength, hasTarget))}</div>
+            <textarea data-chat-input rows="1" ${state.engine.generating ? 'disabled' : ''} placeholder="输入消息，按 Ctrl/⌘ + Enter 发送">${escapeHtml(draft)}</textarea>
+            ${statusText ? `<div class="composer-status" data-composer-status>${escapeHtml(statusText)}</div>` : ''}
             <button class="primary-button" type="button" data-send-message ${canSend ? '' : 'disabled'}>
                 <i class="fa-solid ${state.engine.generating ? 'fa-circle-notch fa-spin' : 'fa-paper-plane'}"></i>
                 ${state.engine.generating ? '生成中' : '发送'}
@@ -52,19 +64,6 @@ export function createChatComposerComponents({
             ` : ''}
         </div>
     `;
-    }
-
-    function getComposerStatusText(draftLength, hasTarget) {
-        if (!hasTarget) {
-            return '先选择角色或群聊。';
-        }
-        if (state.engine.generating) {
-            return state.engine.detail || '生成中，请等待当前回复完成。';
-        }
-        if (draftLength > 0) {
-            return `${draftLength} 字，准备发送。`;
-        }
-        return '输入消息后可发送；空消息不会提交。';
     }
 
     return {

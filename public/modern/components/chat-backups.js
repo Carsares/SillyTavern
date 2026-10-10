@@ -235,9 +235,9 @@ export function createChatBackupComponents({
                         确认删除
                     </button>
                 ` : `
-                    <button class="secondary-button compact-button" type="button" data-delete-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
-                        <i class="fa-solid fa-ellipsis"></i>
-                        管理
+                    <button class="secondary-button compact-button danger-action" type="button" data-delete-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
+                        <i class="fa-solid fa-trash"></i>
+                        删除
                     </button>
                 `}
             </div>

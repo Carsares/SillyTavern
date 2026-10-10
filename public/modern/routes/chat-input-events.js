@@ -1,3 +1,24 @@
+// 输入框随内容长高，到 CSS max-height（styles/routes/chat.css）为止，再多的内容在框内滚动；
+// 内容变短或清空后跟着缩回。先把高度压到最小（CSS min-height）才能量出变短后的 scrollHeight；用 0px 而不是
+// auto，因为 auto 高度的网格子项会被拉伸到行高。量的这一下把外框锁在原高度：否则消息列表（窄屏时是整页）
+// 会瞬间变高，浏览器把它的滚动位置往上夹，读者就离开了最新消息。
+export function fitComposerInput(input) {
+    if (!(input instanceof HTMLTextAreaElement)) {
+        return;
+    }
+    const frame = input.closest('.composer');
+    const style = getComputedStyle(input);
+    const borders = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    if (frame instanceof HTMLElement) {
+        frame.style.minHeight = `${frame.offsetHeight}px`;
+    }
+    input.style.height = '0px';
+    input.style.height = `${input.scrollHeight + borders}px`;
+    if (frame instanceof HTMLElement) {
+        frame.style.minHeight = '';
+    }
+}
+
 export function createChatInputEvents(ctx) {
     const {
         state,
@@ -18,6 +39,7 @@ export function createChatInputEvents(ctx) {
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
             setCurrentDraft(event.target.value);
             updateComposerSendState(event.target);
+            fitComposerInput(event.target);
             return true;
         }
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-edit-message-input]')) {
@@ -40,29 +62,11 @@ export function createChatInputEvents(ctx) {
         const draftLength = input.value.trim().length;
         const hasTarget = Boolean(getSelectedChatEntity());
         const canSend = !state.engine.generating && hasTarget && draftLength > 0;
-        const composer = input.closest('.composer');
-        const sendButton = composer?.querySelector('[data-send-message]');
-        const status = composer?.querySelector('[data-composer-status]');
+        const sendButton = input.closest('.composer')?.querySelector('[data-send-message]');
 
         if (sendButton instanceof HTMLButtonElement) {
             sendButton.disabled = !canSend;
         }
-        if (status) {
-            status.textContent = getComposerStatusText(draftLength, hasTarget);
-        }
-    }
-
-    function getComposerStatusText(draftLength, hasTarget) {
-        if (!hasTarget) {
-            return '先选择角色或群聊。';
-        }
-        if (state.engine.generating) {
-            return state.engine.detail || '生成中，请等待当前回复完成。';
-        }
-        if (draftLength > 0) {
-            return `${draftLength} 字，准备发送。`;
-        }
-        return '输入消息后可发送；空消息不会提交。';
     }
 
     async function handleChatInputChange(event) {

@@ -1,3 +1,4 @@
+import { withDisplayCreator } from '../actions/character-data.js';
 import { createChatBackupComponents } from './chat-backups.js';
 import { createChatSidebarComponents } from './chat-sidebar.js';
 import { createChatThreadComponents } from './chat-thread.js';
@@ -5,10 +6,10 @@ import { createChatThreadComponents } from './chat-thread.js';
 export function createChatLayoutComponents(ctx) {
     const {
         state,
+        escapeHtml,
         formatNumber,
         pageHead,
         renderCharacterRow,
-        renderEmptyState,
         renderGroupRow,
         renderInlineEmpty,
         matchesQuery,
@@ -48,7 +49,7 @@ export function createChatLayoutComponents(ctx) {
         const chatImportAccept = isGroupChatMode() ? '.jsonl' : '.json,.jsonl';
         const resourceRows = isGroupChatMode()
             ? (groups.map(group => renderGroupRow(group)).join('') || renderInlineEmpty(getChatEntityListEmptyText()))
-            : (characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty(getChatEntityListEmptyText()));
+            : (characters.map(character => renderCharacterRow(withDisplayCreator(character))).join('') || renderInlineEmpty(getChatEntityListEmptyText()));
 
         return `
         ${pageHead('聊天工作区', '角色、会话文件和消息预览。', `
@@ -79,7 +80,7 @@ export function createChatLayoutComponents(ctx) {
         isLoadingChats,
     }) : ''}
             <section class="panel chat-thread">
-                ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderEmptyState(isGroupChatMode() ? 'fa-users' : 'fa-address-card', getChatEntityEmptyTitle(), getChatEntityEmptyDescription())}
+                ${selected ? renderChatThread(selected, { compactContext: !state.chatSidebarOpen, chatCount: allChats.length }) : renderChatEntityEmptyState()}
             </section>
         </div>
         ${state.chatBackups.open ? `
@@ -88,6 +89,26 @@ export function createChatLayoutComponents(ctx) {
                 ${renderChatBackupsPanel()}
             </aside>
         ` : ''}
+    `;
+    }
+
+    // No character or group to chat with: offer creating one. data-command-route/-action is the same
+    // navigation the command palette uses (shell/router.js): open the route, then its create form.
+    // The button icon is a <span>: `.empty-state i` styles every <i> inside an empty state as its large illustration.
+    function renderChatEntityEmptyState() {
+        const groupMode = isGroupChatMode();
+        return `
+        <div class="empty-state">
+            <div>
+                <i class="fa-solid ${groupMode ? 'fa-users' : 'fa-address-card'}"></i>
+                <strong>${escapeHtml(getChatEntityEmptyTitle())}</strong>
+                <div>${escapeHtml(getChatEntityEmptyDescription())}</div>
+                <button class="primary-button empty-state-action" type="button" data-command-route="${groupMode ? 'groups' : 'characters'}" data-command-action="${groupMode ? 'create-group' : 'create-character'}">
+                    <span class="fa-solid fa-plus" aria-hidden="true"></span>
+                    ${groupMode ? '新建群组' : '新建角色'}
+                </button>
+            </div>
+        </div>
     `;
     }
 
