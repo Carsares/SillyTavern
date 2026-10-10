@@ -1,3 +1,7 @@
+// The backend's chat summary (getChatInfo in src/endpoints/chats.js) fills an empty last message with this
+// English placeholder; message bubbles say [空消息], so search-result previews use the same wording.
+const backendEmptyMessagePlaceholder = '[The message is empty]';
+
 export function createChatSidebarComponents({
     state,
     escapeHtml,
@@ -11,6 +15,11 @@ export function createChatSidebarComponents({
     getChatMessageCount,
     getChatUnreadCount,
 }) {
+    function getChatPreviewText(chat) {
+        const preview = String(chat?.preview_message || '');
+        return preview.trim() === backendEmptyMessagePlaceholder ? '[空消息]' : preview;
+    }
+
     function renderUnreadBadge(count) {
         if (!count) {
             return '';
@@ -19,10 +28,13 @@ export function createChatSidebarComponents({
         return `<span class="unread-badge" data-unread-count="${count}" aria-label="${formatNumber(count)} 条未读消息"><span class="dot danger"></span>${formatNumber(count)}</span>`;
     }
 
+    // data-chat-entity-list / data-chat-file-list identify the two lists for routes/chat-scroll.js, which keeps
+    // their scroll position across re-renders and route switches; the values tell which list content is shown.
     function renderChatSidebar({
         resourceCount,
         resourceRows,
         selected,
+        contextKey,
         chats,
         searchSummary,
         isSearching,
@@ -48,7 +60,7 @@ export function createChatSidebarComponents({
                             群聊
                         </button>
                     </div>
-                    <div class="resource-list">
+                    <div class="resource-list" data-chat-entity-list="${escapeHtml(state.chatMode)}">
                         ${resourceRows}
                     </div>
                 </section>
@@ -76,7 +88,7 @@ export function createChatSidebarComponents({
                             <i class="fa-solid fa-xmark"></i>
                         </button>
                     </div>
-                    <div class="resource-list">
+                    <div class="resource-list" data-chat-file-list="${escapeHtml(contextKey || '')}">
                         ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? `这个${getChatModeLabel()}暂无聊天文件` : `先选择一个${getChatModeLabel()}`)}
                     </div>
                 </section>
@@ -93,7 +105,7 @@ export function createChatSidebarComponents({
             chat.file_size || '',
             formatDate(chat.last_mes),
         ].filter(Boolean).join(' · ');
-        const preview = chat.preview_message || '';
+        const preview = getChatPreviewText(chat);
 
         return `
         <button class="resource-row ${state.selected.chat === chatId ? 'active' : ''} ${unreadCount ? 'unread' : ''}" type="button" data-select-chat="${escapeHtml(chatId)}">

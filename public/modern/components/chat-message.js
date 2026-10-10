@@ -11,11 +11,13 @@ export function createChatMessageComponents({
     getSelectedChatMessages,
 }) {
     const {
+        renderEmptyReplyHint,
         renderMessageAttachments,
         renderMessageFoot,
         renderMessageReasoning,
         renderMessageText,
     } = createChatMessageContentComponents({
+        state,
         escapeHtml,
         formatBytes,
         formatNumber,
@@ -67,7 +69,8 @@ export function createChatMessageComponents({
 
     function renderMessage(message, messageIndex) {
         const name = message.name || (message.is_user ? 'You' : 'Character');
-        const text = message.extra?.display_text || message.mes || '[空消息]';
+        const rawText = message.extra?.display_text || message.mes || '';
+        const text = rawText || '[空消息]';
         const model = message.extra?.model || message.extra?.api || '';
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
         const isDeleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
@@ -91,7 +94,7 @@ export function createChatMessageComponents({
                     <button class="icon-button mini" type="button" data-copy-message="${messageIndex}" title="复制消息">
                         <i class="fa-solid fa-copy"></i>
                     </button>
-                    <button class="icon-button mini" type="button" data-delete-message="${messageIndex}" title="管理消息" ${isDeleting ? 'disabled' : ''}>
+                    <button class="icon-button mini" type="button" data-delete-message="${messageIndex}" title="编辑或删除消息" aria-label="编辑或删除消息" ${isDeleting ? 'disabled' : ''}>
                         <i class="fa-solid fa-ellipsis"></i>
                     </button>
                 </span>
@@ -111,6 +114,7 @@ export function createChatMessageComponents({
                     </div>
                 </div>
             ` : renderMessageBody(text, messageIndex, isOpeningMessage)}
+            ${isEditing ? '' : renderEmptyReplyHint(message, rawText)}
             ${renderMessageReasoning(message)}
             ${renderMessageAttachments(message)}
             ${renderMessageFoot(message, model)}
@@ -143,23 +147,34 @@ export function createChatMessageComponents({
     `;
     }
 
+    // 两步删除：面板先给出「编辑消息」「删除消息」，点「删除消息」才露出「确认删除这条消息？取消 / 确认删除」。
+    // 第二步用原生 <details> 切换，不需要新的事件或状态；data-message-delete-step 让 routes/chat-scroll.js
+    // 在重渲染后恢复展开状态。取消/确认沿用 data-cancel-message-delete / data-confirm-message-delete。
     function renderMessageManagePanel(message, messageIndex) {
+        const stepKey = `${getCurrentDraftKey()}:${messageIndex}`;
         return `
         <div class="settings-form inline-form message-manage-panel message-delete-panel">
             <div>
-                <strong>消息管理</strong>
+                <strong>编辑或删除消息</strong>
                 <p class="panel-subtitle">编辑或删除 ${escapeHtml(message.name || '当前消息')} 的这一条记录。</p>
             </div>
-            <div class="message-edit-actions">
+            <div class="message-edit-actions message-manage-actions">
                 <button class="secondary-button" type="button" data-edit-message="${messageIndex}">
                     <i class="fa-solid fa-pen"></i>
                     编辑消息
                 </button>
+                <details class="message-delete-step" data-message-delete-step="${escapeHtml(stepKey)}">
+                    <summary class="secondary-button danger-action" data-request-message-delete>
+                        <i class="fa-solid fa-trash"></i>
+                        删除消息
+                    </summary>
+                    <strong class="message-delete-question" role="alert">确认删除这条消息？</strong>
+                </details>
                 <button class="secondary-button" type="button" data-cancel-message-delete>
                     <i class="fa-solid fa-xmark"></i>
                     取消
                 </button>
-                <button class="secondary-button danger-action" type="button" data-confirm-message-delete>
+                <button class="secondary-button danger-action message-delete-confirm" type="button" data-confirm-message-delete>
                     <i class="fa-solid fa-trash"></i>
                     确认删除
                 </button>

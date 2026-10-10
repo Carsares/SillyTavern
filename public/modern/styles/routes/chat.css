@@ -373,6 +373,52 @@
 
 .message-manage-panel .message-edit-actions {
     flex-wrap: wrap;
+    align-items: center;
+}
+
+/* 两步删除：<details> 未展开时只显示「删除消息」，展开后换成「确认删除这条消息？」+ 取消 / 确认删除 */
+.message-delete-step > summary {
+    list-style: none;
+}
+
+.message-delete-step > summary::-webkit-details-marker {
+    display: none;
+}
+
+.message-delete-step[open] > summary,
+.message-delete-step:not([open]) ~ .message-delete-confirm,
+.message-manage-actions:has(> .message-delete-step[open]) > [data-edit-message] {
+    display: none;
+}
+
+.message-delete-question {
+    color: var(--danger);
+    font-size: 13px;
+}
+
+/* 推理模型把 Max Tokens 用完时正文为空：在气泡里说明原因并给出 API 页入口 */
+.message-empty-hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+    color: var(--text);
+    font-size: 12px;
+}
+
+.message-empty-hint > i {
+    color: var(--warning);
+}
+
+.message-empty-hint > span {
+    flex: 1 1 220px;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .chat-manage-panel .message-edit-actions {
@@ -507,6 +553,11 @@
 
 .backup-row.foreign {
     border-style: dashed;
+}
+
+/* 文件名标识与其他角色/群聊相同、无法确定归属的备份 */
+.backup-row.ambiguous:not(.active) {
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
 }
 
 .backup-row-main {

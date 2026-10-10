@@ -1,8 +1,8 @@
 import {
-    createChatBackupOwnerIndex,
+    createChatBackupOwnership,
     describeChatBackupOwner,
+    formatChatBackupOwners,
     getChatBackupOwnerKey,
-    getEntityChatBackupKeys,
 } from '../actions/chat-backup-ownership.js';
 
 export function createChatBackupComponents({
@@ -25,8 +25,13 @@ export function createChatBackupComponents({
         const backups = Array.isArray(state.chatBackups.items) ? state.chatBackups.items : [];
         const groupMode = isGroupChatMode();
         const entity = getSelectedChatEntity();
-        const currentKeys = getEntityChatBackupKeys({ entity, groupMode, chats: getSelectedChatList() });
-        const ownerIndex = createChatBackupOwnerIndex({ characters: state.characters, groups: state.groups });
+        const { ownerIndex, resolve } = createChatBackupOwnership({
+            entity,
+            groupMode,
+            chats: getSelectedChatList(),
+            characters: state.characters,
+            groups: state.groups,
+        });
         const showAll = state.chatBackups.showAll === true;
         const showEmpty = state.chatBackups.showEmpty === true;
         const query = String(state.chatBackups.query || '').trim().toLowerCase();
@@ -37,16 +42,21 @@ export function createChatBackupComponents({
         // Names outside the backend's chat_<key>_<YYYYMMDD-HHMMSS>.jsonl pattern (e.g. copied in by hand)
         // have no owner; they stay out of the per-character view but are counted so they never vanish silently.
         let unrecognizedCount = 0;
+        // Backups carrying the current owner's key that another character or group also produces: still
+        // listed as current, but labelled with every possible owner and restored only after confirmation.
+        let ambiguousCount = 0;
 
         for (const backup of backups) {
             const name = backup.file_name || backup.file_id || '';
-            const ownerKey = getChatBackupOwnerKey(name);
-            const isCurrent = ownerKey !== null && currentKeys.has(ownerKey);
+            const { ownerKey, isCurrent, isAmbiguous, candidates } = resolve(name);
             if (ownerKey === null) {
                 unrecognizedCount += 1;
             }
             if (isCurrent) {
                 currentCount += 1;
+            }
+            if (isAmbiguous) {
+                ambiguousCount += 1;
             }
             if (!showAll && !isCurrent) {
                 hiddenOtherCount += 1;
@@ -59,7 +69,7 @@ export function createChatBackupComponents({
                 hiddenEmptyCount += 1;
                 continue;
             }
-            rows.push({ backup, name, isCurrent });
+            rows.push({ backup, name, isCurrent, isAmbiguous, candidates });
         }
 
         return {
@@ -75,6 +85,7 @@ export function createChatBackupComponents({
             hiddenOtherCount,
             hiddenEmptyCount,
             unrecognizedCount,
+            ambiguousCount,
         };
     }
 
@@ -90,6 +101,9 @@ export function createChatBackupComponents({
             `全部 ${formatNumber(view.backups.length)} 个`,
             view.unrecognizedCount
                 ? `其中 ${formatNumber(view.unrecognizedCount)} 个无法识别归属${view.showAll ? '' : `（勾选「${showAllLabel}」查看）`}`
+                : '',
+            view.ambiguousCount
+                ? `${formatNumber(view.ambiguousCount)} 个与其他角色或群聊的备份文件名相同，无法确定归属（已标注「可能属于」，恢复前需确认）`
                 : '',
         ].filter(Boolean).join(' · ');
 
@@ -164,7 +178,23 @@ export function createChatBackupComponents({
         return renderEmptyState('fa-box-open', title, hints.join(' ') || '自动备份会在聊天保存后出现在这里。');
     }
 
-    function renderChatBackupRow({ backup, name, isCurrent }, view) {
+    // 备份文件名里非英文字母数字都会变成 '_'，同长度的中文名会得到同一个标识，无法区分归属。
+    function getOwnerLabel({ name, isCurrent, isAmbiguous, candidates }, view) {
+        if (isAmbiguous) {
+            return `可能属于：${formatChatBackupOwners(candidates)}`;
+        }
+        if (isCurrent) {
+            return '';
+        }
+        const ownerKey = getChatBackupOwnerKey(name);
+        const owners = ownerKey === null ? [] : (view.ownerIndex.get(ownerKey) || []);
+        return owners.length > 1
+            ? `可能属于：${formatChatBackupOwners(owners)}`
+            : `来自 ${describeChatBackupOwner(name, view.ownerIndex)}`;
+    }
+
+    function renderChatBackupRow(row, view) {
+        const { backup, name, isCurrent, isAmbiguous } = row;
         const isDeleting = state.chatBackups.deleteConfirm === name;
         const isConfirmingRestore = state.chatBackups.restoreConfirm === name;
         const isBusy = state.chatBackups.restoring === name || (isDeleting && state.chatBackups.deleting);
@@ -173,14 +203,19 @@ export function createChatBackupComponents({
             backup.file_size || '',
             formatDate(backup.last_mes),
         ].filter(Boolean).join(' · ');
-        const ownerLabel = isCurrent ? '' : describeChatBackupOwner(name, view.ownerIndex);
+        const ownerLabel = getOwnerLabel(row, view);
+        const rowClass = [
+            state.chatBackups.previewName === name ? 'active' : '',
+            isCurrent ? '' : 'foreign',
+            isAmbiguous ? 'ambiguous' : '',
+        ].filter(Boolean).join(' ');
 
         return `
-        <article class="backup-row ${state.chatBackups.previewName === name ? 'active' : ''} ${isCurrent ? '' : 'foreign'}" data-chat-backup-row="${escapeHtml(name)}">
+        <article class="backup-row ${rowClass}" data-chat-backup-row="${escapeHtml(name)}" ${isAmbiguous ? 'data-chat-backup-ambiguous' : ''}>
             <div class="row-main backup-row-main">
                 <strong class="row-title backup-row-title" title="${escapeHtml(name)}">${escapeHtml(name)}</strong>
                 <span class="row-subtitle backup-row-meta">${escapeHtml(meta)}</span>
-                ${ownerLabel ? `<span class="row-subtitle backup-row-owner">来自 ${escapeHtml(ownerLabel)}</span>` : ''}
+                ${ownerLabel ? `<span class="row-subtitle backup-row-owner">${escapeHtml(ownerLabel)}</span>` : ''}
             </div>
             <div class="row-actions backup-row-actions">
                 <button class="secondary-button compact-button" type="button" data-view-chat-backup="${escapeHtml(name)}" ${isBusy ? 'disabled' : ''}>
@@ -206,19 +241,21 @@ export function createChatBackupComponents({
                     </button>
                 `}
             </div>
-            ${isConfirmingRestore ? renderRestoreConfirm(name, view) : ''}
+            ${isConfirmingRestore ? renderRestoreConfirm(row, view) : ''}
         </article>
     `;
     }
 
-    function renderRestoreConfirm(name, view) {
+    function renderRestoreConfirm({ name, isAmbiguous, candidates }, view) {
         const modeLabel = getChatModeLabel();
-        const ownerLabel = describeChatBackupOwner(name, view.ownerIndex);
         const entityName = view.entityName || '未选择';
+        const ownerText = isAmbiguous
+            ? `这个备份的文件名无法区分归属，可能属于：${formatChatBackupOwners(candidates)}`
+            : `这个备份属于${describeChatBackupOwner(name, view.ownerIndex)}`;
 
         return `
         <div class="backup-restore-confirm" role="alert" data-chat-backup-restore-confirm>
-            <p>这个备份属于${escapeHtml(ownerLabel)}，当前选中的是${modeLabel}「${escapeHtml(entityName)}」。确认后会把它作为新聊天导入到「${escapeHtml(entityName)}」，原备份不变。</p>
+            <p>${escapeHtml(ownerText)}，当前选中的是${modeLabel}「${escapeHtml(entityName)}」。确认后会把它作为新聊天导入到「${escapeHtml(entityName)}」，原备份不变。</p>
             <div class="row-actions">
                 <button class="secondary-button compact-button" type="button" data-cancel-chat-backup-restore>
                     <i class="fa-solid fa-xmark"></i>

@@ -571,6 +571,7 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('.message-delete-panel')).toHaveCount(0);
 
         await page.locator('[data-delete-message="0"]').click();
+        await page.locator('[data-request-message-delete]').click();
         await page.locator('[data-confirm-message-delete]').click();
         await expect.poll(() => savedChat?.chat?.length).toBe(2);
         expect(savedChat.chat.some(message => message.mes === 'hello')).toBe(false);

@@ -1,6 +1,7 @@
 import { renderMessageMarkdown } from '../core/message-markdown.js';
 
 export function createChatMessageContentComponents({
+    state,
     escapeHtml,
     formatBytes,
     formatNumber,
@@ -13,6 +14,44 @@ export function createChatMessageContentComponents({
 
     function getMessageReasoning(message) {
         return message.extra?.reasoning_display_text || message.extra?.reasoning || message.swipe_info?.[message.swipe_id || 0]?.extra?.reasoning || '';
+    }
+
+    function hasMessageAttachments(message) {
+        return (Array.isArray(message.extra?.media) && message.extra.media.length > 0)
+            || (Array.isArray(message.extra?.files) && message.extra.files.length > 0);
+    }
+
+    // Modern 的 API 页只为聊天补全提供 Max Tokens（oai_settings.openai_max_tokens），其他主 API 不显示当前值。
+    function getReplyTokenLimit() {
+        const settings = state.settings || {};
+        if (settings.main_api && settings.main_api !== 'openai') {
+            return null;
+        }
+        const value = Number(settings.oai_settings?.openai_max_tokens);
+        return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    // 推理模型把 Max Tokens 全用在推理上时正文为空，只剩折叠的「推理内容」；在气泡里直接说明原因和去处。
+    function renderEmptyReplyHint(message, text) {
+        if (message.is_user || message.is_system || String(text || '').trim() || hasMessageAttachments(message)) {
+            return '';
+        }
+        if (!String(getMessageReasoning(message)).trim()) {
+            return '';
+        }
+
+        const limit = getReplyTokenLimit();
+        const limitText = limit === null ? '' : `（当前 ${formatNumber(limit)}）`;
+        return `
+        <div class="message-empty-hint" role="note" data-empty-reply-hint>
+            <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+            <span>回复正文为空：推理内容可能用完了 Max Tokens${escapeHtml(limitText)}。可在 API 页调高后重生成。</span>
+            <button class="secondary-button compact-button" type="button" data-route="api">
+                <i class="fa-solid fa-sliders"></i>
+                打开 API 设置
+            </button>
+        </div>
+    `;
     }
 
     function renderMessageReasoning(message) {
@@ -99,6 +138,7 @@ export function createChatMessageContentComponents({
     }
 
     return {
+        renderEmptyReplyHint,
         renderMessageAttachments,
         renderMessageFoot,
         renderMessageReasoning,

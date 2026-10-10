@@ -72,6 +72,7 @@ export function createChatLayoutComponents(ctx) {
         resourceCount,
         resourceRows,
         selected,
+        contextKey,
         chats,
         searchSummary,
         isSearching,

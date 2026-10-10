@@ -1,4 +1,4 @@
-import { getChatBackupOwnerKey, getEntityChatBackupKeys } from './chat-backup-ownership.js';
+import { createChatBackupOwnership } from './chat-backup-ownership.js';
 
 export function createChatBackupActions({
     state,
@@ -51,13 +51,18 @@ export function createChatBackupActions({
         return true;
     }
 
+    // Only a backup whose file name belongs to the selected entity and to nobody else restores without
+    // a second click; a name shared with another character or group (see chat-backup-ownership.js) asks too.
     function isBackupOwnedByEntity(name, entity, groupMode, contextKey) {
-        const ownerKey = getChatBackupOwnerKey(name);
-        if (ownerKey === null) {
-            return false;
-        }
-        const chats = state.chatLists?.[contextKey] || [];
-        return getEntityChatBackupKeys({ entity, groupMode, chats }).has(ownerKey);
+        const { resolve } = createChatBackupOwnership({
+            entity,
+            groupMode,
+            chats: state.chatLists?.[contextKey] || [],
+            characters: state.characters,
+            groups: state.groups,
+        });
+        const ownership = resolve(name);
+        return ownership.isCurrent && !ownership.isAmbiguous;
     }
 
     function formatBackupPreview(rawText) {
@@ -89,8 +94,9 @@ export function createChatBackupActions({
         render();
     }
 
-    // A backup restored into a different character/group than the one it was saved from needs an
-    // explicit second click: the drawer shows both names, then the caller passes { confirmed: true }.
+    // A backup restored into a different character/group than the one it was saved from, or one whose
+    // owner cannot be told apart from another character/group, needs an explicit second click: the
+    // drawer shows the names involved, then the caller passes { confirmed: true }.
     async function restoreChatBackup(name, { confirmed = false } = {}) {
         const entity = getSelectedChatEntity();
         const groupMode = isGroupChatMode();

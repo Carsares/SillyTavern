@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createModernResourceFixture, mockModernWorkspace } from './modern-test-utils.js';
 
-/* global document, window, HTMLElement */
+/* global document, window, HTMLElement, requestAnimationFrame */
 
 const desktopViewport = { width: 1440, height: 900 };
 
@@ -242,7 +242,7 @@ test.describe('Modern chat layout and scrolling', () => {
         await page.locator('[data-delete-message="29"]').click();
         await expect(page.locator('.message-manage-panel')).toBeVisible();
         await expect.poll(async () => (await readMessageListScroll(page)).distanceFromBottom).toBeLessThanOrEqual(1);
-        await expect(page.locator('[data-confirm-message-delete]')).toBeInViewport();
+        await expect(page.locator('[data-request-message-delete]')).toBeInViewport();
         await page.locator('[data-cancel-message-delete]').click();
         await expect(page.locator('.message-manage-panel')).toHaveCount(0);
 
@@ -452,5 +452,379 @@ test.describe('Modern chat layout on narrow screens', () => {
         expect(styles.overflowY).toBe('visible');
         expect(styles.composerPosition).toBe('static');
         await expect(page.locator('[data-scroll-to-latest]')).toBeHidden();
+    });
+});
+
+function readSidebarList(page, selector) {
+    return page.locator(selector).evaluate(list => {
+        const active = list.querySelector('.resource-row.active');
+        const listRect = list.getBoundingClientRect();
+        const activeRect = active?.getBoundingClientRect();
+        const visibleTop = listRect.top + list.clientTop;
+        return {
+            scrollTop: list.scrollTop,
+            scrollable: list.scrollHeight - list.clientHeight,
+            activeId: active?.getAttribute('data-select-character') || active?.getAttribute('data-select-chat') || '',
+            activeVisible: !!activeRect
+                && activeRect.top >= visibleTop - 1
+                && activeRect.bottom <= visibleTop + list.clientHeight + 1,
+        };
+    });
+}
+
+function readPageScrollTop(page) {
+    return page.evaluate(() => document.scrollingElement.scrollTop);
+}
+
+async function switchRoute(page, routeId) {
+    await page.locator(`.nav-button[data-route="${routeId}"]`).click();
+    await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', routeId);
+}
+
+// Entering the chat route reloads the chat list and messages and renders again once they arrive;
+// positions are asserted after that, not on an intermediate render.
+async function waitForChatRouteSettled(page, expectedMessage) {
+    await expect(page.locator('[data-refresh-chat-list]')).toBeEnabled();
+    await expect(page.locator('[data-refresh-chat-list] .fa-spin')).toHaveCount(0);
+    await expect(page.locator('.message-list')).toContainText(expectedMessage);
+}
+
+async function expectSidebarListAt(page, selector, { activeId, scrollTop }) {
+    await expect.poll(async () => {
+        const list = await readSidebarList(page, selector);
+        return { activeId: list.activeId, activeVisible: list.activeVisible, nearExpected: Math.abs(list.scrollTop - scrollTop) <= 2 };
+    }).toEqual({ activeId, activeVisible: true, nearExpected: true });
+}
+
+test.describe('Modern chat message hints and management', () => {
+    test.use({ viewport: desktopViewport });
+
+    test('explains an empty reply whose tokens went to reasoning and normalizes empty previews', async ({ page }) => {
+        const fixture = createChatUiFixture();
+        fixture.settings.main_api = 'openai';
+        fixture.settings.oai_settings = { openai_max_tokens: 300 };
+        const now = Date.now();
+        fixture.messagesByChat['short-chat'] = [
+            { name: 'Modern E2E User', is_user: true, mes: 'hello', send_date: now - 3000 },
+            { name: 'Alice Fixture', is_user: false, mes: '', send_date: now - 2000, extra: { reasoning: 'Thinking about the answer. '.repeat(30) } },
+            { name: 'Modern E2E User', is_user: true, mes: 'again', send_date: now - 1000 },
+            { name: 'Alice Fixture', is_user: false, mes: '', send_date: now, extra: {} },
+        ];
+        await mockChatUiRoutes(page, fixture);
+        // The backend's chat summary fills an empty last message with an English placeholder.
+        await page.route('**/api/chats/search', route => {
+            const payload = postJson(route);
+            if (!payload.query) {
+                return fulfillJson(route, []);
+            }
+            return fulfillJson(route, [
+                { file_name: 'short-chat', file_size: '1 KB', message_count: 4, last_mes: now, preview_message: '[The message is empty]' },
+            ]);
+        });
+        await openChat(page);
+        await page.locator('[data-select-chat="short-chat"]').click();
+        await expect(page.locator('.message-list')).toContainText('again');
+
+        // Only the reply with reasoning but no text gets the hint; an empty reply without reasoning does not.
+        const hint = page.locator('[data-empty-reply-hint]');
+        await expect(hint).toHaveCount(1);
+        await expect(hint).toContainText('回复正文为空：推理内容可能用完了 Max Tokens（当前 300）。可在 API 页调高后重生成。');
+        const hintedMessage = page.locator('.message-list > .message', { has: hint });
+        await expect(hintedMessage.locator('.message-body').first()).toHaveText('[空消息]');
+        await expect(hintedMessage.locator('.message-reasoning summary')).toHaveText('推理内容');
+
+        // Search results show the same placeholder as the message bubbles.
+        await page.locator('[data-chat-search-input]').fill('again');
+        await page.locator('[data-chat-search-run]').click();
+        const preview = page.locator('[data-select-chat="short-chat"] .chat-preview');
+        await expect(preview).toHaveText('[空消息]');
+        await expect(page.locator('.chat-browser')).not.toContainText('The message is empty');
+
+        await hint.locator('[data-route="api"]').click();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'api');
+    });
+
+    test('separates editing from deleting and confirms a delete inline', async ({ page }) => {
+        const fixture = createChatUiFixture();
+        fixture.chatRequests.saves = [];
+        await mockChatUiRoutes(page, fixture);
+        await mockGenerationBridge(page, fixture);
+        await page.route('**/api/chats/save', route => {
+            const payload = postJson(route);
+            fixture.chatRequests.saves.push(payload);
+            fixture.messagesByChat[stripJsonlExtension(payload.file_name)] = payload.chat.filter(message => !message.chat_metadata);
+            return fulfillJson(route, { ok: true });
+        });
+        await openChat(page);
+        await page.locator('[data-select-chat="short-chat"]').click();
+        await expect(page.locator('.message-list')).toContainText('short 2:');
+
+        const manageButton = page.locator('[data-delete-message="1"]');
+        await expect(manageButton).toHaveAttribute('title', '编辑或删除消息');
+        await manageButton.click();
+        const panel = page.locator('.message-manage-panel');
+        await expect(panel).toContainText('编辑或删除消息');
+        const deleteButton = panel.locator('[data-request-message-delete]');
+        const question = panel.getByText('确认删除这条消息？');
+        await expect(panel.locator('[data-edit-message="1"]')).toBeVisible();
+        await expect(deleteButton).toBeVisible();
+        await expect(deleteButton).toContainText('删除消息');
+        await expect(deleteButton).toHaveClass(/danger-action/);
+        // The danger action is not offered until 删除消息 was chosen.
+        await expect(question).toBeHidden();
+        await expect(panel.locator('[data-confirm-message-delete]')).toBeHidden();
+
+        await deleteButton.click();
+        await expect(question).toBeVisible();
+        await expect(panel.locator('[data-confirm-message-delete]')).toBeVisible();
+        await expect(panel.locator('[data-confirm-message-delete]')).toContainText('确认删除');
+        await expect(panel.locator('[data-cancel-message-delete]')).toBeVisible();
+        await expect(panel.locator('[data-edit-message="1"]')).toBeHidden();
+        await expect(deleteButton).toBeHidden();
+
+        // A re-render (opening and closing the backups drawer) keeps the confirmation open.
+        await page.locator('.page-head [data-chat-backups-toggle]').click();
+        await expect(page.locator('.chat-tools-drawer')).toBeVisible();
+        await expect(panel.locator('[data-confirm-message-delete]')).toBeVisible();
+        await page.locator('[data-chat-backups-close]').click();
+        await expect(page.locator('.chat-tools-drawer')).toHaveCount(0);
+        await expect(panel.locator('[data-confirm-message-delete]')).toBeVisible();
+
+        await panel.locator('[data-cancel-message-delete]').click();
+        await expect(panel).toHaveCount(0);
+        expect(fixture.chatRequests.saves).toHaveLength(0);
+
+        // Reopening starts at the first step again; the keyboard reaches the delete step too.
+        await manageButton.click();
+        await expect(panel.locator('[data-confirm-message-delete]')).toBeHidden();
+        await panel.locator('[data-request-message-delete]').focus();
+        await page.keyboard.press('Enter');
+        await expect(question).toBeVisible();
+        await panel.locator('[data-confirm-message-delete]').click();
+        await expect.poll(() => fixture.chatRequests.saves.length).toBe(1);
+        const savedMessages = fixture.chatRequests.saves[0].chat.filter(message => !message.chat_metadata);
+        expect(savedMessages).toHaveLength(1);
+        expect(savedMessages[0].mes).toContain('short 1:');
+        await expect(panel).toHaveCount(0);
+    });
+});
+
+test.describe('Modern chat sidebar list positions', () => {
+    test.use({ viewport: desktopViewport });
+
+    test('keeps the character and chat lists in place across sends and route switches', async ({ page }) => {
+        const fixture = createChatUiFixture();
+        const now = Date.now();
+        for (let index = 1; index <= 36; index += 1) {
+            const id = String(index).padStart(2, '0');
+            const avatar = `filler-${id}.png`;
+            fixture.characters.push({ avatar, name: `Filler ${id}`, data: { name: `Filler ${id}`, creator: 'Modern E2E' } });
+            fixture.chatLists[avatar] = Array.from({ length: 14 }, (_, chatIndex) => {
+                const chatId = `filler-${id}-chat-${String(chatIndex + 1).padStart(2, '0')}`;
+                fixture.messagesByChat[chatId] = buildMessages(2, chatId);
+                return { file_id: chatId, file_name: `${chatId}.jsonl`, chat_items: 2, file_size: '1 KB', last_mes: now - chatIndex * 60_000 };
+            });
+        }
+        await mockChatUiRoutes(page, fixture);
+        await mockGenerationBridge(page, fixture);
+        await openChat(page);
+
+        const entityList = '[data-chat-entity-list]';
+        const fileList = '[data-chat-file-list]';
+        await expect(page.locator(entityList)).toContainText('Filler 36');
+        const target = await page.locator(entityList).evaluate(list => {
+            list.scrollTop = 600;
+            const listTop = list.getBoundingClientRect().top;
+            const row = [...list.querySelectorAll('[data-select-character]')]
+                .find(item => item.getBoundingClientRect().top - listTop >= 60);
+            return { scrollTop: list.scrollTop, avatar: row?.getAttribute('data-select-character') || '' };
+        });
+        expect(target.scrollTop).toBeGreaterThan(300);
+        expect(target.avatar).toMatch(/^filler-/);
+
+        await page.locator(`[data-select-character="${target.avatar}"]`).click();
+        const targetChat = `${target.avatar.replace('.png', '')}-chat-01`;
+        await expect(page.locator(`[data-select-chat="${targetChat}"]`)).toHaveClass(/active/);
+        await expect.poll(async () => (await readSidebarList(page, entityList)).activeId).toBe(target.avatar);
+        expect(Math.abs((await readSidebarList(page, entityList)).scrollTop - target.scrollTop)).toBeLessThanOrEqual(2);
+
+        // Scroll the chat-file list too, then send: neither list jumps back to the top.
+        const fileScrollTop = await page.locator(fileList).evaluate(list => {
+            list.scrollTop = 90;
+            return list.scrollTop;
+        });
+        expect(fileScrollTop).toBeGreaterThan(40);
+        await page.locator('[data-chat-input]').fill('keep my place');
+        await page.locator('[data-send-message]').click();
+        await expect(page.locator('.message-list')).toContainText('generated reply to keep my place');
+        await expect(page.locator('[data-send-message]')).toContainText('发送');
+        await waitForChatRouteSettled(page, 'generated reply to keep my place');
+        expect(Math.abs((await readSidebarList(page, entityList)).scrollTop - target.scrollTop)).toBeLessThanOrEqual(2);
+        expect(Math.abs((await readSidebarList(page, fileList)).scrollTop - fileScrollTop)).toBeLessThanOrEqual(2);
+
+        // Leaving the route and coming back restores the character list and shows the active rows.
+        await switchRoute(page, 'dashboard');
+        await switchRoute(page, 'chat');
+        await waitForChatRouteSettled(page, 'generated reply to keep my place');
+        await expectSidebarListAt(page, entityList, { activeId: target.avatar, scrollTop: target.scrollTop });
+        await expect.poll(async () => (await readSidebarList(page, fileList)).activeVisible).toBe(true);
+        expect(await readPageScrollTop(page)).toBe(0);
+
+        // Even when the active character had been scrolled out of view, re-entering reveals it in the list only.
+        await page.locator(entityList).evaluate(list => {
+            list.scrollTop = 0;
+        });
+        expect((await readSidebarList(page, entityList)).activeVisible).toBe(false);
+        await switchRoute(page, 'dashboard');
+        await switchRoute(page, 'chat');
+        await waitForChatRouteSettled(page, 'generated reply to keep my place');
+        await expect.poll(async () => (await readSidebarList(page, entityList)).activeVisible).toBe(true);
+        expect((await readSidebarList(page, entityList)).scrollTop).toBeGreaterThan(0);
+        expect(await readPageScrollTop(page)).toBe(0);
+        expect(await readDocumentOverflow(page)).toBeLessThanOrEqual(1);
+    });
+
+    // The scroll controller on its own, on a synthetic list: positions this controller sets or the
+    // browser clamps must never replace the reader's position.
+    test('keeps the reader position through clamped restores and transient active rows', async ({ page }) => {
+        await page.route('**/modern/chat-scroll-harness.html', route => route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body style="margin:0"><div id="host"></div></body></html>',
+        }));
+        await page.goto('/modern/chat-scroll-harness.html');
+        await page.evaluate(async () => {
+            const { createChatScrollController } = await import('/modern/routes/chat-scroll.js');
+            const host = document.getElementById('host');
+            const controller = createChatScrollController({ root: document });
+            const rows = active => Array.from({ length: 40 }, (_, index) => (
+                `<button class="resource-row ${index === active ? 'active' : ''}" type="button" style="display:block;box-sizing:border-box;width:100%;height:50px;margin:0">row ${index}</button>`
+            )).join('');
+            // The chat route render: snapshot, then new markup (scrollTop 0) like innerHTML in the renderer.
+            window.renderChatList = ({ active = 20, height = '300px' } = {}) => {
+                controller.beforeRender();
+                host.innerHTML = `<div class="resource-list" data-chat-entity-list="character" style="height:${height};overflow:auto">${rows(active)}</div>`;
+            };
+            // Another route replaces the content without the chat route's render.
+            window.leaveChatRoute = () => {
+                host.innerHTML = '<p>dashboard</p>';
+            };
+        });
+        const list = page.locator('[data-chat-entity-list]');
+        const readList = () => list.evaluate(element => {
+            const active = element.querySelector('.resource-row.active');
+            const top = active.offsetTop - element.scrollTop;
+            return { scrollTop: element.scrollTop, activeVisible: top >= 0 && top + active.offsetHeight <= element.clientHeight };
+        });
+        const nextFrames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+        await page.evaluate(() => window.renderChatList());
+        await list.evaluate(element => {
+            element.scrollTop = 900;
+        });
+        await nextFrames();
+        await page.evaluate(() => window.renderChatList());
+        await expect.poll(readList).toEqual({ scrollTop: 900, activeVisible: true });
+
+        // Re-entering while the list is not height-constrained yet: the browser clamps to 0. Neither
+        // that render nor the next one may take 0 as the reader's position, and once the layout is
+        // final the remembered position comes back without another render.
+        await page.evaluate(() => window.leaveChatRoute());
+        await page.evaluate(() => window.renderChatList({ height: 'auto' }));
+        await nextFrames();
+        expect((await readList()).scrollTop).toBe(0);
+        await page.evaluate(() => window.renderChatList({ height: 'auto' }));
+        await nextFrames();
+        await list.evaluate(element => {
+            element.style.height = '300px';
+        });
+        await expect.poll(readList).toEqual({ scrollTop: 900, activeVisible: true });
+        await page.evaluate(() => window.renderChatList());
+        await expect.poll(readList).toEqual({ scrollTop: 900, activeVisible: true });
+
+        // A first render after re-entering that briefly marks another row active (selection still
+        // being resolved) must not move the list away from the reader's position for good.
+        await page.evaluate(() => window.leaveChatRoute());
+        await page.evaluate(() => window.renderChatList({ active: 0 }));
+        await nextFrames();
+        await page.evaluate(() => window.renderChatList({ active: 20 }));
+        await expect.poll(readList).toEqual({ scrollTop: 900, activeVisible: true });
+
+        // A reader scroll away from the active row is kept within the route; re-entering reveals the row.
+        await list.evaluate(element => {
+            element.scrollTop = 0;
+        });
+        await nextFrames();
+        await page.evaluate(() => window.renderChatList());
+        await expect.poll(readList).toEqual({ scrollTop: 0, activeVisible: false });
+        await page.evaluate(() => window.leaveChatRoute());
+        await page.evaluate(() => window.renderChatList());
+        await expect.poll(readList).toEqual({ scrollTop: 750, activeVisible: true });
+    });
+});
+
+test.describe('Modern chat backups with indistinguishable owners', () => {
+    test.use({ viewport: desktopViewport });
+
+    test('labels backups whose file name fits several characters and confirms before restoring', async ({ page }) => {
+        const fixture = createChatUiFixture();
+        const now = Date.now();
+        fixture.characters.push(
+            { avatar: '钟离.png', name: '钟离', data: { name: '钟离', creator: 'Modern E2E' } },
+            { avatar: '胡桃.png', name: '胡桃', data: { name: '胡桃', creator: 'Modern E2E' } },
+            { avatar: 'UI自检角色A.png', name: 'UI自检角色A', data: { name: 'UI自检角色A', creator: 'Modern E2E' } },
+        );
+        fixture.chatLists['钟离.png'] = [{ file_id: 'zhongli-chat', file_name: 'zhongli-chat.jsonl', chat_items: 2, file_size: '1 KB', last_mes: now }];
+        fixture.messagesByChat['zhongli-chat'] = buildMessages(2, 'zhongli');
+        // The backend turns every character outside [a-z0-9] into '_': 钟离 and 胡桃 both become "__" (chat_ + __ + _ + timestamp).
+        fixture.backups.push(
+            { file_id: 'chat____20261010-120000', file_name: 'chat____20261010-120000.jsonl', chat_items: 4, file_size: '4 KB', last_mes: now - 500 },
+            { file_id: 'chat_ui____a_20261010-130000', file_name: 'chat_ui____a_20261010-130000.jsonl', chat_items: 3, file_size: '3 KB', last_mes: now - 700 },
+        );
+        await mockChatUiRoutes(page, fixture);
+        await openChat(page);
+
+        await page.locator('[data-select-character="钟离.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('钟离');
+        await page.locator('.page-head [data-chat-backups-toggle]').click();
+        const drawer = page.locator('.chat-tools-drawer');
+        const rows = drawer.locator('.backup-row');
+        const shared = drawer.locator('[data-chat-backup-row="chat____20261010-120000.jsonl"]');
+        // Still shown by default, but labelled with every possible owner.
+        await expect(rows).toHaveCount(1);
+        await expect(shared).toHaveAttribute('data-chat-backup-ambiguous', '');
+        await expect(shared.locator('.backup-row-owner')).toHaveText('可能属于：角色「钟离」、角色「胡桃」');
+        await expect(drawer.locator('[data-chat-backup-summary]')).toContainText('1 个与其他角色或群聊的备份文件名相同，无法确定归属');
+
+        await shared.locator('[data-restore-chat-backup]').click();
+        const confirm = drawer.locator('[data-chat-backup-restore-confirm]');
+        await expect(confirm).toBeVisible();
+        await expect(confirm).toContainText('可能属于：角色「钟离」、角色「胡桃」');
+        await expect(confirm).toContainText('当前选中的是角色「钟离」');
+        expect(fixture.chatRequests.imports).toHaveLength(0);
+        await drawer.locator('[data-confirm-chat-backup-restore="chat____20261010-120000.jsonl"]').click();
+        await expect.poll(() => fixture.chatRequests.imports.length).toBe(1);
+        expect(fixture.chatRequests.imports[0]).toEqual({ fileName: 'chat____20261010-120000.jsonl', avatarUrl: '钟离.png' });
+        await drawer.locator('[data-chat-backups-close]').click();
+
+        // The other owner sees the same backup with itself listed first.
+        await page.locator('[data-select-character="胡桃.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('胡桃');
+        await page.locator('.page-head [data-chat-backups-toggle]').click();
+        await expect(shared.locator('.backup-row-owner')).toHaveText('可能属于：角色「胡桃」、角色「钟离」');
+        await drawer.locator('[data-chat-backups-close]').click();
+
+        // A key that only one character produces stays unlabelled and restores directly.
+        await page.locator('[data-select-character="UI自检角色A.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('UI自检角色A');
+        await page.locator('.page-head [data-chat-backups-toggle]').click();
+        const own = drawer.locator('[data-chat-backup-row="chat_ui____a_20261010-130000.jsonl"]');
+        await expect(rows).toHaveCount(1);
+        await expect(own.locator('.backup-row-owner')).toHaveCount(0);
+        await expect(drawer.locator('[data-chat-backup-summary]')).not.toContainText('无法确定归属');
+        await own.locator('[data-restore-chat-backup]').click();
+        await expect.poll(() => fixture.chatRequests.imports.length).toBe(2);
+        expect(fixture.chatRequests.imports[1]).toEqual({ fileName: 'chat_ui____a_20261010-130000.jsonl', avatarUrl: 'UI自检角色A.png' });
+        await expect(drawer.locator('[data-chat-backup-restore-confirm]')).toHaveCount(0);
     });
 });
