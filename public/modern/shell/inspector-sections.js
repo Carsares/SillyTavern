@@ -1,3 +1,4 @@
+import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { routeLabels } from '../core/constants.js';
 import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
 import { createInspectorAssetSection } from './inspector-asset-section.js';
@@ -120,10 +121,12 @@ export function createInspectorSections({
     }
 
     function renderApiContextSection(provider) {
+        const connection = getEffectiveConnection(state.settings || {}, provider);
         return renderSection('连接诊断', [
-            ['主 API', provider.api],
-            ['来源', provider.chatSource || '未配置'],
-            ['模型', provider.model || '未配置'],
+            ['当前连接', connection.label],
+            ['主 API', withRawValue(connection.mainApiLabel, connection.mainApi) || '未选择'],
+            ['来源', withRawValue(connection.sourceLabel, connection.source) || '未配置'],
+            ['模型', connection.model || '未配置'],
             ['预设', provider.preset || '未配置'],
             ['测试状态', state.apiTest.status],
             ['测试详情', state.apiTest.detail],
@@ -152,10 +155,11 @@ export function createInspectorSections({
         const selectedCharacter = state.characters.find(character => character.avatar === state.selected.character);
         const selectedGroup = state.groups.find(group => group.id === state.selected.group);
         const selectedWorldbook = getSelectedWorldbook();
+        const connection = getEffectiveConnection(state.settings || {}, provider);
 
         return renderSection('工作台状态', [
-            ['主 API', provider.api],
-            ['聊天来源', provider.chatSource || '未配置'],
+            ['当前连接', connection.label],
+            ['来源', withRawValue(connection.sourceLabel, connection.source) || '未配置'],
             ['角色 / 群组', `${formatNumber(state.characters.length)} / ${formatNumber(state.groups.length)}`],
             ['世界书', `${formatNumber(state.worldbooks.length || provider.worldCount || 0)} 个`],
             ['素材', `${formatNumber(getBackgroundCount())} 背景 / ${formatNumber(getAssetFileCount())} 文件`],

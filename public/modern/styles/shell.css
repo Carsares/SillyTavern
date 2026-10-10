@@ -213,7 +213,22 @@ kbd {
     white-space: nowrap;
 }
 
+/* The connection chip names provider and model ("Custom OpenAI-compatible · deepseek-v4-flash"); cap it so
+   the search box keeps its room and let the text ellipsize (full values in its title).
+   responsive.css narrows the cap further on small screens. */
+.status-pill {
+    min-width: 0;
+    max-width: min(30vw, 360px);
+}
+
+.status-pill span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .dot {
+    flex: none;
     width: 8px;
     height: 8px;
     border-radius: 999px;

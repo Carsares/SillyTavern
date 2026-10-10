@@ -1,6 +1,23 @@
 import { routeLabels } from '../core/constants.js';
 import { createInspectorSections } from './inspector-sections.js';
 
+// Two stored values:
+// - st-modern-inspector-open: the 设置 page's「默认展开上下文抽屉」preference. core/state.js seeds the initial
+//   state from it and only saving Modern preferences writes it. Older builds also wrote it on every toggle,
+//   so for upgrading users it still holds their last drawer state and keeps opening the drawer as before.
+// - st-modern-inspector-state ('open' | 'closed'): where the user last left the drawer. Every open and close
+//   (toggle, close button, Esc, outside click) writes it, and when present it wins over the preference.
+const inspectorStateKey = 'st-modern-inspector-state';
+const savePreferencesSelector = '[data-save-modern-preferences]';
+
+function readStoredInspectorState() {
+    const value = localStorage.getItem(inspectorStateKey);
+    if (value === 'open') {
+        return true;
+    }
+    return value === 'closed' ? false : null;
+}
+
 export function createInspector({
     state,
     elements,
@@ -28,6 +45,11 @@ export function createInspector({
         isGroupChatMode,
         renderKeyValue,
     });
+
+    const storedOpen = readStoredInspectorState();
+    if (storedOpen !== null) {
+        state.inspectorOpen = storedOpen;
+    }
 
     function renderInspector() {
         const provider = getProviderInfo();
@@ -70,11 +92,63 @@ export function createInspector({
         `;
     }
 
-    function toggleInspector() {
-        state.inspectorOpen = !state.inspectorOpen;
-        localStorage.setItem('st-modern-inspector-open', String(state.inspectorOpen));
+    function setInspectorOpen(open) {
+        state.inspectorOpen = open;
+        localStorage.setItem(inspectorStateKey, open ? 'open' : 'closed');
         renderInspector();
     }
+
+    function toggleInspector() {
+        setInspectorOpen(!state.inspectorOpen);
+    }
+
+    function isInsideInspectorControls(path) {
+        return path.some(node => node === elements.inspector
+            || node === elements.topbar
+            || node === elements.commandPalette
+            || node === elements.toastStack
+            || (node instanceof Element && node.matches('[data-toggle-inspector]')));
+    }
+
+    function isPreferenceSave(path) {
+        return path.some(node => node instanceof Element && node.matches(savePreferencesSelector));
+    }
+
+    // Bound on window so these run after the document-level handlers in events.js / router.js: an Esc
+    // already consumed there (command palette, message edit, chat drawers) is defaultPrevented, and the
+    // toggle buttons have already flipped the drawer by the time the click arrives here.
+    function bindInspectorDismiss() {
+        window.addEventListener('keydown', event => {
+            if (event.key !== 'Escape' || event.defaultPrevented || !state.inspectorOpen || !elements.commandPalette.hidden) {
+                return;
+            }
+
+            const focusWasInside = elements.inspector.contains(document.activeElement);
+            setInspectorOpen(false);
+            event.preventDefault();
+            if (focusWasInside) {
+                /** @type {HTMLElement | null} */ (elements.topbar?.querySelector('[data-toggle-inspector]'))?.focus();
+            }
+        });
+        window.addEventListener('click', event => {
+            // composedPath() is fixed at dispatch time, so a click on a control that re-rendered the drawer
+            // (and detached itself) still counts as inside
+            const path = event.composedPath();
+            if (isPreferenceSave(path)) {
+                // Saving Modern preferences re-declares the default: forget the last drawer state so the saved
+                // preference decides the next load, and leave the drawer as it is in this view
+                localStorage.removeItem(inspectorStateKey);
+                return;
+            }
+            if (!state.inspectorOpen || isInsideInspectorControls(path)) {
+                return;
+            }
+
+            setInspectorOpen(false);
+        });
+    }
+
+    bindInspectorDismiss();
 
     return {
         renderInspector,

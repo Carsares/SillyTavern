@@ -40,7 +40,7 @@ export function createDashboardResourceComponents(ctx) {
         <div class="dashboard-resource-item">
             <button class="resource-row dashboard-resource-row" type="button" data-command-route="${escapeHtml(route)}" data-command-select="${escapeHtml(select)}" data-command-id="${escapeHtml(id)}">
                 <span class="avatar-fallback"><i class="fa-solid ${icon}"></i></span>
-                <span class="row-main">
+                <span class="row-main" title="${escapeHtml(subtitle ? `${title}\n${subtitle}` : title)}">
                     <span class="row-title">${escapeHtml(title)}</span>
                     <span class="row-subtitle">${escapeHtml(subtitle)}</span>
                 </span>

@@ -1,9 +1,12 @@
+/* The drawer starts below the topbar (height measured by shell/topbar.js) so 刷新数据 / 切换主题 / 上下文
+   stay clickable while it is open */
 .inspector {
     position: fixed;
-    top: 0;
+    top: var(--modern-topbar-height, 66px);
     right: 0;
     z-index: 18;
-    height: 100vh;
+    height: calc(100vh - var(--modern-topbar-height, 66px));
+    height: calc(100dvh - var(--modern-topbar-height, 66px));
     width: min(var(--inspector-width), calc(100vw - 32px));
     overflow: auto;
     padding: 18px;
@@ -74,13 +77,16 @@
 
 .kv-list {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
 }
 
+/* A long nowrap value must not widen the row (and the list) past its container */
 .kv-row {
     display: flex;
     justify-content: space-between;
     gap: 14px;
+    min-width: 0;
 }
 
 .kv-key {
@@ -95,6 +101,22 @@
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* The drawer is narrow: wrap long file names and paths instead of truncating them, so every row's
+   value stays readable inside the panel */
+.inspector .kv-key {
+    flex: 0 0 auto;
+    max-width: 45%;
+    overflow-wrap: anywhere;
+}
+
+.inspector .kv-value {
+    flex: 1 1 auto;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 /* Empty markers (未配置/未设置) read as absent rather than as a real value */
@@ -151,14 +173,21 @@
     padding: 9px 10px;
 }
 
+/* shell/toast.js lifts the stack above bottom-anchored actions (the chat composer) through
+   --toast-stack-bottom, or pins it under the topbar when there is no room above them */
 .toast-stack {
     position: fixed;
     right: 18px;
-    bottom: 18px;
+    bottom: var(--toast-stack-bottom, 18px);
     z-index: 30;
     display: grid;
     gap: 8px;
     width: min(360px, calc(100vw - 36px));
+}
+
+.toast-stack[data-placement="top"] {
+    top: calc(var(--modern-topbar-height, 66px) + 12px);
+    bottom: auto;
 }
 
 .toast {
@@ -191,7 +220,8 @@
 }
 
 .danger,
-.success {
+.success,
+.status-text {
     white-space: nowrap;
 }
 

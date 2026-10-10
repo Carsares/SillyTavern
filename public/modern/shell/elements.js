@@ -4,6 +4,7 @@ export function createShellElements(root = document) {
         navList: root.getElementById('navList'),
         content: root.getElementById('content'),
         inspector: root.getElementById('inspector'),
+        topbar: root.querySelector('.topbar'),
         search: root.getElementById('globalSearch'),
         refreshButton: root.getElementById('refreshButton'),
         themeButton: root.getElementById('themeButton'),

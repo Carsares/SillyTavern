@@ -129,7 +129,7 @@ test.describe('Modern workspace', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.api-diagnostic-card')).toHaveCount(6);
+        await expect(page.locator('.api-diagnostic-card')).toHaveCount(7);
         await page.locator('[data-api-model-suggestion="deepseek-ai/DeepSeek-V4-Pro"]').click();
         await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-ai/DeepSeek-V4-Pro');
 

@@ -1,3 +1,5 @@
+import { describeConnection, withRawValue } from '../core/connection-labels.js';
+
 export function createApiStateComponents(ctx) {
     const {
         state,
@@ -84,42 +86,64 @@ export function createApiStateComponents(ctx) {
         };
     }
 
+    // Only a finished connection test can say the connection works (正常 / 可用); before that the
+    // diagnostics can only report whether each piece is configured
+    function getConnectionTestCheck() {
+        const { status, detail } = state.apiTest;
+        if (status === '可用') {
+            return { label: '连接测试', state: 'ok', statusText: '可用', detail };
+        }
+        if (status === '失败') {
+            return { label: '连接测试', state: 'error', statusText: '失败', detail };
+        }
+        return { label: '连接测试', state: 'pending', statusText: status || '未测试', detail };
+    }
+
+    /**
+     * Diagnostic rows for the API page. `state` is one of: ok (a test passed), configured (setting present,
+     * not yet proven), pending (no test result), warn (missing or risky setting), error (test failed).
+     */
     function getApiChecks(provider, profiles) {
         const mainApi = getSelectedApiMain();
         const secretKey = mainApi === 'textgenerationwebui' ? getTextCompletionSecretKey(provider.chatSource) : secretKeyByChatSource[provider.chatSource];
         const textgenSecretState = secretKey ? state.secretState?.[secretKey] : null;
         const secretState = mainApi === 'textgenerationwebui' ? (Array.isArray(textgenSecretState) ? textgenSecretState : []) : getSecretStateForSource(provider.chatSource);
+        const connection = describeConnection({ api: provider.api, source: provider.chatSource, model: provider.model });
 
         return [
+            getConnectionTestCheck(),
             {
                 label: '主 API',
-                state: provider.api && provider.api !== '未选择' ? 'ok' : 'warn',
-                detail: provider.api && provider.api !== '未选择' ? provider.api : '尚未选择主 API。',
+                state: connection.mainApi ? 'configured' : 'warn',
+                detail: connection.mainApi ? withRawValue(connection.mainApiLabel, connection.mainApi) : '尚未选择主 API。',
             },
             {
                 label: '模型',
-                state: provider.model ? 'ok' : 'warn',
+                state: provider.model ? 'configured' : 'warn',
                 detail: provider.model || '未读取到模型字段。',
             },
             {
                 label: '连接档案',
-                state: profiles.some(profile => profile.source || profile.model || profile.endpoint) ? 'ok' : 'warn',
+                state: profiles.some(profile => profile.source || profile.model || profile.endpoint) ? 'configured' : 'warn',
                 detail: `${formatNumber(profiles.length)} 个可见档案。`,
             },
             {
                 label: '密钥显示',
-                state: state.secrets?.allowKeysExposure ? 'warn' : 'ok',
+                state: state.secrets?.allowKeysExposure ? 'warn' : 'configured',
+                statusText: state.secrets?.allowKeysExposure ? '' : '已隐藏',
                 detail: state.secrets?.allowKeysExposure ? '当前允许查看密钥。' : '当前不会暴露密钥明文。',
             },
             {
                 label: '当前来源密钥',
-                state: !secretKey || secretState.length ? 'ok' : 'warn',
+                state: !secretKey || secretState.length ? 'configured' : 'warn',
+                statusText: secretKey ? '' : '无需密钥',
                 detail: secretKey ? (secretState.length ? `${secretKey} 已保存` : `${secretKey} 未保存`) : '当前来源无需或暂未映射密钥。',
             },
             {
                 label: 'CSRF',
-                state: state.csrfToken ? 'ok' : 'warn',
-                detail: state.csrfToken ? '现代页请求令牌正常。' : '尚未获取请求令牌。',
+                state: state.csrfToken ? 'configured' : 'warn',
+                statusText: state.csrfToken ? '已获取' : '',
+                detail: state.csrfToken ? '现代页请求令牌已获取。' : '尚未获取请求令牌。',
             },
         ];
     }

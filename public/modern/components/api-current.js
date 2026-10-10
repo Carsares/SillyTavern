@@ -1,10 +1,34 @@
+import { describeConnection, withRawValue } from '../core/connection-labels.js';
+
 export function createApiCurrentComponents(ctx) {
     const {
         state,
         escapeHtml,
     } = ctx;
 
+    function renderCurrentValue(label, value) {
+        return `
+                <div>
+                    <span class="metric-label">${escapeHtml(label)}</span>
+                    <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+                </div>`;
+    }
+
+    function getApiTestBadgeClass(status) {
+        if (status === '失败') {
+            return 'danger';
+        }
+        return status === '可用' ? 'active' : '';
+    }
+
     function renderApiCurrentPanel(provider, renderConnectionEditor) {
+        // provider follows the 主 API select (including an unsaved text completion switch), so describe it
+        // directly instead of re-reading the saved settings
+        const connection = describeConnection({ api: provider.api, source: provider.chatSource, model: provider.model });
+        // KoboldAI Classic is identified by its server URL; NovelAI / AI Horde by the main API itself
+        const sourceText = connection.source
+            ? withRawValue(connection.sourceLabel, connection.source)
+            : (connection.endpoint || connection.sourceLabel || '未配置');
         return `
         <section class="panel">
             <div class="panel-header">
@@ -12,28 +36,16 @@ export function createApiCurrentComponents(ctx) {
                     <h2 class="panel-title">当前连接</h2>
                     <p class="panel-subtitle">从 SillyTavern settings.json 读取非密钥字段。</p>
                 </div>
-                <span class="badge">${escapeHtml(provider.api)}</span>
+                <span class="badge" title="${escapeHtml(connection.title)}">${escapeHtml(connection.sourceLabel || connection.label)}</span>
             </div>
             <div class="api-current">
-                <div>
-                    <span class="metric-label">主 API</span>
-                    <strong>${escapeHtml(provider.api)}</strong>
-                </div>
-                <div>
-                    <span class="metric-label">来源</span>
-                    <strong>${escapeHtml(provider.chatSource || '未配置')}</strong>
-                </div>
-                <div>
-                    <span class="metric-label">模型</span>
-                    <strong>${escapeHtml(provider.model || '未配置')}</strong>
-                </div>
-                <div>
-                    <span class="metric-label">预设</span>
-                    <strong>${escapeHtml(provider.preset || '未配置')}</strong>
-                </div>
+                ${renderCurrentValue('主 API', withRawValue(connection.mainApiLabel, connection.mainApi) || '未选择')}
+                ${renderCurrentValue('来源', sourceText)}
+                ${renderCurrentValue('模型', provider.model || '未配置')}
+                ${renderCurrentValue('预设', provider.preset || '未配置')}
             </div>
             <div class="connection-test">
-                <span class="badge ${state.apiTest.status === '失败' ? 'danger' : ''}">${escapeHtml(state.apiTest.status)}</span>
+                <span class="badge ${getApiTestBadgeClass(state.apiTest.status)}">${escapeHtml(state.apiTest.status)}</span>
                 <span>${escapeHtml(state.apiTest.detail)}</span>
             </div>
             ${renderConnectionEditor()}

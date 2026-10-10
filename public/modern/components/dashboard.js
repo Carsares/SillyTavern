@@ -1,3 +1,4 @@
+import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { createDashboardResourceComponents } from './dashboard-resources.js';
 
 export function createDashboardComponents(ctx) {
@@ -15,7 +16,8 @@ export function createDashboardComponents(ctx) {
 
     function renderDashboard() {
         const provider = getProviderInfo();
-        const connectionIssues = getConnectionIssues(provider);
+        const connection = getEffectiveConnection(state.settings || {}, provider);
+        const connectionIssues = getConnectionIssues(connection);
 
         return `
         ${pageHead('工作台', '资源、连接和最近会话。', `
@@ -43,9 +45,10 @@ export function createDashboardComponents(ctx) {
                     </button>
                 </div>
                 <div class="kv-list connection-summary-list">
-                    ${renderKeyValue('主 API', provider.api)}
-                    ${renderKeyValue('聊天补全来源', provider.chatSource || '未配置')}
-                    ${renderKeyValue('模型', provider.model || '未读取到模型字段')}
+                    ${renderConnectionRow(connection)}
+                    ${renderKeyValue('主 API', withRawValue(connection.mainApiLabel, connection.mainApi) || '未选择')}
+                    ${renderKeyValue('来源', withRawValue(connection.sourceLabel, connection.source) || '未配置')}
+                    ${renderKeyValue('模型', connection.model || '未读取到模型字段')}
                     ${renderKeyValue('预设字段', provider.preset || '未读取到当前预设字段')}
                 </div>
                 ${renderConnectionIssues(connectionIssues)}
@@ -75,7 +78,7 @@ export function createDashboardComponents(ctx) {
                 ${renderActionCard('群组', '维护成员和群聊策略', `${formatNumber(state.groups.length)} 个群组`, 'fa-users', 'groups')}
                 ${renderActionCard('世界书', '查看知识库文件和条目', `${formatNumber(state.worldbooks.length || provider.worldCount)} 本`, 'fa-book-open', 'worldbooks')}
                 ${renderActionCard('预设', '浏览模型参数和提示模板', `${formatNumber(getPresetCount())} 个`, 'fa-sliders', 'presets')}
-                ${renderActionCard('API', '检查连接、模型和密钥状态', provider.api, 'fa-plug', 'api')}
+                ${renderActionCard('API', '检查连接、模型和密钥状态', connection.sourceLabel || connection.label, 'fa-plug', 'api')}
                 ${renderActionCard('活动', '查看聊天统计和最近活动', '统计缓存', 'fa-chart-line', 'activity')}
                 ${renderActionCard('扩展', '查看已发现扩展', `${formatNumber(state.extensions.length)} 个`, 'fa-cubes', 'extensions')}
             </div>
@@ -83,18 +86,33 @@ export function createDashboardComponents(ctx) {
     `;
     }
 
-    function getConnectionIssues(provider) {
+    // Text completion always resolves a type and the other main APIs have no source id, so only an
+    // unselected or chat-completion main API can be missing its source
+    function getConnectionIssues(connection) {
         const issues = [];
-        if (!provider.api || provider.api === '未选择') {
+        if (!connection.mainApi) {
             issues.push('主 API 未选择');
         }
-        if (!provider.chatSource) {
+        if ((!connection.mainApi || connection.mainApi === 'openai') && !connection.source) {
             issues.push('聊天补全来源未配置');
         }
-        if (!provider.model) {
+        if (connection.mainApi === 'kobold' && !connection.endpoint) {
+            issues.push('KoboldAI 服务地址未配置');
+        }
+        if (!connection.model) {
             issues.push('模型未配置');
         }
         return issues;
+    }
+
+    // The effective provider leads the card; the raw settings values stay in the tooltip
+    function renderConnectionRow(connection) {
+        return `
+        <div class="kv-row">
+            <span class="kv-key">当前连接</span>
+            <span class="kv-value" title="${escapeHtml(connection.title)}">${escapeHtml(connection.label)}</span>
+        </div>
+    `;
     }
 
     function renderConnectionIssues(issues) {

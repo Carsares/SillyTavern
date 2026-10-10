@@ -64,13 +64,15 @@ export function createActivityEntryComponents(ctx) {
             : (target.type === 'character' ? `data-route="chat" data-open-character-chat="${escapeHtml(target.id)}"` : '');
         const detailRoute = target.type === 'group' ? 'groups' : (target.type === 'character' ? 'characters' : '');
         const detailLabel = target.type === 'group' ? '查看群组' : (target.type === 'character' ? '查看角色' : '');
+        const title = target.name || entry.id;
+        const subtitle = `${entry.id} · 最近聊天 ${formatDate(entry.last)}`;
 
         return `
         <article class="resource-card activity-card" data-activity-target="${escapeHtml(target.type ? `${target.type}:${target.id}` : entry.id)}">
             <div class="card-head">
                 <div class="row-main">
-                    <h3 class="card-title mono">${escapeHtml(target.name || entry.id)}</h3>
-                    <p class="row-subtitle">${escapeHtml(entry.id)} · 最近聊天 ${escapeHtml(formatDate(entry.last))}</p>
+                    <h3 class="card-title mono" title="${escapeHtml(title)}">${escapeHtml(title)}</h3>
+                    <p class="row-subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</p>
                 </div>
                 <span class="badge">${formatNumber(entry.messages)} 条消息</span>
             </div>

@@ -58,8 +58,25 @@
     margin-bottom: 14px;
 }
 
+/* One shrinkable track: the default auto track grew to the card head's unbreakable min-content (a long
+   avatar file name), pushing the stat grid and the page wider than the card */
 .activity-card {
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
+}
+
+.activity-card .card-head {
+    min-width: 0;
+}
+
+.activity-card .card-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-card .card-head .badge {
+    flex: none;
 }
 
 .activity-card-actions {
@@ -68,8 +85,9 @@
 
 .activity-stat-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
     gap: 8px;
+    min-width: 0;
 }
 
 .activity-stat-grid span {

@@ -6,19 +6,33 @@ export function createApiDiagnosticComponents(ctx) {
         renderInlineEmpty,
     } = ctx;
 
+    // 正常 / 可用 (green) is reserved for a passed connection test; a present setting only reads 已配置
+    const diagnosticStates = {
+        ok: { icon: 'fa-plug-circle-check', className: 'success', text: '正常' },
+        configured: { icon: 'fa-circle-check', className: 'muted', text: '已配置' },
+        pending: { icon: 'fa-circle-question', className: 'muted', text: '未测试' },
+        warn: { icon: 'fa-triangle-exclamation', className: 'danger', text: '需检查', attention: true },
+        error: { icon: 'fa-circle-xmark', className: 'danger', text: '失败', attention: true },
+    };
+
+    function renderApiDiagnosticCard(check) {
+        const view = diagnosticStates[check.state] || diagnosticStates.warn;
+        return `
+                <article class="api-diagnostic-card ${view.attention ? 'needs-attention' : ''}" data-diagnostic-state="${escapeHtml(check.state)}">
+                    <span class="avatar-fallback"><i class="fa-solid ${view.icon}"></i></span>
+                    <span class="row-main">
+                        <strong>${escapeHtml(check.label)}</strong>
+                        <span class="row-subtitle" title="${escapeHtml(check.detail)}">${escapeHtml(check.detail)}</span>
+                    </span>
+                    <span class="status-text ${view.className}">${escapeHtml(check.statusText || view.text)}</span>
+                </article>
+            `;
+    }
+
     function renderApiDiagnostics(checks) {
         return `
         <div class="api-diagnostic-list">
-            ${checks.map(check => `
-                <article class="api-diagnostic-card ${check.state === 'ok' ? '' : 'needs-attention'}">
-                    <span class="avatar-fallback"><i class="fa-solid ${check.state === 'ok' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i></span>
-                    <span class="row-main">
-                        <strong>${escapeHtml(check.label)}</strong>
-                        <span class="row-subtitle">${escapeHtml(check.detail)}</span>
-                    </span>
-                    <span class="${check.state === 'ok' ? 'success' : 'danger'}">${check.state === 'ok' ? '正常' : '需检查'}</span>
-                </article>
-            `).join('')}
+            ${checks.map(renderApiDiagnosticCard).join('')}
         </div>
     `;
     }

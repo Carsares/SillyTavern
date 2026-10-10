@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+/* global document */
+
 function fulfillJson(route, body, status = 200) {
     return route.fulfill({
         status,
@@ -273,5 +275,85 @@ test.describe('Modern dashboard and activity', () => {
 
         await expect(page).toHaveURL(/\/modern\/\?view=api/);
         await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+    });
+
+    test('keeps activity cards inside the page at desktop and tablet widths', async ({ page }) => {
+        await mockModernDashboardActivityWorkspace(page);
+        const now = Date.now();
+        const longAvatar = 'a-very-long-avatar-file-name-imported-from-a-character-hub-export-with-version-suffix-v2.3.4-final.png';
+        await page.route('**/api/characters/all', route => fulfillJson(route, [
+            { avatar: 'alice.png', name: 'Alice Fixture', date_last_chat: now, data: { name: 'Alice Fixture' } },
+            { avatar: longAvatar, name: longAvatar, date_last_chat: now - 2000, data: { name: longAvatar } },
+        ]));
+        await page.route('**/api/stats/get', route => fulfillJson(route, {
+            timestamp: now,
+            'alice.png': {
+                user_msg_count: 4,
+                non_user_msg_count: 6,
+                user_word_count: 200,
+                non_user_word_count: 300,
+                chat_size: 4096,
+                total_swipe_count: 1,
+                total_gen_time: 1200,
+                date_last_chat: now,
+            },
+            [longAvatar]: {
+                user_msg_count: 0,
+                non_user_msg_count: 0,
+                user_word_count: 0,
+                non_user_word_count: 0,
+                chat_size: 123456789,
+                total_swipe_count: 0,
+                total_gen_time: 98765432,
+                date_last_chat: now - 2000,
+            },
+        }));
+
+        for (const viewport of [{ width: 1440, height: 900 }, { width: 1280, height: 800 }, { width: 768, height: 1024 }]) {
+            await page.setViewportSize(viewport);
+            await page.goto('/modern/?view=activity');
+            await expect(page.locator('.activity-card')).toHaveCount(2);
+
+            const longCard = page.locator(`.activity-card[data-activity-target="character:${longAvatar}"]`);
+            await expect(longCard.locator('.card-head .badge')).toHaveText('0 条消息');
+            await expect(longCard.locator('.card-title')).toHaveAttribute('title', longAvatar);
+            await expect(longCard.locator('.row-subtitle')).toHaveAttribute('title', new RegExp(`^${longAvatar.replace(/[.]/g, '\\.')} · 最近聊天 `));
+
+            const layout = await page.evaluate(() => {
+                const root = document.documentElement;
+                const cards = [...document.querySelectorAll('.activity-card')].map(card => {
+                    const cardBox = card.getBoundingClientRect();
+                    const statBox = card.querySelector('.activity-stat-grid').getBoundingClientRect();
+                    const cellsOutside = [...card.querySelectorAll('.activity-stat-grid > span')]
+                        .filter(cell => {
+                            const box = cell.getBoundingClientRect();
+                            return box.left < cardBox.left - 0.5 || box.right > cardBox.right + 0.5;
+                        }).length;
+                    const titleBox = card.querySelector('.card-head .row-main').getBoundingClientRect();
+                    const badgeBox = card.querySelector('.card-head .badge').getBoundingClientRect();
+                    const subtitle = card.querySelector('.card-head .row-subtitle');
+                    return {
+                        statInside: statBox.left >= cardBox.left - 0.5 && statBox.right <= cardBox.right + 0.5,
+                        cellsOutside,
+                        badgeClearOfTitle: badgeBox.left >= titleBox.right - 0.5 && badgeBox.right <= cardBox.right + 0.5,
+                        subtitleTruncated: subtitle.scrollWidth > subtitle.clientWidth,
+                    };
+                });
+                return {
+                    scrollWidth: root.scrollWidth,
+                    clientWidth: root.clientWidth,
+                    cards,
+                };
+            });
+
+            const label = `${viewport.width}x${viewport.height}`;
+            expect(layout.scrollWidth, `${label} has no horizontal scroll`).toBeLessThanOrEqual(layout.clientWidth);
+            for (const card of layout.cards) {
+                expect(card.statInside, `${label} stat grid fits its card`).toBe(true);
+                expect(card.cellsOutside, `${label} stat cells stay in the card`).toBe(0);
+                expect(card.badgeClearOfTitle, `${label} message badge does not overlap the title`).toBe(true);
+            }
+            expect(layout.cards.some(card => card.subtitleTruncated), `${label} long subtitle is ellipsized`).toBe(true);
+        }
     });
 });

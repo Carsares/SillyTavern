@@ -47,6 +47,17 @@
     height: 38px;
 }
 
+/* Title and subtitle are inline spans; clip a long file name at the row edge instead of letting it run
+   under the type badge */
+.dashboard-resource-row .row-main {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dashboard-resource-row .badge {
+    flex: none;
+}
+
 .dashboard-resource-row .row-subtitle {
     overflow: hidden;
     text-overflow: ellipsis;
