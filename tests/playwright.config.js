@@ -19,7 +19,7 @@ const defaultBaseURL = externalBaseURL || mockServerBaseURL;
 // real-backend and external-dependency suites into the default gate. Both carry
 // live external dependencies, so they are only materialised when named through
 // `--project`.
-const requestedProjects = collectRequestedProjects();
+const requestedProjects = resolveRequestedProjects();
 const runDefault = requestedProjects.size === 0 || requestedProjects.has('default');
 const runRealBackend = requestedProjects.has('real-backend');
 const runExternal = requestedProjects.has('external');
@@ -41,6 +41,30 @@ function collectRequestedProjects() {
             names.add(arg.slice('--project='.length));
         }
     }
+    return names;
+}
+
+/**
+ * Resolve the requested projects once in the runner process and hand them to
+ * worker processes through the environment. Workers load this config again but
+ * do not receive the CLI arguments: without the hand-off a worker would not
+ * materialise the project it was asked to run ("Project not found").
+ * @returns {Set<string>} Explicitly requested project names.
+ */
+function resolveRequestedProjects() {
+    const envKey = 'ST_PLAYWRIGHT_REQUESTED_PROJECTS';
+    try {
+        const inherited = JSON.parse(process.env[envKey] || 'null');
+        // Only a value written by this process's parent runner counts; a stale exported value is ignored
+        if (inherited?.runnerPid === process.ppid && Array.isArray(inherited.names)) {
+            return new Set(inherited.names);
+        }
+    } catch {
+        // A malformed value is ignored like a missing one
+    }
+    const names = collectRequestedProjects();
+    // Worker and loader processes are forked from the runner with its environment
+    process.env[envKey] = JSON.stringify({ runnerPid: process.pid, names: [...names] });
     return names;
 }
 

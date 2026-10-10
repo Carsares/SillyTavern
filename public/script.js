@@ -434,7 +434,7 @@ const settingsSaveQueue = new SerialTaskQueue();
 let importFlashTimeout;
 export let isChatSaving = false;
 let firstRun = false;
-const isModernBridgeMode = new URLSearchParams(location.search).has('modernBridge');
+export const isModernBridgeMode = new URLSearchParams(location.search).has('modernBridge');
 export let settingsReady = false;
 // 首次角色列表（及随后加载的群组列表）是否已载入；bridge 动作须等它完成再读 characters/groups
 let initialCharactersLoaded = false;
@@ -2264,6 +2264,10 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
     return mes;
 }
 
+// Sources recorded in `extra.api` that are not an API with its own icon file. The Modern UI writes `api: 'modern'` on the
+// messages it creates itself (new-chat greetings); without an alias every engine render of them requested /img/modern.svg (404).
+const MODEL_ICON_ALIASES = new Map([['modern', 'logo']]);
+
 /**
  * Creates an Image element for the given API/model icon.
  * The image references the matching SVG file from `/img/` and includes a tooltip with API and model info.
@@ -2276,7 +2280,7 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
 export function createModelIcon(apiName, modelName = '') {
     const image = new Image();
     image.classList.add('icon-svg');
-    image.src = `/img/${apiName}.svg`;
+    image.src = `/img/${MODEL_ICON_ALIASES.get(apiName) ?? apiName}.svg`;
     image.title = modelName ? `${apiName} - ${modelName}` : apiName;
     return image;
 }
@@ -6065,76 +6069,192 @@ async function useModernBridgeChatContext(payload = {}) {
     return { character: characters[this_chid] };
 }
 
-async function handleModernBridgeGenerate(payload = {}) {
-    const params = payload || {};
-    const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
-    const context = await useModernBridgeChatContext(params);
-    const messageCountBefore = chat.length;
+// The bridge generation or swipe in progress. A modern「停止」request marks it, so the handler can tell a stopped
+// reply from a finished one: stopGeneration() alone cannot, because a stopped stream still ends through the normal path.
+/** @type {{ stopRequested: boolean } | null} */
+let modernBridgeActiveTask = null;
 
-    if (type === 'normal') {
-        const textarea = $('#send_textarea');
-        textarea.val(String(params.message || ''));
-        textarea[0]?.dispatchEvent(new Event('input', { bubbles: true }));
+function beginModernBridgeTask() {
+    const task = { stopRequested: false };
+    modernBridgeActiveTask = task;
+    return task;
+}
+
+function endModernBridgeTask(task) {
+    if (modernBridgeActiveTask === task) {
+        modernBridgeActiveTask = null;
+    }
+}
+
+// Reply text a user can see. Reasoning is not part of it, and '...' is only the placeholder a stream starts with
+// (the same placeholder Generate() treats as an empty reply when it removes tool-call placeholders).
+function getModernBridgeVisibleText(text) {
+    const value = String(text ?? '').trim();
+    return value === '...' ? '' : value;
+}
+
+function hasModernBridgeMessageMedia(message) {
+    const extra = message?.extra || {};
+    return (Array.isArray(extra.media) && extra.media.length > 0)
+        || (Array.isArray(extra.files) && extra.files.length > 0)
+        || Boolean(extra.image || extra.file);
+}
+
+/**
+ * Settles the reply of a stopped bridge generation before the chat is saved. A stopped reply that has no visible text yet
+ * (only the placeholder or reasoning) is removed instead of being saved as an empty assistant message; partial text is kept.
+ * @param {string} type Generation type
+ * @param {Set<object>} messagesBefore Chat messages that existed before the generation
+ * @param {{ message: object, text: string } | null} continued Message and visible text a continuation started from
+ * @returns {Promise<{ keptReplyChars: number, removedEmptyReply: boolean }>} What remains of the stopped reply
+ */
+async function settleModernBridgeStoppedReply(type, messagesBefore, continued) {
+    if (type === 'continue') {
+        const text = getModernBridgeVisibleText(continued?.message?.mes);
+        return { keptReplyChars: Math.max(0, text.length - (continued?.text.length || 0)), removedEmptyReply: false };
     }
 
+    const lastMessage = chat[chat.length - 1];
+    if (!lastMessage || messagesBefore.has(lastMessage) || lastMessage.is_user || lastMessage.is_system) {
+        return { keptReplyChars: 0, removedEmptyReply: false };
+    }
+
+    const text = getModernBridgeVisibleText(lastMessage.mes);
+    if (text || hasModernBridgeMessageMedia(lastMessage)) {
+        return { keptReplyChars: text.length, removedEmptyReply: false };
+    }
+
+    await deleteLastMessage();
+    return { keptReplyChars: 0, removedEmptyReply: true };
+}
+
+// Generate() silently does nothing while the engine thinks it has no backend connection. The bridge never runs the legacy
+// connection check, so it marks the connection as usable; a real API failure still surfaces from the request itself.
+function ensureModernBridgeOnlineStatus() {
     if (online_status === 'no_connection') {
         setOnlineStatus('Modern bridge status check skipped');
     }
+}
 
-    // Manual group activation: let the modern UI force a specific member (by avatar) to speak next
-    let forceChid = undefined;
-    if (context.group && params.forceAvatar) {
-        const forcedIndex = characters.findIndex(character => character.avatar === params.forceAvatar);
-        if (forcedIndex !== -1) {
-            forceChid = forcedIndex;
+async function handleModernBridgeGenerate(payload = {}) {
+    const params = payload || {};
+    const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
+    const task = beginModernBridgeTask();
+    try {
+        const context = await useModernBridgeChatContext(params);
+        const messageCountBefore = chat.length;
+        const messagesBefore = new Set(chat);
+        const continuedMessage = type === 'continue' ? chat[chat.length - 1] : null;
+        const continued = continuedMessage ? { message: continuedMessage, text: getModernBridgeVisibleText(continuedMessage.mes) } : null;
+
+        let result = '';
+        // A stop that arrives while the chat context is still switching ends the task before anything reaches the model
+        const started = !task.stopRequested;
+        if (started) {
+            if (type === 'normal') {
+                const textarea = $('#send_textarea');
+                textarea.val(String(params.message || ''));
+                textarea[0]?.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            ensureModernBridgeOnlineStatus();
+
+            // Manual group activation: let the modern UI force a specific member (by avatar) to speak next
+            let forceChid = undefined;
+            if (context.group && params.forceAvatar) {
+                const forcedIndex = characters.findIndex(character => character.avatar === params.forceAvatar);
+                if (forcedIndex !== -1) {
+                    forceChid = forcedIndex;
+                }
+            }
+            try {
+                result = context.group
+                    ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type, { force_chid: forceChid }))
+                    : await Generate(type);
+            } catch (error) {
+                // An aborted request (e.g. a non-streaming one) rejects; after a stop that is the expected outcome
+                if (!task.stopRequested) {
+                    throw error;
+                }
+                console.debug('Modern bridge generation stopped', error);
+            }
         }
+
+        const stopped = task.stopRequested;
+        const stopOutcome = stopped ? await settleModernBridgeStoppedReply(type, messagesBefore, continued) : null;
+        if (!stopped && type === 'normal' && chat.length <= messageCountBefore) {
+            throw new Error('原版生成引擎未生成新消息，请检查 API 连接状态。');
+        }
+        // continue/regenerate/swipe 不改变消息数，normal 的 messageCount 校验对它们失效；用一次确定性
+        // saveChatConditional 的布尔作为「结果已持久化」信号回传 modern（旧引擎内部保存失败会被静默吞掉）。
+        const saved = await saveChatConditional();
+        const group = context.group ? groups.find(x => x.id === context.group.id) : null;
+        return {
+            avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
+            groupId: group?.id || '',
+            chat: group?.chat_id || characters[this_chid]?.chat || '',
+            message: String(result || ''),
+            messageCount: chat.length,
+            saved,
+            type,
+            ...(stopped ? { stopped: true, started, ...stopOutcome } : {}),
+        };
+    } finally {
+        endModernBridgeTask(task);
     }
-    const result = context.group
-        ? (type === 'regenerate' ? await regenerateGroup() : await generateGroupWrapper(false, type, { force_chid: forceChid }))
-        : await Generate(type);
-    if (type === 'normal' && chat.length <= messageCountBefore) {
-        throw new Error('原版生成引擎未生成新消息，请检查 API 连接状态。');
-    }
-    // continue/regenerate/swipe 不改变消息数，normal 的 messageCount 校验对它们失效；用一次确定性
-    // saveChatConditional 的布尔作为「结果已持久化」信号回传 modern（旧引擎内部保存失败会被静默吞掉）。
-    const saved = await saveChatConditional();
-    const group = context.group ? groups.find(x => x.id === context.group.id) : null;
-    return {
-        avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
-        groupId: group?.id || '',
-        chat: group?.chat_id || characters[this_chid]?.chat || '',
-        message: String(result || ''),
-        messageCount: chat.length,
-        saved,
-        type,
-    };
 }
 
 async function handleModernBridgeSwipe(payload = {}) {
     const params = payload || {};
-    const context = await useModernBridgeChatContext(params);
+    const task = beginModernBridgeTask();
+    try {
+        const context = await useModernBridgeChatContext(params);
 
-    const messageId = Number(params.messageIndex ?? chat.length - 1);
-    if (!Number.isInteger(messageId) || !chat[messageId]) {
-        throw new Error('原版生成引擎找不到要切换候选的消息。');
+        const messageId = Number(params.messageIndex ?? chat.length - 1);
+        if (!Number.isInteger(messageId) || !chat[messageId]) {
+            throw new Error('原版生成引擎找不到要切换候选的消息。');
+        }
+
+        const swipeCountBefore = Array.isArray(chat[messageId].swipes) ? chat[messageId].swipes.length : 1;
+        const direction = params.direction === 'left' ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
+        if (!task.stopRequested) {
+            // Swiping past the last candidate generates a new one, which needs the same connection state as generate
+            ensureModernBridgeOnlineStatus();
+            await swipe(null, direction, { source: SWIPE_SOURCE.SWIPE_PICKER, repeated: false, forceMesId: messageId });
+        }
+
+        // A stop during the generation of a new candidate: one without visible text yet is dropped, partial text is kept
+        let keptReplyChars = 0;
+        let removedEmptyReply = false;
+        const swipedMessage = chat[messageId];
+        const generatedCandidate = Array.isArray(swipedMessage?.swipes) && swipedMessage.swipes.length > swipeCountBefore;
+        if (task.stopRequested && generatedCandidate) {
+            const text = getModernBridgeVisibleText(swipedMessage.mes);
+            keptReplyChars = text.length;
+            if (!text && !hasModernBridgeMessageMedia(swipedMessage) && Array.isArray(swipedMessage.swipes) && swipedMessage.swipes.length > 1) {
+                await deleteSwipe(swipedMessage.swipe_id, messageId);
+                removedEmptyReply = true;
+            }
+        }
+
+        const message = chat[messageId] || {};
+        // 同 generate：swipe 不改变消息数，用确定性保存的布尔作为持久化信号回传 modern。
+        const saved = await saveChatConditional();
+        const group = context.group ? groups.find(x => x.id === context.group.id) : null;
+        return {
+            avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
+            groupId: group?.id || '',
+            chat: group?.chat_id || characters[this_chid]?.chat || '',
+            messageCount: chat.length,
+            messageIndex: messageId,
+            swipeId: message.swipe_id ?? 0,
+            swipeCount: Array.isArray(message.swipes) ? message.swipes.length : 0,
+            saved,
+            ...(task.stopRequested ? { stopped: true, keptReplyChars, removedEmptyReply } : {}),
+        };
+    } finally {
+        endModernBridgeTask(task);
     }
-
-    const direction = params.direction === 'left' ? SWIPE_DIRECTION.LEFT : SWIPE_DIRECTION.RIGHT;
-    await swipe(null, direction, { source: SWIPE_SOURCE.SWIPE_PICKER, repeated: false, forceMesId: messageId });
-    const message = chat[messageId] || {};
-    // 同 generate：swipe 不改变消息数，用确定性保存的布尔作为持久化信号回传 modern。
-    const saved = await saveChatConditional();
-    const group = context.group ? groups.find(x => x.id === context.group.id) : null;
-    return {
-        avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
-        groupId: group?.id || '',
-        chat: group?.chat_id || characters[this_chid]?.chat || '',
-        messageCount: chat.length,
-        messageIndex: messageId,
-        swipeId: message.swipe_id ?? 0,
-        swipeCount: Array.isArray(message.swipes) ? message.swipes.length : 0,
-        saved,
-    };
 }
 
 async function handleModernBridgeExtensionInstalled(payload = {}) {
@@ -6320,6 +6440,9 @@ window.addEventListener('message', async (event) => {
             return;
         }
         if (action === BRIDGE_ACTIONS.STOP) {
+            if (modernBridgeActiveTask) {
+                modernBridgeActiveTask.stopRequested = true;
+            }
             postModernBridgeResult(event, id, { stopped: stopGeneration() });
             return;
         }
@@ -6365,6 +6488,20 @@ window.addEventListener('message', async (event) => {
         postModernBridgeResult(event, id, null, error);
     }
 });
+
+// `<base href="/">` resolves fragment-only tab links such as `#bg_global_tab` to `/#bg_global_tab`. The normal page is
+// served at `/`, so jQuery UI sees those links as local tabs. The bridge page is served at `/index.html?modernBridge=1`, so
+// jQuery UI took them for remote tabs and loaded the page itself into a tab panel: every classic script ran a second time
+// and replaced window.jQuery/$. Objects built by the first jQuery then failed `instanceof jQuery` (shakeElement passed a CSS
+// easing to jQuery.animate, throwing "S.easing[this.easing] is not a function" on every animation tick) and lost their
+// widget data (autocomplete('widget') threw "prior to initialization"). Here a fragment-only link always names a local panel.
+if (isModernBridgeMode && typeof $.widget === 'function' && $.ui?.tabs) {
+    $.widget('ui.tabs', $.ui.tabs, {
+        _isLocal(anchor) {
+            return this._super(anchor) || (anchor.hash.length > 1 && String(anchor.getAttribute('href') || '').startsWith('#'));
+        },
+    });
+}
 
 // 流式增量单向推送：bridge 模式下订阅 STREAM_TOKEN_RECEIVED（每 token 携带累积文本），转发给父窗口（modern）
 // 做定点增量渲染。只注册一次，只在 iframe 内（window.parent !== window）向父窗口 post，避免顶层页误发。

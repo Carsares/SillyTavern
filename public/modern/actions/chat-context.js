@@ -2,6 +2,7 @@ import { createChatContextLoaderActions } from './chat-context-loaders.js';
 import { createChatContextSelectorHelpers } from './chat-context-selectors.js';
 import { chatReadStateStorageKey } from '../core/state.js';
 import { KeyedPromiseQueue } from '../core/keyed-queue.js';
+import { readChatSelectionFromUrl, syncChatSelectionToUrl } from '../core/chat-url-selection.js';
 
 // 每个角色/群聊上次实际使用（点开、发送、生成、编辑、新建、导入）的聊天：重新进入该对象时优先打开它，
 // 避免未读标记把用户带到一份从没用过的聊天（例如旧引擎自动生成、只含开场白的文件）。
@@ -64,6 +65,49 @@ export function createChatContextActions({
         state,
         getCharacterAvatarUrl,
     });
+
+    // A reload restores the chat the URL names (UX-018). It is checked against the loaded character/group lists in
+    // ensureAvailableChatMode(); a stale entity falls back to the selection the page makes without URL parameters.
+    let pendingUrlChatSelection = null;
+    const urlChatSelection = readChatSelectionFromUrl();
+    if (urlChatSelection) {
+        pendingUrlChatSelection = { ...urlChatSelection, previousChatMode: state.chatMode };
+        state.chatMode = urlChatSelection.groupMode ? 'group' : 'character';
+        if (urlChatSelection.groupMode) {
+            state.selected.group = urlChatSelection.entityId;
+        } else {
+            state.selected.character = urlChatSelection.entityId;
+        }
+        state.selected.chat = urlChatSelection.chatId;
+    }
+
+    function syncChatSelectionUrl() {
+        syncChatSelectionToUrl(state, getSelectedChatEntity(), isGroupChatMode());
+    }
+
+    function reconcileUrlChatSelection() {
+        const restored = pendingUrlChatSelection;
+        if (!restored) {
+            return;
+        }
+        pendingUrlChatSelection = null;
+
+        const available = restored.groupMode
+            ? state.groups.some(group => group.id === restored.entityId)
+            : state.characters.some(character => character.avatar === restored.entityId);
+        if (available) {
+            localStorage.setItem('st-modern-chat-mode', state.chatMode);
+            return;
+        }
+
+        state.chatMode = restored.previousChatMode;
+        if (restored.groupMode) {
+            state.selected.group = state.groups[0]?.id || '';
+        } else {
+            state.selected.character = state.characters[0]?.avatar || '';
+        }
+        state.selected.chat = '';
+    }
 
     function getChatReadCursors() {
         if (!state.chatReadState || typeof state.chatReadState !== 'object') {
@@ -258,6 +302,7 @@ export function createChatContextActions({
         getSelectedChatEntity,
         isGroupChatMode,
         markChatRead,
+        onChatSelectionShown: syncChatSelectionUrl,
         rememberLastUsedChat,
         sortChats,
         syncChatReadStateForList,
@@ -299,6 +344,7 @@ export function createChatContextActions({
     }
 
     function ensureAvailableChatMode() {
+        reconcileUrlChatSelection();
         if (state.chatMode === 'group' && !state.groups.length && state.characters.length) {
             return useChatMode('character', { resetChat: true });
         }
@@ -606,6 +652,7 @@ export function createChatContextActions({
             const isContextCurrent = isGroupChatMode() === groupMode && getChatContextKey(getSelectedChatEntity(), groupMode) === contextKey;
             if (isContextCurrent) {
                 state.selected.chat = chatId;
+                syncChatSelectionUrl();
             }
             return chatId;
         })();

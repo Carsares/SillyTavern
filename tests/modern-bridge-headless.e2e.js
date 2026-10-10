@@ -71,12 +71,6 @@ function chatHeader() {
     return { chat_metadata: {}, user_name: 'unused', character_name: 'unused' };
 }
 
-// Unrelated legacy UI quirk: in bridge mode the server-history/tag inputs keep the ui-autocomplete-input class
-// without a widget instance (autocomplete('widget') throws on a plain boot), so power-user.js's debounced
-// window-resize handler throws whenever cold-start layout changes resize the viewport.
-function isUnrelatedLegacyUiError(message) {
-    return String(message).includes('cannot call methods on autocomplete prior to initialization');
-}
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -109,6 +103,72 @@ async function routeStubbedChatCompletion(page, reply) {
     return generateRequests;
 }
 
+// Streams a chat-completion reply through a fetch the page controls: the chunks are delivered at once, then the
+// stream stays open until the request is aborted, the way a slow model looks when the user presses stop.
+async function routeOpenStreamingChatCompletion(page, chunks) {
+    await page.route('**/api/settings/get', async route => {
+        const response = await route.fetch();
+        const body = await response.json();
+        const settings = JSON.parse(body.settings || '{}');
+        settings.main_api = 'openai';
+        settings.oai_settings = { ...(settings.oai_settings || {}), chat_completion_source: 'deepseek', stream_openai: true, show_thoughts: true };
+        return route.fulfill({ response, json: { ...body, settings: JSON.stringify(settings) } });
+    });
+    await page.route('**/api/backends/**', route => fulfillJson(route, {}));
+    await page.addInitScript(streamChunks => {
+        const originalFetch = window.fetch;
+        window.fetch = function (input, init) {
+            const url = typeof input === 'string' ? input : input?.url || '';
+            if (!url.includes('/api/backends/chat-completions/generate')) {
+                return originalFetch.apply(this, arguments);
+            }
+            const signal = init?.signal;
+            const encoder = new TextEncoder();
+            const body = new ReadableStream({
+                start(controller) {
+                    for (const delta of streamChunks) {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`));
+                    }
+                    window.bridgeStreamOpened = true;
+                    signal?.addEventListener('abort', () => controller.error(new DOMException('The user aborted a request.', 'AbortError')));
+                },
+            });
+            return Promise.resolve(new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }));
+        };
+    }, chunks);
+}
+
+// Counts streamed tokens the engine has processed, so a test can stop a reply at a known point.
+function countStreamTokens(page) {
+    return page.evaluate(() => {
+        const context = window.SillyTavern.getContext();
+        window.bridgeStreamTokens = 0;
+        context.eventSource.on(context.eventTypes.STREAM_TOKEN_RECEIVED, () => {
+            window.bridgeStreamTokens++;
+        });
+    });
+}
+
+// Starts a bridge call without waiting for its reply; awaitBridgeReply() collects it later.
+function startBridgeCall(page, action, payload, id) {
+    return page.evaluate(({ source, bridgeAction, bridgePayload, requestId }) => {
+        window.bridgeReplies = window.bridgeReplies || {};
+        window.bridgeReplies[requestId] = new Promise(resolve => {
+            window.addEventListener('message', function onMessage(event) {
+                if (event.data && event.data.source === source && event.data.id === requestId && !('action' in event.data)) {
+                    window.removeEventListener('message', onMessage);
+                    resolve({ error: event.data.error, result: event.data.result });
+                }
+            });
+        });
+        window.postMessage({ source, id: requestId, action: bridgeAction, payload: bridgePayload }, location.origin);
+    }, { source: bridgeSource, bridgeAction: action, bridgePayload: payload, requestId: id });
+}
+
+function awaitBridgeReply(page, id) {
+    return page.evaluate(requestId => window.bridgeReplies[requestId], id);
+}
+
 function callBridge(page, action, payload, id) {
     return page.evaluate(({ source, bridgeAction, bridgePayload, requestId }) => new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`bridge ${bridgeAction} timeout`)), 60000);
@@ -121,6 +181,37 @@ function callBridge(page, action, payload, id) {
         });
         window.postMessage({ source, id: requestId, action: bridgeAction, payload: bridgePayload }, location.origin);
     }), { source: bridgeSource, bridgeAction: action, bridgePayload: payload, requestId: id });
+}
+
+// One character with a chat that holds its greeting (plus an optional reply), as the modern UI leaves it before a send.
+async function routeStopFixture(page, { reply = null } = {}) {
+    const character = createBridgeCharacter();
+    const chatId = 'Modern 2026-10-10T15-00-00-000Z';
+    const greeting = { name: character.name, is_user: false, is_system: false, send_date: '2026-10-10T15:00:00.000Z', mes: character.first_mes, extra: {} };
+    const chatSaves = [];
+    let savedCardChat = '';
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+
+    await page.route('**/api/characters/all', route => fulfillJson(route, [character]));
+    await page.route('**/api/characters/get', route => fulfillJson(route, savedCardChat ? { ...character, chat: savedCardChat } : character));
+    await page.route('**/api/characters/edit', route => {
+        savedCardChat = multipartFieldValue(route.request().postData() || '', 'chat');
+        return route.fulfill({ status: 200, contentType: 'text/plain', body: 'OK' });
+    });
+    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/chats/get', route => {
+        const fileName = stripJsonlExtension(postJson(route)?.file_name);
+        return fulfillJson(route, fileName === chatId ? [chatHeader(), greeting, ...(reply ? [reply] : [])] : []);
+    });
+    await page.route('**/api/chats/save', route => {
+        const payload = postJson(route);
+        if (payload && stripJsonlExtension(payload.file_name) === chatId) {
+            chatSaves.push(payload.chat);
+        }
+        return fulfillJson(route, { ok: true });
+    });
+    return { character, chatId, chatSaves, errors };
 }
 
 // The modern UI reuses the legacy generation engine through a hidden /index.html?modernBridge=1 iframe.
@@ -308,7 +399,7 @@ test.describe('Modern legacy bridge headless entry', () => {
         expect(chatSaves.filter(chatId => chatId !== modernChatId)).toEqual([]);
         // Same persistence as switching through openCharacterChat: the card now points at the modern chat
         expect(savedCardChat).toBe(modernChatId);
-        expect(errors.filter(message => !isUnrelatedLegacyUiError(message))).toEqual([]);
+        expect(errors).toEqual([]);
     });
 
     test('switches group chats on fresh metadata without saving the missing default group chat', async ({ page }) => {
@@ -378,7 +469,7 @@ test.describe('Modern legacy bridge headless entry', () => {
         // messageCount 0 proves the frame reopened the new, empty chat instead of keeping the previous chat in memory
         expect(second.result).toMatchObject({ groupId, chat: newChatId, messageCount: 0 });
         expect(groupChatSaves.filter(chatId => chatId !== firstChatId && chatId !== newChatId)).toEqual([]);
-        expect(errors.filter(message => !isUnrelatedLegacyUiError(message))).toEqual([]);
+        expect(errors).toEqual([]);
     });
 
     // A cold iframe reports settingsReady before its first character list arrives (groups load at the end of that
@@ -459,7 +550,7 @@ test.describe('Modern legacy bridge headless entry', () => {
         expect(savedMessages.filter(message => message.is_user).map(message => message.mes)).toEqual([userMessage]);
         expect(savedMessages.some(message => !message.is_user && message.mes === reply)).toBe(true);
         expect(groupChatSaves.filter(savedChatId => savedChatId !== chatId)).toEqual([]);
-        expect(errors.filter(message => !isUnrelatedLegacyUiError(message))).toEqual([]);
+        expect(errors).toEqual([]);
     });
 
     // A member the frame still cannot find after reloading the character list must stop the action: letting
@@ -556,6 +647,113 @@ test.describe('Modern legacy bridge headless entry', () => {
         expect(status.result).toMatchObject({ avatar: character.avatar, chat: chatId, messageCount: 1 });
         expect(characterListRequests).toBe(1);
         expect(chatSaves.filter(savedChatId => savedChatId !== chatId)).toEqual([]);
-        expect(errors.filter(message => !isUnrelatedLegacyUiError(message))).toEqual([]);
+        expect(errors).toEqual([]);
+    });
+    // UX-009: stopping a reply that has only reasoning so far used to save an assistant message with an empty `mes` and
+    // reported a finished generation. The stopped reply is dropped, the user message stays, and the result says it stopped.
+    test('drops a stopped reply that has no visible text yet and reports the stop', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const { character, chatId, chatSaves, errors } = await routeStopFixture(page);
+        await routeOpenStreamingChatCompletion(page, [{ reasoning_content: 'Thinking about the answer.' }]);
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'stop before any text' }, 'stop-empty-generate');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 1);
+        const stop = await callBridge(page, 'stop', {}, 'stop-empty-stop');
+        const generate = await awaitBridgeReply(page, 'stop-empty-generate');
+
+        expect(stop.error).toBeFalsy();
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ chat: chatId, saved: true, stopped: true, started: true, keptReplyChars: 0, removedEmptyReply: true });
+        const savedMessages = chatSaves.at(-1).filter(message => !message.chat_metadata);
+        expect(savedMessages.map(message => [message.is_user, message.mes])).toEqual([
+            [false, character.first_mes],
+            [true, 'stop before any text'],
+        ]);
+        expect(errors).toEqual([]);
+    });
+
+    test('keeps the partial text of a stopped reply', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const { character, chatId, chatSaves, errors } = await routeStopFixture(page);
+        await routeOpenStreamingChatCompletion(page, [{ reasoning_content: 'Planning.' }, { content: 'Partial answer' }]);
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'stop after some text' }, 'stop-partial-generate');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 2);
+        await callBridge(page, 'stop', {}, 'stop-partial-stop');
+        const generate = await awaitBridgeReply(page, 'stop-partial-generate');
+
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ saved: true, stopped: true, keptReplyChars: 'Partial answer'.length, removedEmptyReply: false });
+        const savedMessages = chatSaves.at(-1).filter(message => !message.chat_metadata);
+        expect(savedMessages.at(-1)).toMatchObject({ is_user: false, mes: 'Partial answer' });
+        expect(savedMessages.at(-2)).toMatchObject({ is_user: true, mes: 'stop after some text' });
+        expect(errors).toEqual([]);
+    });
+
+    // Swiping past the last candidate generates a new one; stopping it before any visible text drops that empty candidate
+    test('drops an empty candidate when a swipe generation is stopped', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const { character, chatId, chatSaves, errors } = await routeStopFixture(page, {
+            reply: { name: 'Bridge Fixture', is_user: false, is_system: false, send_date: '2026-10-10T15:00:01.000Z', mes: 'first candidate', swipe_id: 0, swipes: ['first candidate'], swipe_info: [{}], extra: {} },
+        });
+        await routeOpenStreamingChatCompletion(page, [{ reasoning_content: 'Reconsidering.' }]);
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, messageIndex: 1, direction: 'right' }, 'stop-swipe');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 1);
+        await callBridge(page, 'stop', {}, 'stop-swipe-stop');
+        const swipe = await awaitBridgeReply(page, 'stop-swipe');
+
+        expect(swipe.error).toBeFalsy();
+        expect(swipe.result).toMatchObject({ saved: true, stopped: true, removedEmptyReply: true, swipeId: 0, swipeCount: 1 });
+        expect(chatSaves.at(-1).filter(message => !message.chat_metadata).at(-1)).toMatchObject({ mes: 'first candidate', swipes: ['first candidate'] });
+        expect(errors).toEqual([]);
+    });
+
+    // UX-021: the bridge page is served at /index.html?modernBridge=1 under <base href="/">, so jQuery UI took the background
+    // tabs for remote tabs and loaded the page into a panel. Its scripts ran twice, the second jQuery broke `instanceof
+    // jQuery`, and every swipe that ended on the same candidate threw "S.easing[this.easing] is not a function" per frame.
+    test('swipes without reloading its own scripts, animation errors, or missing icons', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const { character, chatId, chatSaves, errors } = await routeStopFixture(page, {
+            reply: { name: 'Bridge Fixture', is_user: false, is_system: false, send_date: '2026-10-10T12:00:01.000Z', mes: 'only candidate', swipe_id: 0, swipes: ['only candidate'], swipe_info: [{}], extra: { api: 'modern' } },
+        });
+        const warnings = [];
+        const missingAssets = [];
+        page.on('console', message => {
+            if (message.type() === 'warning' && /animation|easing/i.test(message.text())) {
+                warnings.push(message.text());
+            }
+        });
+        page.on('response', response => {
+            if (response.status() === 404 && new URL(response.url()).pathname.startsWith('/img/')) {
+                missingAssets.push(new URL(response.url()).pathname);
+            }
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        // Left from the only candidate stays on it: the engine shakes the message and flashes the counter
+        const swipe = await callBridge(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, messageIndex: 1, direction: 'left' }, 'same-candidate-swipe');
+        // Intentional wait: the broken animation threw on every frame after the swipe returned
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(1000);
+
+        expect(swipe.error).toBeFalsy();
+        expect(swipe.result).toMatchObject({ chat: chatId, swipeId: 0, swipeCount: 1, saved: true });
+        expect(await page.evaluate(() => document.querySelectorAll('script[src*="jquery-3.5.1"]').length)).toBe(1);
+        expect(await page.evaluate(() => document.querySelectorAll('#bg_tabs > [role="tabpanel"]:not(#bg_global_tab):not(#bg_chat_tab)').length)).toBe(0);
+        expect(chatSaves.length).toBeGreaterThan(0);
+        expect(errors).toEqual([]);
+        expect(warnings).toEqual([]);
+        expect(missingAssets).toEqual([]);
     });
 });

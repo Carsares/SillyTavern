@@ -12,6 +12,8 @@ export function createChatContextLoaderActions({
     getSelectedChatEntity,
     isGroupChatMode,
     markChatRead = /** @type {(entity: any, chatId: string, messages: any[]) => void} */ (() => {}),
+    // Called whenever the selected chat context is shown, so the URL can follow the selection
+    onChatSelectionShown = /** @type {() => void} */ (() => {}),
     rememberLastUsedChat = /** @type {(contextKey: string, chatId: string) => void} */ (() => {}),
     sortChats,
     syncChatReadStateForList = /** @type {(contextKey: string, chats: any[]) => void} */ (() => {}),
@@ -190,6 +192,9 @@ export function createChatContextLoaderActions({
         }
 
         const normalizedChatId = getChatId({ file_id: chatId, file_name: chatId });
+        if (isContextCurrent()) {
+            onChatSelectionShown();
+        }
         // An explicit choice (clicking the chat, importing it) makes it the chat to reopen for this context,
         // independent of whether its messages load successfully
         if (rememberAsLastUsed && isContextCurrent()) {
@@ -285,6 +290,9 @@ export function createChatContextLoaderActions({
         const entity = getSelectedChatEntity();
         const contextKey = getChatContextKey(entity, groupMode);
         if (!entity || !contextKey) {
+            if (isCurrent()) {
+                onChatSelectionShown();
+            }
             return;
         }
 
@@ -298,6 +306,7 @@ export function createChatContextLoaderActions({
         }
 
         selectAvailableChat(chats, contextKey, preferUnread);
+        onChatSelectionShown();
 
         // Only the chat still selected when its messages land may be marked read; the user can
         // click another chat of the same entity while this load is in flight

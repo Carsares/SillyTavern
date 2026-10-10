@@ -31,6 +31,7 @@ import {
     extension_prompt_roles,
     deleteMessage,
     settingsReady,
+    isModernBridgeMode,
 } from '../script.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
@@ -513,8 +514,11 @@ function switchReducedMotion() {
     if (osReduced) {
         power_user.reduced_motion = true;
     }
-    jQuery.fx.off = power_user.reduced_motion;
-    const overrideDuration = power_user.reduced_motion ? 0 : ANIMATION_DURATION_DEFAULT;
+    // The hidden modern bridge iframe is never shown, and a display:none frame never finishes CSS animations: every
+    // swipe there waited out its animation timeouts and logged warnings. The bridge runs without motion; settings are untouched.
+    const reducedMotion = power_user.reduced_motion || isModernBridgeMode;
+    jQuery.fx.off = reducedMotion;
+    const overrideDuration = reducedMotion ? 0 : ANIMATION_DURATION_DEFAULT;
     setAnimationDuration(overrideDuration);
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
     $('#reduced_motion').prop('disabled', osReduced);
@@ -3124,6 +3128,10 @@ export function forceCharacterEditorTokenize() {
 jQuery(() => {
     const adjustAutocompleteDebounced = debounce(() => {
         $('.ui-autocomplete-input').each(function () {
+            // The class can outlive the widget instance (seen in the modern bridge iframe); calling a method then throws
+            if (!$(this).autocomplete('instance')) {
+                return;
+            }
             const isOpen = $(this).autocomplete('widget')[0].style.display !== 'none';
             if (isOpen) {
                 $(this).autocomplete('search');

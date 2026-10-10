@@ -1839,8 +1839,10 @@ test.describe('Modern action helpers', () => {
         await actions.continueModernReply();
         expect(bridgeActions).toEqual(['generate', 'stop']);
 
+        // A user stop is not a failure: once the original request settles the generation resolves and the chat is
+        // reloaded from the file instead of surfacing the abort as an error.
         rejectGeneration(new Error('生成已停止'));
-        await expect(generation).rejects.toThrow('生成已停止');
+        await expect(generation).resolves.toBeUndefined();
         expect(state.engine.generating).toBe(false);
         expect(state.engine.status).toBe('已停止');
     });

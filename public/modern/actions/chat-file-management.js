@@ -1,4 +1,5 @@
 import { stripJsonlExtension } from '../core/utils.js';
+import { syncChatSelectionToUrl } from '../core/chat-url-selection.js';
 
 function isConfirmedUnchangedChatFileError(error) {
     return error?.status === 400 || error?.status === 409;
@@ -124,6 +125,7 @@ export function createChatFileManagementActions({
         if (isContextCurrent()) {
             const chats = state.chatLists[contextKey] || [];
             state.selected.chat = chats.some(chat => getChatId(chat) === renamedChatId) ? renamedChatId : getChatId(chats[0]);
+            syncChatSelectionToUrl(state, entity, groupMode);
             if (state.selected.chat) {
                 await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
             }
@@ -224,6 +226,7 @@ export function createChatFileManagementActions({
         if (isContextCurrent()) {
             const chats = state.chatLists[contextKey] || [];
             state.selected.chat = getChatId(chats[0]);
+            syncChatSelectionToUrl(state, entity, groupMode);
             if (state.selected.chat) {
                 await loadChatMessages(entity, state.selected.chat, { groupMode, isContextCurrent });
             }

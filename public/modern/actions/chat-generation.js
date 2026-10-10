@@ -76,11 +76,11 @@ export function createChatGenerationActions({
         // 不在这里滚动：是否贴底跟随由 routes/chat-scroll.js 统一判断（用户上滑看历史时不拉回底部）。
     }
 
-    async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage }) {
+    async function syncGeneratedChat({ entity, groupMode, contextKey, chatId, nextChatId, detail, toastTitle, toastMessage, status = '就绪' }) {
         delete state.chatMessages[getChatCacheKey(contextKey, nextChatId)];
         delete state.chatMetadata[getChatCacheKey(contextKey, nextChatId)];
         state.engine.ready = true;
-        state.engine.status = '就绪';
+        state.engine.status = status;
 
         // The bridge updates the original chat even if the user has navigated elsewhere; only sync it into the still-matching UI context.
         if (!isGenerationContextCurrent(contextKey, chatId)) {
@@ -162,6 +162,41 @@ export function createChatGenerationActions({
         }
     }
 
+    // 「停止」后的反馈：说明保留了多少回复。没有可见正文的回复（只有推理或占位）由引擎移出聊天文件，不留空消息。
+    function describeStoppedReply(result) {
+        const keptReplyChars = Number(result?.keptReplyChars) || 0;
+        if (keptReplyChars > 0) {
+            return `已保留 ${formatNumber(keptReplyChars)} 字的部分回复。`;
+        }
+        if (result?.removedEmptyReply) {
+            return '回复还没有可见内容，没有保存空消息。';
+        }
+        if (result?.started === false) {
+            return '生成尚未开始，聊天文件没有变化。';
+        }
+        return '没有生成新的回复内容。';
+    }
+
+    // The engine did not report a result for a stopped request: the stop came before the request reached it (it still
+    // waited for an earlier save of the same chat), or the engine rejected the aborted request. Neither is a failure;
+    // reload what the chat file holds.
+    async function syncStoppedChat({ entity, groupMode, contextKey, chatId, started }) {
+        state.engine.status = '已停止';
+        state.engine.detail = `${chatId} · 已停止生成`;
+        delete state.chatMessages[getChatCacheKey(contextKey, chatId)];
+        if (!isGenerationContextCurrent(contextKey, chatId)) {
+            return;
+        }
+        await loadChatMessages(entity, chatId, {
+            force: true,
+            groupMode,
+            isContextCurrent: () => isGenerationContextCurrent(contextKey, chatId),
+        });
+        if (isGenerationContextCurrent(contextKey, chatId)) {
+            showToast('已停止生成', started ? '生成已中止，聊天已按文件内容刷新。' : '生成尚未开始，聊天文件没有变化。');
+        }
+    }
+
     async function runLegacyChatGeneration(type, {
         entity,
         chatId,
@@ -174,7 +209,7 @@ export function createChatGenerationActions({
         toastMessage,
     }) {
         if (state.engine.generating) {
-            return;
+            return null;
         }
 
         if (!contextKey || !chatId) {
@@ -191,11 +226,13 @@ export function createChatGenerationActions({
             }
         });
 
+        let bridgeCalled = false;
         try {
-            await runModernChatFileOperation(entity, chatId, async () => {
+            return await runModernChatFileOperation(entity, chatId, async () => {
                 if (stoppedGenerationTokens.has(token)) {
                     throw new Error('生成已停止');
                 }
+                bridgeCalled = true;
                 const result = await callLegacyBridge(BRIDGE_ACTIONS.GENERATE, {
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
@@ -210,18 +247,25 @@ export function createChatGenerationActions({
                     throw new Error('生成结果未能保存到聊天文件，请重试或刷新后再试。');
                 }
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
+                const stopped = result?.stopped === true;
                 await syncGeneratedChat({
                     entity,
                     groupMode,
                     contextKey,
                     chatId,
                     nextChatId,
-                    detail: `${nextChatId} · 已同步最新消息`,
-                    toastTitle,
-                    toastMessage,
+                    detail: stopped ? `${nextChatId} · 已停止生成` : `${nextChatId} · 已同步最新消息`,
+                    toastTitle: stopped ? '已停止生成' : toastTitle,
+                    toastMessage: stopped ? describeStoppedReply(result) : toastMessage,
+                    status: stopped ? '已停止' : '就绪',
                 });
+                return { stopped, started: result?.started !== false };
             }, { groupMode });
         } catch (error) {
+            if (stoppedGenerationTokens.has(token)) {
+                await syncStoppedChat({ entity, groupMode, contextKey, chatId, started: bridgeCalled });
+                return { stopped: true, started: bridgeCalled };
+            }
             failGeneration(token, error, error.message.includes('停止') ? '已停止' : '生成失败');
             throw error;
         } finally {
@@ -253,11 +297,13 @@ export function createChatGenerationActions({
 
         const token = beginGeneration('候选切换中', `${chatId} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`);
 
+        let bridgeCalled = false;
         try {
             await runModernChatFileOperation(entity, chatId, async () => {
                 if (stoppedGenerationTokens.has(token)) {
                     throw new Error('生成已停止');
                 }
+                bridgeCalled = true;
                 const result = await callLegacyBridge(BRIDGE_ACTIONS.SWIPE, {
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
@@ -270,18 +316,24 @@ export function createChatGenerationActions({
                 }
                 const nextChatId = stripJsonlExtension(result?.chat || chatId);
                 const swipeDetail = `当前候选 ${formatNumber((result?.swipeId || 0) + 1)}/${formatNumber(result?.swipeCount || 1)}`;
+                const stopped = result?.stopped === true;
                 await syncGeneratedChat({
                     entity,
                     groupMode,
                     contextKey,
                     chatId,
                     nextChatId,
-                    detail: `${nextChatId} · ${swipeDetail}`,
-                    toastTitle: '候选已切换',
-                    toastMessage: swipeDetail,
+                    detail: `${nextChatId} · ${stopped ? '已停止生成 · ' : ''}${swipeDetail}`,
+                    toastTitle: stopped ? '已停止生成' : '候选已切换',
+                    toastMessage: stopped ? `${describeStoppedReply(result)}${swipeDetail}。` : swipeDetail,
+                    status: stopped ? '已停止' : '就绪',
                 });
             }, { groupMode });
         } catch (error) {
+            if (stoppedGenerationTokens.has(token)) {
+                await syncStoppedChat({ entity, groupMode, contextKey, chatId, started: bridgeCalled });
+                return;
+            }
             failGeneration(token, error, error.message.includes('停止') ? '已停止' : '候选切换失败');
             throw error;
         } finally {
@@ -332,7 +384,7 @@ export function createChatGenerationActions({
         appendOptimisticUserMessage(cacheKey, draft);
 
         try {
-            await runLegacyChatGeneration('normal', {
+            const outcome = await runLegacyChatGeneration('normal', {
                 entity,
                 chatId,
                 groupMode,
@@ -342,6 +394,11 @@ export function createChatGenerationActions({
                 toastTitle: '消息已生成',
                 toastMessage: '生成引擎已完成回复并保存聊天文件。',
             });
+            // Stopped before the engine took the message: give the text back instead of dropping it
+            if (outcome?.stopped && !outcome.started && !state.chatDrafts[cacheKey]) {
+                state.chatDrafts[cacheKey] = draft;
+                render();
+            }
         } catch (error) {
             delete state.chatMessages[cacheKey];
             if (isGenerationContextCurrent(contextKey, chatId)) {
