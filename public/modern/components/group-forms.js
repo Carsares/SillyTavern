@@ -50,6 +50,9 @@ export function createGroupFormComponents(ctx) {
     function renderGroupFormContent(form, scope, isCreate) {
         const scopeAttribute = escapeHtml(scope);
         const selectedMembers = new Set(Array.isArray(form.members) ? form.members : []);
+        const errors = (isCreate ? state.groupCreating.errors : state.groupEditing.errors) || {};
+        const membersError = errors.members || '';
+        const membersErrorId = `group-${scopeAttribute}-members-error`;
         const memberOptions = state.characters.map(character => {
             const avatar = character.avatar || '';
             const title = character.name || character.data?.name || avatar;
@@ -126,14 +129,15 @@ export function createGroupFormComponents(ctx) {
                     <span>收藏群组</span>
                 </label>
             </div>
-            <section class="form-section">
+            <section class="form-section${membersError ? ' has-error' : ''}" data-group-members-section="${scopeAttribute}">
                 <div>
-                    <h3 class="form-section-title">成员</h3>
+                    <h3 class="form-section-title">成员<span class="required-marker">必填</span></h3>
                     <p class="panel-subtitle">勾选加入群组的角色；下方可调整发言顺序（用于"列表顺序"策略）并临时禁用成员。已选择 ${formatNumber(selectedMembers.size)} 个角色。</p>
                 </div>
-                <div class="checkbox-grid">
+                <div class="checkbox-grid" role="group" aria-label="群组成员" ${membersError ? `aria-invalid="true" aria-describedby="${membersErrorId}"` : ''}>
                     ${memberOptions}
                 </div>
+                ${membersError ? `<span class="field-error" id="${membersErrorId}" role="alert" data-group-members-error="${scopeAttribute}">${escapeHtml(membersError)}</span>` : ''}
                 ${orderedMembers.length ? `
                 <div class="group-member-order-section">
                     <h4 class="form-subsection-title">成员顺序与状态</h4>

@@ -73,3 +73,37 @@
 .character-draft-notice .character-form-status strong {
     margin-right: 6px;
 }
+
+/* 关联世界书已不存在：用警告色标出，悬浮说明给出处理方式。 */
+.character-meta-grid .kv-value.is-warning {
+    color: var(--warning);
+    font-weight: 680;
+}
+
+.character-meta-grid .kv-value.is-warning i {
+    margin-right: 2px;
+}
+
+/* 新建角色表单里的可选头像：提示文字和已选文件紧跟在输入框下方。 */
+.character-avatar-field {
+    display: grid;
+    gap: 6px;
+}
+
+.character-avatar-field .panel-subtitle {
+    margin: 0;
+}
+
+.character-avatar-selected {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* 角色/群组表单共用 .character-form：必填分区校验失败时描红边框，错误文字紧跟在选择区下方。 */
+.character-form .form-section.has-error {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}

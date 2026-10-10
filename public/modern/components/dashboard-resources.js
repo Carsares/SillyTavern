@@ -1,3 +1,6 @@
+import { formatCharacterCreator } from '../actions/character-data.js';
+import { getGroupChatCount } from '../core/utils.js';
+
 export function createDashboardResourceComponents(ctx) {
     const {
         state,
@@ -57,9 +60,10 @@ export function createDashboardResourceComponents(ctx) {
 
     function renderCharacterResourceRow(character) {
         const title = character.name || character.data?.name || character.avatar || '未命名角色';
+        const creator = formatCharacterCreator(character.data?.creator);
         const subtitle = [
             character.date_last_chat ? `最近 ${formatDate(character.date_last_chat)}` : '',
-            character.data?.creator ? `作者 ${character.data.creator}` : '',
+            creator ? `作者 ${creator}` : '',
             character.avatar || '',
         ].filter(Boolean).join(' · ');
 
@@ -78,7 +82,7 @@ export function createDashboardResourceComponents(ctx) {
     function renderGroupResourceRow(group) {
         return renderOverviewRow({
             title: group.name || group.id || '未命名群组',
-            subtitle: `${formatNumber(Array.isArray(group.members) ? group.members.length : 0)} 个成员 · ${formatNumber(Array.isArray(group.chats) ? group.chats.length : 0)} 个会话`,
+            subtitle: `${formatNumber(Array.isArray(group.members) ? group.members.length : 0)} 个成员 · ${formatNumber(getGroupChatCount(group))} 个会话`,
             badge: '群组',
             icon: 'fa-users',
             route: 'groups',

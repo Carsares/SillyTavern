@@ -1,3 +1,4 @@
+import { formatCharacterCreator, getCharacterWorldStatus, withDisplayCreator } from '../actions/character-data.js';
 import { createCharacterFormComponents } from './character-forms.js';
 
 export function createCharactersComponents(ctx) {
@@ -53,7 +54,7 @@ export function createCharactersComponents(ctx) {
                 </div>
                 ${state.characterCreating.active ? renderCharacterCreatePanel() : ''}
                 <div class="resource-list" data-character-list>
-                    ${characters.map(character => renderCharacterRow(character)).join('') || renderInlineEmpty('暂无匹配角色')}
+                    ${characters.map(character => renderCharacterRow(withDisplayCreator(character))).join('') || renderInlineEmpty('暂无匹配角色')}
                 </div>
             </section>
         `;
@@ -113,6 +114,7 @@ export function createCharactersComponents(ctx) {
         const draft = getCharacterEditDraft(character.avatar);
         const description = detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。';
         const canExpandDescription = description.length > 260;
+        const isLoadingDetail = state.characterDetailLoading === character.avatar;
 
         return `
         <div class="detail-hero character-detail-hero">
@@ -129,9 +131,15 @@ export function createCharactersComponents(ctx) {
                     <i class="fa-solid fa-comments"></i>
                     开始聊天
                 </button>
-                <button class="secondary-button" type="button" data-load-character-detail="${escapeHtml(character.avatar)}">
-                    <i class="fa-solid fa-database"></i>
-                    读取完整卡
+                <button
+                    class="secondary-button"
+                    type="button"
+                    data-load-character-detail="${escapeHtml(character.avatar)}"
+                    title="从角色卡文件重新读取全部字段（列表接口可能只返回部分字段）"
+                    ${isLoadingDetail ? 'disabled aria-busy="true"' : ''}
+                >
+                    <i class="fa-solid ${isLoadingDetail ? 'fa-circle-notch fa-spin' : 'fa-database'}"></i>
+                    ${isLoadingDetail ? '读取中…' : '读取完整卡'}
                 </button>
                 <button class="secondary-button" type="button" data-edit-character="${escapeHtml(character.avatar)}" ${isEditing ? 'disabled' : ''}>
                     <i class="fa-solid fa-pen"></i>
@@ -173,8 +181,8 @@ export function createCharactersComponents(ctx) {
             ${renderKeyValue('最近聊天', formatDate(detail.date_last_chat))}
             ${renderKeyValue('聊天占用', formatBytes(detail.chat_size))}
             ${renderKeyValue('卡片大小', formatBytes(detail.data_size))}
-            ${renderKeyValue('作者', detail.data?.creator || '未知')}
-            ${renderKeyValue('关联世界书', detail.data?.extensions?.world || '未关联')}
+            ${renderCharacterCreatorRow(detail.data?.creator)}
+            ${renderCharacterWorldRow(detail.data?.extensions?.world)}
         </div>
         <section class="detail-description">
             ${canExpandDescription ? '<input class="visually-hidden detail-description-toggle" id="character-description-toggle" type="checkbox" data-character-description-toggle>' : ''}
@@ -190,6 +198,43 @@ export function createCharactersComponents(ctx) {
             <p class="detail-text">${escapeHtml(description)}</p>
         </section>
     `;
+    }
+
+    // 与 renderKeyValue 结构一致，额外支持自定义悬浮说明和状态样式。
+    function renderCharacterMetaRow(key, value, { title = value, className = '', icon = '', attributes = '' } = {}) {
+        return `
+            <div class="kv-row" ${attributes}>
+                <span class="kv-key">${escapeHtml(key)}</span>
+                <span class="kv-value${className ? ` ${className}` : ''}" title="${escapeHtml(title)}">${icon ? `<i class="fa-solid ${icon}"></i> ` : ''}${escapeHtml(value)}</span>
+            </div>
+        `;
+    }
+
+    function renderCharacterCreatorRow(rawCreator) {
+        const creator = formatCharacterCreator(rawCreator);
+        const raw = String(rawCreator ?? '');
+        return renderCharacterMetaRow('作者', creator || '未知', {
+            title: creator && raw !== creator ? `${creator}（卡片原始值：${raw}）` : (creator || '卡片没有填写作者'),
+            className: creator ? '' : 'is-empty',
+            attributes: 'data-character-creator',
+        });
+    }
+
+    function renderCharacterWorldRow(world) {
+        const status = getCharacterWorldStatus(world, state);
+        if (status === 'none') {
+            return renderCharacterMetaRow('关联世界书', '未关联', { className: 'is-empty', attributes: 'data-character-world="none"' });
+        }
+        if (status === 'missing') {
+            return renderCharacterMetaRow('关联世界书', `${world}（未找到）`, {
+                title: `世界书目录里没有「${world}」，这个关联目前不会生效。可以导入同名世界书，或在编辑角色时重新选择。`,
+                className: 'is-warning',
+                icon: 'fa-triangle-exclamation',
+                attributes: 'data-character-world="missing"',
+            });
+        }
+
+        return renderCharacterMetaRow('关联世界书', world, { attributes: `data-character-world="${status}"` });
     }
 
     // 编辑区已收起但仍有未保存修改时，在角色详情顶部提示，并提供继续编辑与放弃两个出口。

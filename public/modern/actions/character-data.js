@@ -7,6 +7,77 @@ import {
     numberInput,
 } from '../core/utils.js';
 
+// 卡片里的标签可能带空串或纯空白项（导入的旧卡常见），展示和编辑时都只保留有内容的标签。
+export function cleanCharacterTags(tags) {
+    return Array.isArray(tags)
+        ? tags.map(tag => String(tag ?? '').trim()).filter(Boolean)
+        : [];
+}
+
+// 作者字段常见「A,,A,」这类脏数据：按逗号拆开、去空白、去空项并去重后再展示；只影响展示，不改卡片数据。
+export function formatCharacterCreator(creator) {
+    const names = String(creator ?? '')
+        .split(/[,，]/)
+        .map(name => name.trim())
+        .filter(Boolean);
+    return [...new Set(names)].join('、');
+}
+
+// 列表行只展示整理后的作者名：返回浅拷贝给渲染用，卡片原始数据保持不变。
+export function withDisplayCreator(character) {
+    const creator = character?.data?.creator;
+    if (!creator) {
+        return character;
+    }
+
+    const displayCreator = formatCharacterCreator(creator);
+    return displayCreator === creator ? character : { ...character, data: { ...character.data, creator: displayCreator } };
+}
+
+// 统计重新读取后新出现的字段数：顶层字段和 data 下的字段分别计入，用于「读取完整卡」的结果提示。
+export function countAddedCharacterFields(previous, next) {
+    const listFieldPaths = character => {
+        if (!character || typeof character !== 'object') {
+            return [];
+        }
+
+        const paths = Object.keys(character).filter(key => key !== 'data');
+        const data = character.data;
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            paths.push(...Object.keys(data).map(key => `data.${key}`));
+        }
+        return paths;
+    };
+
+    const previousPaths = new Set(listFieldPaths(previous));
+    return listFieldPaths(next).filter(fieldPath => !previousPaths.has(fieldPath)).length;
+}
+
+/**
+ * 角色卡里记录的关联世界书只是文件名，文件可能已被删除或改名。
+ * 世界书列表读取失败且没有其他名单可对照时返回 'unknown'，避免误报「未找到」。
+ * @param {unknown} worldName 角色卡 data.extensions.world
+ * @param {{ worldbooks?: any[], settingsBundle?: { world_names?: string[] }, errors?: { key?: string }[] }} [sources] 当前已读取的世界书名单
+ * @returns {'none' | 'found' | 'missing' | 'unknown'} 关联状态
+ */
+export function getCharacterWorldStatus(worldName, { worldbooks = [], settingsBundle = {}, errors = [] } = {}) {
+    const name = String(worldName ?? '').trim();
+    if (!name) {
+        return 'none';
+    }
+
+    const knownNames = new Set([
+        ...(Array.isArray(worldbooks) ? worldbooks : []).map(worldbook => worldbook?.file_id || worldbook?.name),
+        ...(Array.isArray(settingsBundle?.world_names) ? settingsBundle.world_names : []),
+    ].filter(Boolean));
+    if (knownNames.has(name)) {
+        return 'found';
+    }
+
+    const worldListFailed = (Array.isArray(errors) ? errors : []).some(error => error?.key === 'worldbooks');
+    return worldListFailed && !knownNames.size ? 'unknown' : 'missing';
+}
+
 export function createCharacterDataHelpers() {
     function defaultCharacterForm() {
         return { ...characterFormDefaults };
@@ -18,7 +89,7 @@ export function createCharacterDataHelpers() {
 
     function getCharacterTags(character) {
         const dataTags = getCharacterData(character).tags;
-        return Array.isArray(dataTags) ? dataTags : Array.isArray(character?.tags) ? character.tags : [];
+        return cleanCharacterTags(Array.isArray(dataTags) ? dataTags : character?.tags);
     }
 
     function characterToForm(character) {
@@ -90,6 +161,24 @@ export function createCharacterDataHelpers() {
         };
     }
 
+    // 带头像创建时改走 multipart（与旧版创建请求一致）：标签按逗号拼回、备用开场白逐条追加，
+    // 发言概率另放进 extensions，保证卡片 V2 字段和 JSON 创建时一样是数字。
+    function characterCreateFormData(payload, avatarFile) {
+        const formData = new FormData();
+        for (const [key, value] of Object.entries(payload)) {
+            if (key === 'tags') {
+                formData.set('tags', value.join(','));
+            } else if (key === 'alternate_greetings') {
+                value.forEach(greeting => formData.append('alternate_greetings', greeting));
+            } else {
+                formData.set(key, String(value ?? ''));
+            }
+        }
+        formData.set('extensions', JSON.stringify({ talkativeness: payload.talkativeness }));
+        formData.set('avatar', avatarFile, avatarFile.name || 'avatar.png');
+        return formData;
+    }
+
     function characterMergePayload(avatar, form) {
         const tags = entryInputToArray(form.tags);
         const talkativeness = numberInput(form.talkativeness, 0.5);
@@ -137,6 +226,7 @@ export function createCharacterDataHelpers() {
     }
 
     return {
+        characterCreateFormData,
         characterCreatePayload,
         characterMergePayload,
         characterToForm,

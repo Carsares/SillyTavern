@@ -1,5 +1,12 @@
 import { formatNumber, isValidGroupAvatarUrl, numberInput } from '../core/utils.js';
 
+const groupMembersRequiredMessage = '请至少选择一个角色成员。';
+
+// 与聊天页新建会话（createModernChatId）使用同一命名格式，新群组的首个会话在列表里和后续会话一致。
+function createInitialGroupChatId() {
+    return `Modern ${new Date().toISOString().replace(/[:.]/g, '-')}`;
+}
+
 export function createGroupActions({
     state,
     apiFetch,
@@ -48,6 +55,7 @@ export function createGroupActions({
         delete persistentPrevious.create_date;
         delete persistentPrevious.date_last_chat;
         delete persistentPrevious.chat_size;
+        delete persistentPrevious.chat_count;
         return {
             ...persistentPrevious,
             name: form.name.trim() || `群组 ${formatNumber(state.groups.length + 1)}`,
@@ -91,8 +99,23 @@ export function createGroupActions({
         });
     }
 
+    function getGroupFormState(scope) {
+        return scope === 'create' ? state.groupCreating : state.groupEditing;
+    }
+
+    // 与角色表单一致：在成员选择区下方显示错误，同时弹出提示并把焦点移到第一个成员复选框。
+    function showGroupFormError(scope, field, message, title) {
+        const formState = getGroupFormState(scope);
+        formState.errors = { ...(formState.errors || {}), [field]: message };
+        showToast(title, message);
+        render();
+        window.setTimeout(() => {
+            /** @type {HTMLElement | null} */ (document.querySelector(`[data-group-member][data-group-scope="${scope}"], [data-group-focus="${scope}-${field}"]`))?.focus();
+        }, 0);
+    }
+
     function beginGroupCreate() {
-        state.groupCreating = { active: true, form: defaultGroupForm() };
+        state.groupCreating = { active: true, form: defaultGroupForm(), errors: {} };
         state.groupEditing = { id: '', form: {} };
         state.groupDeleteConfirm = { id: '', name: '' };
         render();
@@ -106,10 +129,27 @@ export function createGroupActions({
     async function saveGroupCreate() {
         const payload = groupFormToPayload(state.groupCreating.form || defaultGroupForm());
         if (!payload.members.length) {
-            throw new Error('群组至少需要一个角色成员。');
+            showGroupFormError('create', 'members', groupMembersRequiredMessage, '群组创建失败');
+            return;
         }
 
-        const group = await apiFetch('/api/groups/create', { body: payload });
+        // 先写出首个会话文件，再把它登记进群组：群组登记的会话都有对应文件，首次打开聊天直接进入这个会话，
+        // 不会再另建一个会话而留下一个没有文件的登记。
+        const chatId = createInitialGroupChatId();
+        await apiFetch('/api/chats/group/save', {
+            body: {
+                id: chatId,
+                chat: [{ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }],
+            },
+        });
+        let group;
+        try {
+            group = await apiFetch('/api/groups/create', { body: { ...payload, chat_id: chatId, chats: [chatId] } });
+        } catch (error) {
+            // 群组没建成时删掉刚写出的空会话文件；清理失败只会留下一个未登记的空文件，不影响重试。
+            await apiFetch('/api/chats/group/delete', { body: { id: chatId } }).catch(() => {});
+            throw error;
+        }
         state.groupCreating = { active: false, form: {} };
         state.selected.group = group?.id || '';
         state.chatMode = 'group';
@@ -126,7 +166,7 @@ export function createGroupActions({
             return;
         }
 
-        state.groupEditing = { id: groupId, form: groupToForm(group) };
+        state.groupEditing = { id: groupId, form: groupToForm(group), errors: {} };
         state.groupCreating = { active: false, form: {} };
         state.groupDeleteConfirm = { id: '', name: '' };
         render();
@@ -145,7 +185,8 @@ export function createGroupActions({
             throw new Error('编辑目标已变化，请重新选择群组。');
         }
         if (!Array.isArray(form.members) || !form.members.length) {
-            throw new Error('群组至少需要一个角色成员。');
+            showGroupFormError('edit', 'members', groupMembersRequiredMessage, '群组保存失败');
+            return;
         }
 
         const formSnapshot = structuredClone(form);
@@ -183,6 +224,8 @@ export function createGroupActions({
         if (!id || state.selected.group !== id) {
             throw new Error('删除目标已变化，请重新选择群组。');
         }
+        // 提示里用群组名称，不显示内部 ID。
+        const groupName = deleteConfirm.name || state.groups.find(group => group.id === id)?.name || id;
 
         await deleteGroupMetadata(id);
         state.groups = state.groups.filter(group => group.id !== id);
@@ -214,7 +257,7 @@ export function createGroupActions({
             render();
             return;
         }
-        showToast('群组已删除', id);
+        showToast('群组已删除', groupName);
         render();
     }
 
@@ -236,6 +279,10 @@ export function createGroupActions({
             form.disabled_members = (Array.isArray(form.disabled_members) ? form.disabled_members : []).filter(member => member !== avatar);
         }
         form.members = [...members];
+        const formState = getGroupFormState(scope);
+        if (form.members.length && formState.errors?.members) {
+            delete formState.errors.members;
+        }
         render();
     }
 

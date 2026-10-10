@@ -495,8 +495,8 @@ textarea[aria-invalid="true"]:focus {
     text-align: center;
 }
 
-.empty-state i,
-.loading-state i {
+.empty-state :not(button) > i,
+.loading-state :not(button) > i {
     display: block;
     margin-bottom: 12px;
     color: var(--text-muted);

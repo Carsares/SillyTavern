@@ -2,6 +2,8 @@ import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 // 旧版界面给没有绑定名称的人设写入的占位名，现代界面按「未命名」展示。
 const legacyUnnamedPersonaName = '[Unnamed Persona]';
+// 与旧版 createDummyPersona 一致：不上传头像时使用内置的默认用户头像。
+const defaultPersonaAvatarUrl = '/img/user-default.png';
 
 function isUnnamedPersonaName(name) {
     return !String(name || '').trim() || name === legacyUnnamedPersonaName;
@@ -94,17 +96,25 @@ export function createPersonaActions({
         return result?.path || overwriteName;
     }
 
+    async function getDefaultPersonaAvatarFile() {
+        const response = await fetch(defaultPersonaAvatarUrl, { credentials: 'same-origin' });
+        if (!response.ok) {
+            throw new Error(`默认头像读取失败（HTTP ${response.status}），请选择一张头像图片后重试。`);
+        }
+
+        const blob = await response.blob();
+        return new File([blob], 'avatar.png', { type: blob.type || 'image/png' });
+    }
+
     async function savePersonaCreate() {
         const { form, file } = state.personaCreating;
         const name = form.name.trim();
         if (!name) {
             throw new Error('人设名称不能为空。');
         }
-        if (!file) {
-            throw new Error('请先选择头像图片。');
-        }
 
-        const avatarId = await uploadPersonaAvatarFile(file);
+        // 头像可选：没选图片时上传默认头像，之后可以随时「替换头像」。
+        const avatarId = await uploadPersonaAvatarFile(file || await getDefaultPersonaAvatarFile());
         const powerUser = getPowerUserSettingsForWrite();
         powerUser.personas[avatarId] = name;
         powerUser.persona_descriptions[avatarId] = {

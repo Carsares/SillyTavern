@@ -59,6 +59,35 @@ function createCharacterWithDescription(description) {
     };
 }
 
+function createDisplayCharacter({ avatar, name, creator, tags = [], world = '', extra = {} }) {
+    return {
+        avatar,
+        name,
+        description: `${name} visible description.`,
+        data: {
+            name,
+            description: `${name} visible description.`,
+            personality: '',
+            scenario: '',
+            first_mes: `Hello from ${name}.`,
+            creator,
+            tags,
+            extensions: {
+                world,
+                talkativeness: 0.5,
+                fav: false,
+                depth_prompt: { prompt: '', depth: 4, role: 'system' },
+            },
+        },
+        ...extra,
+    };
+}
+
+function multipartField(bodyText, fieldName) {
+    const match = new RegExp(`name="${fieldName}"\\r?\\n\\r?\\n([^\\r\\n]*)`).exec(bodyText);
+    return match?.[1] ?? null;
+}
+
 test.describe('Modern character resources', () => {
     test('shows field errors for missing character names without marking data load failed', async ({ page }) => {
         const fixture = createModernResourceFixture();
@@ -481,5 +510,181 @@ test.describe('Modern character resources', () => {
         await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'chat');
         await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
         await expect.poll(() => chatListRequests.some(payload => payload?.avatar_url === 'bruno.png')).toBe(true);
+    });
+    test('cleans tags and authors and flags a missing worldbook without changing the card', async ({ page }) => {
+        const amon = createDisplayCharacter({
+            avatar: 'amon.png',
+            name: 'Amon',
+            creator: 'yuukikun,,yuukikun,',
+            tags: ['Lord of Mysteries', 'Angel', ' ', ''],
+            world: 'Beyonder World',
+        });
+        const fixture = createModernResourceFixture({
+            characters: [
+                amon,
+                createDisplayCharacter({ avatar: 'hedona.png', name: 'Hedona', creator: 'Hedonã,' }),
+                createDisplayCharacter({ avatar: 'commas.png', name: 'Commas Only', creator: ',,,' }),
+                createDisplayCharacter({ avatar: 'otis.png', name: 'Otis', creator: 'OtisAlejandro,OtisAlejandro,OtisAlejandro,OtisAlejandro', world: 'ModernLore' }),
+            ],
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-select-character="amon.png"]').click();
+
+        await expect(page.locator('.detail-title')).toHaveText('Amon');
+        await expect(page.locator('.detail-tags .tag')).toHaveText(['Lord of Mysteries', 'Angel']);
+
+        const creator = page.locator('[data-character-creator] .kv-value');
+        await expect(creator).toHaveText('yuukikun');
+        await expect(creator).toHaveAttribute('title', 'yuukikun（卡片原始值：yuukikun,,yuukikun,）');
+
+        const world = page.locator('[data-character-world="missing"] .kv-value');
+        await expect(world).toHaveText('Beyonder World（未找到）');
+        await expect(world).toHaveClass(/is-warning/);
+        await expect(world).toHaveAttribute('title', /世界书目录里没有「Beyonder World」/);
+
+        await expect(page.locator('[data-select-character="hedona.png"] .row-subtitle')).toHaveText('作者 Hedonã');
+        await expect(page.locator('[data-select-character="commas.png"] .row-subtitle')).not.toContainText('作者');
+        await expect(page.locator('[data-select-character="otis.png"] .row-subtitle')).toHaveText('作者 OtisAlejandro');
+        await expect(page.locator('[data-select-character="amon.png"] .row-subtitle')).toHaveText('作者 yuukikun');
+
+        await page.locator('[data-select-character="commas.png"]').click();
+        await expect(page.locator('[data-character-creator] .kv-value')).toHaveText('未知');
+        await expect(page.locator('[data-character-world="none"] .kv-value')).toHaveText('未关联');
+
+        await page.locator('[data-select-character="otis.png"]').click();
+        await expect(page.locator('[data-character-creator] .kv-value')).toHaveText('OtisAlejandro');
+        await expect(page.locator('[data-character-world="found"] .kv-value')).toHaveText('ModernLore');
+
+        await page.locator('[data-select-character="amon.png"]').click();
+        await page.locator('[data-edit-character="amon.png"]').click();
+        await expect(page.locator('[data-character-field="world"][data-character-scope="edit"] option:checked')).toHaveText('Beyonder World（未找到）');
+        await expect(page.locator('[data-character-field="tags"][data-character-scope="edit"]')).toHaveValue('Lord of Mysteries, Angel');
+
+        // 只整理展示，不写回卡片。
+        expect(fixture.requests.characterMerge).toHaveLength(0);
+        expect(fixture.characters.find(character => character.avatar === 'amon.png').data.creator).toBe('yuukikun,,yuukikun,');
+    });
+
+    test('shows progress and the result when reading the full character card', async ({ page }) => {
+        const shallow = {
+            shallow: true,
+            avatar: 'shallow.png',
+            name: 'Shallow Character',
+            data: { name: 'Shallow Character', creator: 'Modern E2E', tags: ['shallow'], extensions: { world: '', fav: false } },
+        };
+        const full = createDisplayCharacter({ avatar: 'shallow.png', name: 'Shallow Character', creator: 'Modern E2E', tags: ['shallow'] });
+        const fixture = createModernResourceFixture({ characters: [shallow], characterDetails: { 'shallow.png': full } });
+        await mockModernWorkspace(page, fixture);
+        let releaseDetail;
+        const detailGate = new Promise(resolve => {
+            releaseDetail = resolve;
+        });
+        await page.route('**/api/characters/get', async route => {
+            await detailGate;
+            return route.fallback();
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+
+        const loadButton = page.locator('[data-load-character-detail="shallow.png"]');
+        await expect(loadButton).toHaveAttribute('title', /重新读取全部字段/);
+        await loadButton.click();
+        await expect(loadButton).toBeDisabled();
+        await expect(loadButton).toHaveAttribute('aria-busy', 'true');
+        await expect(loadButton).toHaveText('读取中…');
+
+        releaseDetail();
+        const resultToast = page.locator('.toast', { hasText: '已读取完整卡' });
+        await expect(resultToast).toContainText(/新增 \d+ 个字段/);
+        await expect(loadButton).toBeEnabled();
+        await expect(loadButton).toHaveText('读取完整卡');
+        await expect(page.locator('.detail-text')).toContainText('Shallow Character visible description.');
+
+        await loadButton.click();
+        await expect(page.locator('.toast', { hasText: '已是完整数据' })).toBeVisible();
+    });
+
+    test('explains why a character file could not be imported', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        const responses = [
+            { status: 200, body: { error: true, reason: 'no_card_data' } },
+            { status: 200, body: { error: true } },
+            { status: 400, body: 'Bad Request' },
+        ];
+        await page.route('**/api/characters/import', route => {
+            const response = responses.shift();
+            return route.fulfill({
+                status: response.status,
+                contentType: typeof response.body === 'string' ? 'text/plain' : 'application/json',
+                body: typeof response.body === 'string' ? response.body : JSON.stringify(response.body),
+            });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        const importInput = page.locator('[data-character-import-file]');
+
+        await importInput.setInputFiles({ name: 'plain-photo.png', mimeType: 'image/png', buffer: Buffer.from('plain image bytes') });
+        await expect(page.locator('.toast', { hasText: '角色导入失败' }).filter({ hasText: 'plain-photo.png：这个 PNG 里没有角色卡数据' })).toBeVisible();
+
+        await importInput.setInputFiles({ name: 'legacy-error.png', mimeType: 'image/png', buffer: Buffer.from('legacy error bytes') });
+        await expect(page.locator('.toast', { hasText: 'legacy-error.png：这个 PNG 可能没有角色卡数据，或文件已损坏。' })).toBeVisible();
+
+        await importInput.setInputFiles({ name: 'unknown-shape.json', mimeType: 'application/json', buffer: Buffer.from('{"hello":"world"}') });
+        await expect(page.locator('.toast', { hasText: 'unknown-shape.json：文件里没有可识别的角色卡内容' })).toBeVisible();
+
+        await expect(page.locator('.toast', { hasText: '角色卡导入失败。' })).toHaveCount(0);
+        await expect(page.locator('[data-select-character="alice.png"]')).toBeVisible();
+    });
+
+    test('uploads an optional avatar together with a new character', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        const createRequests = [];
+        await page.route('**/api/characters/create', route => {
+            const request = route.request();
+            const bodyText = request.postData() || '';
+            createRequests.push({ bodyText, contentType: request.headers()['content-type'] || '' });
+            const avatar = 'avatar-character.png';
+            const character = createDisplayCharacter({ avatar, name: multipartField(bodyText, 'ch_name'), creator: multipartField(bodyText, 'creator') });
+            fixture.characters.push(character);
+            fixture.characterDetails[avatar] = character;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(avatar) });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-create-character]').click();
+
+        const avatarField = page.locator('[data-character-create-avatar-field]');
+        await expect(avatarField).toContainText('头像图片（可选）');
+        await expect(avatarField).toContainText('不选择时使用默认头像');
+        await page.locator('[data-character-field="name"][data-character-scope="create"]').fill('Avatar Character');
+        await page.locator('[data-character-field="creator"][data-character-scope="create"]').fill('Modern E2E');
+        await page.locator('[data-character-field="tags"][data-character-scope="create"]').fill('modern, avatar');
+        await page.locator('[data-character-field="alternate_greetings"][data-character-scope="create"]').fill('First alternate\n---\nSecond alternate');
+
+        await page.locator('[data-character-create-avatar]').setInputFiles({ name: 'discarded.png', mimeType: 'image/png', buffer: Buffer.from('discarded avatar') });
+        await expect(page.locator('[data-character-create-avatar-selected]')).toContainText('已选择：discarded.png');
+        await page.locator('[data-clear-character-create-avatar]').click();
+        await expect(page.locator('[data-character-create-avatar-selected]')).toHaveCount(0);
+
+        await page.locator('[data-character-create-avatar]').setInputFiles({ name: 'new-avatar.png', mimeType: 'image/png', buffer: Buffer.from('new character avatar') });
+        await expect(page.locator('[data-character-create-avatar-selected]')).toContainText('已选择：new-avatar.png');
+        await expect(page.locator('[data-character-field="name"][data-character-scope="create"]')).toHaveValue('Avatar Character');
+        await page.locator('[data-save-character-create]').click();
+
+        await expect(page.locator('.detail-title')).toHaveText('Avatar Character');
+        expect(createRequests).toHaveLength(1);
+        const [{ bodyText, contentType }] = createRequests;
+        expect(contentType).toContain('multipart/form-data');
+        expect(bodyText).toContain('name="avatar"; filename="new-avatar.png"');
+        expect(multipartField(bodyText, 'ch_name')).toBe('Avatar Character');
+        expect(multipartField(bodyText, 'tags')).toBe('modern,avatar');
+        expect(multipartField(bodyText, 'fav')).toBe('false');
+        expect(JSON.parse(multipartField(bodyText, 'extensions'))).toEqual({ talkativeness: 0.5 });
+        expect(bodyText.match(/name="alternate_greetings"/g)).toHaveLength(2);
+        expect(fixture.requests.characterCreate).toHaveLength(0);
     });
 });

@@ -1,3 +1,5 @@
+import { countAddedCharacterFields } from '../actions/character-data.js';
+
 export function createCharactersEvents(ctx) {
     const {
         state,
@@ -49,8 +51,12 @@ export function createCharactersEvents(ctx) {
 
         const loadCharacterButton = event.target.closest('[data-load-character-detail]');
         if (loadCharacterButton) {
-            await loadCharacterDetail(loadCharacterButton.dataset.loadCharacterDetail, { force: true });
-            render();
+            await reloadCharacterDetail(loadCharacterButton.dataset.loadCharacterDetail);
+            return;
+        }
+
+        if (event.target.closest('[data-clear-character-create-avatar]')) {
+            setCharacterCreateAvatar(null);
             return;
         }
 
@@ -165,6 +171,47 @@ export function createCharactersEvents(ctx) {
         return false;
     }
 
+    // 「读取完整卡」：按钮进入读取中状态，完成后用提示告诉用户补到了多少字段。
+    async function reloadCharacterDetail(avatar) {
+        if (!avatar || state.characterDetailLoading === avatar) {
+            return;
+        }
+
+        const previous = state.characterDetails[avatar] || getCharacterByAvatar(avatar);
+        state.characterDetailLoading = avatar;
+        render();
+        try {
+            // 读取失败时 loadCharacterDetail 自己会提示「角色卡读取失败」并返回 null。
+            const detail = await loadCharacterDetail(avatar, { force: true });
+            if (detail) {
+                const addedCount = countAddedCharacterFields(previous, detail);
+                if (addedCount > 0) {
+                    showToast('已读取完整卡', `新增 ${addedCount} 个字段`);
+                } else {
+                    showToast('已是完整数据', '已从角色卡文件重新读取，没有新的字段。');
+                }
+            }
+        } finally {
+            if (state.characterDetailLoading === avatar) {
+                state.characterDetailLoading = '';
+            }
+            render();
+        }
+    }
+
+    // 新建表单里选择或移除头像：文件只暂存在表单状态里，创建角色时一并上传。
+    function setCharacterCreateAvatar(file) {
+        if (!state.characterCreating.active) {
+            return;
+        }
+
+        state.characterCreating.avatarFile = file || null;
+        if (state.characterCreating.errors?.avatar) {
+            delete state.characterCreating.errors.avatar;
+        }
+        render();
+    }
+
     function handleCharactersInput(event) {
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-rename-input]')) {
             state.characterRenaming.name = event.target.value;
@@ -187,6 +234,15 @@ export function createCharactersEvents(ctx) {
                 render();
             } finally {
                 event.target.value = '';
+            }
+            return;
+        }
+
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-character-create-avatar]')) {
+            // 取消选择对话框不清掉已选头像，移除走「移除」按钮。
+            const file = event.target.files?.[0];
+            if (file) {
+                setCharacterCreateAvatar(file);
             }
             return;
         }

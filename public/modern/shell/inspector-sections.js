@@ -1,7 +1,16 @@
+import { formatCharacterCreator } from '../actions/character-data.js';
 import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { routeLabels } from '../core/constants.js';
 import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
 import { createInspectorAssetSection } from './inspector-asset-section.js';
+
+// 与世界书条目列表的排序下拉选项一致。
+const worldEntrySortLabels = {
+    order: '按插入顺序',
+    comment: '按注释',
+    key: '按关键词',
+    status: '按启用状态',
+};
 
 export function createInspectorSections({
     state,
@@ -146,7 +155,7 @@ export function createInspectorSections({
             ['条目数量', `${formatNumber(entries.length)} 条`],
             ['启用条目', `${formatNumber(enabledCount)} 条`],
             ['选中条目', `${formatNumber(selectedCount)} 条`],
-            ['列表排序', state.worldEntryList.sort],
+            ['列表排序', worldEntrySortLabels[state.worldEntryList.sort] || state.worldEntryList.sort],
             ['当前页', formatNumber(state.worldEntryList.page)],
         ]);
     }
@@ -188,7 +197,7 @@ export function createInspectorSections({
         return renderSection('角色状态', [
             ['当前角色', name],
             ['角色文件', detail.avatar || selectedCharacter?.avatar || '未选中'],
-            ['作者', detail.data?.creator || '未知'],
+            ['作者', formatCharacterCreator(detail.data?.creator) || '未知'],
             ['标签数量', `${formatNumber(tags.length)} 个`],
             ['聊天占用', formatBytes(detail.chat_size)],
             ['编辑状态', state.characterEditing.avatar ? `编辑 ${state.characterEditing.avatar}` : '未编辑'],

@@ -131,6 +131,8 @@ export function createModernState() {
             deleteChats: false,
         },
         avatarCacheBust: {},
+        // 正在执行「读取完整卡」的角色头像文件名，用于按钮的读取中状态。
+        characterDetailLoading: '',
         groupCreating: {
             active: false,
             form: {},

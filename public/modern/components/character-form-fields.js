@@ -1,3 +1,5 @@
+import { getCharacterWorldStatus } from '../actions/character-data.js';
+
 export function createCharacterFormFieldComponents({
     state,
     escapeHtml,
@@ -20,6 +22,7 @@ export function createCharacterFormFieldComponents({
                 ${renderCharacterDepthRoleSelect(form, scopeAttribute)}
                 ${renderCharacterCheckbox('favorite', '收藏角色', form.favorite, scopeAttribute)}
             </div>
+            ${scope === 'create' ? renderCharacterCreateAvatarInput(errors) : ''}
             ${renderCharacterTextarea('description', '描述', form.description, scopeAttribute)}
             ${renderCharacterTextarea('personality', '性格', form.personality, scopeAttribute)}
             ${renderCharacterTextarea('scenario', '场景', form.scenario, scopeAttribute)}
@@ -111,6 +114,43 @@ export function createCharacterFormFieldComponents({
     `;
     }
 
+    // 新建角色时可直接带上头像；文件对象保存在 state 里，重绘后输入框会清空，所以单独显示已选文件和「移除」。
+    function renderCharacterCreateAvatarInput(errors = {}) {
+        const file = state.characterCreating.avatarFile;
+        const error = errors.avatar || '';
+        const hintId = 'character-create-avatar-hint';
+        const errorId = 'character-create-avatar-error';
+        const describedBy = error ? `${hintId} ${errorId}` : hintId;
+        return `
+        <div class="character-avatar-field" data-character-create-avatar-field>
+            <label class="field-label">
+                <span>头像图片（可选）</span>
+                <input
+                    class="text-input"
+                    type="file"
+                    accept="image/*"
+                    data-character-create-avatar
+                    data-character-focus="create-avatar"
+                    aria-describedby="${describedBy}"
+                    ${error ? 'aria-invalid="true"' : ''}
+                >
+            </label>
+            <p class="panel-subtitle" id="${hintId}">不选择时使用默认头像；创建后也可以在角色详情里「替换头像」。</p>
+            ${file ? `
+                <div class="character-avatar-selected" data-character-create-avatar-selected>
+                    <i class="fa-solid fa-image"></i>
+                    <span>已选择：${escapeHtml(file.name || '头像图片')}</span>
+                    <button class="secondary-button compact-button" type="button" data-clear-character-create-avatar>
+                        <i class="fa-solid fa-xmark"></i>
+                        移除
+                    </button>
+                </div>
+            ` : ''}
+            ${error ? `<span class="field-error" id="${errorId}">${escapeHtml(error)}</span>` : ''}
+        </div>
+    `;
+    }
+
     function renderCharacterNumberInput(field, label, value, scope, min, max, step) {
         return `
         <label class="field-label">
@@ -165,13 +205,18 @@ export function createCharacterFormFieldComponents({
             ...(state.worldbooks || []).map(worldbook => worldbook.file_id || worldbook.name),
             ...(state.settingsBundle.world_names || []),
         ]);
+        // 卡片里记录的世界书已不存在时仍保留选项，但标注「未找到」，提醒重新选择。
+        const worldOptions = worldNames.map(name => {
+            const label = getCharacterWorldStatus(name, state) === 'missing' ? `${name}（未找到）` : name;
+            return `<option value="${escapeHtml(name)}" ${form.world === name ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('');
 
         return `
         <label class="field-label">
             <span>关联世界书</span>
             <select class="select-input" data-character-field="world" data-character-scope="${scope}">
                 <option value="">不关联</option>
-                ${worldNames.map(name => `<option value="${escapeHtml(name)}" ${form.world === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+                ${worldOptions}
             </select>
         </label>
     `;

@@ -1,3 +1,5 @@
+import { withDisplayCreator } from '../actions/character-data.js';
+import { getGroupChatCount } from '../core/utils.js';
 import { createGroupFormComponents } from './group-forms.js';
 
 export function createGroupsComponents(ctx) {
@@ -58,6 +60,7 @@ export function createGroupsComponents(ctx) {
     `;
     }
 
+    // 按钮图标用 span 承载：.empty-state i 是给上方大图标的样式，会把按钮里的 <i> 变成灰色大图标并单独占一行。
     function renderGroupEmptyState() {
         return `
         <div class="empty-state">
@@ -66,7 +69,7 @@ export function createGroupsComponents(ctx) {
                 <strong>暂无群组</strong>
                 <div>当前用户目录里没有群组，可以从已有角色创建一个群聊。</div>
                 <button class="primary-button empty-state-action" type="button" data-create-group>
-                    <i class="fa-solid fa-plus"></i>
+                    <span class="fa-solid fa-plus" aria-hidden="true"></span>
                     新建群组
                 </button>
             </div>
@@ -81,13 +84,15 @@ export function createGroupsComponents(ctx) {
         const missingMembers = memberAvatars.filter(avatarId => !getCharacterByAvatar(avatarId));
         const isEditing = state.groupEditing.id === group.id;
         const isDeleting = state.groupDeleteConfirm.id === group.id;
+        const chatCount = getGroupChatCount(group);
+        const missingChatCount = (Array.isArray(group.chats) ? group.chats.length : 0) - chatCount;
 
         return `
         <div class="detail-hero">
             ${avatar ? `<img class="avatar large" src="${escapeHtml(avatar)}" alt="">` : '<span class="avatar-fallback large"><i class="fa-solid fa-users"></i></span>'}
             <div>
                 <h2 class="detail-title">${escapeHtml(group.name || group.id || '未命名群组')}</h2>
-                <p class="panel-subtitle">${escapeHtml(group.id)} · ${formatNumber(memberAvatars.length)} 个成员 · ${formatNumber((group.chats || []).length)} 个会话</p>
+                <p class="panel-subtitle">${escapeHtml(group.id)} · ${formatNumber(memberAvatars.length)} 个成员 · ${formatNumber(chatCount)} 个会话</p>
                 <div class="tag-row detail-tags">
                     <span class="tag">${group.allow_self_responses ? '允许自回复' : '禁止自回复'}</span>
                     <span class="tag">策略 ${formatNumber(group.activation_strategy ?? 0)}</span>
@@ -114,7 +119,7 @@ export function createGroupsComponents(ctx) {
         ${isEditing ? renderGroupEditPanel(group) : ''}
         <div class="metrics-grid compact-metrics">
             ${metricCard('成员', formatNumber(memberAvatars.length), `${formatNumber(missingMembers.length)} 个缺失`, 'fa-users')}
-            ${metricCard('聊天文件', formatNumber((group.chats || []).length), formatBytes(group.chat_size), 'fa-message')}
+            ${metricCard('聊天文件', formatNumber(chatCount), missingChatCount > 0 ? `${formatBytes(group.chat_size)} · ${formatNumber(missingChatCount)} 个登记的会话没有文件` : formatBytes(group.chat_size), 'fa-message')}
             ${metricCard('最近聊天', group.date_last_chat ? formatDate(group.date_last_chat) : '暂无', '群组聊天记录', 'fa-clock')}
         </div>
         <section class="panel section-panel">
@@ -125,7 +130,7 @@ export function createGroupsComponents(ctx) {
                 </div>
             </div>
             <div class="resource-list">
-                ${members.map(character => renderCharacterRow(character)).join('')}
+                ${members.map(character => renderCharacterRow(withDisplayCreator(character))).join('')}
                 ${missingMembers.map(avatarId => `
                     <div class="resource-row">
                         <span class="avatar-fallback"><i class="fa-solid fa-triangle-exclamation"></i></span>

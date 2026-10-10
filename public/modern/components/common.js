@@ -1,4 +1,5 @@
-import { escapeHtml, formatDate, formatNumber } from '../core/utils.js';
+import { formatCharacterCreator } from '../actions/character-data.js';
+import { escapeHtml, formatDate, formatNumber, getGroupChatCount } from '../core/utils.js';
 import { routeLabels } from '../core/constants.js';
 
 export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupAvatarUrl, getEntityUnreadCount = () => 0 }) {
@@ -50,8 +51,9 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
         const avatar = getCharacterAvatarUrl(character);
         const title = character.name || character.data?.name || character.avatar || '未命名角色';
         const unreadCount = getEntityUnreadCount(character);
+        const creator = formatCharacterCreator(character.data?.creator);
         const subtitle = [
-            character.data?.creator ? `作者 ${character.data.creator}` : '',
+            creator ? `作者 ${creator}` : '',
             character.date_last_chat ? `最近 ${formatDate(character.date_last_chat)}` : '',
         ].filter(Boolean).join(' · ') || character.avatar || '角色卡';
 
@@ -70,7 +72,7 @@ export function createCommonComponents({ state, getCharacterAvatarUrl, getGroupA
     function renderGroupRow(group) {
         const avatar = getGroupAvatarUrl(group);
         const memberCount = Array.isArray(group.members) ? group.members.length : 0;
-        const chatCount = Array.isArray(group.chats) ? group.chats.length : 0;
+        const chatCount = getGroupChatCount(group);
         const unreadCount = getEntityUnreadCount(group);
         const subtitle = [
             `${formatNumber(memberCount)} 个成员`,

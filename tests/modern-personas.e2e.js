@@ -149,6 +149,32 @@ test.describe('Modern persona resources', () => {
         await expect(page.locator('[data-set-default-persona="fresh-persona.png"]')).toBeEnabled();
     });
 
+    test('creates a persona with the default avatar when no image is chosen', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'personas', '用户人设');
+
+        await page.locator('[data-create-persona]').click();
+        const createPanel = page.locator('.section-panel', { hasText: '新建用户人设' });
+        await expect(createPanel).toBeVisible();
+        // 头像是可选项，表单在提交前就说明不选时使用默认头像。
+        await expect(createPanel.locator('.field-label', { has: page.locator('[data-persona-create-file]') })).toContainText('头像图片（可选）');
+        await expect(page.locator('[data-persona-create-file-status]')).toHaveText('未选择时使用默认头像，创建后可以随时替换。');
+        await page.locator('[data-persona-field="name"][data-persona-scope="create"]').fill('No Upload Persona');
+        await page.locator('[data-persona-field="title"][data-persona-scope="create"]').fill('No upload');
+        await page.locator('[data-save-persona-create]').click();
+
+        await expect(page.locator('.toast', { hasText: '用户人设已创建' })).toBeVisible();
+        expect(fixture.requests.avatarUpload).toHaveLength(1);
+        expect(fixture.requests.avatarUpload[0]).toMatchObject({ fileName: 'avatar.png', overwriteName: '' });
+        expect(fixture.requests.avatarUpload[0].bodyText).toContain('Content-Type: image/png');
+        const avatarId = fixture.requests.avatarUpload[0].path;
+        expect(fixture.requests.settingsSave[0].power_user.personas[avatarId]).toBe('No Upload Persona');
+        expect(fixture.requests.settingsSave[0].power_user.persona_descriptions[avatarId]).toMatchObject({ title: 'No upload' });
+        await expect(page.locator(`[data-persona-card="${avatarId}"]`)).toContainText('No Upload Persona');
+    });
+
     test('opens create panel and requires confirmation before deleting a persona', async ({ page }) => {
         const fixture = createModernResourceFixture();
         await mockModernWorkspace(page, fixture);
@@ -157,15 +183,10 @@ test.describe('Modern persona resources', () => {
 
         await page.locator('[data-create-persona]').click();
         await expect(page.locator('.section-panel', { hasText: '新建用户人设' })).toBeVisible();
-        await page.locator('[data-persona-field="name"][data-persona-scope="create"]').fill('No Upload Persona');
-        await page.locator('[data-persona-field="title"][data-persona-scope="create"]').fill('No upload');
         await expect(page.locator('[data-persona-create-file]')).toHaveCount(1);
-        await page.locator('[data-save-persona-create]').click();
-
-        await expect(page.locator('.toast', { hasText: '请先选择头像图片。' })).toBeVisible();
-        expect(fixture.requests.settingsSave).toHaveLength(0);
 
         await page.locator('[data-cancel-persona-create]').click();
+        expect(fixture.requests.settingsSave).toHaveLength(0);
         const deletePersonaButton = page.locator('[data-delete-persona="persona-beta.png"]');
         await expect(deletePersonaButton).toHaveText('删除');
         await expect(deletePersonaButton).toHaveClass(/danger-action/);

@@ -143,6 +143,8 @@ router.post('/all', (request, response) => {
 
             let chat_size = 0;
             let date_last_chat = 0;
+            // Registered chat IDs whose file exists; `chats` may also list IDs that were never written to disk
+            let chat_count = 0;
 
             if (Array.isArray(group.chats) && Array.isArray(chats)) {
                 for (const chat of chats) {
@@ -150,12 +152,14 @@ router.post('/all', (request, response) => {
                         const chatStat = fs.statSync(path.join(request.user.directories.groupChats, chat));
                         chat_size += chatStat.size;
                         date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs);
+                        chat_count++;
                     }
                 }
             }
 
             group.date_last_chat = date_last_chat;
             group.chat_size = chat_size;
+            group.chat_count = chat_count;
             groups.push(group);
         } catch (error) {
             console.error(error);

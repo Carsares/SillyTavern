@@ -1714,6 +1714,45 @@ function getPreservedName(request) {
         : undefined;
 }
 
+/**
+ * Classifies a character import failure so the client can explain it without exposing server paths.
+ * @param {unknown} error Error thrown while importing
+ * @param {string} format Requested import format
+ * @returns {string} Reason code
+ */
+export function getCharacterImportErrorReason(error, format) {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+
+    if (message.startsWith('Unsupported format')) {
+        return 'unsupported_format';
+    }
+
+    switch (format) {
+        case 'png':
+            if (message === 'No PNG metadata.') {
+                return 'no_card_data';
+            }
+            if (error instanceof SyntaxError) {
+                return 'invalid_card_data';
+            }
+            // Messages thrown by png-chunks-extract for non-PNG or truncated/corrupted files
+            if (/png file|IHDR header/i.test(message)) {
+                return 'invalid_png';
+            }
+            return 'unknown';
+        case 'json':
+            return error instanceof SyntaxError ? 'invalid_json' : 'unknown';
+        case 'yaml':
+        case 'yml':
+            return 'invalid_yaml';
+        case 'charx':
+        case 'byaf':
+            return 'invalid_archive';
+        default:
+            return 'unknown';
+    }
+}
+
 router.post('/import', async function (request, response) {
     if (!request.body || !request.file) return response.sendStatus(400);
 
@@ -1754,7 +1793,8 @@ router.post('/import', async function (request, response) {
         if (err instanceof ZipExtractionLimitError) {
             return response.status(413).send({ error: err.message });
         }
-        return response.send({ error: true });
+        // `error: true` stays for existing clients; `reason` lets newer clients name the cause
+        return response.send({ error: true, reason: getCharacterImportErrorReason(err, format) });
     }
 });
 

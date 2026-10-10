@@ -66,20 +66,23 @@ export function createPersonaCardComponents(ctx) {
     }
 
     function renderPersonaCreatePanel() {
+        const avatarStatus = state.personaCreating.file
+            ? `已选择：${escapeHtml(state.personaCreating.file.name)}`
+            : '未选择时使用默认头像，创建后可以随时替换。';
         return `
         <section class="panel section-panel">
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">新建用户人设</h2>
-                    <p class="panel-subtitle">上传头像后写入 personas 设置。</p>
+                    <p class="panel-subtitle">填写名称即可创建；头像可选，不选时使用默认头像。</p>
                 </div>
             </div>
             <div class="settings-form inline-form">
                 ${renderPersonaFormContent(state.personaCreating.form, 'create')}
                 <label class="field-label">
-                    <span>头像图片</span>
-                    <input class="text-input" type="file" accept="image/*" data-persona-create-file>
-                    ${state.personaCreating.file ? `<span class="card-meta">${escapeHtml(state.personaCreating.file.name)}</span>` : ''}
+                    <span>头像图片（可选）</span>
+                    <input class="text-input" type="file" accept="image/*" data-persona-create-file aria-describedby="persona-create-avatar-hint">
+                    <span class="card-meta" id="persona-create-avatar-hint" data-persona-create-file-status>${avatarStatus}</span>
                 </label>
                 <div class="message-edit-actions">
                     <button class="secondary-button" type="button" data-cancel-persona-create>

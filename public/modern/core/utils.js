@@ -173,3 +173,9 @@ export function formatDurationMs(value) {
     const rest = seconds % 60;
     return `${formatNumber(minutes)}m ${formatNumber(rest)}s`;
 }
+
+// 群组会话数以后端统计的「有文件的会话」为准（chat_count）；旧后端没有该字段时退回登记数。
+export function getGroupChatCount(group) {
+    const registeredCount = Array.isArray(group?.chats) ? group.chats.length : 0;
+    return Number.isFinite(group?.chat_count) ? Math.min(group.chat_count, registeredCount) : registeredCount;
+}
