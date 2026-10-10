@@ -6,6 +6,11 @@ const remoteResourceTypes = new Set(['', 'character', 'worldbook', 'extension', 
 // 后端 /api/presets/save 认可的 apiId 集合，非该集合的值会被后端拒绝。
 const presetApiIds = new Set(['kobold', 'koboldhorde', 'novel', 'textgenerationwebui', 'openai', 'instruct', 'context', 'sysprompt', 'reasoning']);
 
+// 前端按资源站逐个请求搜索时的并发上限：与浏览器同源 HTTP/1.1 连接数（6）一致，
+// 既让快的资源站先出结果，又不把其他接口请求挤在连接队列后面。
+const REMOTE_SEARCH_CONCURRENCY = 6;
+const REMOTE_SEARCH_LIMIT = 48;
+
 // 仅在强信号命中时返回具体 apiId，弱信号或无判据一律返回 null，交给用户在卡片内联选择，避免误判。
 function inferPresetApiId(preset) {
     if (!preset || typeof preset !== 'object') {
@@ -47,6 +52,7 @@ export function createRemoteResourceActions({
     confirmAction = message => window.confirm(message),
 }) {
     let remoteSearchToken = null;
+    let remoteSearchController = null;
 
     function getRemoteResourceCount() {
         return state.remoteResources.records.length;
@@ -113,9 +119,16 @@ export function createRemoteResourceActions({
         render();
     }
 
+    // 搜索按资源站拆成独立请求（并发上限 REMOTE_SEARCH_CONCURRENCY），每个资源站返回即合并渲染。
+    // 合并结果始终按所选资源站顺序拼接，搜索全部结束后与后端一次性聚合的结果、total、errors 完全一致。
     async function searchRemoteResources() {
         const searchToken = Symbol('remote-search');
         remoteSearchToken = searchToken;
+        // 新搜索立即中止上一轮仍在等待的请求；上一轮迟到的响应也会因 token 失效被丢弃，不会混入本轮结果。
+        abortRemoteSearchRequests();
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        remoteSearchController = controller;
+        const isCurrentSearch = () => remoteSearchToken === searchToken;
         const query = state.remoteResources.query.trim();
         const resourceType = state.remoteResources.resourceType;
         const selectedProviders = [...state.remoteResources.selectedProviders];
@@ -123,43 +136,179 @@ export function createRemoteResourceActions({
             if (!state.remoteResources.loaded) {
                 await loadRemoteResources();
             }
-            if (remoteSearchToken !== searchToken) {
+            if (!isCurrentSearch()) {
                 return;
             }
 
-            const providers = selectedProviders.length
-                ? selectedProviders
-                : state.remoteResources.providers.filter(provider => provider.supportsSearch).map(provider => provider.id);
-            state.remoteResources.searching = true;
-            state.remoteResources.searched = true;
-            state.remoteResources.errors = [];
-            render();
+            const providers = resolveSearchProviders(selectedProviders);
+            if (!providers.length) {
+                throw new Error('没有可搜索的已启用资源站，请勾选或启用资源站后再搜索。');
+            }
+
+            const remote = state.remoteResources;
+            remote.searching = true;
+            remote.searched = true;
+            remote.results = [];
+            remote.total = 0;
+            remote.errors = [];
+            remote.resultPage = 1;
+            remote.searchProgress = {
+                providers: providers.map(provider => ({ id: provider.id, name: provider.name, status: 'queued' })),
+                cancelled: false,
+            };
+
+            const outcomes = new Map();
+            const queue = [...providers];
+            const takeNextProvider = () => {
+                const provider = queue.shift();
+                if (provider) {
+                    setSearchProviderStatus(provider.id, 'running');
+                }
+                return provider;
+            };
+            const publishOutcomes = () => {
+                const settled = providers.map(provider => outcomes.get(provider.id)).filter(Boolean);
+                remote.results = settled.flatMap(outcome => outcome.items);
+                remote.total = settled.reduce((sum, outcome) => sum + outcome.total, 0) || remote.results.length;
+                remote.errors = settled.flatMap(outcome => outcome.errors);
+            };
+            const runWorker = async () => {
+                let provider = takeNextProvider();
+                while (provider) {
+                    const outcome = await searchSingleProvider(provider, { query, resourceType, signal: controller?.signal });
+                    if (!isCurrentSearch()) {
+                        return;
+                    }
+                    outcomes.set(provider.id, outcome);
+                    setSearchProviderStatus(provider.id, outcome.errors.length ? 'failed' : 'done');
+                    publishOutcomes();
+                    // 先领取下一个资源站再渲染，进度里的「等待中」名单与实际在途请求保持一致。
+                    provider = takeNextProvider();
+                    renderPreservingQueryFocus();
+                }
+            };
+
+            const workers = Array.from({ length: Math.min(REMOTE_SEARCH_CONCURRENCY, providers.length) }, () => runWorker());
+            renderPreservingQueryFocus();
+            await Promise.all(workers);
+            if (!isCurrentSearch()) {
+                return;
+            }
+
+            const requestErrors = [...outcomes.values()].map(outcome => outcome.requestError).filter(Boolean);
+            // 所有资源站请求都在传输层失败（如会话失效、服务不可达）时，沿用旧的整体失败提示。
+            if (requestErrors.length === providers.length) {
+                throw requestErrors[0];
+            }
+            if (remote.errors.length) {
+                showToast('部分资源站读取失败', remote.errors[0]);
+            }
+        } catch (error) {
+            if (isCurrentSearch()) {
+                throw error;
+            }
+        } finally {
+            if (isCurrentSearch()) {
+                state.remoteResources.searching = false;
+                if (remoteSearchController === controller) {
+                    remoteSearchController = null;
+                }
+                renderPreservingQueryFocus();
+            }
+        }
+    }
+
+    // 取消只中止仍在等待的资源站请求，已返回的结果全部保留，搜索按钮随 searching=false 恢复。
+    function cancelRemoteSearch() {
+        const remote = state.remoteResources;
+        if (!remote.searching) {
+            return;
+        }
+        remoteSearchToken = null;
+        abortRemoteSearchRequests();
+        remote.searching = false;
+        if (remote.searchProgress) {
+            remote.searchProgress.cancelled = true;
+            for (const provider of remote.searchProgress.providers) {
+                if (provider.status === 'queued' || provider.status === 'running') {
+                    provider.status = 'cancelled';
+                }
+            }
+        }
+        renderPreservingQueryFocus();
+        showToast('已取消搜索', `已保留 ${remote.results.length} 条结果`);
+    }
+
+    function setRemoteResultPage(page) {
+        state.remoteResources.resultPage = Math.max(1, Math.trunc(Number(page)) || 1);
+        render();
+    }
+
+    function abortRemoteSearchRequests() {
+        remoteSearchController?.abort();
+        remoteSearchController = null;
+    }
+
+    // 只请求已知、可搜索且未被禁用的资源站；后端同样会跳过禁用项，这里提前过滤让进度总数与实际请求一致。
+    function resolveSearchProviders(selectedProviders) {
+        const searchable = state.remoteResources.providers.filter(provider => provider.supportsSearch && provider.enabled !== false);
+        if (!selectedProviders.length) {
+            return searchable;
+        }
+        const byId = new Map(searchable.map(provider => [provider.id, provider]));
+        return [...new Set(selectedProviders)].map(id => byId.get(id)).filter(Boolean);
+    }
+
+    async function searchSingleProvider(provider, { query, resourceType, signal }) {
+        try {
             const result = await apiFetch('/api/remote-resources/search', {
                 body: {
                     query,
                     resourceType,
-                    providers,
+                    providers: [provider.id],
                     page: 1,
-                    limit: 48,
+                    limit: REMOTE_SEARCH_LIMIT,
                 },
+                signal,
             });
-            if (remoteSearchToken !== searchToken) {
-                return;
-            }
-            state.remoteResources.results = Array.isArray(result?.items) ? result.items : [];
-            state.remoteResources.total = Number(result?.total) || state.remoteResources.results.length;
-            state.remoteResources.errors = Array.isArray(result?.errors) ? result.errors : [];
-            if (state.remoteResources.errors.length) {
-                showToast('部分资源站读取失败', state.remoteResources.errors[0]);
-            }
+            const items = Array.isArray(result?.items) ? result.items : [];
+            return {
+                items,
+                total: Number(result?.total) || items.length,
+                errors: Array.isArray(result?.errors) ? result.errors : [],
+                requestError: null,
+            };
         } catch (error) {
-            if (remoteSearchToken === searchToken) {
-                throw error;
-            }
-        } finally {
-            if (remoteSearchToken === searchToken) {
-                state.remoteResources.searching = false;
-                render();
+            return {
+                items: [],
+                total: 0,
+                errors: [`${provider.name || provider.id}: ${error?.message || String(error)}`],
+                requestError: error,
+            };
+        }
+    }
+
+    function setSearchProviderStatus(providerId, status) {
+        const entry = state.remoteResources.searchProgress?.providers.find(provider => provider.id === providerId);
+        if (entry) {
+            entry.status = status;
+        }
+    }
+
+    // 渐进渲染会整页重绘；用户在搜索期间继续输入关键词时，保留输入框焦点与光标位置，避免每个资源站返回都打断输入。
+    function renderPreservingQueryFocus() {
+        const active = typeof document === 'undefined' ? null : document.activeElement;
+        const queryInput = active && active instanceof HTMLInputElement && active.matches('[data-remote-resource-query]') ? active : null;
+        const selection = queryInput ? [queryInput.selectionStart, queryInput.selectionEnd] : null;
+        render();
+        if (!queryInput || document.activeElement === queryInput) {
+            return;
+        }
+        const nextInput = document.querySelector('[data-remote-resource-query]');
+        if (nextInput instanceof HTMLInputElement) {
+            nextInput.focus();
+            if (selection && selection[0] !== null) {
+                nextInput.setSelectionRange(selection[0], selection[1]);
             }
         }
     }
@@ -632,6 +781,7 @@ export function createRemoteResourceActions({
 
     return {
         cancelPresetImport,
+        cancelRemoteSearch,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
@@ -647,6 +797,7 @@ export function createRemoteResourceActions({
         setRemoteResourceQuery,
         setRemoteResourceTab,
         setRemoteResourceType,
+        setRemoteResultPage,
         setRemoteUrlImport,
         toggleProviderEnabled,
         toggleRemoteProvider,

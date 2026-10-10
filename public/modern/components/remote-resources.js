@@ -1,3 +1,8 @@
+// 每页渲染的结果卡片数：避免一次搜索把数百张卡片同时塞进 DOM。
+const REMOTE_RESULT_PAGE_SIZE = 24;
+// 进度区每类资源站名单最多列出的名称数，超出部分以「等」收尾。
+const PROGRESS_NAME_LIMIT = 6;
+
 export function createRemoteResourceComponents(ctx) {
     const {
         state,
@@ -81,10 +86,18 @@ export function createRemoteResourceComponents(ctx) {
                         ${renderTypeOption('preset', '预设', remote.resourceType)}
                     </select>
                 </label>
-                <button class="primary-button remote-search-button" type="button" data-search-remote-resources ${remote.searching || !searchableProviders.length ? 'disabled' : ''}>
-                    <i class="fa-solid ${remote.searching ? 'fa-circle-notch fa-spin' : 'fa-magnifying-glass'}"></i>
-                    搜索
-                </button>
+                <div class="remote-search-actions">
+                    <button class="primary-button remote-search-button" type="button" data-search-remote-resources ${!searchableProviders.length ? 'disabled' : ''}>
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        搜索
+                    </button>
+                    ${remote.searching ? `
+                        <button class="secondary-button remote-search-button" type="button" data-cancel-remote-search>
+                            <i class="fa-solid fa-circle-stop"></i>
+                            取消搜索
+                        </button>
+                    ` : ''}
+                </div>
             </div>
             <div class="remote-provider-row">
                 ${searchableProviders.map(provider => {
@@ -98,10 +111,55 @@ export function createRemoteResourceComponents(ctx) {
                 `;
     }).join('') || '<span class="muted">暂无可搜索资源站</span>'}
             </div>
+            ${renderSearchProgress(remote)}
             ${remote.errors.length ? `<div class="remote-resource-warning"><i class="fa-solid fa-triangle-exclamation"></i>${escapeHtml(remote.errors.join('；'))}</div>` : ''}
         </section>
         ${renderRemoteResults(remote)}
     `;
+    }
+
+    // 逐站进度：已完成数 / 总数 + 已找到条数，并列出仍在等待和已失败的资源站名称。
+    function renderSearchProgress(remote) {
+        const progress = remote.searchProgress;
+        if (!remote.searched || !progress?.providers?.length) {
+            return '';
+        }
+        const providers = progress.providers;
+        const finished = providers.filter(provider => provider.status === 'done' || provider.status === 'failed');
+        const failed = providers.filter(provider => provider.status === 'failed');
+        const pending = [
+            ...providers.filter(provider => provider.status === 'running'),
+            ...providers.filter(provider => provider.status === 'queued'),
+        ];
+        const cancelled = providers.filter(provider => provider.status === 'cancelled');
+        const counts = `已完成 ${formatNumber(finished.length)} / ${formatNumber(providers.length)} 个资源站`;
+        let icon = 'fa-circle-check';
+        let summary = `${counts} · 共找到 ${formatNumber(remote.results.length)} 条`;
+        if (remote.searching) {
+            icon = 'fa-circle-notch fa-spin';
+            summary = `${counts} · 已找到 ${formatNumber(remote.results.length)} 条`;
+        } else if (progress.cancelled) {
+            icon = 'fa-circle-stop';
+            summary = `已取消搜索 · ${counts} · 保留 ${formatNumber(remote.results.length)} 条`;
+        }
+
+        return `
+        <div class="remote-search-progress" data-remote-search-progress role="status" aria-live="polite">
+            <div class="remote-search-progress-summary" data-remote-search-progress-summary>
+                <i class="fa-solid ${icon}"></i>
+                <span>${escapeHtml(summary)}</span>
+            </div>
+            ${remote.searching && pending.length ? renderProviderNameList('等待响应', pending, 'data-remote-search-pending') : ''}
+            ${cancelled.length ? renderProviderNameList('未完成', cancelled, 'data-remote-search-cancelled') : ''}
+            ${failed.length ? renderProviderNameList('失败', failed, 'data-remote-search-failed', 'remote-search-progress-failed') : ''}
+        </div>
+    `;
+    }
+
+    function renderProviderNameList(label, providers, dataAttribute, className = '') {
+        const shown = providers.slice(0, PROGRESS_NAME_LIMIT).map(provider => provider.name || provider.id).join('、');
+        const more = providers.length > PROGRESS_NAME_LIMIT ? ' 等' : '';
+        return `<div class="remote-search-progress-detail ${className}" ${dataAttribute}>${escapeHtml(`${label}（${formatNumber(providers.length)}）：${shown}${more}`)}</div>`;
     }
 
     function renderRemoteResults(remote) {
@@ -112,12 +170,40 @@ export function createRemoteResourceComponents(ctx) {
             return renderEmptyState('fa-cloud-arrow-down', '尚未搜索', '选择资源站和类型后开始搜索。');
         }
         if (!remote.results.length) {
+            if (remote.searchProgress?.cancelled) {
+                return renderEmptyState('fa-circle-stop', '搜索已取消', '取消前没有资源站返回结果。');
+            }
             return renderEmptyState('fa-magnifying-glass', '没有匹配资源', '换一个关键词或资源站。');
         }
 
+        // 分页只影响渲染：索引仍是 results 中的绝对下标，导入 / 下载按钮的定位方式不变。
+        const pageCount = Math.max(1, Math.ceil(remote.results.length / REMOTE_RESULT_PAGE_SIZE));
+        const page = Math.min(Math.max(1, Number(remote.resultPage) || 1), pageCount);
+        const start = (page - 1) * REMOTE_RESULT_PAGE_SIZE;
+        const pageItems = remote.results.slice(start, start + REMOTE_RESULT_PAGE_SIZE);
+
         return `
+        ${pageCount > 1 ? renderResultPager('top', page, pageCount, start, pageItems.length, remote.results.length) : ''}
         <div class="remote-result-grid">
-            ${remote.results.map((item, index) => renderRemoteCard(item, index)).join('')}
+            ${pageItems.map((item, offset) => renderRemoteCard(item, start + offset)).join('')}
+        </div>
+        ${pageCount > 1 ? renderResultPager('bottom', page, pageCount, start, pageItems.length, remote.results.length) : ''}
+    `;
+    }
+
+    function renderResultPager(position, page, pageCount, start, count, totalCount) {
+        return `
+        <div class="remote-result-pager" data-remote-result-pager="${position}">
+            <button class="secondary-button" type="button" data-remote-result-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>
+                <i class="fa-solid fa-chevron-left"></i>
+                上一页
+            </button>
+            <span class="badge" data-remote-result-page-badge>${formatNumber(page)} / ${formatNumber(pageCount)}</span>
+            <button class="secondary-button" type="button" data-remote-result-page="${page + 1}" ${page >= pageCount ? 'disabled' : ''}>
+                下一页
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+            <span class="muted">第 ${formatNumber(start + 1)}–${formatNumber(start + count)} 条，共 ${formatNumber(totalCount)} 条</span>
         </div>
     `;
     }

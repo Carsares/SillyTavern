@@ -311,6 +311,13 @@ export function createModernState() {
             results: [],
             total: 0,
             errors: [],
+            // 当前结果页（1 起），新搜索重置为 1。
+            resultPage: 1,
+            // 本轮搜索的逐站进度：providers 为 { id, name, status: queued|running|done|failed|cancelled }。
+            searchProgress: {
+                providers: [],
+                cancelled: false,
+            },
             records: [],
             operation: {
                 key: '',

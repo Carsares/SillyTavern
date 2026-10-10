@@ -235,6 +235,7 @@ export function createPersonaRouteContext(personas) {
 export function createRemoteResourceRouteContext(remoteResources) {
     const {
         cancelPresetImport,
+        cancelRemoteSearch,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
@@ -249,6 +250,7 @@ export function createRemoteResourceRouteContext(remoteResources) {
         setRemoteResourceQuery,
         setRemoteResourceTab,
         setRemoteResourceType,
+        setRemoteResultPage,
         setRemoteUrlImport,
         toggleProviderEnabled,
         toggleRemoteProvider,
@@ -256,6 +258,7 @@ export function createRemoteResourceRouteContext(remoteResources) {
 
     return {
         cancelPresetImport,
+        cancelRemoteSearch,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
@@ -270,6 +273,7 @@ export function createRemoteResourceRouteContext(remoteResources) {
         setRemoteResourceQuery,
         setRemoteResourceTab,
         setRemoteResourceType,
+        setRemoteResultPage,
         setRemoteUrlImport,
         toggleProviderEnabled,
         toggleRemoteProvider,

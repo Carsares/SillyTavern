@@ -4,6 +4,7 @@ export function createRemoteResourceEvents(ctx) {
         render,
         showToast,
         cancelPresetImport,
+        cancelRemoteSearch,
         deleteRemoteProviderCredential,
         deleteRemoteRecord,
         downloadRemoteResource,
@@ -17,6 +18,7 @@ export function createRemoteResourceEvents(ctx) {
         setRemoteResourceQuery,
         setRemoteResourceTab,
         setRemoteResourceType,
+        setRemoteResultPage,
         setRemoteUrlImport,
         toggleProviderEnabled,
         toggleRemoteProvider,
@@ -36,6 +38,19 @@ export function createRemoteResourceEvents(ctx) {
 
         if (event.target.closest('[data-search-remote-resources]')) {
             await runRemoteAction('remote-search', '远程搜索失败', () => searchRemoteResources());
+            return;
+        }
+
+        if (event.target.closest('[data-cancel-remote-search]')) {
+            cancelRemoteSearch();
+            return;
+        }
+
+        const pageButton = event.target.closest('[data-remote-result-page]');
+        if (pageButton) {
+            setRemoteResultPage(Number(pageButton.dataset.remoteResultPage));
+            // 从底部分页条翻页时把结果顶部拉回视野；顶部分页条本就可见时 nearest 不会滚动。
+            document.querySelector('[data-remote-result-pager="top"]')?.scrollIntoView({ block: 'nearest' });
             return;
         }
 
@@ -163,7 +178,10 @@ export function createRemoteResourceEvents(ctx) {
             state.errors.push({ key, message: error.message });
             showToast(title, error.message);
             state.remoteResources.operation = { key: '', running: false };
-            state.remoteResources.searching = false;
+            // 搜索是渐进式的，期间仍可导入 / 下载；其他操作失败不能把仍在进行的搜索标记为结束。
+            if (key === 'remote-search') {
+                state.remoteResources.searching = false;
+            }
             state.remoteResources.loading = false;
             state.remoteResources.urlImport.running = false;
             state.remoteResources.credentialSaving = '';
