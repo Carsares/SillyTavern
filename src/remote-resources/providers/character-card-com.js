@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { hasCharacterCardData } from '../../character-card-parser.js';
 import {
     REMOTE_RESOURCE_TYPES,
     clampLimit,
@@ -326,33 +327,9 @@ function validatePngCharacterCard(buffer) {
     if (!isPng(buffer)) {
         throw new Error('CharacterCard.com resource is not a PNG character card.');
     }
-    if (!hasCharacterTextChunk(buffer)) {
+    if (!hasCharacterCardData(buffer)) {
         throw new Error('CharacterCard.com PNG does not contain SillyTavern character metadata.');
     }
-}
-
-function hasCharacterTextChunk(buffer) {
-    let offset = 8;
-    while (offset + 8 <= buffer.length) {
-        const length = buffer.readUInt32BE(offset);
-        const type = buffer.toString('ascii', offset + 4, offset + 8);
-        const dataStart = offset + 8;
-        const dataEnd = dataStart + length;
-        if (dataEnd + 4 > buffer.length) {
-            return false;
-        }
-        if ((type === 'tEXt' || type === 'iTXt') && isCharacterChunk(buffer.subarray(dataStart, dataEnd))) {
-            return true;
-        }
-        offset = dataEnd + 4;
-    }
-    return false;
-}
-
-function isCharacterChunk(chunk) {
-    const separator = chunk.indexOf(0);
-    const keyword = chunk.subarray(0, separator > 0 ? separator : chunk.length).toString('latin1');
-    return keyword === 'chara' || keyword === 'ccv3';
 }
 
 function isPng(buffer) {

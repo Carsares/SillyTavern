@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createRemoteResourceActions } from '../public/modern/actions/remote-resources.js';
+import { createRemoteResourceActions, describeRemoteSearchError, summarizeRemoteError } from '../public/modern/actions/remote-resources.js';
 import { gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 function fulfillJson(route, body, status = 200) {
@@ -172,9 +172,12 @@ test.describe('Modern remote resources search actions', () => {
         expect(state.remoteResources.searching).toBe(false);
         expect(state.remoteResources.results.map(item => item.id)).toEqual(['p1-a', 'p1-b', 'p2-a', 'p8-a']);
         expect(state.remoteResources.total).toBe(10);
-        expect(state.remoteResources.errors).toEqual(['P3 upstream failed', 'Provider 4: network down']);
+        expect(state.remoteResources.errors).toEqual([
+            { providerId: 'p3', providerName: 'Provider 3', summary: 'P3 upstream failed', detail: 'P3 upstream failed' },
+            { providerId: 'p4', providerName: 'Provider 4', summary: '网络连接失败', detail: 'network down' },
+        ]);
         expect(statuses()).toEqual(['done', 'done', 'failed', 'failed', 'done', 'done', 'done', 'done']);
-        expect(toasts).toEqual([['部分资源站读取失败', 'P3 upstream failed']]);
+        expect(toasts).toEqual([['部分资源站读取失败', 'Provider 3：P3 upstream failed；Provider 4：网络连接失败']]);
     });
 
     test('cancelling keeps received results, aborts pending requests, and a new search aborts the previous one', async () => {
@@ -273,7 +276,83 @@ test.describe('Modern remote resources search actions', () => {
 
         await expect(actions.searchRemoteResources()).rejects.toThrow('当前会话没有访问权限，请先登录。');
         expect(state.remoteResources.searching).toBe(false);
-        expect(state.remoteResources.errors).toEqual(['Site A: 当前会话没有访问权限，请先登录。', 'Site B: 当前会话没有访问权限，请先登录。']);
+        expect(state.remoteResources.errors.map(error => `${error.providerName}：${error.summary}`)).toEqual([
+            'Site A：当前会话没有访问权限，请先登录。',
+            'Site B：当前会话没有访问权限，请先登录。',
+        ]);
+    });
+
+    test('turns provider failures into short per-site messages without upstream HTML', async () => {
+        const htmlPage = '<!doctype html> <html lang="en"> <head> <meta charset="utf-8" /> <title>404</title> <script>window.__DATA__ = "<b>";</script> </head> <body><h1>Page   not found</h1></body></html>';
+        expect(summarizeRemoteError(`Remote request failed: 404 Not Found - ${htmlPage}`)).toEqual({
+            summary: '404 未找到',
+            detail: 'Remote request failed: 404 Not Found - 404 Page not found',
+        });
+        expect(summarizeRemoteError('Remote request failed: 403 Forbidden - Just a moment...').summary).toBe('403 被拒绝');
+        expect(summarizeRemoteError('Remote request rate limited (429), retry after 30s').summary).toBe('429 请求过于频繁');
+        expect(summarizeRemoteError('Remote request failed: 522').summary).toBe('522 服务器错误');
+        expect(summarizeRemoteError('Remote request timed out after 20s').summary).toBe('请求超时');
+        expect(summarizeRemoteError('request to https://example.invalid/a failed, reason: read ECONNRESET').summary).toBe('网络连接失败');
+        const long = summarizeRemoteError(`Unexpected provider reply ${'x'.repeat(400)}`);
+        expect(long.summary.length).toBeLessThanOrEqual(120);
+        expect(long.summary.endsWith('…')).toBe(true);
+        // The backend prefixes `errors` strings with the site name; it is not repeated in the UI text.
+        expect(describeRemoteSearchError({ id: 'wyvern', name: 'WyvernChat' }, 'WyvernChat: Remote request failed: 403 Forbidden')).toEqual({
+            providerId: 'wyvern',
+            providerName: 'WyvernChat',
+            summary: '403 被拒绝',
+            detail: 'Remote request failed: 403 Forbidden',
+        });
+
+        const providers = ['a', 'b', 'c'].map(id => ({ id, name: `Site ${id.toUpperCase()}`, supportsSearch: true }));
+        const state = {
+            remoteResources: {
+                loaded: true,
+                searching: false,
+                searched: false,
+                query: '',
+                resourceType: '',
+                selectedProviders: [],
+                providers,
+                results: [],
+                total: 0,
+                errors: [],
+                records: [],
+            },
+        };
+        const toasts = [];
+        const actions = createRemoteResourceActions({
+            state,
+            apiFetch: async (_url, options) => {
+                const [providerId] = options.body.providers;
+                if (providerId === 'a') {
+                    // Current backend: structured providerErrors next to the name-prefixed strings.
+                    return {
+                        items: [],
+                        total: 0,
+                        errors: ['Site A: Remote request failed: 404 Not Found'],
+                        providerErrors: [{ providerId: 'a', providerName: 'Site A', message: 'Remote request failed: 404 Not Found' }],
+                    };
+                }
+                if (providerId === 'b') {
+                    // Older backend: a raw error string that still embeds an HTML page.
+                    return { items: [], total: 0, errors: [`Remote request failed: 502 Bad Gateway - ${htmlPage}`] };
+                }
+                return { items: [], total: 0, errors: ['Remote request timed out after 20s'] };
+            },
+            render: () => {},
+            showToast: (...args) => toasts.push(args),
+        });
+
+        await actions.searchRemoteResources();
+
+        expect(state.remoteResources.errors.map(error => `${error.providerName}：${error.summary}`)).toEqual([
+            'Site A：404 未找到',
+            'Site B：502 网关错误',
+            'Site C：请求超时',
+        ]);
+        expect(state.remoteResources.errors.every(error => !/[<>]/.test(error.detail))).toBe(true);
+        expect(toasts).toEqual([['部分资源站读取失败', 'Site A：404 未找到；Site B：502 网关错误 等 3 个资源站']]);
     });
 });
 
@@ -309,7 +388,9 @@ test.describe('Modern remote resources page', () => {
         await expect(page.locator('.remote-resource-card')).toHaveCount(3);
         await expect(page.locator('[data-remote-search-pending]')).toHaveText('等待响应（1）：Slow Site');
         await expect(page.locator('[data-remote-search-failed]')).toHaveText('失败（1）：Broken Site');
-        await expect(page.locator('.remote-resource-warning')).toContainText('Broken Site search failed: 502');
+        const brokenError = page.locator('[data-remote-search-error="broken-site"]');
+        await expect(brokenError).toHaveText('Broken Site：502 网关错误');
+        await expect(brokenError).toHaveAttribute('title', 'Broken Site search failed: 502');
         await expect(page.locator('[data-cancel-remote-search]')).toBeVisible();
         await expect(page.locator('[data-search-remote-resources]')).toBeEnabled();
         await expect(searchResultMetric(page)).toHaveText('3');
@@ -412,6 +493,106 @@ test.describe('Modern remote resources page', () => {
             'second Slow Site #01',
             'second Slow Site #02',
         ]);
+    });
+
+    test('lists failed sites with short messages, keeps card chips and buttons at natural height, and replaces broken thumbnails once', async ({ page }) => {
+        const slow = createDeferred();
+        // Cards arrive only after the failing sites answered, so no re-render races the broken thumbnail's error event.
+        const releaseCards = createDeferred();
+        const brokenThumb = 'https://thumbs.example.invalid/broken/avatar.webp';
+        const workingThumb = 'https://thumbs.example.invalid/ok/avatar.png';
+        const brokenThumbRequests = [];
+        // 1x1 PNG so the working thumbnail really loads.
+        const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+        await page.route('https://thumbs.example.invalid/**', route => {
+            if (route.request().url() === brokenThumb) {
+                brokenThumbRequests.push(route.request().url());
+                return route.abort('connectionreset');
+            }
+            return route.fulfill({ status: 200, contentType: 'image/png', body: pixel });
+        });
+        const [tallCard, bareCard] = createItems('fast-site', 'Fast Site', 2);
+        Object.assign(tallCard, {
+            description: '这是一段很长的简介，用来把同一行里的卡片撑高。'.repeat(12),
+            tags: ['Game Characters', 'Wholesome', 'Fantasy'],
+            thumbnailUrl: brokenThumb,
+        });
+        Object.assign(bareCard, { thumbnailUrl: workingThumb });
+        const htmlPage = '<!doctype html> <html lang="en"> <head> <meta charset="utf-8" /> <title>404</title> </head> <body>Not found</body></html>';
+        const providers = [
+            createProvider('fast-site', 'Fast Site'),
+            createProvider('character-tavern', 'Character Tavern'),
+            createProvider('wyvern-chat', 'WyvernChat'),
+            createProvider('slow-site', 'Slow Site'),
+        ];
+        await mockRemoteResourcesWorkspace(page, {
+            providers,
+            onSearch: async body => {
+                const [providerId] = body.providers;
+                if (providerId === 'fast-site') {
+                    await releaseCards.promise;
+                    return { items: [tallCard, bareCard], total: 2, errors: [] };
+                }
+                if (providerId === 'character-tavern') {
+                    return { items: [], total: 0, errors: [`Character Tavern: Remote request failed: 404 Not Found - ${htmlPage}`] };
+                }
+                if (providerId === 'wyvern-chat') {
+                    return {
+                        items: [],
+                        total: 0,
+                        errors: ['WyvernChat: Remote request failed: 403 Forbidden - Just a moment...'],
+                        providerErrors: [{ providerId, providerName: 'WyvernChat', message: 'Remote request failed: 403 Forbidden - Just a moment...' }],
+                    };
+                }
+                await slow.promise;
+                return { items: createItems('slow-site', 'Slow Site', 1), total: 1, errors: [] };
+            },
+        });
+        await openRemoteResources(page, 4);
+
+        await page.locator('[data-search-remote-resources]').click();
+        await expect(page.locator('[data-remote-search-progress-summary]')).toHaveText('已完成 2 / 4 个资源站 · 已找到 0 条');
+        releaseCards.resolve();
+        await expect(page.locator('[data-remote-search-progress-summary]')).toHaveText('已完成 3 / 4 个资源站 · 已找到 2 条');
+
+        // One short line per failed site, named like the progress list; the cleaned full error stays in the title.
+        await expect(page.locator('[data-remote-search-failed]')).toHaveText('失败（2）：Character Tavern、WyvernChat');
+        await expect(page.locator('[data-remote-search-error]')).toHaveText(['Character Tavern：404 未找到', 'WyvernChat：403 被拒绝']);
+        await expect(page.locator('[data-remote-search-error="character-tavern"]')).toHaveAttribute('title', 'Remote request failed: 404 Not Found - 404 Not found');
+        await expect(page.locator('[data-remote-search-errors]')).not.toContainText('<');
+        await expect(page.locator('.toast', { hasText: '部分资源站读取失败' })).toHaveCount(0);
+
+        const cards = page.locator('.remote-resource-card');
+        await expect(cards).toHaveCount(2);
+        const [tallBox, bareBox] = await Promise.all([cards.nth(0).boundingBox(), cards.nth(1).boundingBox()]);
+        // Both cards share a grid row, so the bare card is stretched to the tall card's height.
+        expect(Math.abs(tallBox.y - bareBox.y)).toBeLessThan(1);
+        expect(Math.abs(tallBox.height - bareBox.height)).toBeLessThan(1);
+        for (const tag of await cards.nth(0).locator('.tag-row .tag').all()) {
+            expect((await tag.boundingBox()).height).toBeLessThanOrEqual(32);
+        }
+        const bareActions = cards.nth(1).locator('.row-actions > *');
+        await expect(bareActions).toHaveCount(3);
+        for (const action of await bareActions.all()) {
+            expect((await action.boundingBox()).height).toBeLessThanOrEqual(44);
+        }
+        // Actions sit at the bottom of the stretched card.
+        const lastAction = await bareActions.last().boundingBox();
+        expect(bareBox.y + bareBox.height - (lastAction.y + lastAction.height)).toBeLessThan(24);
+
+        // The broken thumbnail becomes a placeholder; the working one stays an image.
+        await expect(cards.nth(0).locator('[data-remote-thumb-failed]')).toHaveAttribute('title', '缩略图加载失败');
+        await expect(cards.nth(0).locator('img')).toHaveCount(0);
+        await expect(cards.nth(1).locator('img[data-remote-thumb]')).toHaveCount(1);
+        expect(brokenThumbRequests).toHaveLength(1);
+
+        // The next site's results re-render the page; the failed thumbnail is not requested again.
+        slow.resolve();
+        await expect(page.locator('[data-remote-search-progress-summary]')).toHaveText('已完成 4 / 4 个资源站 · 共找到 3 条');
+        await expect(cards).toHaveCount(3);
+        await expect(cards.nth(0).locator('[data-remote-thumb-failed]')).toHaveCount(1);
+        await expect(page.locator('.toast', { hasText: '部分资源站读取失败' })).toContainText('Character Tavern：404 未找到；WyvernChat：403 被拒绝');
+        expect(brokenThumbRequests).toHaveLength(1);
     });
 
     test('paginates search results instead of rendering every card at once', async ({ page }) => {

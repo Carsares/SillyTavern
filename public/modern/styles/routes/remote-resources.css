@@ -87,9 +87,24 @@
 .remote-resource-warning {
     display: flex;
     gap: 8px;
-    align-items: center;
+    align-items: baseline;
     color: var(--danger);
     font-size: 13px;
+}
+
+.remote-search-error-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.remote-search-error-list li {
+    overflow-wrap: anywhere;
+    cursor: help;
 }
 
 .remote-result-grid,
@@ -105,8 +120,22 @@
     gap: 10px;
 }
 
-.remote-resource-card {
-    grid-template-rows: auto auto 1fr auto auto;
+/* 纵向 flex：卡片在结果网格里被拉到同行最高时，多出的高度只留在操作按钮上方，
+   不再分给标签行或按钮行，避免标签被撑成大椭圆、按钮被拉高。
+   layout.css 在本文件之后加载并给 .resource-card 设了 display: grid，这里用双类选择器保证覆盖。 */
+.resource-card.remote-resource-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.remote-resource-card > .row-actions {
+    margin-top: auto;
+}
+
+.remote-resource-card .tag-row,
+.remote-resource-card .row-actions {
+    align-items: center;
+    align-content: flex-start;
 }
 
 .remote-card-head {

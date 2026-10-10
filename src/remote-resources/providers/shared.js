@@ -77,6 +77,58 @@ export function stripHtml(html) {
     return decode(String(html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
+// Upper bound for the response-body excerpt appended to an HTTP error message.
+const ERROR_BODY_MAX_LENGTH = 120;
+
+/**
+ * Turns arbitrary error text into one readable line: drops script/style blocks, comments and tags
+ * (including a tag cut off by an earlier slice), decodes entities and collapses whitespace.
+ * @param {unknown} value Error text, possibly containing HTML
+ * @param {number} [maxLength] Maximum length of the returned text
+ * @returns {string} Plain single-line text
+ */
+export function sanitizeErrorText(value, maxLength = 300) {
+    const text = String(value ?? '')
+        .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+        .replace(/<!--[\s\S]*?(?:-->|$)/g, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/<[^>]*$/, ' ');
+    return truncateText(decode(text).replace(/\s+/g, ' ').trim(), maxLength);
+}
+
+/**
+ * Summarizes a failed response body for an error message. HTML pages (error pages, Cloudflare challenges)
+ * contribute only their <title>; other bodies are reduced to a short plain-text excerpt.
+ * @param {string} text Response body
+ * @param {string|null} [contentType] Response Content-Type header
+ * @returns {string} Short excerpt, or an empty string when the body has nothing readable
+ */
+export function summarizeErrorBody(text, contentType = '') {
+    const body = String(text || '');
+    if (!body.trim()) {
+        return '';
+    }
+    const isHtmlPage = /\bhtml\b/i.test(String(contentType || '')) || /^\s*(?:<!doctype\s+html|<html[\s>])/i.test(body);
+    if (isHtmlPage) {
+        const title = body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+        return sanitizeErrorText(title, ERROR_BODY_MAX_LENGTH);
+    }
+    return sanitizeErrorText(body, ERROR_BODY_MAX_LENGTH);
+}
+
+/**
+ * Builds the error message for a non-OK HTTP response, keeping the status code and a short body excerpt.
+ * @param {string} prefix Message prefix, e.g. 'Remote request failed'
+ * @param {{ status: number, statusText?: string, headers?: { get(name: string): string|null } }} response Failed response
+ * @param {string} [text] Response body
+ * @returns {string} Error message
+ */
+export function formatHttpErrorMessage(prefix, response, text = '') {
+    const status = `${response.status} ${response.statusText || ''}`.trim();
+    const excerpt = summarizeErrorBody(text, response.headers?.get?.('content-type'));
+    return `${prefix}: ${status}${excerpt ? ` - ${excerpt}` : ''}`;
+}
+
 export function truncateText(value, maxLength = 520) {
     const text = String(value || '').trim();
     if (text.length <= maxLength) {
@@ -161,10 +213,16 @@ async function fetchWithTimeout(url, options = {}) {
                 throw new Error(`Remote request rate limited (429)${retryAfter ? `, retry after ${retryAfter}s` : ''}`);
             }
             const text = await response.text().catch(() => '');
-            throw new Error(`Remote request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+            throw new Error(formatHttpErrorMessage('Remote request failed', response, text));
         }
 
         return response;
+    } catch (error) {
+        // The abort here only comes from our own timer; report it as a timeout instead of a bare "aborted".
+        if (controller.signal.aborted && error?.name === 'AbortError') {
+            throw new Error(`Remote request timed out after ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw error;
     } finally {
         clearTimeout(timer);
     }

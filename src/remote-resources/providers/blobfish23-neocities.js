@@ -1,8 +1,6 @@
 import path from 'node:path';
 
-import extractChunks from 'png-chunks-extract';
-import PNGtext from 'png-chunk-text';
-
+import { hasCharacterCardData } from '../../character-card-parser.js';
 import {
     REMOTE_RESOURCE_TYPES,
     clampLimit,
@@ -254,7 +252,7 @@ async function verifySourcePageLink(fileUrl) {
 
 function validateDownloadedBuffer(buffer, resourceType) {
     if (resourceType === REMOTE_RESOURCE_TYPES.CHARACTER) {
-        if (!isPng(buffer) || !hasCharacterCardText(buffer)) {
+        if (!isPng(buffer) || !hasCharacterCardData(buffer)) {
             throw new Error('Blobfish23 PNG does not contain character card metadata.');
         }
         return;
@@ -286,17 +284,6 @@ function isWorldbookJson(json) {
 
 function isPng(buffer) {
     return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-}
-
-function hasCharacterCardText(buffer) {
-    try {
-        return extractChunks(new Uint8Array(buffer))
-            .filter(chunk => chunk.name === 'tEXt')
-            .map(chunk => PNGtext.decode(chunk.data))
-            .some(chunk => ['chara', 'ccv3'].includes(String(chunk.keyword || '').toLowerCase()) && chunk.text);
-    } catch {
-        return false;
-    }
 }
 
 function getDownloadFileName(fileUrl, resourceType) {

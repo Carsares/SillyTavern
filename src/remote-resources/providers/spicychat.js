@@ -7,6 +7,7 @@ import {
     USER_AGENT,
     clampLimit,
     fetchJson,
+    formatHttpErrorMessage,
     formatRemoteResource,
     stripHtml,
     truncateText,
@@ -146,7 +147,7 @@ async function postTypesenseSearch(apiKey, payload) {
     });
     const text = await response.text();
     if (!response.ok) {
-        throw new Error(`SpicyChat search failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+        throw new Error(formatHttpErrorMessage('SpicyChat search failed', response, text));
     }
 
     const json = JSON.parse(text);

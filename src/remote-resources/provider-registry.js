@@ -32,6 +32,7 @@ import { characterArchiveCatboxProvider } from './providers/character-archive-ca
 import { blobfish23NeocitiesProvider } from './providers/blobfish23-neocities.js';
 import { malliebotsProvider } from './providers/malliebots.js';
 import { snomblerNeocitiesProvider } from './providers/snombler-neocities.js';
+import { sanitizeErrorText } from './providers/shared.js';
 import { getRemoteCredentialState } from './credentials.js';
 import { providerEnabledFromMap, readProviderPreferences } from './provider-preferences.js';
 
@@ -95,26 +96,40 @@ export async function searchRemoteResources(params, directories) {
     const resourceType = params.resourceType || '';
     // A provider can only be searched once per request, even if a crafted client repeats its ID.
     // Disabled providers are skipped even if a client requests them explicitly.
-    const searches = [...new Set(providerIds)]
+    const providers = [...new Set(providerIds)]
         .map(id => PROVIDERS.find(provider => provider.id === id))
-        .filter(provider => provider?.supportsSearch && providerEnabledFromMap(preferences, provider.id))
-        .map(provider => searchProvider(provider, { ...params, resourceType }, directories));
+        .filter(provider => provider?.supportsSearch && providerEnabledFromMap(preferences, provider.id));
+    const searches = providers.map(provider => searchProvider(provider, { ...params, resourceType }, directories));
 
     const results = await Promise.allSettled(searches);
     const items = [];
     const errors = [];
+    const providerErrors = [];
     let total = 0;
 
-    for (const result of results) {
+    results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
             items.push(...result.value.items);
             total += Number(result.value.total) || result.value.items.length;
-        } else {
-            errors.push(result.reason?.message || String(result.reason));
+            return;
         }
-    }
+        const providerError = describeProviderError(providers[index], result.reason);
+        providerErrors.push(providerError);
+        errors.push(`${providerError.providerName}: ${providerError.message}`);
+    });
 
-    return { items, total, errors };
+    // `errors` stays a list of readable strings for existing clients; `providerErrors` carries the same failures with provider IDs.
+    return { items, total, errors, providerErrors };
+}
+
+// Provider errors can embed upstream response text; keep them to one short plain-text line so no HTML page reaches the UI.
+function describeProviderError(provider, reason) {
+    const message = sanitizeErrorText(reason?.message || String(reason)) || 'Unknown error';
+    return {
+        providerId: provider.id,
+        providerName: provider.name || provider.id,
+        message,
+    };
 }
 
 export async function downloadRemoteResource(params, directories) {

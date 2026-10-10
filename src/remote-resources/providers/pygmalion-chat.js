@@ -4,6 +4,7 @@ import {
     REMOTE_RESOURCE_TYPES,
     USER_AGENT,
     clampLimit,
+    formatHttpErrorMessage,
     formatRemoteResource,
     stripHtml,
     truncateText,
@@ -86,7 +87,7 @@ async function connectJson(method, payload) {
     });
     const text = await response.text();
     if (!response.ok) {
-        throw new Error(`Pygmalion Chat ${method} failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+        throw new Error(formatHttpErrorMessage(`Pygmalion Chat ${method} failed`, response, text));
     }
     return JSON.parse(text);
 }

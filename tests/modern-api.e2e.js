@@ -484,6 +484,111 @@ test.describe('Modern API page', () => {
         await expect(page.locator('.api-history-panel')).toContainText('OK from custom');
     });
 
+    test('blocks saving chat completion parameters outside the legacy ranges and marks the fields', async ({ page }) => {
+        const savedBodies = [];
+        const generateBodies = [];
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                oai_settings: {
+                    chat_completion_source: 'custom',
+                    custom_model: 'custom/saved-model',
+                    custom_url: 'https://saved.example/v1',
+                    temp_openai: 0.7,
+                    openai_max_tokens: 300,
+                    top_p_openai: 0.9,
+                    freq_pen_openai: 0.1,
+                    pres_pen_openai: 0.2,
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+
+        await mockModernApiShell(page, settingsBundle);
+        await page.route('**/api/settings/save', route => {
+            savedBodies.push(route.request().postDataJSON());
+            settingsBundle.settings = JSON.stringify(savedBodies.at(-1));
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+        await page.route('**/api/backends/chat-completions/generate', route => {
+            generateBodies.push(route.request().postDataJSON());
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: 'OK' } }] }) });
+        });
+
+        await page.goto('/modern/?view=api');
+        await expect(page.locator('[data-api-top-p]')).toHaveValue('0.9');
+        // The inputs expose the same limits as the legacy sliders.
+        await expect(page.locator('[data-api-top-p]')).toHaveAttribute('max', '1');
+        await expect(page.locator('[data-api-temperature]')).toHaveAttribute('max', '2');
+        await expect(page.locator('[data-api-frequency-penalty]')).toHaveAttribute('min', '-2');
+        await expect(page.locator('[data-api-max-tokens]')).toHaveAttribute('max', '128000');
+
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-api-top-p]').fill('5');
+        await page.locator('[data-api-temperature]').fill('2.5');
+        await page.locator('[data-api-presence-penalty]').fill('-3');
+        await page.locator('[data-api-max-tokens]').fill('12.5');
+        await page.locator('[data-save-api-connection]').click();
+
+        const topPError = page.locator('[data-api-field-error="topP"]');
+        await expect(topPError).toHaveText('Top P 需在 0 到 1 之间');
+        await expect(page.locator('[data-api-top-p]')).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('[data-api-top-p]')).toHaveAttribute('aria-describedby', 'api-field-error-topP');
+        await expect(page.locator('[data-api-field-error="temperature"]')).toHaveText('Temperature 需在 0 到 2 之间');
+        await expect(page.locator('[data-api-field-error="presencePenalty"]')).toHaveText('Presence Penalty 需在 -2 到 2 之间');
+        await expect(page.locator('[data-api-field-error="maxTokens"]')).toHaveText('Max Tokens 需为 1 到 128000 之间的整数');
+        await expect(page.locator('[data-api-field-error="frequencyPenalty"]')).toHaveCount(0);
+        await expect(page.locator('.toast', { hasText: '连接配置未保存' })).toContainText('Temperature 需在 0 到 2 之间');
+        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toHaveCount(0);
+        // The user's edits stay in the form so they can be corrected.
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/new-model');
+        await expect(page.locator('[data-api-top-p]')).toHaveValue('5');
+        await expect(page.locator('[data-api-temperature]')).toBeFocused();
+
+        // Enter in a field takes the same validated path instead of the browser's native bubble.
+        await page.locator('[data-api-model]').press('Enter');
+        await expect(topPError).toHaveText('Top P 需在 0 到 1 之间');
+
+        // Testing the connection does not send out-of-range parameters either.
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试未执行' })).toBeVisible();
+        expect(generateBodies).toEqual([]);
+        expect(savedBodies).toEqual([]);
+
+        // Correcting a marked field hides its error as soon as it changes, without shifting the layout.
+        const saveButton = page.locator('[data-save-api-connection]');
+        const saveButtonTop = (await saveButton.boundingBox()).y;
+        await page.locator('[data-api-top-p]').fill('0.5');
+        await page.locator('[data-api-top-p]').blur();
+        await expect(topPError).toBeHidden();
+        await expect(page.locator('[data-api-top-p]')).not.toHaveAttribute('aria-invalid', 'true');
+        expect((await saveButton.boundingBox()).y).toBe(saveButtonTop);
+        await page.locator('[data-api-temperature]').fill('');
+        await page.locator('[data-api-temperature]').blur();
+        await expect(page.locator('[data-api-field-error="temperature"]')).toHaveText('请填写 Temperature');
+
+        await page.locator('[data-api-temperature]').fill('2');
+        await page.locator('[data-api-presence-penalty]').fill('-2');
+        await page.locator('[data-api-max-tokens]').fill('128000');
+        // The last field still has focus: its change fires on mousedown, and the click must still land on the button.
+        await saveButton.click();
+
+        await expect.poll(() => savedBodies.length).toBe(1);
+        expect(savedBodies[0].oai_settings).toMatchObject({
+            custom_model: 'custom/new-model',
+            temp_openai: 2,
+            openai_max_tokens: 128000,
+            top_p_openai: 0.5,
+            freq_pen_openai: 0.1,
+            pres_pen_openai: -2,
+        });
+        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+        await expect(page.locator('.field-error')).toHaveCount(0);
+    });
+
     test('treats a reasoning-only chat completion test reply as a working connection', async ({ page }) => {
         const generateBodies = [];
         const generateResponses = [

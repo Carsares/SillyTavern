@@ -19,6 +19,8 @@ export function createRemoteResourceComponents(ctx) {
     let autoLoadPending = false;
     // Stops the first-load failure from silently re-firing (and re-toasting) on every render; manual refresh still retries.
     let autoLoadFailed = false;
+    // 加载失败过的缩略图地址：渐进搜索每返回一个资源站就整页重绘，记住失败地址后直接渲染占位，不再重复请求。
+    const failedThumbnails = new Set();
 
     function renderRemoteResources() {
         ensureRemoteResourcesLoaded();
@@ -112,7 +114,7 @@ export function createRemoteResourceComponents(ctx) {
     }).join('') || '<span class="muted">暂无可搜索资源站</span>'}
             </div>
             ${renderSearchProgress(remote)}
-            ${remote.errors.length ? `<div class="remote-resource-warning"><i class="fa-solid fa-triangle-exclamation"></i>${escapeHtml(remote.errors.join('；'))}</div>` : ''}
+            ${renderSearchErrors(remote)}
         </section>
         ${renderRemoteResults(remote)}
     `;
@@ -152,6 +154,23 @@ export function createRemoteResourceComponents(ctx) {
             ${remote.searching && pending.length ? renderProviderNameList('等待响应', pending, 'data-remote-search-pending') : ''}
             ${cancelled.length ? renderProviderNameList('未完成', cancelled, 'data-remote-search-cancelled') : ''}
             ${failed.length ? renderProviderNameList('失败', failed, 'data-remote-search-failed', 'remote-search-progress-failed') : ''}
+        </div>
+    `;
+    }
+
+    // 每个失败资源站一行简述（名称与进度区「失败」名单一致），完整错误放在 title 里悬停查看。
+    function renderSearchErrors(remote) {
+        if (!remote.errors.length) {
+            return '';
+        }
+        return `
+        <div class="remote-resource-warning" data-remote-search-errors>
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <ul class="remote-search-error-list">
+                ${remote.errors.map(error => `
+                    <li data-remote-search-error="${escapeHtml(error.providerId)}" title="${escapeHtml(error.detail)}">${escapeHtml(`${error.providerName}：${error.summary}`)}</li>
+                `).join('')}
+            </ul>
         </div>
     `;
     }
@@ -222,7 +241,7 @@ export function createRemoteResourceComponents(ctx) {
         return `
         <article class="resource-card remote-resource-card">
             <div class="remote-card-head">
-                ${item.thumbnailUrl ? `<img class="remote-thumb" src="${escapeHtml(item.thumbnailUrl)}" alt="">` : `<span class="remote-thumb remote-thumb-fallback"><i class="fa-solid ${getTypeIcon(item.resourceType)}"></i></span>`}
+                ${renderRemoteThumbnail(item)}
                 <div class="remote-card-title">
                     <h2>${escapeHtml(item.title)}</h2>
                     <div class="card-meta">${escapeHtml(item.providerName)} · ${escapeHtml(typeLabel)}${item.author ? ` · ${escapeHtml(item.author)}` : ''}</div>
@@ -253,6 +272,37 @@ export function createRemoteResourceComponents(ctx) {
             ${presetPromptActive ? renderPresetTypePrompt(index) : ''}
         </article>
     `;
+    }
+
+    function renderRemoteThumbnail(item) {
+        const icon = getTypeIcon(item.resourceType);
+        if (!item.thumbnailUrl) {
+            return renderThumbnailFallback(icon);
+        }
+        if (failedThumbnails.has(item.thumbnailUrl)) {
+            return renderThumbnailFallback(icon, true);
+        }
+        return `<img class="remote-thumb" data-remote-thumb data-fallback-icon="${escapeHtml(icon)}" src="${escapeHtml(item.thumbnailUrl)}" alt="">`;
+    }
+
+    function renderThumbnailFallback(icon, failed = false) {
+        return `<span class="remote-thumb remote-thumb-fallback" ${failed ? 'data-remote-thumb-failed title="缩略图加载失败"' : ''}><i class="fa-solid ${escapeHtml(icon)}"></i></span>`;
+    }
+
+    // 缩略图加载失败（被浏览器 ORB 拦截、连接被重置等）时换成占位并记住地址。
+    // 由路由在捕获阶段统一监听 error 事件（该事件不冒泡），不使用内联 onerror。
+    function handleRemoteThumbnailError(event) {
+        const image = event.target;
+        if (!(image instanceof HTMLImageElement) || !image.matches('img[data-remote-thumb]')) {
+            return;
+        }
+        const url = image.getAttribute('src');
+        if (url) {
+            failedThumbnails.add(url);
+        }
+        const template = document.createElement('template');
+        template.innerHTML = renderThumbnailFallback(image.dataset.fallbackIcon || getTypeIcon(''), true);
+        image.replaceWith(template.content);
     }
 
     // 预设类型无法自动识别时的内联回退：让用户从合法 apiId 中选一个再确认导入。
@@ -433,6 +483,7 @@ export function createRemoteResourceComponents(ctx) {
 
     return {
         renderRemoteResources,
+        handleRemoteThumbnailError,
     };
 }
 

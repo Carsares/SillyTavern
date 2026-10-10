@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import extract from 'png-chunks-extract';
 
 import encode from '../src/png/encode.js';
-import { read, write } from '../src/character-card-parser.js';
+import { hasCharacterCardData, read, write } from '../src/character-card-parser.js';
 
 const NUL = Buffer.from([0]);
 
@@ -153,6 +153,49 @@ describe('character-card-parser read()', () => {
         ]);
         expect(() => read(image)).toThrow('No PNG metadata.');
         expect(console.error).toHaveBeenCalledWith('PNG metadata does not contain any character data.');
+    });
+});
+
+describe('character-card-parser hasCharacterCardData()', () => {
+    beforeEach(() => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test.each([
+        ['a tEXt chara chunk', () => tEXt('chara', toBase64(makeCard('Text')))],
+        ['a zTXt chara chunk', () => zTXt('chara', toBase64(makeCard('Compressed')))],
+        ['a zTXt chunk with an upper-case CCV3 keyword', () => zTXt('CCV3', toBase64(makeCard('Upper', 'chara_card_v3')))],
+        ['an uncompressed iTXt chara chunk', () => iTXt('chara', toBase64(makeCard('iTXt')))],
+        ['a compressed iTXt ccv3 chunk', () => iTXt('ccv3', toBase64(makeCard('iTXt z', 'chara_card_v3')), { compressed: true })],
+    ])('accepts card data stored in %s', (_label, createChunk) => {
+        expect(hasCharacterCardData(buildPng([createChunk()]))).toBe(true);
+    });
+
+    test('agrees with read() when a corrupt ccv3 chunk falls back to a readable chara chunk', () => {
+        const image = buildPng([
+            zTXt('ccv3', '', { compressed: Buffer.from('not zlib data') }),
+            zTXt('chara', toBase64(makeCard('Fallback'))),
+        ]);
+        expect(hasCharacterCardData(image)).toBe(true);
+        expect(readName(image)).toBe('Fallback');
+    });
+
+    test.each([
+        ['a PNG without text chunks', () => buildPng([])],
+        ['a PNG with only unrelated text chunks', () => buildPng([tEXt('Comment', 'hello'), zTXt('Software', 'editor')])],
+        ['a PNG whose only card chunk cannot be inflated', () => buildPng([zTXt('chara', '', { compressed: Buffer.from('broken') })])],
+        ['a PNG whose card chunk is empty', () => buildPng([tEXt('chara', '')])],
+        ['bytes that are not a PNG', () => Buffer.from('<!doctype html><title>Not a card</title>')],
+        ['an empty buffer', () => Buffer.alloc(0)],
+    ])('rejects %s without logging', (_label, createImage) => {
+        expect(hasCharacterCardData(createImage())).toBe(false);
+        expect(console.error).not.toHaveBeenCalled();
+        expect(console.warn).not.toHaveBeenCalled();
     });
 });
 

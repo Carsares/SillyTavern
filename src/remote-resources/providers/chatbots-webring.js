@@ -1,8 +1,6 @@
 import path from 'node:path';
 
-import extractChunks from 'png-chunks-extract';
-import PNGtext from 'png-chunk-text';
-
+import { hasCharacterCardData } from '../../character-card-parser.js';
 import {
     REMOTE_RESOURCE_TYPES,
     clampLimit,
@@ -313,7 +311,7 @@ function validateDownloadedBuffer(buffer, resourceType, fileUrl) {
         if (!isPng || resourceType !== REMOTE_RESOURCE_TYPES.CHARACTER) {
             throw new Error('Chatbots Webring character card is not a PNG file.');
         }
-        if (isExternalCardFileUrl(parsedUrl) && !hasCharacterCardText(buffer)) {
+        if (isExternalCardFileUrl(parsedUrl) && !hasCharacterCardData(buffer)) {
             throw new Error('Chatbots Webring external PNG does not contain character card metadata.');
         }
         return;
@@ -341,17 +339,6 @@ function isWorldbookJson(json) {
     const entries = json?.entries;
     const values = Array.isArray(entries) ? entries : entries && typeof entries === 'object' ? Object.values(entries) : [];
     return values.some(entry => entry && typeof entry === 'object' && Array.isArray(entry.key) && entry.key.length && typeof entry.content === 'string' && entry.content.trim());
-}
-
-function hasCharacterCardText(buffer) {
-    try {
-        const textChunks = extractChunks(new Uint8Array(buffer))
-            .filter(chunk => chunk.name === 'tEXt')
-            .map(chunk => PNGtext.decode(chunk.data));
-        return textChunks.some(chunk => ['chara', 'ccv3'].includes(String(chunk.keyword || '').toLowerCase()) && chunk.text);
-    } catch {
-        return false;
-    }
 }
 
 function isCatboxFileUrl(url) {

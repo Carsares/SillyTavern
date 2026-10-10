@@ -1,3 +1,5 @@
+import { refreshChatCompletionFieldError } from '../actions/api-chat-completion-connection.js';
+
 export function createApiEvents(ctx) {
     const {
         state,
@@ -90,6 +92,11 @@ export function createApiEvents(ctx) {
 
         if (event.target instanceof HTMLSelectElement && event.target.matches('[data-textgen-type]')) {
             updateTextCompletionTypeFields(event.target.value);
+            return true;
+        }
+
+        // 已标红的数值参数改动后同步刷新提示：改对即隐藏，仍越界则更新文案。
+        if (refreshChatCompletionFieldError(event.target)) {
             return true;
         }
 

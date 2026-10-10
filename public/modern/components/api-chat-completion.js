@@ -1,3 +1,5 @@
+import { CHAT_COMPLETION_NUMBER_FIELDS } from '../actions/api-chat-completion-connection.js';
+
 export function createApiChatCompletionComponents(ctx) {
     const {
         state,
@@ -11,6 +13,12 @@ export function createApiChatCompletionComponents(ctx) {
         getNumberSetting,
     } = ctx;
 
+    // 数值输入框的 min / max 与保存前校验共用同一份范围定义。
+    function renderNumberRange(key) {
+        const field = CHAT_COMPLETION_NUMBER_FIELDS.find(item => item.key === key);
+        return field ? `min="${field.min}" max="${field.max}"` : '';
+    }
+
     function renderChatCompletionEditor(provider, mainApi, renderApiMainSelect) {
         const settings = state.settings.oai_settings || {};
         const source = provider.chatSource || settings.chat_completion_source || 'openai';
@@ -23,7 +31,7 @@ export function createApiChatCompletionComponents(ctx) {
         const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
 
         return `
-        <form class="settings-form" data-api-connection-form autocomplete="off">
+        <form class="settings-form" data-api-connection-form autocomplete="off" novalidate>
             <section class="form-section">
                 <div>
                     <h3 class="form-section-title">连接</h3>
@@ -83,23 +91,23 @@ export function createApiChatCompletionComponents(ctx) {
                     </label>
                     <label class="field-label">
                         <span>Temperature</span>
-                        <input class="text-input" type="number" step="0.01" data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
+                        <input class="text-input" type="number" step="0.01" ${renderNumberRange('temperature')} data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
                     </label>
                     <label class="field-label">
                         <span>Max Tokens</span>
-                        <input class="text-input" type="number" step="1" min="1" data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
+                        <input class="text-input" type="number" step="1" ${renderNumberRange('maxTokens')} data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
                     </label>
                     <label class="field-label">
                         <span>Top P</span>
-                        <input class="text-input" type="number" step="0.01" data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">
+                        <input class="text-input" type="number" step="0.01" ${renderNumberRange('topP')} data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">
                     </label>
                     <label class="field-label">
                         <span>Frequency Penalty</span>
-                        <input class="text-input" type="number" step="0.01" data-api-frequency-penalty value="${escapeHtml(getNumberSetting(settings, 'freq_pen_openai', 0))}">
+                        <input class="text-input" type="number" step="0.01" ${renderNumberRange('frequencyPenalty')} data-api-frequency-penalty value="${escapeHtml(getNumberSetting(settings, 'freq_pen_openai', 0))}">
                     </label>
                     <label class="field-label">
                         <span>Presence Penalty</span>
-                        <input class="text-input" type="number" step="0.01" data-api-presence-penalty value="${escapeHtml(getNumberSetting(settings, 'pres_pen_openai', 0))}">
+                        <input class="text-input" type="number" step="0.01" ${renderNumberRange('presencePenalty')} data-api-presence-penalty value="${escapeHtml(getNumberSetting(settings, 'pres_pen_openai', 0))}">
                     </label>
                 </div>
             </section>

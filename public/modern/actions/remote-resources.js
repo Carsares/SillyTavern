@@ -11,6 +11,98 @@ const presetApiIds = new Set(['kobold', 'koboldhorde', 'novel', 'textgenerationw
 const REMOTE_SEARCH_CONCURRENCY = 6;
 const REMOTE_SEARCH_LIMIT = 48;
 
+// 资源站失败提示的长度上限：简述用于行内提示和 toast，详情放进 title 供悬停查看。
+const REMOTE_ERROR_SUMMARY_MAX_LENGTH = 120;
+const REMOTE_ERROR_DETAIL_MAX_LENGTH = 600;
+// 常见 HTTP 状态码的中文简述；未列出的按 4xx / 5xx 归类。
+const HTTP_STATUS_LABELS = {
+    400: '请求无效',
+    401: '未授权',
+    403: '被拒绝',
+    404: '未找到',
+    408: '请求超时',
+    410: '已下线',
+    429: '请求过于频繁',
+    500: '服务器错误',
+    502: '网关错误',
+    503: '服务不可用',
+    504: '网关超时',
+};
+const HTML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', '#39': '\'', '#039': '\'', nbsp: ' ' };
+
+/**
+ * 把错误文本整理成一行纯文本：去掉 script / style 块、注释和标签（含被截断的半个标签），解码常见实体并合并空白。
+ * 后端已做同样处理，这里作为兜底，防止旧后端或其他来源把整页 HTML 带进提示。
+ * @param {unknown} value 错误文本
+ * @param {number} maxLength 最大长度，超出部分以省略号结尾
+ * @returns {string} 纯文本
+ */
+export function sanitizeRemoteErrorText(value, maxLength) {
+    const text = String(value ?? '')
+        .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+        .replace(/<!--[\s\S]*?(?:-->|$)/g, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/<[^>]*$/, ' ')
+        .replace(/&(amp|lt|gt|quot|apos|#0?39|nbsp);/g, (_match, name) => HTML_ENTITIES[name])
+        .replace(/\s+/g, ' ')
+        .trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text;
+}
+
+/**
+ * 把一条资源站错误归纳为简述和详情：带 HTTP 状态码的保留状态码并附中文说明，超时和网络错误归类，其余截断原文。
+ * @param {unknown} message 错误文本
+ * @returns {{ summary: string, detail: string }} 简述与完整（已清理）详情
+ */
+export function summarizeRemoteError(message) {
+    const detail = sanitizeRemoteErrorText(message, REMOTE_ERROR_DETAIL_MAX_LENGTH) || '未知错误';
+    const status = detail.match(/(?:^|[\s:(（])([45]\d{2})(?=$|[\s),.;:，。；）])/)?.[1];
+    if (status) {
+        const label = HTTP_STATUS_LABELS[status] || (status.startsWith('5') ? '服务器错误' : '请求失败');
+        return { summary: `${status} ${label}`, detail };
+    }
+    if (/timed?\s*out|timeout|ETIMEDOUT/i.test(detail)) {
+        return { summary: '请求超时', detail };
+    }
+    if (/ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network|fetch failed|failed to fetch/i.test(detail)) {
+        return { summary: '网络连接失败', detail };
+    }
+    return { summary: sanitizeRemoteErrorText(detail, REMOTE_ERROR_SUMMARY_MAX_LENGTH), detail };
+}
+
+/**
+ * 生成单个资源站的失败记录；后端在 errors 字符串前加了「资源站名: 」前缀，这里去掉以免名称重复。
+ * @param {{ id: string, name?: string }} provider 资源站
+ * @param {unknown} message 错误文本
+ * @returns {{ providerId: string, providerName: string, summary: string, detail: string }} 失败记录
+ */
+export function describeRemoteSearchError(provider, message) {
+    const providerName = provider.name || provider.id;
+    let text = String(message ?? '');
+    for (const separator of [': ', '：']) {
+        if (text.startsWith(`${providerName}${separator}`)) {
+            text = text.slice(providerName.length + separator.length);
+            break;
+        }
+    }
+    return { providerId: provider.id, providerName, ...summarizeRemoteError(text) };
+}
+
+/**
+ * 失败记录的展示文本，行内提示与 toast 共用，名称与搜索进度里的「失败」名单一致。
+ * @param {{ providerName: string, summary: string }} error 失败记录
+ * @returns {string} 例如「Character Tavern：404 未找到」
+ */
+export function formatRemoteSearchError(error) {
+    return `${error.providerName}：${error.summary}`;
+}
+
+// toast 只列前两个资源站，其余以总数概括，完整名单在页面内的提示里。
+function formatRemoteSearchErrorToast(errors) {
+    const shown = errors.slice(0, 2).map(formatRemoteSearchError).join('；');
+    return errors.length > 2 ? `${shown} 等 ${errors.length} 个资源站` : shown;
+}
+
 // 仅在强信号命中时返回具体 apiId，弱信号或无判据一律返回 null，交给用户在卡片内联选择，避免误判。
 function inferPresetApiId(preset) {
     if (!preset || typeof preset !== 'object') {
@@ -201,7 +293,7 @@ export function createRemoteResourceActions({
                 throw requestErrors[0];
             }
             if (remote.errors.length) {
-                showToast('部分资源站读取失败', remote.errors[0]);
+                showToast('部分资源站读取失败', formatRemoteSearchErrorToast(remote.errors));
             }
         } catch (error) {
             if (isCurrentSearch()) {
@@ -272,17 +364,20 @@ export function createRemoteResourceActions({
                 signal,
             });
             const items = Array.isArray(result?.items) ? result.items : [];
+            // 优先读后端的结构化 providerErrors（不带名称前缀），旧响应只有 errors 字符串时退回读取它。
+            const providerErrors = Array.isArray(result?.providerErrors) ? result.providerErrors.map(error => error?.message) : [];
+            const messages = providerErrors.length ? providerErrors : (Array.isArray(result?.errors) ? result.errors : []);
             return {
                 items,
                 total: Number(result?.total) || items.length,
-                errors: Array.isArray(result?.errors) ? result.errors : [],
+                errors: messages.map(message => describeRemoteSearchError(provider, message)),
                 requestError: null,
             };
         } catch (error) {
             return {
                 items: [],
                 total: 0,
-                errors: [`${provider.name || provider.id}: ${error?.message || String(error)}`],
+                errors: [describeRemoteSearchError(provider, error?.message || String(error))],
                 requestError: error,
             };
         }

@@ -137,40 +137,77 @@ export const write = (image, data) => {
 };
 
 /**
- * Reads Character metadata from a PNG image buffer.
- * Supports both V2 (chara) and V3 (ccv3) stored in tEXt, zTXt or iTXt chunks. V3 (ccv3) takes precedence.
+ * Lists the tEXt, zTXt and iTXt chunks of a PNG image with their lowercased keywords.
  * @param {Buffer} image PNG image buffer
- * @returns {string} Character data
+ * @returns {{ name: string, keyword: string, bytes: Buffer, offset: number }[]} Text chunks in file order
  */
-export const read = (image) => {
-    const chunks = extract(new Uint8Array(image));
-
-    const textChunks = chunks
+function getTextChunks(image) {
+    return extract(new Uint8Array(image))
         .filter((chunk) => TEXT_CHUNK_NAMES.includes(chunk.name))
         .map((chunk) => {
             const bytes = toBuffer(chunk.data);
             const { keyword, offset } = readChunkKeyword(bytes);
             return { name: chunk.name, keyword: keyword.toLowerCase(), bytes, offset };
         });
+}
+
+/**
+ * Finds the base64 text of the first readable character card chunk, V3 (ccv3) first.
+ * @param {{ name: string, keyword: string, bytes: Buffer, offset: number }[]} textChunks Text chunks from getTextChunks()
+ * @param {(chunk: { name: string }, keyword: string, error: Error) => void} [onUnreadable] Called for each chunk that cannot be decoded
+ * @returns {string|null} Encoded card text, or null when no card chunk is readable
+ */
+function findCardText(textChunks, onUnreadable) {
+    for (const keyword of CARD_KEYWORDS) {
+        for (const chunk of textChunks.filter((textChunk) => textChunk.keyword === keyword)) {
+            try {
+                return decodeChunkText(chunk.name, chunk.bytes, chunk.offset);
+            } catch (error) {
+                onUnreadable?.(chunk, keyword, error);
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Reads Character metadata from a PNG image buffer.
+ * Supports both V2 (chara) and V3 (ccv3) stored in tEXt, zTXt or iTXt chunks. V3 (ccv3) takes precedence.
+ * @param {Buffer} image PNG image buffer
+ * @returns {string} Character data
+ */
+export const read = (image) => {
+    const textChunks = getTextChunks(image);
 
     if (textChunks.length === 0) {
         console.error('PNG metadata does not contain any text chunks.');
         throw new Error('No PNG metadata.');
     }
 
-    for (const keyword of CARD_KEYWORDS) {
-        for (const chunk of textChunks.filter((textChunk) => textChunk.keyword === keyword)) {
-            try {
-                const text = decodeChunkText(chunk.name, chunk.bytes, chunk.offset);
-                return Buffer.from(text, 'base64').toString('utf8');
-            } catch (error) {
-                console.warn(`Skipping unreadable ${chunk.name} '${keyword}' chunk in PNG metadata: ${error.message}`);
-            }
-        }
+    const text = findCardText(textChunks, (chunk, keyword, error) => {
+        console.warn(`Skipping unreadable ${chunk.name} '${keyword}' chunk in PNG metadata: ${error.message}`);
+    });
+    if (text !== null) {
+        return Buffer.from(text, 'base64').toString('utf8');
     }
 
     console.error('PNG metadata does not contain any character data.');
     throw new Error('No PNG metadata.');
+};
+
+/**
+ * Checks whether a PNG image buffer carries character card data that read() can return.
+ * Uses the same tEXt/zTXt/iTXt decoding and ccv3-over-chara precedence as read(), without logging.
+ * @param {Buffer} image PNG image buffer
+ * @returns {boolean} True when the card chunk read() would pick decodes to non-empty text
+ */
+export const hasCharacterCardData = (image) => {
+    try {
+        const text = findCardText(getTextChunks(image));
+        return Boolean(text && text.trim());
+    } catch {
+        return false;
+    }
 };
 
 /**

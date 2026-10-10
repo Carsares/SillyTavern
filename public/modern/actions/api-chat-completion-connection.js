@@ -1,5 +1,110 @@
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
+// 聊天补全数值参数的允许范围，与旧版界面一致：public/index.html 中 #temp_openai、#top_p_openai、
+// #freq_pen_openai、#pres_pen_openai 滑块和 #openai_max_tokens 输入框的 min / max。
+export const CHAT_COMPLETION_NUMBER_FIELDS = Object.freeze([
+    Object.freeze({ key: 'temperature', selector: '[data-api-temperature]', label: 'Temperature', min: 0, max: 2, integer: false }),
+    Object.freeze({ key: 'maxTokens', selector: '[data-api-max-tokens]', label: 'Max Tokens', min: 1, max: 128000, integer: true }),
+    Object.freeze({ key: 'topP', selector: '[data-api-top-p]', label: 'Top P', min: 0, max: 1, integer: false }),
+    Object.freeze({ key: 'frequencyPenalty', selector: '[data-api-frequency-penalty]', label: 'Frequency Penalty', min: -2, max: 2, integer: false }),
+    Object.freeze({ key: 'presencePenalty', selector: '[data-api-presence-penalty]', label: 'Presence Penalty', min: -2, max: 2, integer: false }),
+]);
+
+/**
+ * 返回数值字段的错误文案，合法时返回空字符串。
+ * @param {{ label: string, min: number, max: number, integer: boolean }} field 字段定义
+ * @param {HTMLInputElement} input 字段输入框
+ * @returns {string} 错误文案
+ */
+function getChatCompletionNumberFieldError(field, input) {
+    if (input.validity?.badInput) {
+        return `${field.label} 必须是数字`;
+    }
+    const text = String(input.value ?? '').trim();
+    if (!text) {
+        return `请填写 ${field.label}`;
+    }
+    const value = Number(text);
+    const outOfRange = !Number.isFinite(value) || value < field.min || value > field.max;
+    if (field.integer && (outOfRange || !Number.isInteger(value))) {
+        return `${field.label} 需为 ${field.min} 到 ${field.max} 之间的整数`;
+    }
+    if (outOfRange) {
+        return `${field.label} 需在 ${field.min} 到 ${field.max} 之间`;
+    }
+    return '';
+}
+
+function findChatCompletionNumberField(input) {
+    return CHAT_COMPLETION_NUMBER_FIELDS.find(item => input.matches(item.selector)) || null;
+}
+
+function getChatCompletionFieldErrorElement(input, field) {
+    return input.parentElement?.querySelector(`[data-api-field-error="${field.key}"]`) || null;
+}
+
+/**
+ * 在输入框旁显示或移除字段级错误。直接改 DOM 而不重绘，避免整页 render 把用户未保存的输入重置为已保存值。
+ * 只在保存 / 测试的点击处理里调用：此时点击已完成，插入或移除提示造成的位移不影响操作。
+ * @param {HTMLInputElement} input 字段输入框
+ * @param {{ key: string }} field 字段定义
+ * @param {string} message 错误文案，空字符串表示移除
+ */
+function showChatCompletionFieldError(input, field, message) {
+    const errorId = `api-field-error-${field.key}`;
+    let errorElement = getChatCompletionFieldErrorElement(input, field);
+    if (!message) {
+        input.removeAttribute('aria-invalid');
+        if (input.getAttribute('aria-describedby') === errorId) {
+            input.removeAttribute('aria-describedby');
+        }
+        errorElement?.remove();
+        return;
+    }
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-describedby', errorId);
+    if (!errorElement) {
+        errorElement = input.ownerDocument.createElement('span');
+        errorElement.className = 'field-error';
+        errorElement.id = errorId;
+        errorElement.setAttribute('data-api-field-error', field.key);
+        input.after(errorElement);
+    }
+    errorElement.style.visibility = '';
+    errorElement.textContent = message;
+}
+
+/**
+ * 字段改动（change）后刷新已显示的错误：改对了就隐藏提示但保留占位，仍不合法就更新文案；不插入也不移除元素。
+ * change 常在用户按下「保存」时因输入框失焦触发，若此刻提示增删导致按钮位移，松开鼠标时点击会落空。
+ * 新出现的错误留到保存或测试时统一提示。
+ * @param {EventTarget | null} target 发生变化的元素
+ * @returns {boolean} 是否为受校验的数值字段
+ */
+export function refreshChatCompletionFieldError(target) {
+    if (!(target instanceof HTMLInputElement)) {
+        return false;
+    }
+    const field = findChatCompletionNumberField(target);
+    if (!field) {
+        return false;
+    }
+    const errorElement = getChatCompletionFieldErrorElement(target, field);
+    if (!(errorElement instanceof HTMLElement)) {
+        return true;
+    }
+    const message = getChatCompletionNumberFieldError(field, target);
+    if (message) {
+        target.setAttribute('aria-invalid', 'true');
+        errorElement.style.visibility = '';
+        errorElement.textContent = message;
+    } else {
+        target.removeAttribute('aria-invalid');
+        errorElement.style.visibility = 'hidden';
+    }
+    return true;
+}
+
 export function createApiChatCompletionConnectionActions({
     state,
     elements,
@@ -25,6 +130,28 @@ export function createApiChatCompletionConnectionActions({
     saveHordeConnectionFromForm,
     testHordeConnection,
 }) {
+    // 校验表单里全部数值字段并标出错误；有错误时聚焦第一个错误字段、提示并返回 false，调用方应中止操作。
+    function validateChatCompletionNumberFields(toastTitle) {
+        const errors = [];
+        for (const field of CHAT_COMPLETION_NUMBER_FIELDS) {
+            const input = elements.content.querySelector(field.selector);
+            if (!(input instanceof HTMLInputElement)) {
+                continue;
+            }
+            const message = getChatCompletionNumberFieldError(field, input);
+            showChatCompletionFieldError(input, field, message);
+            if (message) {
+                errors.push({ input, message });
+            }
+        }
+        if (!errors.length) {
+            return true;
+        }
+        errors[0].input.focus();
+        showToast(toastTitle, errors.map(item => item.message).join('；'));
+        return false;
+    }
+
     function getChatCompletionSettingsFromForm() {
         const savedSettings = getOaiSettings();
         const source = elements.content.querySelector('[data-api-source]')?.value || savedSettings.chat_completion_source || 'openai';
@@ -84,6 +211,10 @@ export function createApiChatCompletionConnectionActions({
         }
         if (!modelField || !model) {
             throw new Error('当前连接暂不支持在现代页保存，或模型为空。');
+        }
+        // 超出旧版界面允许范围的参数不写入设置；错误标在字段旁，不重绘以保留用户输入。
+        if (!validateChatCompletionNumberFields('连接配置未保存')) {
+            return;
         }
 
         state.settings.oai_settings = oaiSettings;
@@ -219,6 +350,10 @@ export function createApiChatCompletionConnectionActions({
         }
         if (getSelectedApiMain() !== 'openai') {
             throw new Error('现代页当前不支持测试该主 API。');
+        }
+        // 测试请求使用同一组表单参数，越界时先在字段旁提示，不把非法参数发给模型服务。
+        if (!validateChatCompletionNumberFields('连接测试未执行')) {
+            return;
         }
 
         const settings = getChatCompletionSettingsFromForm();

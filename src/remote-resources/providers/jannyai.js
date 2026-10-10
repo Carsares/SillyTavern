@@ -5,6 +5,7 @@ import {
     REMOTE_RESOURCE_TYPES,
     USER_AGENT,
     clampLimit,
+    formatHttpErrorMessage,
     formatRemoteResource,
     getPageOffset,
     stripHtml,
@@ -99,7 +100,7 @@ async function postSearch(payload) {
     });
     const text = await response.text();
     if (!response.ok) {
-        throw new Error(`JannyAI search failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+        throw new Error(formatHttpErrorMessage('JannyAI search failed', response, text));
     }
     return JSON.parse(text);
 }

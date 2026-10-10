@@ -1,8 +1,6 @@
 import path from 'node:path';
 
-import extractChunks from 'png-chunks-extract';
-import PNGtext from 'png-chunk-text';
-
+import { hasCharacterCardData } from '../../character-card-parser.js';
 import {
     REMOTE_RESOURCE_TYPES,
     clampLimit,
@@ -67,7 +65,7 @@ export const anchorholdAicgProvider = {
         }
 
         const { response, buffer } = await fetchBuffer(url.toString());
-        if (!isPng(buffer) || !hasCharacterCardText(buffer)) {
+        if (!isPng(buffer) || !hasCharacterCardData(buffer)) {
             throw new Error('Anchorhold PNG does not contain character card metadata.');
         }
 
@@ -346,17 +344,6 @@ function matchesAnchorholdQuery(item, query) {
 
 function isPng(buffer) {
     return buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
-}
-
-function hasCharacterCardText(buffer) {
-    try {
-        const textChunks = extractChunks(new Uint8Array(buffer))
-            .filter(chunk => chunk.name === 'tEXt')
-            .map(chunk => PNGtext.decode(chunk.data));
-        return textChunks.some(chunk => ['chara', 'ccv3'].includes(String(chunk.keyword || '').toLowerCase()) && chunk.text);
-    } catch {
-        return false;
-    }
 }
 
 function getDownloadFileName(url) {

@@ -4,6 +4,7 @@ import {
     REMOTE_RESOURCE_TYPES,
     USER_AGENT,
     clampLimit,
+    formatHttpErrorMessage,
     formatRemoteResource,
     stripHtml,
     truncateText,
@@ -113,7 +114,7 @@ async function readTrpc(procedure, input) {
     });
     const text = await response.text();
     if (!response.ok) {
-        throw new Error(`Backyard AI request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 200)}` : ''}`);
+        throw new Error(formatHttpErrorMessage('Backyard AI request failed', response, text));
     }
 
     const payload = JSON.parse(text);
