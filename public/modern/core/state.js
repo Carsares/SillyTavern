@@ -116,7 +116,11 @@ export function createModernState() {
             avatar: '',
             form: {},
             errors: {},
+            // 开始编辑时的已保存内容，用来判断是否有未保存的修改。
+            baseline: {},
         },
+        // 收起或切换编辑后保留的未保存角色修改：avatar → { form, baseline }。
+        characterEditDrafts: {},
         characterRenaming: {
             avatar: '',
             name: '',

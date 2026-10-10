@@ -1,3 +1,4 @@
+import { chatCompletionModelFields } from '../core/constants.js';
 import { createPresetDetailComponents } from './preset-details.js';
 
 export function createPresetsComponents(ctx) {
@@ -88,14 +89,19 @@ export function createPresetsComponents(ctx) {
 
         if (typeof rawPreset === 'string') {
             try {
-                const preset = JSON.parse(rawPreset);
-                return preset.model || preset.openai_model || preset.name || 'JSON 预设';
+                return getPresetModelSummary(JSON.parse(rawPreset));
             } catch {
                 return '文本预设';
             }
         }
 
-        return rawPreset.model || rawPreset.name || 'JSON 预设';
+        return getPresetModelSummary(rawPreset);
+    }
+
+    // 优先显示预设自身来源对应的模型字段（如 custom → custom_model），避免把残留的 openai_model 当成实际模型。
+    function getPresetModelSummary(preset) {
+        const sourceField = chatCompletionModelFields[preset?.chat_completion_source];
+        return (sourceField && preset[sourceField]) || preset?.model || preset?.openai_model || preset?.name || 'JSON 预设';
     }
 
     return {

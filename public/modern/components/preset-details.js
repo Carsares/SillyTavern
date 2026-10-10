@@ -1,4 +1,5 @@
 import { getOpenAiPromptOrderEntry, getOpenAiPromptName } from '../actions/openai-preset-fields.js';
+import { chatCompletionModelFields } from '../core/constants.js';
 
 export function createPresetDetailComponents(ctx) {
     const {
@@ -9,6 +10,7 @@ export function createPresetDetailComponents(ctx) {
         renderKeyValue,
         getPresetEditorText,
         getOaiSettings,
+        getChatCompletionModel,
     } = ctx;
 
     function renderPresetDetail(group, item) {
@@ -17,6 +19,9 @@ export function createPresetDetailComponents(ctx) {
         const jsonText = getPresetEditorText(group.id, item.name, item.content);
         const parsedPreset = parsePreset(item.content);
         const editorError = state.presetEditor.apiId === group.id && state.presetEditor.name === item.name ? state.presetEditor.error : '';
+        const summaryNote = isOpenAi
+            ? '这里显示预设文件里保存的值，不一定是当前 API 连接正在用的值；与当前连接不同的字段已标出。完整内容在下方 JSON 编辑器。'
+            : '常用字段预览；完整内容在下方 JSON 编辑器。';
 
         return `
         <div class="detail-hero preset-detail-hero">
@@ -49,9 +54,9 @@ export function createPresetDetailComponents(ctx) {
                     <i class="fa-solid fa-clock-rotate-left"></i>
                     恢复默认
                 </button>
-                <button class="secondary-button" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
-                    <i class="fa-solid fa-ellipsis"></i>
-                    管理
+                <button class="secondary-button danger-action" type="button" data-delete-preset="${escapeHtml(item.name)}" data-preset-api="${escapeHtml(group.id)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    删除
                 </button>
             </div>
         </div>
@@ -78,10 +83,10 @@ export function createPresetDetailComponents(ctx) {
         <section class="form-section">
             <div>
                 <h3 class="form-section-title">摘要</h3>
-                <p class="panel-subtitle">常用字段预览；完整内容在下方 JSON 编辑器。</p>
+                <p class="panel-subtitle" data-preset-summary-note>${escapeHtml(summaryNote)}</p>
             </div>
             <div class="kv-list">
-                ${renderPresetPreviewRows(parsedPreset)}
+                ${renderPresetPreviewRows(parsedPreset, isOpenAi)}
             </div>
         </section>
         <section class="form-section">
@@ -172,16 +177,53 @@ export function createPresetDetailComponents(ctx) {
     `;
     }
 
-    function renderPresetPreviewRows(preset) {
+    // 预设的模型按它自己保存的来源取对应字段（如 custom → custom_model），没有来源时沿用常见字段顺序。
+    function getPresetModel(preset, source) {
+        const sourceField = chatCompletionModelFields[source];
+        if (sourceField && preset[sourceField]) {
+            return preset[sourceField];
+        }
+
+        const modelFields = ['model', 'openai_model', 'siliconflow_model', 'claude_model', 'openrouter_model', 'custom_model'];
+        return modelFields.map(field => preset[field]).find(Boolean) || '';
+    }
+
+    // 当前 API 连接的来源和模型，取自设置里的 oai_settings，与 API 页显示口径一致。
+    function getCurrentChatCompletionConnection() {
+        const settings = getOaiSettings();
+        const source = settings.chat_completion_source || '';
+        return {
+            source,
+            model: source ? getChatCompletionModel(settings, source) : '',
+        };
+    }
+
+    function renderPresetSummaryRow(key, field, value, currentValue) {
+        const differs = Boolean(value && currentValue && String(value) !== String(currentValue));
+        if (!differs) {
+            return renderKeyValue(key, String(value || '未设置'));
+        }
+
+        return `
+            <div class="kv-row preset-summary-diff" data-preset-summary-diff="${escapeHtml(field)}">
+                <span class="kv-key">${escapeHtml(key)}</span>
+                <span class="preset-summary-diff-values">
+                    <span class="kv-value" title="${escapeHtml(value)}">${escapeHtml(value)}</span>
+                    <span class="preset-summary-current" title="${escapeHtml(currentValue)}">当前连接：${escapeHtml(currentValue)}</span>
+                </span>
+            </div>
+        `;
+    }
+
+    function renderPresetPreviewRows(preset, isOpenAi) {
         if (!preset || typeof preset !== 'object') {
             return renderKeyValue('格式', '非 JSON 或空预设');
         }
 
-        const modelFields = ['model', 'openai_model', 'siliconflow_model', 'claude_model', 'openrouter_model', 'custom_model'];
-        const model = modelFields.map(field => preset[field]).find(Boolean);
+        const source = preset.chat_completion_source || preset.source || '';
+        const model = getPresetModel(preset, source);
+        const current = isOpenAi ? getCurrentChatCompletionConnection() : { source: '', model: '' };
         const rows = [
-            ['模型', model || '未设置'],
-            ['来源', preset.chat_completion_source || preset.source || '未设置'],
             ['Temperature', preset.temperature ?? preset.temp_openai ?? '未设置'],
             ['Max Tokens', preset.openai_max_tokens ?? preset.max_tokens ?? '未设置'],
             ['Prompts', Array.isArray(preset.prompts) ? `${formatNumber(preset.prompts.length)} 个` : '未设置'],
@@ -189,7 +231,11 @@ export function createPresetDetailComponents(ctx) {
             ['字段数', formatNumber(Object.keys(preset).length)],
         ];
 
-        return rows.map(([key, value]) => renderKeyValue(key, String(value))).join('');
+        return [
+            renderPresetSummaryRow('模型', 'model', model, current.model),
+            renderPresetSummaryRow('来源', 'source', source, current.source),
+            ...rows.map(([key, value]) => renderKeyValue(key, String(value))),
+        ].join('');
     }
 
     return {

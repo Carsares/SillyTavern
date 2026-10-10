@@ -13,9 +13,14 @@ export function createPersonaCardComponents(ctx) {
             <div class="detail-hero compact-hero">
                 <img class="avatar large" src="${avatarUrl}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'avatar-fallback large', textContent: 'P' }))">
                 <div>
-                    <h2 class="card-title">${escapeHtml(persona.name || '未命名人设')}</h2>
-                    <div class="card-meta">${escapeHtml(persona.title || persona.avatarId)}</div>
-                    ${persona.default ? '<span class="tag">默认</span>' : ''}
+                    <h2 class="card-title">${escapeHtml(persona.displayName || persona.name || '未命名人设')}</h2>
+                    <div class="card-meta">${escapeHtml(getPersonaSubtitle(persona))}</div>
+                    ${persona.active || persona.default ? `
+                        <div class="tag-row persona-badges">
+                            ${persona.active ? '<span class="badge active" data-persona-badge="active" title="当前聊天正在使用这个人设">当前使用</span>' : ''}
+                            ${persona.default ? '<span class="tag" data-persona-badge="default" title="新聊天默认使用这个人设">默认</span>' : ''}
+                        </div>
+                    ` : ''}
                 </div>
             </div>
             <p class="detail-text">${escapeHtml(persona.description || '暂无描述')}</p>
@@ -24,24 +29,40 @@ export function createPersonaCardComponents(ctx) {
                     <i class="fa-solid fa-pen"></i>
                     编辑
                 </button>
-                <button class="secondary-button" type="button" data-set-default-persona="${escapeHtml(persona.avatarId)}" ${persona.default ? 'disabled' : ''}>
-                    <i class="fa-solid fa-user-check"></i>
-                    设为默认
-                </button>
+                ${persona.default ? `
+                    <button class="secondary-button" type="button" data-clear-default-persona="${escapeHtml(persona.avatarId)}" title="新聊天不再默认使用这个人设">
+                        <i class="fa-solid fa-user-xmark"></i>
+                        取消默认
+                    </button>
+                ` : `
+                    <button class="secondary-button" type="button" data-set-default-persona="${escapeHtml(persona.avatarId)}" title="新聊天默认使用这个人设">
+                        <i class="fa-solid fa-user-check"></i>
+                        设为默认
+                    </button>
+                `}
                 <label class="secondary-button file-action">
                     <i class="fa-solid fa-image"></i>
                     替换头像
                     <input class="visually-hidden" type="file" accept="image/*" data-persona-avatar-file="${escapeHtml(persona.avatarId)}">
                 </label>
-                <button class="secondary-button" type="button" data-delete-persona="${escapeHtml(persona.avatarId)}">
-                    <i class="fa-solid fa-ellipsis"></i>
-                    管理
+                <button class="secondary-button danger-action" type="button" data-delete-persona="${escapeHtml(persona.avatarId)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    删除
                 </button>
             </div>
             ${state.personaEditing.avatarId === persona.avatarId ? renderPersonaEditPanel() : ''}
             ${state.personaDeleteConfirm.avatarId === persona.avatarId ? renderPersonaDeletePanel(persona) : ''}
         </article>
     `;
+    }
+
+    // 未命名人设用头像文件名区分；有标题时标题在前。
+    function getPersonaSubtitle(persona) {
+        if (persona.unnamed) {
+            return persona.title ? `${persona.title} · ${persona.avatarId}` : persona.avatarId;
+        }
+
+        return persona.title || persona.avatarId;
     }
 
     function renderPersonaCreatePanel() {
@@ -164,7 +185,7 @@ export function createPersonaCardComponents(ctx) {
         <div class="settings-form inline-form danger-panel">
             <div>
                 <strong>删除用户人设</strong>
-                <p class="panel-subtitle">将删除 ${escapeHtml(persona.name || persona.avatarId)} 的设置和头像文件。</p>
+                <p class="panel-subtitle">将删除 ${escapeHtml(persona.unnamed ? persona.avatarId : (persona.name || persona.avatarId))} 的设置和头像文件。</p>
             </div>
             <div class="message-edit-actions">
                 <button class="secondary-button" type="button" data-cancel-persona-delete>

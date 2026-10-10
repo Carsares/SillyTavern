@@ -16,12 +16,14 @@ export function createCharactersComponents(ctx) {
         matchesQuery,
         getCharacterAvatarUrl,
         getCharacterTags,
+        getCharacterEditDraft,
     } = ctx;
     const {
         renderCharacterCreatePanel,
         renderCharacterEditPanel,
         renderCharacterRenamePanel,
         renderCharacterDeletePanel,
+        refreshCharacterFormActions,
     } = createCharacterFormComponents(ctx);
 
     function getVisibleCharacters() {
@@ -108,6 +110,7 @@ export function createCharactersComponents(ctx) {
         const isEditing = state.characterEditing.avatar === character.avatar;
         const isRenaming = state.characterRenaming.avatar === character.avatar;
         const isDeleting = state.characterDeleteConfirm.avatar === character.avatar;
+        const draft = getCharacterEditDraft(character.avatar);
         const description = detail.description || detail.data?.description || detail.data?.creator_notes || '当前列表接口未返回完整角色描述。';
         const canExpandDescription = description.length > 260;
 
@@ -122,6 +125,10 @@ export function createCharactersComponents(ctx) {
                 </div>
             </div>
             <div class="detail-actions page-actions">
+                <button class="primary-button" type="button" data-route="chat" data-open-character-chat="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-comments"></i>
+                    开始聊天
+                </button>
                 <button class="secondary-button" type="button" data-load-character-detail="${escapeHtml(character.avatar)}">
                     <i class="fa-solid fa-database"></i>
                     读取完整卡
@@ -151,12 +158,13 @@ export function createCharactersComponents(ctx) {
                     <i class="fa-solid fa-file-code"></i>
                     JSON
                 </button>
-                <button class="secondary-button" type="button" data-delete-character="${escapeHtml(character.avatar)}">
-                    <i class="fa-solid fa-ellipsis"></i>
-                    管理
+                <button class="secondary-button danger-action" type="button" data-delete-character="${escapeHtml(character.avatar)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    删除
                 </button>
             </div>
         </div>
+        ${!isEditing && draft ? renderCharacterDraftNotice(character.avatar) : ''}
         ${isRenaming ? renderCharacterRenamePanel(detail) : ''}
         ${isDeleting ? renderCharacterDeletePanel(detail) : ''}
         ${isEditing ? renderCharacterEditPanel(detail) : ''}
@@ -184,8 +192,31 @@ export function createCharactersComponents(ctx) {
     `;
     }
 
+    // 编辑区已收起但仍有未保存修改时，在角色详情顶部提示，并提供继续编辑与放弃两个出口。
+    function renderCharacterDraftNotice(avatar) {
+        return `
+        <div class="settings-form inline-form character-draft-notice" data-character-draft-notice="${escapeHtml(avatar)}">
+            <div class="character-form-status">
+                <span class="dot warning"></span>
+                <span><strong>有未保存的修改</strong> 上次编辑的内容还没有保存到角色卡。</span>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button danger-action" type="button" data-discard-character-draft="${escapeHtml(avatar)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    放弃修改
+                </button>
+                <button class="primary-button" type="button" data-resume-character-draft="${escapeHtml(avatar)}">
+                    <i class="fa-solid fa-pen"></i>
+                    继续编辑
+                </button>
+            </div>
+        </div>
+    `;
+    }
+
     return {
         renderCharacters,
         renderCharacterSelection,
+        refreshCharacterFormActions,
     };
 }

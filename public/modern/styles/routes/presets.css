@@ -103,3 +103,37 @@
     font-size: 12px !important;
     line-height: 1.55;
 }
+
+/* 摘要里与当前 API 连接不同的字段：保留预设值，并在下方标出当前连接的值。 */
+.preset-summary-diff {
+    align-items: flex-start;
+    margin: 0 -8px;
+    padding: 6px 8px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+.preset-summary-diff .kv-key {
+    color: var(--warning);
+    font-weight: 680;
+}
+
+.preset-summary-diff-values {
+    display: grid;
+    min-width: 0;
+    justify-items: end;
+    gap: 2px;
+}
+
+.preset-summary-diff-values .kv-value {
+    max-width: 100%;
+}
+
+.preset-summary-current {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--warning);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

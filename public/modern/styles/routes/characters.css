@@ -20,3 +20,56 @@
     border-radius: var(--radius);
     background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
 }
+
+/* 编辑/新建角色表单很长，操作栏贴在视口底部，未保存提示和保存按钮始终可见。 */
+.character-form-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: 0 -6px 18px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.character-form-actions .message-edit-actions {
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.character-form-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.character-form-actions.is-dirty {
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.character-form-actions.is-dirty .character-form-status,
+.character-draft-notice .character-form-status {
+    color: var(--warning);
+    font-weight: 680;
+}
+
+.character-draft-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 12px;
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.character-draft-notice .character-form-status strong {
+    margin-right: 6px;
+}

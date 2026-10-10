@@ -126,9 +126,9 @@ export function createAssetFileComponents(ctx) {
                             确认
                         </button>
                     ` : `
-                        <button class="secondary-button" type="button" data-delete-asset data-asset-category="${escapeHtml(entry.category)}" data-asset-filename="${escapeHtml(entry.filename)}">
-                            <i class="fa-solid fa-ellipsis"></i>
-                            管理
+                        <button class="secondary-button danger-action" type="button" data-delete-asset data-asset-category="${escapeHtml(entry.category)}" data-asset-filename="${escapeHtml(entry.filename)}">
+                            <i class="fa-solid fa-trash-can"></i>
+                            删除
                         </button>
                     `}
                 </span>

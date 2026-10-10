@@ -257,7 +257,10 @@ test.describe('Modern assets page', () => {
         });
         await expect(page.locator('.background-card')).toHaveCount(0);
 
-        await page.locator('[data-delete-background-folder="modern-set"]').click();
+        const deleteFolderButton = page.locator('[data-delete-background-folder="modern-set"]');
+        await expect(deleteFolderButton).toHaveText('删除文件夹');
+        await expect(deleteFolderButton).toHaveClass(/danger-action/);
+        await deleteFolderButton.click();
         await page.locator('[data-confirm-background-folder-delete]').click();
 
         await expect.poll(() => requests.folderDelete.length).toBe(1);
@@ -360,7 +363,10 @@ test.describe('Modern assets page', () => {
         });
         await expect(page.locator('.asset-row', { hasText: 'new-theme.mp3' })).toBeVisible();
 
-        await page.locator('[data-delete-asset][data-asset-category="bgm"][data-asset-filename="new-theme.mp3"]').click();
+        const deleteAssetButton = page.locator('[data-delete-asset][data-asset-category="bgm"][data-asset-filename="new-theme.mp3"]');
+        await expect(deleteAssetButton).toHaveText('删除');
+        await expect(deleteAssetButton).toHaveClass(/danger-action/);
+        await deleteAssetButton.click();
         await page.locator('[data-confirm-asset-delete]').click();
 
         await expect.poll(() => requests.assetDeletes.length).toBe(1);

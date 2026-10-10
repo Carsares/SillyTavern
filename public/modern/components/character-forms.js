@@ -5,25 +5,42 @@ export function createCharacterFormComponents(ctx) {
         state,
         escapeHtml,
         characterToForm,
+        isCharacterCreateDirty,
+        isCharacterEditDirty,
     } = ctx;
-    const { renderCharacterFormContent } = createCharacterFormFieldComponents(ctx);
+    const { renderCharacterFormContent, renderCharacterFormActions } = createCharacterFormFieldComponents(ctx);
 
     function renderCharacterCreatePanel() {
         return `
-        <div class="settings-form inline-form">
+        <div class="settings-form inline-form" data-character-create-panel>
             <strong>新建角色</strong>
-            ${renderCharacterFormContent(state.characterCreating.form, 'create', true)}
+            ${renderCharacterFormContent(state.characterCreating.form, 'create', { dirty: isCharacterCreateDirty() })}
         </div>
     `;
     }
 
     function renderCharacterEditPanel(character) {
         return `
-        <div class="settings-form inline-form">
+        <div class="settings-form inline-form" data-character-edit-panel>
             <strong>编辑角色卡</strong>
-            ${renderCharacterFormContent(state.characterEditing.form || characterToForm(character), 'edit', false)}
+            ${renderCharacterFormContent(state.characterEditing.form || characterToForm(character), 'edit', { dirty: isCharacterEditDirty(), avatar: state.characterEditing.avatar })}
         </div>
     `;
+    }
+
+    // 输入时只重绘底部操作栏，避免整页重绘打断正在输入的文本框。
+    function refreshCharacterFormActions(scope) {
+        const actions = document.querySelector(`[data-character-form-actions="${scope}"]`);
+        if (!actions) {
+            return;
+        }
+
+        const dirty = scope === 'create' ? isCharacterCreateDirty() : isCharacterEditDirty();
+        if ((actions.getAttribute('data-dirty') === 'true') === dirty) {
+            return;
+        }
+
+        actions.outerHTML = renderCharacterFormActions(scope, { dirty, avatar: state.characterEditing.avatar });
     }
 
     function renderCharacterRenamePanel(character) {
@@ -80,5 +97,6 @@ export function createCharacterFormComponents(ctx) {
         renderCharacterEditPanel,
         renderCharacterRenamePanel,
         renderCharacterDeletePanel,
+        refreshCharacterFormActions,
     };
 }

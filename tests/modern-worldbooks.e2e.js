@@ -248,7 +248,10 @@ test.describe('Modern worldbooks page', () => {
         expect(requests.edits.at(-1).data.entries[3]).toMatchObject({ uid: 3, comment: 'alpha entry' });
         await expect(page.locator('[data-world-entry-select="3"]')).toBeVisible();
 
-        await page.locator('[data-delete-world-entry="Lore"][data-world-entry-key="3"]').click();
+        const deleteEntryButton = page.locator('[data-delete-world-entry="Lore"][data-world-entry-key="3"]');
+        await expect(deleteEntryButton).toHaveText('删除');
+        await expect(deleteEntryButton).toHaveClass(/danger-action/);
+        await deleteEntryButton.click();
         await page.locator('[data-confirm-world-entry-delete]').click();
 
         await expect.poll(() => requests.edits.length).toBe(5);
@@ -290,7 +293,11 @@ test.describe('Modern worldbooks page', () => {
         await expect(page.locator('[data-select-worldbook="ImportedLore"]')).toBeVisible();
         await expect(page.locator('.panel-title', { hasText: 'ImportedLore' })).toBeVisible();
 
-        await page.locator('[data-delete-worldbook="ImportedLore"]').click();
+        const deleteWorldbookButton = page.locator('[data-delete-worldbook="ImportedLore"]');
+        await expect(deleteWorldbookButton).toHaveText('删除');
+        await expect(deleteWorldbookButton).toHaveClass(/danger-action/);
+        await expect(deleteWorldbookButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deleteWorldbookButton.click();
         await page.locator('[data-confirm-worldbook-delete]').click();
 
         await expect.poll(() => requests.deletes.length).toBe(1);

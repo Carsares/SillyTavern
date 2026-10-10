@@ -50,6 +50,22 @@ export function createCharacterDataHelpers() {
         };
     }
 
+    // 表单值统一按字符串比较：输入框回写的是字符串，基线里的布尔值和数字也按同样口径归一。
+    function isCharacterFormDirty(form, baseline) {
+        if (!form || !baseline) {
+            return false;
+        }
+
+        const fields = new Set([...Object.keys(baseline), ...Object.keys(form)]);
+        for (const field of fields) {
+            if (String(form[field] ?? '') !== String(baseline[field] ?? '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     function characterCreatePayload(form) {
         return {
             ch_name: form.name.trim(),
@@ -126,5 +142,6 @@ export function createCharacterDataHelpers() {
         characterToForm,
         defaultCharacterForm,
         getCharacterTags,
+        isCharacterFormDirty,
     };
 }

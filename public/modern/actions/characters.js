@@ -20,6 +20,7 @@ export function createCharacterActions({
         characterToForm,
         defaultCharacterForm,
         getCharacterTags,
+        isCharacterFormDirty,
     } = createCharacterDataHelpers();
     const {
         getCharacterAvatarUrl,
@@ -32,14 +33,78 @@ export function createCharacterActions({
         showToast,
     });
 
+    function emptyCharacterEditing() {
+        return { avatar: '', form: {}, errors: {}, baseline: {} };
+    }
+
+    function emptyCharacterCreating() {
+        return { active: false, form: defaultCharacterForm(), errors: {} };
+    }
+
+    function isCharacterEditDirty(editing = state.characterEditing) {
+        return Boolean(editing?.avatar) && isCharacterFormDirty(editing.form, editing.baseline);
+    }
+
+    function isCharacterCreateDirty() {
+        return Boolean(state.characterCreating.active) && isCharacterFormDirty(state.characterCreating.form, defaultCharacterForm());
+    }
+
+    function getCharacterEditDraft(avatar) {
+        return (avatar && state.characterEditDrafts[avatar]) || null;
+    }
+
+    // 收起当前编辑器：有未保存修改时转存为该角色的草稿，回到该角色时可继续编辑或放弃。
+    function closeCharacterEditor() {
+        const { avatar, form, baseline } = state.characterEditing;
+        if (isCharacterEditDirty()) {
+            state.characterEditDrafts[avatar] = { form: { ...form }, baseline: { ...baseline } };
+        }
+        state.characterEditing = emptyCharacterEditing();
+    }
+
+    // 角色重命名后，把打开的编辑器和草稿迁到新文件名；卡片名称同步成新名称，其余未保存修改保持不变。
+    function moveCharacterEditState(fromAvatar, toAvatar, nextName) {
+        const migrate = entry => {
+            const previousName = entry.baseline?.name;
+            return {
+                form: { ...entry.form, name: entry.form?.name === previousName ? nextName : entry.form?.name },
+                baseline: { ...entry.baseline, name: nextName },
+            };
+        };
+
+        if (state.characterEditing.avatar === fromAvatar) {
+            state.characterEditing = isCharacterEditDirty()
+                ? { avatar: toAvatar, errors: {}, ...migrate(state.characterEditing) }
+                : emptyCharacterEditing();
+        }
+
+        const draft = getCharacterEditDraft(fromAvatar);
+        if (draft) {
+            delete state.characterEditDrafts[fromAvatar];
+            state.characterEditDrafts[toAvatar] = migrate(draft);
+        }
+    }
+
+    function forgetCharacterEditState(avatar) {
+        if (state.characterEditing.avatar === avatar) {
+            state.characterEditing = emptyCharacterEditing();
+        }
+        delete state.characterEditDrafts[avatar];
+    }
+
     function beginCharacterCreate() {
-        state.characterCreating = { active: true, form: defaultCharacterForm(), errors: {} };
-        state.characterEditing = { avatar: '', form: {}, errors: {} };
+        // 已打开的新建表单（含未保存内容）保持原样；未修改的编辑器照旧收起，有修改的编辑器保留。
+        if (!state.characterCreating.active) {
+            state.characterCreating = { active: true, form: defaultCharacterForm(), errors: {} };
+        }
+        if (!isCharacterEditDirty()) {
+            state.characterEditing = emptyCharacterEditing();
+        }
         render();
     }
 
     function cancelCharacterCreate() {
-        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
+        state.characterCreating = emptyCharacterCreating();
         render();
     }
 
@@ -52,7 +117,7 @@ export function createCharacterActions({
         }
 
         const avatar = await apiFetch('/api/characters/create', { body: payload });
-        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
+        state.characterCreating = emptyCharacterCreating();
         state.selected.character = avatar;
         state.selected.chat = '';
         await loadData({ silent: true });
@@ -62,20 +127,52 @@ export function createCharacterActions({
     }
 
     async function beginCharacterEdit(avatar) {
-        const character = await loadCharacterDetail(avatar);
-        if (!character) {
+        if (!avatar) {
+            return;
+        }
+        if (state.characterEditing.avatar === avatar) {
+            render();
             return;
         }
 
-        state.characterEditing = { avatar, form: characterToForm(character), errors: {} };
-        state.characterCreating = { active: false, form: defaultCharacterForm(), errors: {} };
+        const draft = getCharacterEditDraft(avatar);
+        const character = draft ? null : await loadCharacterDetail(avatar);
+        if (!draft && !character) {
+            return;
+        }
+
+        closeCharacterEditor();
+        if (draft) {
+            // 恢复该角色未保存的草稿，基线仍是开始编辑时的已保存内容。
+            state.characterEditing = { avatar, form: { ...draft.form }, errors: {}, baseline: { ...draft.baseline } };
+            delete state.characterEditDrafts[avatar];
+        } else {
+            state.characterEditing = { avatar, form: characterToForm(character), errors: {}, baseline: characterToForm(character) };
+        }
+        if (!isCharacterCreateDirty()) {
+            state.characterCreating = emptyCharacterCreating();
+        }
         state.characterRenaming = { avatar: '', name: '' };
         state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
         render();
     }
 
     function cancelCharacterEdit() {
-        state.characterEditing = { avatar: '', form: {}, errors: {} };
+        const hadChanges = isCharacterEditDirty();
+        closeCharacterEditor();
+        if (hadChanges) {
+            showToast('已收起编辑', '未保存的修改已保留，可在角色详情里继续编辑或放弃。');
+        }
+        render();
+    }
+
+    function discardCharacterEditDraft(avatar) {
+        if (!avatar) {
+            return;
+        }
+
+        forgetCharacterEditState(avatar);
+        showToast('已放弃修改', '角色卡保持上次保存的内容。');
         render();
     }
 
@@ -90,7 +187,7 @@ export function createCharacterActions({
         }
 
         await apiFetch('/api/characters/merge-attributes', { body: characterMergePayload(avatar, form) });
-        state.characterEditing = { avatar: '', form: {}, errors: {} };
+        forgetCharacterEditState(avatar);
         clearCharacterCache(avatar);
         await loadData({ silent: true });
         await loadCharacterDetail(avatar, { force: true });
@@ -177,7 +274,7 @@ export function createCharacterActions({
         await migrateCharacterReferences(avatar, nextAvatar);
         clearCharacterCache(avatar);
         state.characterRenaming = { avatar: '', name: '' };
-        state.characterEditing = { avatar: '', form: {} };
+        moveCharacterEditState(avatar, nextAvatar, nextName);
         state.selected.character = nextAvatar;
         state.selected.chat = '';
         await loadData({ silent: true });
@@ -229,7 +326,7 @@ export function createCharacterActions({
         await apiFetch('/api/characters/delete', { body: { avatar_url: avatar, delete_chats: deleteChats } });
         clearCharacterCache(avatar);
         state.characterDeleteConfirm = { avatar: '', name: '', deleteChats: false };
-        state.characterEditing = { avatar: '', form: {} };
+        forgetCharacterEditState(avatar);
         state.selected.character = '';
         state.selected.chat = '';
         await loadData({ silent: true });
@@ -333,6 +430,10 @@ export function createCharacterActions({
         loadCharacterDetail,
         beginCharacterEdit,
         cancelCharacterEdit,
+        discardCharacterEditDraft,
+        getCharacterEditDraft,
+        isCharacterEditDirty,
+        isCharacterCreateDirty,
         saveCharacterEdit,
         duplicateCharacter,
         beginCharacterRename,

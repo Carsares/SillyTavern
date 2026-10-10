@@ -3,7 +3,7 @@ export function createCharacterFormFieldComponents({
     escapeHtml,
     uniqueValues,
 }) {
-    function renderCharacterFormContent(form, scope, isCreate) {
+    function renderCharacterFormContent(form, scope, { dirty = false, avatar = '' } = {}) {
         const scopeAttribute = escapeHtml(scope);
         const errors = getCharacterFormErrors(scope);
 
@@ -30,11 +30,49 @@ export function createCharacterFormFieldComponents({
             ${renderCharacterTextarea('system_prompt', '系统提示词', form.system_prompt, scopeAttribute)}
             ${renderCharacterTextarea('depth_prompt_prompt', 'Depth Prompt', form.depth_prompt_prompt, scopeAttribute)}
             ${renderCharacterTextarea('post_history_instructions', '历史后置提示', form.post_history_instructions, scopeAttribute)}
-            <div class="message-edit-actions">
-                <button class="secondary-button" type="button" ${isCreate ? 'data-cancel-character-create' : 'data-cancel-character-edit'}>
+            ${renderCharacterFormActions(scope, { dirty, avatar })}
+        </div>
+    `;
+    }
+
+    // 表单底部操作栏固定在视口底部；有未保存修改时显示提示，并给出明确的「放弃修改」入口。
+    function renderCharacterFormActions(scope, { dirty = false, avatar = '' } = {}) {
+        const isCreate = scope === 'create';
+        const status = dirty
+            ? '<span class="dot warning"></span><span>有未保存的修改</span>'
+            : `<span>${isCreate ? '尚未填写内容' : '没有未保存的修改'}</span>`;
+        let secondaryActions;
+        if (isCreate) {
+            secondaryActions = dirty
+                ? `<button class="secondary-button danger-action" type="button" data-cancel-character-create>
+                    <i class="fa-solid fa-trash-can"></i>
+                    放弃修改
+                </button>`
+                : `<button class="secondary-button" type="button" data-cancel-character-create>
                     <i class="fa-solid fa-xmark"></i>
                     取消
+                </button>`;
+        } else {
+            secondaryActions = dirty
+                ? `<button class="secondary-button" type="button" data-cancel-character-edit title="收起编辑区，未保存的修改会保留">
+                    <i class="fa-solid fa-chevron-up"></i>
+                    收起
                 </button>
+                <button class="secondary-button danger-action" type="button" data-discard-character-draft="${escapeHtml(avatar)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    放弃修改
+                </button>`
+                : `<button class="secondary-button" type="button" data-cancel-character-edit>
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>`;
+        }
+
+        return `
+        <div class="character-form-actions ${dirty ? 'is-dirty' : ''}" data-character-form-actions="${escapeHtml(scope)}" data-dirty="${dirty ? 'true' : 'false'}">
+            <span class="character-form-status" role="status">${status}</span>
+            <div class="message-edit-actions">
+                ${secondaryActions}
                 <button class="primary-button" type="button" ${isCreate ? 'data-save-character-create' : 'data-save-character-edit'}>
                     <i class="fa-solid fa-check"></i>
                     ${isCreate ? '创建角色' : '保存角色'}
@@ -141,5 +179,6 @@ export function createCharacterFormFieldComponents({
 
     return {
         renderCharacterFormContent,
+        renderCharacterFormActions,
     };
 }

@@ -1,5 +1,16 @@
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
+// 旧版界面给没有绑定名称的人设写入的占位名，现代界面按「未命名」展示。
+const legacyUnnamedPersonaName = '[Unnamed Persona]';
+
+function isUnnamedPersonaName(name) {
+    return !String(name || '').trim() || name === legacyUnnamedPersonaName;
+}
+
+function getPersonaDisplayName(name, avatarId = '') {
+    return isUnnamedPersonaName(name) ? `未命名人设${avatarId ? `（${avatarId}）` : ''}` : name;
+}
+
 export function createPersonaActions({
     state,
     apiFetch,
@@ -31,9 +42,12 @@ export function createPersonaActions({
 
         return Object.entries(personas).map(([avatarId, name]) => {
             const descriptor = descriptions[avatarId] || {};
+            const unnamed = isUnnamedPersonaName(name);
             return {
                 avatarId,
                 name,
+                unnamed,
+                displayName: unnamed ? '未命名人设' : name,
                 title: descriptor.title || '',
                 description: descriptor.description || '',
                 // Advanced descriptor fields that the legacy UI exposed and the engine still consumes
@@ -43,6 +57,8 @@ export function createPersonaActions({
                 lorebook: descriptor.lorebook || '',
                 connections: Array.isArray(descriptor.connections) ? descriptor.connections : [],
                 default: powerUser.default_persona === avatarId,
+                // 当前聊天使用的人设由根设置 user_avatar 决定，和「默认人设」是两件事。
+                active: state.settings.user_avatar === avatarId,
             };
         });
     }
@@ -99,9 +115,7 @@ export function createPersonaActions({
             role: Number.isFinite(form.role) ? form.role : 0,
             lorebook: form.lorebook || '',
         };
-        if (!powerUser.default_persona) {
-            powerUser.default_persona = avatarId;
-        }
+        // 与旧版一致：新建人设不会自动成为默认人设，默认人设只由用户显式设置。
         await saveSettingsSerialized(apiFetch, state.settings);
         state.personaCreating = { active: false, form: defaultPersonaForm(), file: null };
         await loadData({ silent: true });
@@ -172,7 +186,23 @@ export function createPersonaActions({
         powerUser.default_persona = avatarId;
         await saveSettingsSerialized(apiFetch, state.settings);
         await loadData({ silent: true });
-        showToast('默认人设已更新', powerUser.personas[avatarId]);
+        showToast('默认人设已更新', getPersonaDisplayName(powerUser.personas[avatarId], avatarId));
+        // 默认人设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+        await reloadSettings();
+        render();
+    }
+
+    // 对应旧版 toggleDefaultPersona 的取消分支：清空默认人设后，新聊天不再自动使用该人设。
+    async function clearDefaultPersona(avatarId) {
+        const powerUser = getPowerUserSettingsForWrite();
+        if (!avatarId || powerUser.default_persona !== avatarId) {
+            throw new Error('该人设已不是默认人设，请刷新后重试。');
+        }
+
+        powerUser.default_persona = null;
+        await saveSettingsSerialized(apiFetch, state.settings);
+        await loadData({ silent: true });
+        showToast('已取消默认人设', getPersonaDisplayName(powerUser.personas[avatarId], avatarId));
         // 默认人设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
         await reloadSettings();
         render();
@@ -196,7 +226,7 @@ export function createPersonaActions({
         }
 
         const powerUser = state.settings.power_user || state.settings;
-        const name = powerUser.personas?.[avatarId] || avatarId;
+        const name = getPersonaDisplayName(powerUser.personas?.[avatarId], avatarId);
 
         // Commit the reference removal before deleting the avatar so a failed settings save cannot leave a broken persona.
         const nextSettings = structuredClone(state.settings);
@@ -248,6 +278,7 @@ export function createPersonaActions({
         savePersonaCreate,
         beginPersonaEdit,
         setDefaultPersona,
+        clearDefaultPersona,
         beginPersonaDelete,
         cancelPersonaDelete,
         confirmPersonaDelete,

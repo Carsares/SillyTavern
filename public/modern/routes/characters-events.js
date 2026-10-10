@@ -9,6 +9,7 @@ export function createCharactersEvents(ctx) {
         loadCharacterDetail,
         beginCharacterEdit,
         cancelCharacterEdit,
+        discardCharacterEditDraft,
         saveCharacterEdit,
         duplicateCharacter,
         getCharacterByAvatar,
@@ -56,6 +57,18 @@ export function createCharactersEvents(ctx) {
         const editCharacterButton = event.target.closest('[data-edit-character]');
         if (editCharacterButton) {
             await beginCharacterEdit(editCharacterButton.dataset.editCharacter);
+            return;
+        }
+
+        const resumeDraftButton = event.target.closest('[data-resume-character-draft]');
+        if (resumeDraftButton) {
+            await beginCharacterEdit(resumeDraftButton.dataset.resumeCharacterDraft);
+            return;
+        }
+
+        const discardDraftButton = event.target.closest('[data-discard-character-draft]');
+        if (discardDraftButton) {
+            discardCharacterEditDraft(discardDraftButton.dataset.discardCharacterDraft);
             return;
         }
 

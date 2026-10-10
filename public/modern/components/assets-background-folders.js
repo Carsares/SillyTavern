@@ -138,9 +138,9 @@ export function createAssetBackgroundFolderComponents({
                     <i class="fa-solid fa-i-cursor"></i>
                     重命名
                 </button>
-                <button class="secondary-button" type="button" data-delete-background-folder="${escapeHtml(folder.id)}">
-                    <i class="fa-solid fa-ellipsis"></i>
-                    管理文件夹
+                <button class="secondary-button danger-action" type="button" data-delete-background-folder="${escapeHtml(folder.id)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    删除文件夹
                 </button>
             </div>
         </div>

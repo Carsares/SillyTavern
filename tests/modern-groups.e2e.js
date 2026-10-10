@@ -71,7 +71,11 @@ test.describe('Modern group resources', () => {
 
         await gotoModern(page, 'groups', '群组管理');
 
-        await page.locator('[data-delete-group="group-alpha"]').click();
+        const deleteGroupButton = page.locator('[data-delete-group="group-alpha"]');
+        await expect(deleteGroupButton).toHaveText('删除');
+        await expect(deleteGroupButton).toHaveClass(/danger-action/);
+        await expect(deleteGroupButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deleteGroupButton.click();
         await expect(page.locator('.danger-panel', { hasText: '删除群组' })).toBeVisible();
         await page.locator('[data-cancel-group-delete]').click();
 

@@ -2,19 +2,30 @@ import { createCharactersComponents } from '../components/characters.js';
 import { createCharactersEvents } from './characters-events.js';
 
 export function createCharactersRoute(ctx) {
-    const { renderCharacters, renderCharacterSelection } = createCharactersComponents(ctx);
+    const { renderCharacters, renderCharacterSelection, refreshCharacterFormActions } = createCharactersComponents(ctx);
     const { handleCharactersClick, handleCharactersInput, handleCharactersChange } = createCharactersEvents(ctx);
+
+    function refreshFormActionsFor(event) {
+        const scope = event.target instanceof HTMLElement ? event.target.dataset.characterScope : '';
+        if (scope) {
+            refreshCharacterFormActions(scope);
+        }
+    }
 
     async function handleClick(event) {
         return handleCharactersClick(event);
     }
 
     function handleInput(event) {
-        return handleCharactersInput(event);
+        const result = handleCharactersInput(event);
+        refreshFormActionsFor(event);
+        return result;
     }
 
     async function handleChange(event) {
-        return handleCharactersChange(event);
+        const result = await handleCharactersChange(event);
+        refreshFormActionsFor(event);
+        return result;
     }
 
     return {

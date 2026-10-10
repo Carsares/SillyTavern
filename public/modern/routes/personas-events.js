@@ -9,6 +9,7 @@ export function createPersonasEvents(ctx) {
         savePersonaCreate,
         beginPersonaEdit,
         setDefaultPersona,
+        clearDefaultPersona,
         beginPersonaDelete,
         cancelPersonaDelete,
         confirmPersonaDelete,
@@ -56,6 +57,18 @@ export function createPersonasEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'persona-default', message: error.message });
                 showToast('默认人设保存失败', error.message);
+                render();
+            }
+            return;
+        }
+
+        const clearDefaultPersonaButton = event.target.closest('[data-clear-default-persona]');
+        if (clearDefaultPersonaButton) {
+            try {
+                await clearDefaultPersona(clearDefaultPersonaButton.dataset.clearDefaultPersona);
+            } catch (error) {
+                state.errors.push({ key: 'persona-default', message: error.message });
+                showToast('取消默认人设失败', error.message);
                 render();
             }
             return;

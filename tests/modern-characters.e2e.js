@@ -137,7 +137,11 @@ test.describe('Modern character resources', () => {
 
         await gotoModern(page, 'characters', '角色库');
 
-        await page.locator('[data-delete-character="alice.png"]').click();
+        const deleteCharacterButton = page.locator('[data-delete-character="alice.png"]');
+        await expect(deleteCharacterButton).toHaveText('删除');
+        await expect(deleteCharacterButton).toHaveClass(/danger-action/);
+        await expect(deleteCharacterButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deleteCharacterButton.click();
         await expect(page.locator('.danger-panel', { hasText: '删除角色' })).toBeVisible();
         await page.locator('[data-character-delete-chats]').check();
         await page.locator('[data-cancel-character-delete]').click();
@@ -306,5 +310,176 @@ test.describe('Modern character resources', () => {
         const afterSelectScrollTop = await list.evaluate(element => element.scrollTop);
         expect(afterSelectScrollTop).toBeGreaterThan(0);
         expect(Math.abs(afterSelectScrollTop - beforeSelectScrollTop)).toBeLessThan(8);
+    });
+
+    test('keeps unsaved character edits across routes with a notice and an explicit discard', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        await page.setViewportSize({ width: 1280, height: 800 });
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-edit-character="alice.png"]').click();
+
+        const editActions = page.locator('[data-character-form-actions="edit"]');
+        await expect(editActions).toHaveAttribute('data-dirty', 'false');
+        await expect(editActions).toContainText('没有未保存的修改');
+
+        const description = page.locator('[data-character-field="description"][data-character-scope="edit"]');
+        await description.fill('Alice visible description. Unsaved addition.');
+        await expect(editActions).toHaveAttribute('data-dirty', 'true');
+        await expect(editActions).toContainText('有未保存的修改');
+        await expect(description).toBeFocused();
+
+        // 表单远高于视口时，操作栏贴在视口底部，不用滚到表单末尾也能保存或放弃。
+        await page.locator('.page-title').evaluate(element => element.ownerDocument.defaultView.scrollTo(0, 0));
+        const formBox = await page.locator('[data-character-edit-panel]').boundingBox();
+        expect(formBox?.height || 0).toBeGreaterThan(800);
+        await expect(editActions).toHaveCSS('position', 'sticky');
+        const actionsBox = await editActions.boundingBox();
+        expect(actionsBox).not.toBeNull();
+        expect((actionsBox?.y || 0) + (actionsBox?.height || 0)).toBeLessThanOrEqual(801);
+        expect(actionsBox?.y || 0).toBeGreaterThan(0);
+
+        await page.locator('.nav-button[data-route="dashboard"]').click();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'dashboard');
+        await page.locator('.nav-button[data-route="characters"]').click();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'characters');
+
+        await expect(description).toHaveValue('Alice visible description. Unsaved addition.');
+        await expect(editActions).toContainText('有未保存的修改');
+
+        // 「收起」保留草稿：详情顶部出现提示，可以继续编辑。
+        await editActions.locator('[data-cancel-character-edit]').click();
+        const draftNotice = page.locator('[data-character-draft-notice="alice.png"]');
+        await expect(draftNotice).toContainText('有未保存的修改');
+        await expect(description).toHaveCount(0);
+        await draftNotice.locator('[data-resume-character-draft="alice.png"]').click();
+        await expect(description).toHaveValue('Alice visible description. Unsaved addition.');
+
+        // 开始编辑另一个角色时，当前角色的修改转存为草稿。
+        await page.locator('[data-select-character="bruno.png"]').click();
+        await page.locator('[data-edit-character="bruno.png"]').click();
+        await expect(page.locator('[data-character-form-actions="edit"]')).toHaveAttribute('data-dirty', 'false');
+        await page.locator('[data-select-character="alice.png"]').click();
+        await expect(draftNotice).toBeVisible();
+        await draftNotice.locator('[data-resume-character-draft="alice.png"]').click();
+        await expect(description).toHaveValue('Alice visible description. Unsaved addition.');
+
+        await editActions.locator('[data-discard-character-draft="alice.png"]').click();
+        await expect(page.locator('[data-character-edit-panel]')).toHaveCount(0);
+        await expect(draftNotice).toHaveCount(0);
+        await page.locator('[data-edit-character="alice.png"]').click();
+        await expect(description).toHaveValue('Alice visible description.');
+        await expect(editActions).toHaveAttribute('data-dirty', 'false');
+        expect(fixture.requests.characterMerge).toHaveLength(0);
+    });
+
+    test('saves a restored character edit draft', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-edit-character="alice.png"]').click();
+        await page.locator('[data-character-field="personality"][data-character-scope="edit"]').fill('Draft personality.');
+        await page.locator('[data-cancel-character-edit]').click();
+        await page.locator('[data-resume-character-draft="alice.png"]').click();
+        await page.locator('[data-save-character-edit]').click();
+
+        await expect(page.locator('.toast', { hasText: '角色卡已保存' })).toBeVisible();
+        await expect(page.locator('[data-character-draft-notice="alice.png"]')).toHaveCount(0);
+        expect(fixture.requests.characterMerge[0]).toMatchObject({
+            avatar: 'alice.png',
+            personality: 'Draft personality.',
+        });
+    });
+
+    test('keeps unsaved character edits when renaming the character', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        await page.route('**/api/characters/rename', async route => {
+            const payload = route.request().postDataJSON();
+            const nextAvatar = 'renamed-alice.png';
+            const character = fixture.characterDetails[payload.avatar_url];
+            const renamed = { ...character, avatar: nextAvatar, name: payload.new_name, data: { ...character.data, name: payload.new_name } };
+            fixture.characters = fixture.characters.map(item => item.avatar === payload.avatar_url ? renamed : item);
+            fixture.characterDetails[nextAvatar] = renamed;
+            delete fixture.characterDetails[payload.avatar_url];
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ avatar: nextAvatar }) });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-edit-character="alice.png"]').click();
+        await page.locator('[data-character-field="scenario"][data-character-scope="edit"]').fill('Unsaved scenario.');
+        await page.locator('[data-rename-character="alice.png"]').click();
+        await page.locator('[data-character-rename-input]').fill('Renamed Alice');
+        await page.locator('[data-confirm-character-rename]').click();
+
+        await expect(page.locator('.detail-title')).toHaveText('Renamed Alice');
+        await expect(page.locator('[data-character-field="scenario"][data-character-scope="edit"]')).toHaveValue('Unsaved scenario.');
+        await expect(page.locator('[data-character-field="name"][data-character-scope="edit"]')).toHaveValue('Renamed Alice');
+        await expect(page.locator('[data-character-form-actions="edit"]')).toContainText('有未保存的修改');
+
+        await page.locator('[data-save-character-edit]').click();
+        await expect(page.locator('.toast', { hasText: '角色卡已保存' })).toBeVisible();
+        expect(fixture.requests.characterMerge[0]).toMatchObject({
+            avatar: 'renamed-alice.png',
+            name: 'Renamed Alice',
+            scenario: 'Unsaved scenario.',
+        });
+    });
+
+    test('keeps an unsaved new character form across routes', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-create-character]').click();
+        const createActions = page.locator('[data-character-form-actions="create"]');
+        await expect(createActions).toHaveAttribute('data-dirty', 'false');
+        await expect(createActions.locator('[data-cancel-character-create]')).toHaveText('取消');
+
+        await page.locator('[data-character-field="name"][data-character-scope="create"]').fill('Draft Character');
+        await expect(createActions).toHaveAttribute('data-dirty', 'true');
+        await expect(createActions).toContainText('有未保存的修改');
+        await expect(createActions.locator('[data-cancel-character-create]')).toHaveText('放弃修改');
+
+        // 有内容的新建表单不会因为打开另一个角色的编辑而被清空。
+        await page.locator('[data-edit-character="alice.png"]').click();
+        await expect(page.locator('[data-character-field="name"][data-character-scope="create"]')).toHaveValue('Draft Character');
+
+        await page.locator('.nav-button[data-route="dashboard"]').click();
+        await page.locator('.nav-button[data-route="characters"]').click();
+        await expect(page.locator('[data-character-field="name"][data-character-scope="create"]')).toHaveValue('Draft Character');
+        await expect(createActions).toContainText('有未保存的修改');
+
+        await page.locator('[data-create-character]').click();
+        await expect(page.locator('[data-character-field="name"][data-character-scope="create"]')).toHaveValue('Draft Character');
+
+        await createActions.locator('[data-cancel-character-create]').click();
+        await expect(page.locator('[data-character-create-panel]')).toHaveCount(0);
+        expect(fixture.requests.characterCreate).toHaveLength(0);
+    });
+
+    test('starts a chat with the selected character from its detail toolbar', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        const chatListRequests = [];
+        await page.route('**/api/characters/chats', route => {
+            chatListRequests.push(route.request().postDataJSON());
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-select-character="bruno.png"]').click();
+
+        const startChat = page.locator('[data-character-detail-panel] [data-open-character-chat="bruno.png"]');
+        await expect(startChat).toHaveText('开始聊天');
+        await expect(startChat).toHaveClass(/primary-button/);
+        await startChat.click();
+
+        await expect(page).toHaveURL(/\/modern\/\?view=chat/);
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'chat');
+        await expect(page.locator('.detail-title')).toHaveText('Bruno Fixture');
+        await expect.poll(() => chatListRequests.some(payload => payload?.avatar_url === 'bruno.png')).toBe(true);
     });
 });

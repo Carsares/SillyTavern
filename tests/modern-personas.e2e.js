@@ -9,7 +9,7 @@ test.describe('Modern persona resources', () => {
 
         await gotoModern(page, 'personas', '用户人设');
 
-        await expect(page.locator('.resource-card', { hasText: 'Alpha Persona' })).toContainText('默认');
+        await expect(page.locator('[data-persona-card="persona-alpha.png"] [data-persona-badge="default"]')).toHaveText('默认');
         await page.locator('[data-edit-persona="persona-beta.png"]').click();
         await expect(page.locator('.settings-form', { hasText: '保存' })).toBeVisible();
         await page.locator('[data-persona-field="name"][data-persona-scope="edit"]').fill('Edited Persona');
@@ -26,7 +26,8 @@ test.describe('Modern persona resources', () => {
 
         await page.locator('[data-set-default-persona="persona-beta.png"]').click();
 
-        await expect(page.locator('.resource-card', { hasText: 'Edited Persona' })).toContainText('默认');
+        await expect(page.locator('[data-persona-card="persona-beta.png"] [data-persona-badge="default"]')).toHaveText('默认');
+        await expect(page.locator('[data-persona-card="persona-alpha.png"] [data-persona-badge="default"]')).toHaveCount(0);
         expect(fixture.requests.settingsSave.at(-1).power_user.default_persona).toBe('persona-beta.png');
     });
 
@@ -60,6 +61,92 @@ test.describe('Modern persona resources', () => {
             title: 'Created title',
             description: 'Created persona description.',
         });
+        // 已有默认人设时新建人设不改动默认人设。
+        expect(fixture.requests.settingsSave[0].power_user.default_persona).toBe('persona-alpha.png');
+    });
+
+    test('marks the active and default personas, names unnamed personas, and toggles the default off', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            settings: {
+                user_avatar: 'user-one.png',
+                power_user: {
+                    personas: {
+                        'user-one.png': '[Unnamed Persona]',
+                        'user-two.png': '[Unnamed Persona]',
+                    },
+                    persona_descriptions: {
+                        'user-one.png': { title: '', description: '' },
+                        'user-two.png': { title: '', description: '' },
+                    },
+                    default_persona: null,
+                },
+            },
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'personas', '用户人设');
+
+        const firstCard = page.locator('[data-persona-card="user-one.png"]');
+        const secondCard = page.locator('[data-persona-card="user-two.png"]');
+        await expect(firstCard.locator('.card-title')).toHaveText('未命名人设');
+        await expect(firstCard.locator('.card-meta')).toHaveText('user-one.png');
+        await expect(secondCard.locator('.card-title')).toHaveText('未命名人设');
+        await expect(secondCard.locator('.card-meta')).toHaveText('user-two.png');
+        await expect(page.locator('text=[Unnamed Persona]')).toHaveCount(0);
+
+        await expect(firstCard.locator('[data-persona-badge="active"]')).toHaveText('当前使用');
+        await expect(secondCard.locator('[data-persona-badge="active"]')).toHaveCount(0);
+        await expect(page.locator('[data-persona-badge="default"]')).toHaveCount(0);
+        await expect(page.locator('[data-set-default-persona]')).toHaveCount(2);
+        await expect(page.locator('[data-clear-default-persona]')).toHaveCount(0);
+
+        await secondCard.locator('[data-set-default-persona="user-two.png"]').click();
+
+        await expect(secondCard.locator('[data-persona-badge="default"]')).toHaveText('默认');
+        await expect(firstCard.locator('[data-persona-badge="default"]')).toHaveCount(0);
+        await expect(secondCard.locator('[data-clear-default-persona="user-two.png"]')).toHaveText('取消默认');
+        await expect(secondCard.locator('[data-set-default-persona]')).toHaveCount(0);
+        expect(fixture.requests.settingsSave.at(-1).power_user.default_persona).toBe('user-two.png');
+
+        await secondCard.locator('[data-clear-default-persona="user-two.png"]').click();
+
+        await expect(page.locator('.toast', { hasText: '已取消默认人设' })).toBeVisible();
+        await expect(page.locator('[data-persona-badge="default"]')).toHaveCount(0);
+        await expect(secondCard.locator('[data-set-default-persona="user-two.png"]')).toBeEnabled();
+        expect(fixture.requests.settingsSave.at(-1).power_user.default_persona).toBeNull();
+        // 「当前使用」来自 user_avatar，取消默认不影响它。
+        await expect(firstCard.locator('[data-persona-badge="active"]')).toHaveText('当前使用');
+    });
+
+    test('does not make a newly created persona the default when none is set', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            settings: {
+                power_user: {
+                    personas: { 'persona-alpha.png': 'Alpha Persona' },
+                    persona_descriptions: { 'persona-alpha.png': { title: '', description: '' } },
+                    default_persona: null,
+                },
+            },
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'personas', '用户人设');
+
+        await page.locator('[data-create-persona]').click();
+        await page.locator('[data-persona-field="name"][data-persona-scope="create"]').fill('Fresh Persona');
+        await page.locator('[data-persona-create-file]').setInputFiles({
+            name: 'fresh-persona.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('fresh persona avatar'),
+        });
+        await page.locator('[data-save-persona-create]').click();
+
+        await expect(page.locator('.toast', { hasText: '用户人设已创建' })).toBeVisible();
+        expect(fixture.requests.settingsSave).toHaveLength(1);
+        expect(fixture.requests.settingsSave[0].power_user.personas['fresh-persona.png']).toBe('Fresh Persona');
+        expect(fixture.requests.settingsSave[0].power_user.default_persona).toBeNull();
+        await expect(page.locator('[data-persona-card="fresh-persona.png"] [data-persona-badge="default"]')).toHaveCount(0);
+        await expect(page.locator('[data-set-default-persona="fresh-persona.png"]')).toBeEnabled();
     });
 
     test('opens create panel and requires confirmation before deleting a persona', async ({ page }) => {
@@ -79,7 +166,11 @@ test.describe('Modern persona resources', () => {
         expect(fixture.requests.settingsSave).toHaveLength(0);
 
         await page.locator('[data-cancel-persona-create]').click();
-        await page.locator('[data-delete-persona="persona-beta.png"]').click();
+        const deletePersonaButton = page.locator('[data-delete-persona="persona-beta.png"]');
+        await expect(deletePersonaButton).toHaveText('删除');
+        await expect(deletePersonaButton).toHaveClass(/danger-action/);
+        await expect(deletePersonaButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deletePersonaButton.click();
         await expect(page.locator('.danger-panel', { hasText: '删除用户人设' })).toBeVisible();
         await page.locator('[data-cancel-persona-delete]').click();
 

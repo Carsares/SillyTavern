@@ -17,7 +17,7 @@ export function createPersonasComponents(ctx) {
     function renderPersonas() {
         const selectedPersonaId = state.selected.persona;
         const personas = getPersonas()
-            .filter(persona => matchesQuery(persona.name, persona.title, persona.description, persona.avatarId))
+            .filter(persona => matchesQuery(persona.displayName, persona.name, persona.title, persona.description, persona.avatarId))
             .sort((a, b) => Number(b.avatarId === selectedPersonaId) - Number(a.avatarId === selectedPersonaId));
 
         return `

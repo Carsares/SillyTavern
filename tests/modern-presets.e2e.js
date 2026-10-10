@@ -214,7 +214,11 @@ test.describe('Modern presets page', () => {
         await expect(page.locator('[data-select-preset="Preset B"][data-preset-api="openai"]')).toContainText('当前');
 
         await page.locator('[data-select-preset="Preset B copy"][data-preset-api="openai"]').click();
-        await page.locator('[data-delete-preset="Preset B copy"][data-preset-api="openai"]').click();
+        const deletePresetButton = page.locator('[data-delete-preset="Preset B copy"][data-preset-api="openai"]');
+        await expect(deletePresetButton).toHaveText('删除');
+        await expect(deletePresetButton).toHaveClass(/danger-action/);
+        await expect(deletePresetButton.locator('.fa-trash-can')).toHaveCount(1);
+        await deletePresetButton.click();
         await expect(page.locator('.danger-panel', { hasText: '删除预设' })).toBeVisible();
         await page.locator('[data-cancel-preset-delete]').click();
         expect(requests.deletes).toHaveLength(0);
@@ -260,5 +264,45 @@ test.describe('Modern presets page', () => {
         await expect(page.locator('.toast').filter({ hasText: '/api/settings/save failed: 500' }).first()).toBeVisible();
         expect(fixture.requests.presetWorkflows.deletes).toHaveLength(0);
         await expect(page.locator('[data-select-preset="Preset A"][data-preset-api="openai"]')).toContainText('当前');
+    });
+
+    test('marks preset summary fields that differ from the current connection', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            settings: {
+                main_api: 'openai',
+                oai_settings: {
+                    preset_settings_openai: 'Default',
+                    chat_completion_source: 'custom',
+                    custom_model: 'deepseek-v4-flash',
+                    openai_model: 'gpt-4-turbo',
+                },
+            },
+            settingsBundle: {
+                openai_setting_names: ['Default', 'Matching'],
+                openai_settings: [
+                    JSON.stringify({ chat_completion_source: 'openai', openai_model: 'gpt-4-turbo', temperature: 1 }),
+                    JSON.stringify({ chat_completion_source: 'custom', custom_model: 'deepseek-v4-flash', openai_model: 'gpt-4-turbo' }),
+                ],
+            },
+        });
+        await mockModernWorkspace(page, fixture);
+
+        await gotoModern(page, 'presets', '预设管理');
+        await page.locator('[data-select-preset="Default"][data-preset-api="openai"]').click();
+
+        await expect(page.locator('[data-preset-summary-note]')).toContainText('预设文件里保存的值');
+        const modelRow = page.locator('[data-preset-summary-diff="model"]');
+        const sourceRow = page.locator('[data-preset-summary-diff="source"]');
+        await expect(modelRow).toContainText('gpt-4-turbo');
+        await expect(modelRow).toContainText('当前连接：deepseek-v4-flash');
+        await expect(sourceRow).toContainText('openai');
+        await expect(sourceRow).toContainText('当前连接：custom');
+
+        // 来源一致的预设按自身来源取模型字段（custom_model），不再误报残留的 openai_model。
+        await page.locator('[data-select-preset="Matching"][data-preset-api="openai"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Matching');
+        await expect(page.locator('[data-preset-summary-diff]')).toHaveCount(0);
+        await expect(page.locator('.kv-row', { hasText: '模型' })).toContainText('deepseek-v4-flash');
+        await expect(page.locator('[data-select-preset="Matching"][data-preset-api="openai"] .row-subtitle')).toHaveText('deepseek-v4-flash');
     });
 });

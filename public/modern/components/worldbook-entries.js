@@ -79,9 +79,9 @@ export function createWorldbookEntryComponents(ctx) {
                     <i class="fa-solid fa-copy"></i>
                     复制
                 </button>
-                <button class="secondary-button" type="button" data-delete-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
-                    <i class="fa-solid fa-ellipsis"></i>
-                    管理
+                <button class="secondary-button danger-action" type="button" data-delete-world-entry="${escapeHtml(worldbook.file_id)}" data-world-entry-key="${escapeHtml(entryKey)}">
+                    <i class="fa-solid fa-trash-can"></i>
+                    删除
                 </button>
             </div>
             ${isEditing ? renderWorldEntryForm(entryKey, entry) : ''}
