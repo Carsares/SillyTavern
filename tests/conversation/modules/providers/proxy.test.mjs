@@ -154,3 +154,56 @@ test('empty response statuses, multipart bodies and per-request abort retain fet
     await arrived; controller.abort(); await rejected;
     assert.equal((await client.fetch(source.url)).status, 204);
 });
+
+test('global agent mode passes no agent to an injected transport and keeps request hygiene', async t => {
+    const seen = [];
+    const client = transport(t, { proxy: null }, { agent: 'global', fetch: async (request, options) => {
+        seen.push({ options, redirect: request.redirect, proxyAuth: request.headers.get('proxy-authorization'), authorization: request.headers.get('authorization') });
+        return new Response('global');
+    } });
+    assert.equal(await (await client.fetch('http://target.invalid', { headers: { Authorization: 'Bearer synthetic', 'Proxy-Authorization': 'must-not-pass' } })).text(), 'global');
+    assert.deepEqual(seen, [{ options: { redirect: 'error' }, redirect: 'error', proxyAuth: null, authorization: 'Bearer synthetic' }]);
+    assert.equal(Object.hasOwn(seen[0].options, 'agent'), false);
+    client.close(); client.close();
+    await assert.rejects(client.fetch('http://target.invalid'), { code: 'transport-closed' });
+    const broken = transport(t, {}, { agent: 'global', fetch: async () => { throw new Error('https://user:secret@target.invalid'); } });
+    await assert.rejects(broken.fetch('http://target.invalid'), error => error.code === 'provider-network-error' && !error.message.includes('secret'));
+});
+
+test('global agent mode rejects connection proxy, native fetch and unknown agent values', () => {
+    for (const connection of [{ proxy: { url: 'https://user:secret@proxy.invalid:8443/' } }, { data: { proxy: { url: 'http://proxy.invalid' } } }]) {
+        assert.throws(() => createConnectionFetch(connection, { agent: 'global' }),
+            error => error.code === 'invalid-transport' && !/secret|proxy\.invalid|user/.test(error.message));
+    }
+    // Bare `fetch` is the native global fetch (tests/.eslintrc.cjs does not declare globalThis).
+    assert.throws(() => createConnectionFetch({}, { agent: 'global', fetch }), { code: 'invalid-transport' });
+    for (const agent of ['Global', 'proxy', '', null, true, {}, () => 'global']) {
+        assert.throws(() => createConnectionFetch({}, { agent }), { code: 'invalid-transport' });
+    }
+    assert.throws(() => createConnectionFetch({}, { agent: 'global', fetch: 'not-a-function' }), { code: 'invalid-transport' });
+});
+
+test('global agent mode routes node-fetch through http.globalAgent; default mode does not', { timeout: 5000 }, async t => {
+    const origin = await listen(t, (_req, res) => res.end('origin'));
+    let connections = 0, destroyed = 0;
+    class CountingAgent extends http.Agent {
+        createConnection(...args) { connections++; return super.createConnection(...args); }
+        destroy() { destroyed++; return super.destroy(); }
+    }
+    const previous = http.globalAgent;
+    const counting = new CountingAgent({ keepAlive: false });
+    try {
+        http.globalAgent = counting;
+        const global = createConnectionFetch({}, { agent: 'global' });
+        assert.equal(await (await global.fetch(`${origin.url}/global`)).text(), 'origin');
+        assert.equal(connections, 1);
+        global.close(); global.close();
+        assert.equal(destroyed, 0);
+        await assert.rejects(global.fetch(origin.url), { code: 'transport-closed' });
+        assert.equal(await (await transport(t, {}).fetch(`${origin.url}/default`)).text(), 'origin');
+        assert.equal(connections, 1);
+    } finally {
+        http.globalAgent = previous;
+        counting.destroy();
+    }
+});

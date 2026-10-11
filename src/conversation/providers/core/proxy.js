@@ -64,14 +64,21 @@ export function validateConnectionProxy(connection) {
  * honor the Node agent when proxy is configured. Native fetch cannot do that.
  * Without injection, node-fetch handles both direct and proxy requests, so no
  * HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY or global dispatcher is consulted.
+ * agent:'global' creates no agent: node-fetch (or an injected fetch, called with
+ * {redirect:'error'} only) falls back to http(s).globalAgent, i.e. the host's
+ * request proxy and private request filter. It rejects a connection proxy and
+ * native fetch, which bypasses Node's global agents.
  */
-export function createConnectionFetch(connection, { fetch: injectedFetch } = {}) {
+export function createConnectionFetch(connection, { fetch: injectedFetch, agent: agentMode } = {}) {
     const proxyUrl = validateConnectionProxy(connection);
+    if (agentMode !== undefined && agentMode !== 'global') throw fail('invalid-transport', 'agent must be omitted or \'global\'');
     if (injectedFetch !== undefined && typeof injectedFetch !== 'function') throw fail('invalid-transport', 'Injected fetch must be a function');
+    if (agentMode === 'global' && proxyUrl) throw fail('invalid-transport', 'Global agent mode cannot use a connection proxy');
+    if (agentMode === 'global' && injectedFetch === globalThis.fetch) throw fail('invalid-transport', 'Native fetch bypasses the global Node agents; omit fetch or inject a Node-agent-aware transport');
     if (proxyUrl && injectedFetch === globalThis.fetch) throw fail('invalid-transport', 'Native fetch cannot honor the proxy agent; omit fetch or inject an agent-aware transport');
     // Outer-agent socket reuse skips HttpProxyAgent's absolute request-target
     // rewrite on subsequent requests. Reuse agent objects, not those sockets.
-    const agent = new VerifiedProxyAgent({ getProxyForUrl: () => proxyUrl ?? '', rejectUnauthorized: true, keepAlive: false });
+    const agent = agentMode === 'global' ? null : new VerifiedProxyAgent({ getProxyForUrl: () => proxyUrl ?? '', rejectUnauthorized: true, keepAlive: false });
     const lifetime = new AbortController();
     let closed = false;
     return {
@@ -90,11 +97,12 @@ export function createConnectionFetch(connection, { fetch: injectedFetch } = {})
             request.signal.throwIfAborted();
             let response;
             try {
+                // Global mode omits the agent key entirely so node-fetch uses http(s).globalAgent.
                 response = injectedFetch
-                    ? await injectedFetch(request, { agent, redirect: 'error' })
+                    ? await injectedFetch(request, agent ? { agent, redirect: 'error' } : { redirect: 'error' })
                     : await nodeFetch(request.url, { method: request.method, headers: Object.fromEntries(request.headers),
                         body: request.body ? Readable.fromWeb(request.body) : undefined,
-                        signal: request.signal, redirect: 'error', agent });
+                        signal: request.signal, redirect: 'error', ...(agent ? { agent } : {}) });
                 request.signal.throwIfAborted();
                 if (response instanceof Response) return response;
                 const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.status);
@@ -113,6 +121,8 @@ export function createConnectionFetch(connection, { fetch: injectedFetch } = {})
             if (closed) return;
             closed = true;
             lifetime.abort();
+            // Global mode owns no agent; never destroy the host's shared global agents.
+            if (!agent) return;
             agent.destroy();
             // ProxyAgent.destroy() does not destroy its separately owned direct agents.
             agent.httpAgent.destroy(); agent.httpsAgent.destroy();

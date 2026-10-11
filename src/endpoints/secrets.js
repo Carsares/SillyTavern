@@ -70,6 +70,7 @@ export const SECRET_KEYS = {
     VOLCENGINE_APP_ID: 'volcengine_app_id',
     VOLCENGINE_ACCESS_KEY: 'volcengine_access_key',
     WORKERS_AI: 'api_key_workers_ai',
+    IMAGE_GENERATION: 'api_key_image_generation',
     REMOTE_RESOURCES_GITHUB: 'remote_resources_github_token',
     REMOTE_RESOURCES_CHUB_COOKIE: 'remote_resources_chub_cookie',
     REMOTE_RESOURCES_RISU_TOKEN: 'remote_resources_risu_token',

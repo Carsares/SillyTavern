@@ -34,6 +34,7 @@ import { router as remoteResourcesRouter } from './endpoints/remote-resources.js
 import { router as backgroundsRouter } from './endpoints/backgrounds.js';
 import { router as spritesRouter } from './endpoints/sprites.js';
 import { router as stableDiffusionRouter } from './endpoints/stable-diffusion.js';
+import { router as imageGenerationRouter } from './endpoints/image-generation.js';
 import { router as hordeRouter } from './endpoints/horde.js';
 import { router as vectorsRouter } from './endpoints/vectors.js';
 import { router as translateRouter } from './endpoints/translate.js';
@@ -174,6 +175,7 @@ export function setupPrivateEndpoints(app) {
     app.use('/api/settings', settingsRouter);
     app.use('/api/remote-resources', remoteResourcesRouter);
     app.use('/api/sd', stableDiffusionRouter);
+    app.use('/api/image-generation', imageGenerationRouter);
     app.use('/api/horde', hordeRouter);
     app.use('/api/vector', vectorsRouter);
     app.use('/api/translate', translateRouter);

@@ -22,7 +22,43 @@ export function outputLimit(connection, requested) {
         || (connection.contextWindow !== undefined && value >= connection.contextWindow)) throw fail('invalid-budget', 'Invalid output reserve');
     return value;
 }
-export function createTransport(connection, capability, { fetch: fetchImpl = globalThis.fetch, onRequest, onPayload } = {}) {
+/** Opt-in short provider reason from an HTTP error body: reads at most 4096 bytes, stops on abort,
+ * always releases the body, never throws. Redacted before whitespace collapse and 300-char truncation.
+ */
+async function providerErrorMessage(response, signal, redact) {
+    const limit = 4096;
+    let reader;
+    const stop = () => { reader?.cancel().catch(() => {}); };
+    try {
+        reader = response.body?.getReader();
+        if (!reader) return '';
+        signal.addEventListener('abort', stop, { once: true });
+        const chunks = []; let size = 0;
+        while (size <= limit && !signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            chunks.push(value); size += value.byteLength;
+        }
+        if (signal.aborted) return '';
+        const capped = size > limit;
+        // stream:true drops a multi-byte character split by the cap.
+        let text = new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit), { stream: true });
+        // A token cut by the cap may be a secret prefix that the redactor cannot match; drop it.
+        if (capped) { let end = text.length; while (end > 0 && !/\s/u.test(text[end - 1])) end--; text = text.slice(0, end); }
+        let message = text;
+        try {
+            const parsed = JSON.parse(text);
+            message = [parsed?.error?.message, parsed?.message, parsed?.detail, parsed?.error].find(item => typeof item === 'string' && item.trim()) ?? '';
+        } catch { /* not JSON: keep raw text */ }
+        const characters = Array.from(redact(message).replace(/[\s\u0000-\u001f\u007f]+/gu, ' ').trim());
+        if (characters.length > 300) return `${characters.slice(0, 300).join('').trimEnd()}…`;
+        return capped && characters.length ? `${characters.join('')}…` : characters.join('');
+    } catch { return ''; } finally {
+        signal.removeEventListener('abort', stop);
+        await (reader ? reader.cancel() : response.body?.cancel())?.catch(() => {});
+    }
+}
+export function createTransport(connection, capability, { fetch: fetchImpl = globalThis.fetch, onRequest, onPayload, errorDetail = false } = {}) {
     const redact = createRedactor(connection);
     const captured = createCapturedFetch({ fetchImpl, onRequest, redact });
     return async (path, { body, signal, method = 'POST', headers = {}, raw = false } = {}) => {
@@ -49,9 +85,11 @@ export function createTransport(connection, capability, { fetch: fetchImpl = glo
         }
         combined.throwIfAborted();
         if (!response.ok) {
-            await response.body?.cancel();
+            let providerMessage = '';
+            if (errorDetail === true) providerMessage = await providerErrorMessage(response, combined, redact);
+            else await response.body?.cancel();
             const error = fail('provider-http-error', `Provider returned HTTP ${response.status}`);
-            error.details = { status: response.status, retryable: false };
+            error.details = { status: response.status, retryable: false, ...(providerMessage ? { providerMessage } : {}) };
             throw error;
         }
         if (raw) return response;

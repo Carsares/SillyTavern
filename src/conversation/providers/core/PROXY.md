@@ -71,6 +71,18 @@ Agent objects are reused, but outer socket keep-alive is disabled: with the
 installed proxy-agent stack, socket reuse skips the HTTP proxy absolute URL
 rewrite on the second request. A local regression test verifies both requests.
 
+## Global agent mode
+
+`createConnectionFetch(connection, {agent: 'global'})` is for main-application
+endpoints (currently `src/endpoints/image-generation.js`) that must follow the
+host's `requestProxy` and `privateAddressWhitelist` settings. Those settings
+replace `http.globalAgent`/`https.globalAgent`, so this mode creates no proxy
+agent and calls node-fetch without an `agent`; an injected fetch receives
+`{redirect:'error'}` and no agent. A connection `proxy` and `globalThis.fetch`
+(native fetch ignores the global agents) are rejected with `invalid-transport`.
+`close()` aborts active work but never destroys the shared global agents. Any
+other `agent` value is rejected. Agent conversations never pass this option.
+
 `tests/conversation/modules/providers/proxy.test.mjs` uses only local ephemeral
 HTTP listeners and synthetic credentials. It verifies actual proxy forwarding,
 authentication, no fallback, ignored environment routing, CONNECT refusal,
