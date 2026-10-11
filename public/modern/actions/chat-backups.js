@@ -1,5 +1,31 @@
 import { createChatBackupOwnership } from './chat-backup-ownership.js';
 
+/**
+ * 备份预览的文字：最后 40 条消息，每条是「名字 · 时间」加正文。
+ * 正文用原文 mes：恢复备份恢复的是原文，译文（extra.display_text）只是显示用的，可能已经过期；
+ * 带译文的消息在标题行注明，免得以为译文丢了。
+ * @param {string} rawText 备份文件内容（JSONL）
+ * @param {(value: any) => string} formatDate 时间格式化
+ * @returns {string} 预览文字
+ */
+export function formatChatBackupPreview(rawText, formatDate) {
+    const lines = String(rawText || '').split('\n').filter(Boolean);
+    const messages = [];
+    for (const line of lines) {
+        try {
+            const item = JSON.parse(line);
+            if (item?.mes) {
+                const translated = typeof item.extra?.display_text === 'string' && item.extra.display_text.trim() ? ' · 有译文（这里显示原文）' : '';
+                messages.push(`${item.name || 'Unknown'} · ${formatDate(item.send_date)}${translated}\n${item.mes}`);
+            }
+        } catch {
+            // Ignore broken lines in a backup preview; restore still uses the original file.
+        }
+    }
+
+    return messages.slice(-40).join('\n\n') || '这个备份没有可预览的消息。';
+}
+
 export function createChatBackupActions({
     state,
     apiFetch,
@@ -65,23 +91,6 @@ export function createChatBackupActions({
         return ownership.isCurrent && !ownership.isAmbiguous;
     }
 
-    function formatBackupPreview(rawText) {
-        const lines = String(rawText || '').split('\n').filter(Boolean);
-        const messages = [];
-        for (const line of lines) {
-            try {
-                const item = JSON.parse(line);
-                if (item?.mes) {
-                    messages.push(`${item.name || 'Unknown'} · ${formatDate(item.send_date)}\n${item.extra?.display_text || item.mes}`);
-                }
-            } catch {
-                // Ignore broken lines in a backup preview; restore still uses the original file.
-            }
-        }
-
-        return messages.slice(-40).join('\n\n') || '这个备份没有可预览的消息。';
-    }
-
     async function downloadChatBackup(name) {
         return apiFetchResponse('/api/backups/chat/download', { body: { name } });
     }
@@ -90,7 +99,7 @@ export function createChatBackupActions({
         const response = await downloadChatBackup(name);
         const rawText = await response.text();
         state.chatBackups.previewName = name;
-        state.chatBackups.previewText = formatBackupPreview(rawText);
+        state.chatBackups.previewText = formatChatBackupPreview(rawText, formatDate);
         render();
     }
 
