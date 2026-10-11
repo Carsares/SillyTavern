@@ -1601,7 +1601,20 @@ export async function getCharacters() {
     if (response.ok) {
         // Parse before clearing: concurrent readers must never observe an empty list while the response is read
         const getData = await response.json();
-        const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
+        let previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
+        // bridge 模式：modern 改名（换了头像文件名）或删除了引擎当前打开的角色。下面的弹窗在隐藏 iframe 里永远无人应答，
+        // 它所在的 bridge 串行队列会就此卡死，刷新也会丢掉排队中的任务。这里改用旧版卸下当前角色的清理方式
+        // （同 removeCharacterFromUI / reloadCurrentChatUnsafe）：丢弃待存的聊天（文件已随改名/删除移走，聊天文件以 modern 为准），
+        // 清空当前角色与聊天，然后照常载入列表。下一个 bridge 任务会按 payload 重新选择角色和聊天。
+        // 卸载要在列表替换前做：此时 this_chid 仍指向旧列表里的这个角色，提示词分解记录才会记在它自己的聊天名下。
+        // skipCharacterSave：本函数可能就在角色卡保存队列里被调用，等待该队列会自锁。
+        const unloadMissingCharacter = isModernBridgeMode && Boolean(previousAvatar) && !getData.some(character => character?.avatar === previousAvatar);
+        if (unloadMissingCharacter) {
+            console.warn('Modern bridge: the active character is no longer available, unloading it.', previousAvatar);
+            await clearChat({ clearData: true, discardPendingSave: true, skipCharacterSave: true });
+            resetChatState();
+            previousAvatar = null;
+        }
         characters.splice(0, characters.length);
         for (let i = 0; i < getData.length; i++) {
             characters[i] = getData[i];
@@ -1628,6 +1641,11 @@ export async function getCharacters() {
 
         await getGroups();
         await printCharacters(true);
+
+        if (unloadMissingCharacter) {
+            await printMessages();
+            await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
+        }
     } else {
         console.error('Failed to fetch characters:', response.statusText);
         const errorData = await response.json();

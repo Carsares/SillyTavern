@@ -1286,6 +1286,154 @@ test.describe('Modern bridge engine sync', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
+// The open character disappears: the modern UI renamed it (the server gives the card a new avatar file name) or deleted it
+// ---------------------------------------------------------------------------------------------------------------------
+
+// Characters whose list the test changes between bridge calls, the way the server's list changes after the modern UI renames
+// or deletes a card. A chat opens only for its owner's current avatar and `chat` name; every chat save is recorded with the
+// avatar it was written for.
+async function routeMutableCharacterFixture(page, initialCharacters) {
+    let characterList = initialCharacters;
+    const chatSaves = [];
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+
+    await page.route('**/api/characters/all', route => fulfillJson(route, characterList));
+    await page.route('**/api/characters/get', route => {
+        const found = characterList.find(character => character.avatar === postJson(route)?.avatar_url);
+        return found ? fulfillJson(route, found) : fulfillJson(route, { error: 'not found' }, 404);
+    });
+    await page.route('**/api/characters/edit', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'OK' }));
+    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/chats/get', route => {
+        const payload = postJson(route);
+        const owner = characterList.find(character => character.avatar === payload?.avatar_url);
+        if (!owner || owner.chat !== stripJsonlExtension(payload?.file_name)) {
+            return fulfillJson(route, []);
+        }
+        const greeting = { name: owner.name, is_user: false, is_system: false, send_date: '2026-10-11T09:00:00.000Z', mes: owner.first_mes, extra: {} };
+        return fulfillJson(route, [chatHeader(), greeting]);
+    });
+    await page.route('**/api/chats/save', route => {
+        const payload = postJson(route);
+        chatSaves.push({ avatar: payload?.avatar_url, chat: stripJsonlExtension(payload?.file_name) });
+        return fulfillJson(route, { ok: true });
+    });
+
+    return {
+        chatSaves,
+        errors,
+        setCharacters: list => {
+            characterList = list;
+        },
+    };
+}
+
+// Before the fix the engine's character reload found its open character gone, awaited a legacy popup that nobody can answer in
+// the hidden iframe and would then have reloaded the page: the serial bridge lane stayed blocked, so every later generate,
+// summary, estimate and reload waited for its own timeout. A blocked lane shows up here as a callBridge timeout.
+test.describe('Modern bridge after the open character disappears', () => {
+    test('keeps serving after the modern UI renames the open character', async ({ page }) => {
+        test.setTimeout(150_000);
+
+        const chatId = 'Modern 2026-10-11T09-00-00-000Z';
+        const original = { ...createBridgeCharacter({ name: 'Before Rename', avatar: 'before-rename.png' }), chat: chatId };
+        // The rename endpoint keeps the card and its chats, only the avatar file name (the card's key) changes
+        const renamed = { ...createBridgeCharacter({ name: 'After Rename', avatar: 'after-rename.png' }), chat: chatId };
+        const fixture = await routeMutableCharacterFixture(page, [original]);
+        const modelRequests = await routeStubbedChatCompletion(page, 'reply after rename');
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await page.evaluate(() => {
+            window.bridgeBootMarker = true;
+        });
+
+        const opened = await callBridge(page, 'status', { avatar: original.avatar, groupId: null, chat: chatId }, 'rename-open');
+        expect(opened.error).toBeFalsy();
+        expect(opened.result).toMatchObject({ avatar: original.avatar, chat: chatId });
+        const savesBeforeRename = fixture.chatSaves.length;
+
+        fixture.setCharacters([renamed]);
+        const reload = await callBridge(page, 'reloadCharacter', {}, 'rename-reload');
+        expect(reload.error).toBeFalsy();
+        expect(reload.result).toMatchObject({ ok: true });
+
+        // The engine let go of the vanished character: no popup, no page reload, nothing open
+        const probe = await callBridge(page, 'status', {}, 'rename-probe');
+        expect(probe.error).toBeFalsy();
+        expect(probe.result).toMatchObject({ avatar: '', groupId: '', chat: '' });
+        await expect(page.locator('dialog.popup[open]')).toHaveCount(0);
+        expect(await page.evaluate(() => window.bridgeBootMarker)).toBe(true);
+
+        // Operations keep running one after another: a generate on the renamed card, another card save, one more generate
+        const first = await callBridge(page, 'generate', { avatar: renamed.avatar, groupId: null, chat: chatId, type: 'normal', message: 'first after rename' }, 'rename-generate-1');
+        expect(first.error).toBeFalsy();
+        expect(first.result).toMatchObject({ avatar: renamed.avatar, chat: chatId, saved: true });
+
+        const reloadAgain = await callBridge(page, 'reloadCharacter', {}, 'rename-reload-2');
+        expect(reloadAgain.error).toBeFalsy();
+        expect(reloadAgain.result).toMatchObject({ ok: true });
+
+        const second = await callBridge(page, 'generate', { avatar: renamed.avatar, groupId: null, chat: chatId, type: 'normal', message: 'second after rename' }, 'rename-generate-2');
+        expect(second.error).toBeFalsy();
+        expect(second.result).toMatchObject({ avatar: renamed.avatar, chat: chatId, saved: true });
+
+        expect(modelRequests).toHaveLength(2);
+        // The chat the engine held for the old avatar was dropped, never written back under the avatar that no longer exists
+        expect(fixture.chatSaves.slice(savesBeforeRename).filter(save => save.avatar !== renamed.avatar)).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('keeps serving after the modern UI deletes the open character', async ({ page }) => {
+        test.setTimeout(150_000);
+
+        const deletedChatId = 'Modern 2026-10-11T09-10-00-000Z';
+        const remainingChatId = 'Modern 2026-10-11T09-20-00-000Z';
+        const deleted = { ...createBridgeCharacter({ name: 'Deleted Fixture', avatar: 'deleted-fixture.png' }), chat: deletedChatId };
+        const remaining = { ...createBridgeCharacter({ name: 'Remaining Fixture', avatar: 'remaining-fixture.png' }), chat: remainingChatId };
+        const fixture = await routeMutableCharacterFixture(page, [deleted, remaining]);
+        const modelRequests = await routeStubbedChatCompletion(page, 'reply after delete');
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await page.evaluate(() => {
+            window.bridgeBootMarker = true;
+        });
+
+        const opened = await callBridge(page, 'status', { avatar: deleted.avatar, groupId: null, chat: deletedChatId }, 'delete-open');
+        expect(opened.error).toBeFalsy();
+        expect(opened.result).toMatchObject({ avatar: deleted.avatar, chat: deletedChatId });
+        const savesBeforeDelete = fixture.chatSaves.length;
+
+        fixture.setCharacters([remaining]);
+        const reload = await callBridge(page, 'reloadCharacter', {}, 'delete-reload');
+        expect(reload.error).toBeFalsy();
+        expect(reload.result).toMatchObject({ ok: true });
+
+        const probe = await callBridge(page, 'status', {}, 'delete-probe');
+        expect(probe.error).toBeFalsy();
+        expect(probe.result).toMatchObject({ avatar: '', groupId: '', chat: '' });
+        await expect(page.locator('dialog.popup[open]')).toHaveCount(0);
+        expect(await page.evaluate(() => window.bridgeBootMarker)).toBe(true);
+
+        // A request that still names the deleted card is answered with an error at once instead of hanging the lane
+        const stale = await callBridge(page, 'generate', { avatar: deleted.avatar, groupId: null, chat: deletedChatId, type: 'normal', message: 'to the deleted card' }, 'delete-stale');
+        expect(stale.error?.message).toContain('找不到当前选择的角色');
+
+        const generate = await callBridge(page, 'generate', { avatar: remaining.avatar, groupId: null, chat: remainingChatId, type: 'normal', message: 'after delete' }, 'delete-generate');
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ avatar: remaining.avatar, chat: remainingChatId, saved: true });
+
+        const reloadAgain = await callBridge(page, 'reloadCharacter', {}, 'delete-reload-2');
+        expect(reloadAgain.error).toBeFalsy();
+        expect(reloadAgain.result).toMatchObject({ ok: true });
+
+        expect(modelRequests).toHaveLength(1);
+        expect(fixture.chatSaves.slice(savesBeforeDelete).filter(save => save.avatar === deleted.avatar)).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Chat summary (A6): the SUMMARIZE action and the memory extension's behavior inside the bridge
 // ---------------------------------------------------------------------------------------------------------------------
 
