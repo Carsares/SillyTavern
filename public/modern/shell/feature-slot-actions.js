@@ -17,6 +17,7 @@ import { createChatGlobalSearchActions } from '../actions/chat-global-search.js'
 
 import { createChatBackgroundActions } from '../actions/chat-background.js';
 import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
+import { createMaintenanceActions } from '../actions/maintenance.js';
 
 /**
  * @typedef {object} FeatureSlotDeps
@@ -38,6 +39,7 @@ import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
  */
 export function createFeatureSlotActions(deps) {
     return {
+        maintenance: createMaintenanceActions(deps), // 设置页「数据维护」（B4）
         chatGlobalSearch: createChatGlobalSearchActions(deps), // 跨角色聊天搜索（B2）
         // 目前没有任何功能接入；各功能代理在这里各加一行自己的分组
         chatBackground: createChatBackgroundActions(deps),

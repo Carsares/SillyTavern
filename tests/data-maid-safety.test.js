@@ -20,6 +20,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+    jest.restoreAllMocks();
     DataMaidService.TOKENS.clear();
     for (const directory of tempDirectories.splice(0)) {
         fs.rmSync(directory, { recursive: true, force: true });
@@ -49,7 +50,10 @@ function createDirectories() {
 }
 
 function createResponse() {
-    return { sendStatus: jest.fn(value => value) };
+    return {
+        sendStatus: jest.fn(value => value),
+        json: jest.fn(value => value),
+    };
 }
 
 function createToken(handle, ...filePaths) {
@@ -58,10 +62,10 @@ function createToken(handle, ...filePaths) {
     return { token, hash: hashes[0], hashes };
 }
 
-async function deleteFiles(directories, handle, token, hashes) {
+async function deleteFiles(directories, handle, token, hashes, extraBody = {}) {
     const response = createResponse();
     await deleteHandler({
-        body: { token, hashes },
+        body: { token, hashes, ...extraBody },
         user: { profile: { handle }, directories },
     }, response);
     return response;
@@ -136,5 +140,108 @@ describe('data maid cleanup token safety', () => {
 
         expect(finalizeResponse.sendStatus).toHaveBeenCalledWith(204);
         expect(DataMaidService.TOKENS.has(token)).toBe(false);
+    });
+});
+
+describe('data maid detailed delete', () => {
+    test('answers with the deleted hashes, the skipped ones and a reason for each, while the default stays 204', async () => {
+        const directories = createDirectories();
+        const deletable = path.join(directories.files, 'deletable.txt');
+        const replaced = path.join(directories.files, 'replaced.txt');
+        const referenced = path.join(directories.files, 'referenced.txt');
+        const vanished = path.join(directories.files, 'vanished.txt');
+        for (const filePath of [deletable, replaced, referenced, vanished]) {
+            fs.writeFileSync(filePath, path.basename(filePath));
+        }
+        const { token, hashes: [deletableHash, replacedHash, referencedHash, vanishedHash] } = createToken('test-user', deletable, replaced, referenced, vanished);
+        fs.unlinkSync(replaced);
+        fs.writeFileSync(replaced, 'something else now');
+        fs.unlinkSync(vanished);
+        fs.writeFileSync(path.join(directories.root, 'settings.json'), JSON.stringify({
+            extension_settings: { attachments: [{ url: path.relative(directories.root, referenced) }] },
+        }));
+
+        const response = await deleteFiles(directories, 'test-user', token, [deletableHash, replacedHash, referencedHash, vanishedHash, 'e'.repeat(64)], { detailed: true });
+
+        expect(response.sendStatus).not.toHaveBeenCalled();
+        const [body] = response.json.mock.calls[0];
+        expect(body.deleted).toEqual([deletableHash]);
+        expect(body.freedBytes).toBe('deletable.txt'.length);
+        expect(body.skipped).toEqual(expect.arrayContaining([
+            { hash: replacedHash, reason: 'changed' },
+            { hash: referencedHash, reason: 'referenced' },
+            { hash: vanishedHash, reason: 'missing' },
+            { hash: 'e'.repeat(64), reason: 'unknown' },
+        ]));
+        expect(body.skipped).toHaveLength(4);
+        expect(fs.existsSync(deletable)).toBe(false);
+        expect(fs.readFileSync(replaced, 'utf8')).toBe('something else now');
+        expect(fs.existsSync(referenced)).toBe(true);
+    });
+
+    test('reports a file that cannot be removed and still handles the files after it', async () => {
+        const directories = createDirectories();
+        const firstPath = path.join(directories.files, 'first.txt');
+        const secondPath = path.join(directories.files, 'second.txt');
+        fs.writeFileSync(firstPath, 'first');
+        fs.writeFileSync(secondPath, 'second');
+        const { token, hashes: [firstHash, secondHash] } = createToken('test-user', firstPath, secondPath);
+        const realUnlink = fs.promises.unlink;
+        jest.spyOn(fs.promises, 'unlink').mockImplementation(async filePath => {
+            if (filePath === firstPath) {
+                throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+            }
+            return realUnlink(filePath);
+        });
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const response = await deleteFiles(directories, 'test-user', token, [firstHash, secondHash], { detailed: true });
+
+        const [body] = response.json.mock.calls[0];
+        expect(body.deleted).toEqual([secondHash]);
+        expect(body.skipped).toEqual([{ hash: firstHash, reason: 'failed' }]);
+        expect(fs.existsSync(firstPath)).toBe(true);
+        expect(fs.existsSync(secondPath)).toBe(false);
+    });
+
+    test('without the flag a removal failure still ends the request with 500 and no body, as before', async () => {
+        const directories = createDirectories();
+        const filePath = path.join(directories.files, 'stuck.txt');
+        fs.writeFileSync(filePath, 'stuck');
+        const { token, hash } = createToken('test-user', filePath);
+        jest.spyOn(fs.promises, 'unlink').mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const response = await deleteFiles(directories, 'test-user', token, [hash]);
+
+        expect(response.sendStatus).toHaveBeenCalledWith(500);
+        expect(response.json).not.toHaveBeenCalled();
+    });
+
+    test('only a literal true switches the detailed answer on', async () => {
+        const directories = createDirectories();
+        const filePath = path.join(directories.files, 'plain.txt');
+        fs.writeFileSync(filePath, 'plain');
+        const { token, hash } = createToken('test-user', filePath);
+
+        const response = await deleteFiles(directories, 'test-user', token, [hash], { detailed: 'true' });
+
+        expect(response.sendStatus).toHaveBeenCalledWith(204);
+        expect(response.json).not.toHaveBeenCalled();
+        expect(fs.existsSync(filePath)).toBe(false);
+    });
+
+    test('a detailed request with another user\'s token or without hashes is refused like before', async () => {
+        const directories = createDirectories();
+        const filePath = path.join(directories.files, 'kept.txt');
+        fs.writeFileSync(filePath, 'kept');
+        const { token, hash } = createToken('test-user', filePath);
+
+        const intruder = await deleteFiles(directories, 'other-user', token, [hash], { detailed: true });
+        const empty = await deleteFiles(directories, 'test-user', token, [], { detailed: true });
+
+        expect(intruder.sendStatus).toHaveBeenCalledWith(403);
+        expect(empty.sendStatus).toHaveBeenCalledWith(400);
+        expect(fs.existsSync(filePath)).toBe(true);
     });
 });

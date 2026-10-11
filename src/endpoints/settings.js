@@ -11,6 +11,7 @@ import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js'
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
+import { deleteSnapshotFile, listSnapshots, parseKeepCount, planSnapshotPrune } from '../settings-snapshots.js';
 
 // Serializes settings writes per user handle so /save and /restore-snapshot don't race each other
 const SETTINGS_WRITE_QUEUE = new KeyedPromiseQueue();
@@ -156,7 +157,8 @@ function backupUserSettings(handle, preventDuplicates) {
     }
 
     fs.copyFileSync(sourceFile, backupFile);
-    removeOldBackups(userDirectories.backups, `settings_${handle}`);
+    // The trailing underscore ends the handle: `settings_alice` would also match the snapshots of a user named `alice-2`
+    removeOldBackups(userDirectories.backups, getSettingsBackupFilePrefix(handle));
 }
 
 /**
@@ -378,6 +380,82 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         });
 
         response.sendStatus(204);
+    } catch (error) {
+        console.error(error);
+        response.sendStatus(500);
+    }
+});
+
+const SNAPSHOT_DELETE_ERRORS = Object.freeze({
+    invalid: [400, 'Invalid snapshot name'],
+    missing: [404, 'Snapshot not found'],
+    newest: [409, 'The newest snapshot cannot be deleted'],
+    failed: [500, 'Could not delete the snapshot'],
+});
+
+// Deletes one snapshot. Same name validation as restore, but stricter (the exact file name this server writes), a snapshot
+// that is the newest one is refused, and the delete waits for a running settings save or restore of the user.
+router.post('/delete-snapshot', getFileNameValidationFunction('name'), async (request, response) => {
+    try {
+        const handle = request.user.profile.handle;
+        const name = request.body?.name;
+        const outcome = await SETTINGS_WRITE_QUEUE.run(handle, () => deleteSnapshotFile(request.user.directories.backups, handle, name));
+
+        if (outcome.ok) {
+            return response.json({ ok: true, name, size: outcome.size });
+        }
+
+        const [status, error] = SNAPSHOT_DELETE_ERRORS[outcome.reason];
+        return response.status(status).send({ error });
+    } catch (error) {
+        console.error(error);
+        response.sendStatus(500);
+    }
+});
+
+// Deletes the snapshots beyond the newest `keep`. Preview only unless `dryRun` is explicitly false. `names` (optional) limits
+// the delete to snapshots the caller was shown: anything not currently in the prune set is skipped.
+router.post('/prune-snapshots', async (request, response) => {
+    try {
+        const handle = request.user.profile.handle;
+        const keep = parseKeepCount(request.body?.keep);
+        const { names } = request.body ?? {};
+        const dryRun = request.body?.dryRun !== false;
+
+        if (keep === null || (names !== undefined && (!Array.isArray(names) || names.length > 10_000 || !names.every(name => typeof name === 'string')))) {
+            return response.status(400).send({ error: 'Invalid keep or names' });
+        }
+
+        const result = await SETTINGS_WRITE_QUEUE.run(handle, async () => {
+            const backups = request.user.directories.backups;
+            const snapshots = await listSnapshots(backups, handle);
+            const plan = planSnapshotPrune(snapshots, keep);
+            const requested = Array.isArray(names) ? new Set(names) : null;
+            const selected = requested ? plan.remove.filter(snapshot => requested.has(snapshot.name)) : plan.remove;
+            const skipped = requested
+                ? [...requested].filter(name => !plan.remove.some(snapshot => snapshot.name === name)).map(name => ({ name, reason: 'not-in-prune-set' }))
+                : [];
+            const toReport = ({ name, size, date }) => ({ name, size, date });
+
+            if (dryRun) {
+                return { dryRun, keep, total: snapshots.length, kept: plan.keep.length, candidates: selected.map(toReport), deleted: [], skipped, freedBytes: 0 };
+            }
+
+            const deleted = [];
+            let freedBytes = 0;
+            for (const snapshot of selected) {
+                const outcome = await deleteSnapshotFile(backups, handle, snapshot.name);
+                if (outcome.ok) {
+                    deleted.push(snapshot.name);
+                    freedBytes += outcome.size;
+                } else {
+                    skipped.push({ name: snapshot.name, reason: outcome.reason });
+                }
+            }
+            return { dryRun, keep, total: snapshots.length, kept: plan.keep.length, candidates: selected.map(toReport), deleted, skipped, freedBytes };
+        });
+
+        response.json(result);
     } catch (error) {
         console.error(error);
         response.sendStatus(500);

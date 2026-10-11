@@ -7,48 +7,16 @@ import { getSettingsBackupFilePrefix } from './settings.js';
 import { CHAT_BACKUPS_PREFIX } from './chats.js';
 import { isPathUnderParent, tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
+import { getFileIdentity, matchesFileIdentity } from '../file-identity.js';
+import { collectStorageUsage } from '../data-usage.js';
+import {
+    DUPLICATE_GREETING_TOKEN_TTL_MS,
+    findDuplicateGreetingChats,
+    moveDuplicateGreetingChatsToQuarantine,
+} from '../data-maid-duplicate-greetings.js';
+import { KeyedPromiseQueue } from '../keyed-promise-queue.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
-
-/**
- * Gets the stable file metadata used to ensure a cleanup token still refers to the scanned file.
- * @param {string} filePath Path to the file.
- * @returns {DataMaidFileIdentity|null} File identity, or null if the path is no longer a regular file.
- */
-function getFileIdentity(filePath) {
-    try {
-        const stat = fs.lstatSync(filePath);
-        if (!stat.isFile()) {
-            return null;
-        }
-
-        return {
-            dev: stat.dev,
-            ino: stat.ino,
-            size: stat.size,
-            mtimeMs: stat.mtimeMs,
-            ctimeMs: stat.ctimeMs,
-        };
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Checks whether a path still contains the file captured by a cleanup token.
- * @param {string} filePath Path to the file.
- * @param {DataMaidFileIdentity} expected Expected file identity.
- * @returns {boolean} Whether the current file matches the token snapshot.
- */
-function matchesFileIdentity(filePath, expected) {
-    const current = getFileIdentity(filePath);
-    return current !== null
-        && current.dev === expected.dev
-        && current.ino === expected.ino
-        && current.size === expected.size
-        && current.mtimeMs === expected.mtimeMs
-        && current.ctimeMs === expected.ctimeMs;
-}
 
 /**
  * @typedef {object} DataMaidRawReport
@@ -118,12 +86,7 @@ function matchesFileIdentity(filePath, expected) {
  */
 
 /**
- * @typedef {object} DataMaidFileIdentity
- * @property {number} dev - Device identifier.
- * @property {number} ino - File system inode identifier.
- * @property {number} size - File size in bytes.
- * @property {number} mtimeMs - Last modification time.
- * @property {number} ctimeMs - Last metadata change time.
+ * @typedef {import('../file-identity.js').FileIdentity} DataMaidFileIdentity
  */
 
 /**
@@ -843,19 +806,42 @@ router.post('/delete', async (req, res) => {
             return res.sendStatus(403);
         }
 
+        // Optional: answer with what happened to each file instead of a bare 204. Without the flag the response is unchanged.
+        const detailed = req.body.detailed === true;
         const requestedHashes = new Set(hashes);
         const fileEntries = tokenEntry.paths.filter(entry => requestedHashes.has(entry.hash));
 
         // Consume only the authenticated paths before doing any asynchronous work so a hash cannot be replayed.
         tokenEntry.paths = tokenEntry.paths.filter(entry => !requestedHashes.has(entry.hash));
 
+        /** @type {string[]} */
+        const deleted = [];
+        /** @type {{ hash: string, reason: string }[]} */
+        const skipped = [];
+        let freedBytes = 0;
+        if (detailed) {
+            const knownHashes = new Set(fileEntries.map(entry => entry.hash));
+            for (const hash of requestedHashes) {
+                if (!knownHashes.has(hash)) {
+                    skipped.push({ hash: String(hash), reason: 'unknown' });
+                }
+            }
+        }
+
         const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
         const currentReport = await dataMaid.generateReport();
         const currentLoosePaths = new Set(Object.values(currentReport).filter(value => Array.isArray(value)).flat());
 
         for (const fileEntry of fileEntries) {
+            const skip = reason => {
+                if (detailed) {
+                    skipped.push({ hash: fileEntry.hash, reason });
+                }
+            };
+
             if (!isPathUnderParent(req.user.directories.root, fileEntry.path)) {
                 console.warn('[Data Maid] Attempted deletion of a file outside of the user directory:', fileEntry.path);
+                skip('outside');
                 continue;
             }
 
@@ -863,19 +849,182 @@ router.post('/delete', async (req, res) => {
             const fileExists = fs.existsSync(pathToFile);
 
             if (!fileExists) {
+                skip('missing');
                 continue;
             }
 
-            if (!currentLoosePaths.has(pathToFile) || !matchesFileIdentity(pathToFile, fileEntry.identity)) {
+            if (!currentLoosePaths.has(pathToFile)) {
+                skip('referenced');
                 continue;
             }
 
-            await fs.promises.unlink(pathToFile);
+            if (!matchesFileIdentity(pathToFile, fileEntry.identity)) {
+                skip('changed');
+                continue;
+            }
+
+            if (!detailed) {
+                await fs.promises.unlink(pathToFile);
+                continue;
+            }
+
+            // A file that cannot be removed is reported and does not stop the files after it.
+            try {
+                await fs.promises.unlink(pathToFile);
+                deleted.push(fileEntry.hash);
+                freedBytes += fileEntry.identity.size;
+            } catch (error) {
+                console.error('[Data Maid] Error deleting a file:', error);
+                skip('failed');
+            }
+        }
+
+        if (detailed) {
+            return res.json({ deleted, skipped, freedBytes });
         }
 
         return res.sendStatus(204);
     } catch (error) {
         console.error('[Data Maid] Error deleting files:', error);
+        return res.sendStatus(500);
+    }
+});
+
+/**
+ * One storage scan per user at a time: a second request while a scan runs gets the result of the running one.
+ * @type {Map<string, Promise<Awaited<ReturnType<typeof collectStorageUsage>>>>}
+ */
+const USAGE_SCANS = new Map();
+
+router.post('/usage', async (req, res) => {
+    try {
+        if (!req.user || !req.user.directories) {
+            return res.sendStatus(403);
+        }
+
+        const handle = req.user.profile.handle;
+        let scan = USAGE_SCANS.get(handle);
+        if (!scan) {
+            scan = collectStorageUsage(req.user.directories).finally(() => USAGE_SCANS.delete(handle));
+            USAGE_SCANS.set(handle, scan);
+        }
+
+        return res.json(await scan);
+    } catch (error) {
+        console.error('[Data Maid] Error measuring storage usage:', error);
+        return res.sendStatus(500);
+    }
+});
+
+/**
+ * @typedef {object} DuplicateGreetingTokenEntry
+ * @property {string} handle The user's handle.
+ * @property {number} createdAt Creation time in epoch milliseconds.
+ * @property {Map<string, { filePath: string, identity: DataMaidFileIdentity }>} items Reported files by path hash.
+ */
+
+/**
+ * Report tokens of the duplicate greeting-only chat check. Kept apart from the clean-up tokens so a report here never
+ * invalidates an open clean-up report, and the other way round.
+ * @type {Map<string, DuplicateGreetingTokenEntry>}
+ */
+export const DUPLICATE_GREETING_TOKENS = new Map();
+const DUPLICATE_GREETING_QUEUE = new KeyedPromiseQueue();
+
+function pruneDuplicateGreetingTokens(handle = '') {
+    const now = Date.now();
+    for (const [token, entry] of DUPLICATE_GREETING_TOKENS) {
+        if (entry.handle === handle || now - entry.createdAt > DUPLICATE_GREETING_TOKEN_TTL_MS) {
+            DUPLICATE_GREETING_TOKENS.delete(token);
+        }
+    }
+}
+
+router.post('/duplicate-greetings', async (req, res) => {
+    try {
+        if (!req.user || !req.user.directories) {
+            return res.sendStatus(403);
+        }
+
+        const handle = req.user.profile.handle;
+        const { candidates, stats, truncated } = await findDuplicateGreetingChats(req.user.directories);
+
+        /** @type {DuplicateGreetingTokenEntry['items']} */
+        const items = new Map();
+        const report = candidates.map(candidate => {
+            const hash = sha256(candidate.filePath);
+            items.set(hash, { filePath: candidate.filePath, identity: candidate.identity });
+            return {
+                hash,
+                avatar: `${candidate.avatarBase}.png`,
+                characterName: candidate.characterName,
+                file: candidate.fileName,
+                size: candidate.identity.size,
+                mtime: candidate.identity.mtimeMs,
+                sendDate: new Date(candidate.sendMs).toISOString(),
+                swipeCount: candidate.swipeCount,
+                preview: candidate.preview,
+                isCardChat: candidate.isCardChat,
+                modern: {
+                    file: candidate.modern.fileName,
+                    size: candidate.modern.identity.size,
+                    messageCount: candidate.modern.messageCount,
+                    startsWithSameGreeting: candidate.modern.startsWithSameGreeting,
+                    timeDeltaMs: candidate.modern.timeDeltaMs,
+                },
+            };
+        });
+
+        // A new report replaces the user's previous one
+        pruneDuplicateGreetingTokens(handle);
+        const token = crypto.randomBytes(32).toString('hex');
+        DUPLICATE_GREETING_TOKENS.set(token, { handle, createdAt: Date.now(), items });
+
+        return res.json({ token, items: report, stats, truncated, expiresInMs: DUPLICATE_GREETING_TOKEN_TTL_MS });
+    } catch (error) {
+        console.error('[Data Maid] Error looking for duplicate greeting chats:', error);
+        return res.sendStatus(500);
+    }
+});
+
+router.post('/duplicate-greetings/resolve', async (req, res) => {
+    try {
+        if (!req.user || !req.user.directories) {
+            return res.sendStatus(403);
+        }
+
+        const { token, hashes } = req.body;
+        if (typeof token !== 'string' || !token || !Array.isArray(hashes) || hashes.length === 0 || hashes.length > 500 || !hashes.every(hash => typeof hash === 'string')) {
+            return res.sendStatus(400);
+        }
+
+        const handle = req.user.profile.handle;
+        const tokenEntry = DUPLICATE_GREETING_TOKENS.get(token);
+        if (!tokenEntry || tokenEntry.handle !== handle) {
+            return res.sendStatus(403);
+        }
+        if (Date.now() - tokenEntry.createdAt > DUPLICATE_GREETING_TOKEN_TTL_MS) {
+            DUPLICATE_GREETING_TOKENS.delete(token);
+            return res.sendStatus(403);
+        }
+
+        // Take the requested files out of the token before any asynchronous work so a hash cannot be replayed.
+        const entries = [];
+        const skipped = [];
+        for (const hash of new Set(hashes)) {
+            const item = tokenEntry.items.get(hash);
+            if (item) {
+                tokenEntry.items.delete(hash);
+                entries.push({ hash, ...item });
+            } else {
+                skipped.push({ hash, reason: 'unknown' });
+            }
+        }
+
+        const outcome = await DUPLICATE_GREETING_QUEUE.run(handle, () => moveDuplicateGreetingChatsToQuarantine(req.user.directories, entries));
+        return res.json({ ...outcome, skipped: [...skipped, ...outcome.skipped] });
+    } catch (error) {
+        console.error('[Data Maid] Error resolving duplicate greeting chats:', error);
         return res.sendStatus(500);
     }
 });

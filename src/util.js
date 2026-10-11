@@ -886,15 +886,39 @@ export function generateTimestamp() {
 }
 
 /**
+ * Matches what follows the series prefix in a backup file name: the `YYYYMMDD-HHMMSS` stamp from {@link generateTimestamp} and an extension.
+ */
+const BACKUP_SERIES_SUFFIX_REGEXP = /^\d{8}-\d{6}\.[A-Za-z0-9]+$/;
+
+/**
+ * Checks whether a backup file belongs to the series named by a prefix, i.e. is exactly `<prefix><YYYYMMDD-HHMMSS>.<ext>`.
+ * A bare prefix match is not enough: `chat_alice_` also starts `chat_alice_2_20240101-120000.jsonl`, a backup of another character.
+ * @param {string} fileName Backup file name (no directory)
+ * @param {string} prefix Series prefix, ending with the separator that precedes the timestamp (for example `chat_alice_`)
+ * @returns {boolean} True if the file is a backup of exactly this series
+ */
+export function isBackupOfSeries(fileName, prefix) {
+    return fileName.startsWith(prefix) && BACKUP_SERIES_SUFFIX_REGEXP.test(fileName.slice(prefix.length));
+}
+
+/**
  * Remove old backups with the given prefix from a specified directory.
+ *
+ * Two uses, told apart by `limit`:
+ * - `limit` omitted: per-series rotation. `prefix` names one series (`chat_alice_`, `settings_default-user_`) and only files named
+ *   exactly `<prefix><YYYYMMDD-HHMMSS>.<ext>` count, so a series whose name merely starts with the same text (`chat_alice_2_…`) is left alone.
+ * - `limit` given: a cap over a whole family of series (`chat_`), where every file that starts with the prefix counts.
+ * `options.series` overrides that choice.
  * @param {string} directory The root directory to remove backups from.
  * @param {string} prefix File prefix to filter backups by.
  * @param {number?} limit Maximum number of backups to keep. If null, the limit is determined by the `backups.common.numberOfBackups` config value.
+ * @param {{ series?: boolean }} [options] `series`: match only `<prefix><timestamp>.<ext>` files instead of every file with the prefix.
  */
-export function removeOldBackups(directory, prefix, limit = null) {
+export function removeOldBackups(directory, prefix, limit = null, options = {}) {
     const MAX_BACKUPS = limit ?? Number(getConfigValue('backups.common.numberOfBackups', 50, 'number'));
+    const matchSeries = options.series ?? limit === null;
 
-    let files = fs.readdirSync(directory).filter(f => f.startsWith(prefix));
+    let files = fs.readdirSync(directory).filter(f => matchSeries ? isBackupOfSeries(f, prefix) : f.startsWith(prefix));
     if (files.length > MAX_BACKUPS) {
         files = files.map(f => path.join(directory, f));
         files.sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
