@@ -267,7 +267,7 @@ router.post('/delete', requireAdminMiddleware, async (request, response) => {
                 await fsPromises.rm(directories.root, { recursive: true, force: true });
             }
         };
-        const conversations = request.app.locals.conversationHost;
+        const conversations = request.app?.locals?.conversationHost;
         if (conversations) await conversations.withUserDataChange(directories.root, deleteUser);
         else await deleteUser();
 

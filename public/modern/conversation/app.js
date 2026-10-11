@@ -1,4 +1,4 @@
-import { initialAgentConversation } from '../core/agent-navigation.js';
+import { initialAgentConversation } from './core/navigation.js';
 import { createRetrievalStatus } from './retrieval/view.js';
 import { acceptedTurn, applySnapshotCommand, refreshAfterWrite, requireSnapshot } from './core/operations.js';
 import { createClient, subscribe } from './core/client.js';

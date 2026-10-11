@@ -1,5 +1,5 @@
-import { agentWorkspaceUrl } from '../core/agent-navigation.js';
-export { AGENT_WORKSPACE_URL } from '../core/agent-navigation.js';
+import { agentWorkspaceUrl } from '../conversation/core/navigation.js';
+export { AGENT_WORKSPACE_URL } from '../conversation/core/navigation.js';
 
 /** Fixed same-origin URL; cookies and CSRF remain owned by the authenticated server. */
 export function renderAgentWorkspace(search = globalThis.location?.search || '') {

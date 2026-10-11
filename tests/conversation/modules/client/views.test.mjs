@@ -78,7 +78,7 @@ test('independent source entry and its complete static module graph stay in serv
     }
     const favicon = html.match(/<link rel="icon" href="([^"]+)"/);
     assert.ok(favicon?.[1].startsWith('data:image/svg+xml,'));
-    for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    for (const match of html.matchAll(/<(?:script|link)\b[^>]*?(?:src|href)="([^"]+)"/g)) {
         if (match[1] === favicon[1]) continue;
         await check(new URL(match[1], entry));
     }

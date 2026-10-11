@@ -113,16 +113,20 @@ function connection(settings, secrets, executor = 'pi') {
 
 function persona(settings, selected, characterId) {
     const power = settings.power_user ?? {}, descriptions = power.persona_descriptions ?? {};
+    const generic = () => ({ name: settings.username || 'User', data: { description: text(power.persona_description, 'persona.description') } });
     if (selected === null) return null;
     let id = selected;
+    let bound = selected !== undefined;
     if (id === undefined) {
         const connected = Object.entries(descriptions).filter(([, value]) => value.connections?.some(c => c.type === 'character' && c.id === characterId)).map(([key]) => key);
         check(connected.length < 2, 'personaId.multiple-character-connections');
+        bound = Boolean(connected[0] || power.default_persona);
         id = connected[0] || power.default_persona || settings.user_avatar;
     }
-    if (!id) return { name: settings.username || 'User', data: { description: text(power.persona_description, 'persona.description') } };
+    if (!id) return generic();
     identifier(id, 'personaId');
     const descriptor = descriptions[id];
+    if (!bound && !Object.hasOwn(descriptions, id) && !Object.hasOwn(power.personas ?? {}, id)) return generic();
     check(object(descriptor), 'personaId');
     check([undefined, 0, 1, 4, 9].includes(descriptor.position), 'persona.position');
     const description = text(descriptor.description, 'persona.description');
@@ -139,7 +143,9 @@ function preset(source, character, person, power) {
     check(Array.isArray(source.prompts ?? []), 'preset.prompts');
     const orders = source.prompt_order ?? [];
     check(Array.isArray(orders), 'preset.prompt_order');
-    const activeOrder = orders.filter(item => String(item.character_id) === '100001');
+    const activeOrder = orders.some(item => String(item.character_id) === '100001')
+        ? orders.filter(item => String(item.character_id) === '100001')
+        : orders.filter(item => String(item.character_id) === '100000');
     check(activeOrder.length <= 1 && (orders.length === 0 || activeOrder.length === 1), 'preset.prompt_order');
     const defaultOrder = ['main', 'worldInfoBefore', 'personaDescription', 'charDescription', 'charPersonality', 'scenario', 'nsfw', 'worldInfoAfter', 'dialogueExamples', 'chatHistory', 'jailbreak'];
     const order = activeOrder[0]?.order ?? defaultOrder.map(identifier => ({ identifier, enabled: true }));
@@ -176,7 +182,7 @@ function preset(source, character, person, power) {
 
 function worldbook(raw, settings) {
     const global = settings.world_info_settings ?? {};
-    rejectActive(global, ['world_info_min_activations', 'world_info_match_whole_words', 'world_info_use_group_scoring'], 'world_info_settings');
+    rejectActive(global, ['world_info_min_activations', 'world_info_use_group_scoring'], 'world_info_settings');
     const entries = raw.entries;
     check(object(entries) || Array.isArray(entries), 'worldbook.entries');
     check(Object.keys(entries).length <= 2000, 'worldbook.entries.limit');
@@ -184,7 +190,7 @@ function worldbook(raw, settings) {
         check(object(entry), 'worldbook.entry');
         if (entry.disable === true || entry.enabled === false) return { id, enabled: false, content: text(entry.content, 'worldbook.content') };
         const x = entry.extensions ?? entry;
-        rejectActive(x, ['matchWholeWords', 'vectorized', 'group', 'delay', 'sticky', 'cooldown', 'excludeRecursion', 'preventRecursion', 'useGroupScoring', 'matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes', 'outletName', 'triggers'], 'worldbook.entry');
+        rejectActive(x, ['vectorized', 'group', 'delay', 'sticky', 'cooldown', 'excludeRecursion', 'preventRecursion', 'useGroupScoring', 'matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes', 'outletName', 'triggers'], 'worldbook.entry');
         check(!x.characterFilter?.names?.length && !x.characterFilter?.tags?.length, 'worldbook.characterFilter');
         check(entry.use_regex !== true, 'worldbook.entry.use_regex');
         const keys = entry.key ?? entry.keys ?? [], secondaryKeys = entry.keysecondary ?? entry.secondary_keys ?? [];
@@ -195,6 +201,7 @@ function worldbook(raw, settings) {
         check([0, 2, 3].includes(logic), 'worldbook.secondaryLogic');
         return { id, enabled: true, content: text(entry.content, 'worldbook.content'), keys, secondaryKeys: entry.selective === false ? [] : secondaryKeys,
             secondaryMode: { 0: 'any', 2: 'none', 3: 'all' }[logic], constant: entry.constant === true,
+            matchWholeWords: x.matchWholeWords ?? global.world_info_match_whole_words ?? false,
             recursive: global.world_info_recursive === true, caseSensitive: x.caseSensitive ?? global.world_info_case_sensitive ?? false,
             probability: x.useProbability === false ? 100 : x.probability ?? 100, priority: entry.order ?? entry.insertion_order ?? 0,
             role: ['system', 'user', 'assistant'][x.role ?? 0], placement: position === 4 ? { type: 'depth', depth: x.depth ?? 4 } : { type: 'prefix' } };
@@ -229,7 +236,8 @@ export async function projectWorkspace(directories, body) {
     check(names.length <= 32, 'worldbookIds.limit');
     const books = [];
     for (const name of new Set(names)) books.push({ kind: 'worldbook', name: identifier(name, 'worldbookId'), data: worldbook(await read('worlds', `${name}.json`), settings) });
-    if (character.character_book?.entries?.length) books.push({ kind: 'worldbook', name: `${character.name} · embedded`, data: worldbook(character.character_book, settings) });
+    // Like the original engine, an embedded character_book is inactive until imported as a linked world.
+    // Saving a card with a linked world rewrites character_book from that world with use_regex: true.
     const secrets = await read('root', 'secrets.json', { optional: true, limit: 1024 * 1024 });
     const resources = [
         { kind: 'connection', name: 'Workspace connection', data: connection(settings, secrets, body.executor) },

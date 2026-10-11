@@ -62,6 +62,15 @@ test('server projection copies selected resources and only the active credential
     const after = await Promise.all(['settings.json', 'secrets.json'].map(name => readFile(join(f.directories.root, name))));
     assert.deepEqual(after, before);
 });
+test('embedded character_book stays inactive like the original engine; the linked world is used once', async t => {
+    const f = await setup(t);
+    // The original server copies the linked world into character_book and marks every entry use_regex.
+    f.card.data.character_book = { name: 'RoleBook', entries: [{ keys: ['library'], content: 'RoleBook fact', use_regex: true, enabled: true, constant: true }] };
+    await f.saveCard();
+    const p = await projectWorkspace(f.directories, f.body);
+    assert.deepEqual(p.resources.filter(r => r.kind === 'worldbook').map(r => r.name), ['Global', 'RoleBook']);
+});
+
 test('router creates only new resources/conversation, no history or runtime calls and no credential response', async t => {
     const f = await setup(t), s = services();
     s.runtime = new Proxy({}, { get() { assert.fail('bootstrap must never invoke runtime'); } });

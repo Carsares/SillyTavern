@@ -280,7 +280,7 @@ router.post('/reset-step2', async (request, response) => {
             await ensurePublicDirectoriesExist();
             await checkForNewContent([request.user.directories]);
         };
-        const conversations = request.app.locals.conversationHost;
+        const conversations = request.app?.locals?.conversationHost;
         if (conversations) await conversations.withUserDataChange(request.user.directories.root, resetData);
         else await resetData();
 

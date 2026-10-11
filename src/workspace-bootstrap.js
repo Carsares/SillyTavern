@@ -3,6 +3,7 @@ import { serverDirectory } from './server-directory.js';
 import path from 'node:path';
 
 export async function startWorkspace(hostProcess = process) {
+    console.log(`Node version: ${hostProcess.version}. Running in ${hostProcess.env.NODE_ENV} environment. Server directory: ${serverDirectory}`);
     const cliArgs = new CommandLineParser().parse(hostProcess.argv);
     cliArgs.dataRoot = path.resolve(cliArgs.dataRoot);
     globalThis.DATA_ROOT = cliArgs.dataRoot;

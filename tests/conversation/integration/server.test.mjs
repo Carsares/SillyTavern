@@ -39,7 +39,7 @@ function processRun(script, args, directory, password) {
 }
 
 async function launch(t, directory, { port = 0, host = '127.0.0.1', password, extra = [] } = {}) {
-    const running = processRun('server.js', ['--host', host, '--port', String(port), '--dataRoot', directory, ...extra], directory, password);
+    const running = processRun('conversation-server.js', ['--host', host, '--port', String(port), '--dataRoot', directory, ...extra], directory, password);
     let stopped = false;
     async function stop() {
         if (stopped) return;
@@ -78,7 +78,7 @@ function request(port, pathname, { method = 'GET', headers = {}, body } = {}) {
     });
 }
 
-test('real default entrypoint: init, routes, request security, old API removal and shutdown', { timeout: 25000 }, async t => {
+test('optional standalone entrypoint: init, routes, request security, old API removal and shutdown', { timeout: 25000 }, async t => {
     const directory = await temporary(t);
     await mkdir(path.join(directory, 'default-user/chats'), { recursive: true });
     const sentinel = path.join(directory, 'default-user/chats/legacy.json');
@@ -144,7 +144,7 @@ test('real default entrypoint: init, routes, request security, old API removal a
 test('remote listener requires password before creating data; valid password protects all routes', { timeout: 25000 }, async t => {
     const directory = await temporary(t);
     for (const args of [['--listen'], ['--host', '0.0.0.0']]) {
-        const result = await processRun('server.js', [...args, '--port', '0', '--dataRoot', directory], directory).done;
+        const result = await processRun('conversation-server.js', [...args, '--port', '0', '--dataRoot', directory], directory).done;
         assert.equal(result.code, 1, result.output);
         await assert.rejects(access(workspace(directory)), { code: 'ENOENT' });
     }

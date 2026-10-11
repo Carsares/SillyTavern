@@ -6,7 +6,7 @@ import { createAgentRoute } from '../public/modern/routes/agent.js';
 import { createAgentWorkspaceHost } from '../public/modern/components/agent-workspace.js';
 import { createRenderer } from '../public/modern/shell/renderer.js';
 import { createRouter } from '../public/modern/shell/router.js';
-import { agentWorkspaceUrl, initialAgentConversation } from '../public/modern/core/agent-navigation.js';
+import { agentWorkspaceUrl, initialAgentConversation } from '../public/modern/conversation/core/navigation.js';
 
 const originalRoutes = ['dashboard', 'chat', 'characters', 'groups', 'worldbooks', 'presets', 'personas', 'assets', 'remoteResources', 'api', 'extensions', 'activity', 'settings'];
 const source = file => readFile(new URL(`../public/modern/${file}`, import.meta.url), 'utf8');

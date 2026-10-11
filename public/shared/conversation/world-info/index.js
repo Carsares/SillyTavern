@@ -2,7 +2,7 @@ import { ProtocolError } from '../schemas/index.js';
 
 export const WORLD_INFO_DEFAULTS = Object.freeze({ scanDepth: 20, maxRecursion: 4, entries: Object.freeze([]) });
 export const WORLD_ENTRY_DEFAULTS = Object.freeze({ enabled: true, keys: Object.freeze([]), secondaryKeys: Object.freeze([]),
-    secondaryMode: 'any', constant: false, recursive: true, caseSensitive: false, probability: 100,
+    secondaryMode: 'any', constant: false, recursive: true, caseSensitive: false, matchWholeWords: false, probability: 100,
     group: '', priority: 0, required: false, role: 'system', placement: Object.freeze({ type: 'prefix' }), cooldown: 0, duration: 0, content: '' });
 
 /** Stable per-entry draw: omitting a sibling entry does not change this entry's probability. */
@@ -29,7 +29,7 @@ export function selectWorldInfo(worldbooks, { history = [], seed = 0, turnIndex 
             ids.add(entry.key);
             if (!entry.enabled) continue;
             if (!Array.isArray(entry.keys) || !Array.isArray(entry.secondaryKeys) || [...entry.keys, ...entry.secondaryKeys].some(key => typeof key !== 'string' || !key.length)
-                || !['any', 'all', 'none'].includes(entry.secondaryMode) || typeof entry.content !== 'string'
+                || !['any', 'all', 'none'].includes(entry.secondaryMode) || typeof entry.content !== 'string' || typeof entry.matchWholeWords !== 'boolean'
                 || !Number.isFinite(entry.priority) || !Number.isFinite(entry.probability) || entry.probability < 0 || entry.probability > 100
                 || ![entry.cooldown, entry.duration].every(value => Number.isSafeInteger(value) && value >= 0)) {
                 throw new ProtocolError('invalid-worldbook', `Invalid worldbook entry ${entry.key}`);
@@ -54,7 +54,13 @@ export function selectWorldInfo(worldbooks, { history = [], seed = 0, turnIndex 
             if (round > entry.maxRecursion || (round > 0 && !entry.recursive) || (entry.group && groups.has(entry.group))) continue;
             const normalize = text => entry.caseSensitive ? text : text.toLocaleLowerCase('en-US');
             const haystack = normalize(entry.text + (round > 0 ? `\n${recursiveText}` : ''));
-            const match = key => haystack.includes(normalize(key));
+            const match = key => {
+                const needle = normalize(key);
+                // Preserve literal workspace matching: multiword phrases use substring matching.
+                if (!entry.matchWholeWords || needle.split(/\s+/).length > 1) return haystack.includes(needle);
+                const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`).test(haystack);
+            };
             const secondary = !entry.secondaryKeys.length || (entry.secondaryMode === 'all' ? entry.secondaryKeys.every(match)
                 : entry.secondaryMode === 'none' ? !entry.secondaryKeys.some(match) : entry.secondaryKeys.some(match));
             if (!entry.active && !(entry.constant || (entry.keys.some(match) && secondary))) continue;
