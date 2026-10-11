@@ -58,6 +58,8 @@ public/scripts/extensions/third-party
 yarn.lock
 *.code-workspace
 test-results/
+.playwright-cli/
+output/playwright/
 
 # Claude Code local tooling (agent worktrees, settings) — not part of the project
 .claude/
