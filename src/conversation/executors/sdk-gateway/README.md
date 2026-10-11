@@ -33,7 +33,9 @@ responseBytes and frameBytes. The SDK owns the model/tool loop.
 ## Native history and explicit fallback
 
 Default `historyMode: 'native-transcript'`: the initial SDK prompt contains a
-random marker and JSON transcript. Every model request must retain exactly one
+random marker and bounded JSON reference (mode plus SHA-256 of the frozen full
+transcript). The full messages stay in gateway memory, not in the SDK prompt.
+Every model request must retain exactly one
 unchanged user segment. The gateway replaces it with provider-native messages,
 replaces coding instructions with compiled system messages, and retains only
 assistant/tool continuations following the marker. Input budgets and traces
@@ -335,3 +337,21 @@ distributed across gateway requests. Token completeness is independent of cost
 availability. Latest cost-change SDK unit suite: 45/45, exit 0; no live rerun.
 Canonical connection.proxy is now wired through the shared transport; unsupported
 legacy proxy fields remain rejected independently.
+
+### Full-history Claude startup regression
+
+Installed Claude 0.3.289 rejected the previous 1,105,610-byte SDK prompt locally
+with assistant error invalid_request / "Prompt is too long", then emitted
+success subtype with is_error=true; no provider fetch happened. Native mode now
+uses a bounded marker reference before gateway expansion. Structured-transcript
+mode still sends full text; it is not silently changed into native replay.
+
+The installed offline regression uses the full synthetic evaluation dataset,
+config.deepseek.example.json, 50 questions and preserveFullHistory=true through
+adapter factory injection. It supplied only a synthetic key via explicit env,
+not host credentials. Observed: SDK prompt 289 bytes, Anthropic outbound JSON
+806,602 bytes / 3,041 messages, exactly one dummy fetch which deliberately throws.
+Outbound messages and system are deep-equal to the complete compiled request.
+The request's actual expanded body remains subject to the gateway budget; a
+separate unit regression proves a small budget still blocks dispatch.
+No real provider call or live evaluation was performed for this fix.

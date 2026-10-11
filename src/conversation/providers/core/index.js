@@ -21,7 +21,7 @@ export function createRedactor(connection) {
 }
 
 /** Capture the serialized request, before any network operation; never expose auth headers. */
-export function createCapturedFetch({ fetchImpl = globalThis.fetch, onRequest, redact, check }) {
+export function createCapturedFetch({ fetchImpl = globalThis.fetch, onRequest, redact, check, beforeDispatch }) {
     let attempt = 0;
     return async (input, init) => {
         check?.();
@@ -32,6 +32,7 @@ export function createCapturedFetch({ fetchImpl = globalThis.fetch, onRequest, r
         const headers = {};
         for (const key of ['content-type', 'accept']) if (request.headers.has(key)) headers[key] = request.headers.get(key);
         const text = await request.clone().text();
+        await beforeDispatch?.(text);
         let body;
         try { body = JSON.parse(text); } catch { body = '[non-JSON body omitted]'; }
         await onRequest?.(redact({ attempt: ++attempt, url: url.href, method: request.method, headers, body }));
@@ -48,7 +49,11 @@ export function estimateContext(messages) { return Buffer.byteLength(JSON.string
 export function estimatePiContext(messages, capabilities) {
     let mediaTokens = 0;
     const stripped = messages.map(message => {
-        const { providerParts, content, ...rest } = message;
+        const { providerParts, content, ...metadata } = message;
+        // SDK bookkeeping is never sent as model input. Retain all other fields,
+        // including native replay/signatures and tool IDs, rather than flattening roles.
+        const bookkeeping = ['timestamp', ...(message.role === 'assistant' ? ['api', 'provider', 'model', 'usage', 'stopReason', 'errorMessage'] : [])];
+        const rest = Object.fromEntries(Object.entries(metadata).filter(([key]) => !bookkeeping.includes(key)));
         const parts = providerParts ?? content;
         if (providerParts !== undefined && !Array.isArray(providerParts)) throw fail('unsupported-content', 'Invalid providerParts');
         return { ...rest, content: Array.isArray(parts) ? parts.map(part => {

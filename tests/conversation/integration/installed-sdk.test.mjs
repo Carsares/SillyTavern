@@ -236,3 +236,48 @@ test('Claude runtime environment suffix is exact, single, removed, and never arb
     delete transcript.sdkEnvironmentText;
     assert.throws(() => run([environment]), { code: 'unexpected-sdk-context' });
 });
+
+test('installed Claude full evaluation history reaches only offline fetch without SDK prompt truncation', { timeout: 45000, skip: process.platform !== 'darwin' }, async t => {
+    const { readFile } = await import('node:fs/promises');
+    const { createEvaluationAdapter } = await import('../evaluation/adapter.mjs');
+    const { createDataset, publicInput } = await import('../evaluation/dataset.mjs');
+    const { createConversationServices } = await import('../../../src/conversation/composition/index.js');
+    const { createStore } = await import('../../../src/conversation/store/index.js');
+    const { createMemoryService } = await import('../../../src/conversation/memory/index.js');
+    const { createRetrieval } = await import('../../../src/conversation/retrieval/index.js');
+    const { encodeHistory } = await import('../../../src/conversation/executors/sdk-gateway/history.js');
+    const { loadSdk } = await import('../../../src/conversation/executors/sdk-gateway/environment.js');
+    const sdk = await loadSdk('claude');
+    const config = JSON.parse(await readFile(new URL('../evaluation/config.deepseek.example.json', import.meta.url), 'utf8')).executors.claude;
+    let dispatched = 0, expected, promptBytes, wireBytes, wireBody;
+    const tracedSdk = { ...sdk, query(input) { promptBytes = Buffer.byteLength(input.prompt); return sdk.query(input); } };
+    const adapter = createEvaluationAdapter({ executor: 'claude', config, env: { EVALUATION_API_KEY: 'offline-dummy' }, dependencies: {
+        fetch: async input => {
+            dispatched++;
+            const request = new Request(input), text = await request.text(), body = JSON.parse(text);
+            wireBytes = Buffer.byteLength(text); wireBody = body;
+            // No network: intentional terminal failure after checking complete actual JSON.
+            throw Error('offline-stop');
+        },
+        factories: { createStore, createMemoryService, createRetrieval,
+            createServices: options => createConversationServices({ ...options, dependencies: { ...options.dependencies,
+                createClaudeExecutor: dependencies => {
+                    const executor = createClaudeExecutor({ ...dependencies, sdk: tracedSdk });
+                    return { ...executor, runTurn(args) { expected = encodeHistory(args.requestPlan.messages, 'anthropic'); return executor.runTurn(args); } };
+                },
+            } }),
+        },
+    } });
+    const dataset = createDataset();
+    const request = { ...publicInput(dataset, dataset.questions.slice(0, 50)),
+        condition: { executor: 'claude', budget: 'full', workingBudget: null, repeat: 1, cache: 'uncontrolled', sessionKey: 'offline-sdk-full' },
+        preserveFullHistory: true, signal: AbortSignal.timeout(35000) };
+    request.ceiling = await adapter.quote(request);
+    await assert.rejects(adapter.run(request));
+    assert.equal(dispatched, 1);
+    assert.ok(promptBytes < 512);
+    assert.deepEqual(wireBody.messages, expected.messages); assert.deepEqual(wireBody.system, expected.system);
+    assert.ok(wireBody.messages.length > 3000);
+    assert.ok(wireBytes > 500000);
+    t.diagnostic(JSON.stringify({ promptBytes, wireBytes, messages: wireBody.messages.length, dispatched }));
+});

@@ -1,10 +1,16 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { fail, serializeTranscript, HISTORY_INSTRUCTIONS } from './contracts.js';
 
 export function createTranscript(snapshot, plan, mode = 'native-transcript') {
     const serialized = JSON.stringify({ ...JSON.parse(serializeTranscript(snapshot, plan)), historyMode: mode });
     const marker = `CONVERSATION_TRANSCRIPT_${randomBytes(24).toString('hex')}`;
-    const prompt = `${marker}\n${serialized}\nEND_${marker}`;
+    // The gateway owns the frozen full history. A bounded reference prevents
+    // SDK-local prompt limits/compaction from rejecting it before our budget check.
+    // Structured fallback is deliberately still the full model-interpreted text.
+    const payload = mode === 'native-transcript'
+        ? JSON.stringify({ schemaVersion: 1, historyMode: mode, transcriptSha256: createHash('sha256').update(serialized).digest('hex') })
+        : serialized;
+    const prompt = `${marker}\n${payload}\nEND_${marker}`;
     return { marker, prompt, messages: structuredClone(plan.messages), sourceRefs: structuredClone(plan.sourceRefs ?? []), mode };
 }
 

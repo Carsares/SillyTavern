@@ -104,7 +104,15 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                 };
             });
             if (new Set(sdkTools.map(t => t.name)).size !== sdkTools.length) throw fail('invalid-tool', 'Duplicate tool names');
-            const capturedFetch = createCapturedFetch({ fetchImpl, redact, check, onRequest: async trace => {
+            function checkWireSize(bytes) {
+                // Media uses verified token reserves, not base64 byte length. Text-only
+                // requests can additionally be checked at the final transport boundary.
+                if (mediaReserve === 0 && bytes + 64 > inputBudget) {
+                    stop(fail('budget-blocked', 'Serialized provider payload exceeds the input budget'));
+                    throw fatal;
+                }
+            }
+            const capturedFetch = createCapturedFetch({ fetchImpl, redact, check, beforeDispatch: text => checkWireSize(Buffer.byteLength(text, 'utf8')), onRequest: async trace => {
                 try { await onRequest?.({ ...trace, requestIndex: requests }); } catch { stop(fail('request-capture-failed', 'Could not persist the request capture')); throw fatal; }
             } });
             const stream = streamFn ?? createPrimaryStream(c, model);
@@ -124,7 +132,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                             const actual = { ...requestPlan, messages: structuredClone(context.messages), estimatedTokens: estimatePiContext(context.messages, capabilities), estimationMethod: 'utf8-byte-upper-bound-with-verified-media', mediaTokenCost: capabilities.mediaTokenCost, mediaTokenCostVerified: capabilities.verified === true, budget: { hardInputBudget: Math.min(capabilities.inputLimit, c.contextWindow - outputLimit), workingBudget: inputBudget }, requestIndex: requests, signal: effectiveSignal };
                             await beforeRequest?.(actual);
                             check();
-                            if (!beforeRequest && estimatePiContext(context.messages, capabilities) > inputBudget) throw fail('budget-blocked', 'Actual SDK context exceeds the input budget');
+                            if (actual.estimatedTokens > inputBudget) throw fail('budget-blocked', 'Actual SDK context exceeds the input budget');
                         } catch (error) {
                             stop(effectiveSignal.aborted ? fail('aborted', 'Turn aborted') : error?.name === 'ProtocolError' ? fail(error.code, redact(error.message)) : fail('before-request-failed', 'Before-request validation failed'));
                             throw fatal;
@@ -136,7 +144,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                             async onPayload(payload) {
                                 check();
                                 try { checkTextContext(payload.negative_prompt); if (c.type === 'text') checkTextContext(payload.prompt ?? payload.input); } catch (error) { stop(error); throw fatal; }
-                                if (!beforeRequest && capabilities.media.every(type => type === 'text') && estimateContext(payload) > inputBudget) { stop(fail('budget-blocked', 'Serialized provider payload exceeds the input budget')); throw fatal; }
+                                checkWireSize(Buffer.byteLength(JSON.stringify(payload), 'utf8'));
                             },
                             async onProviderStreamEvent(raw) {
                                 check();

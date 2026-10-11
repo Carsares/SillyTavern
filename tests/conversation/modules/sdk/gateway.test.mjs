@@ -202,3 +202,26 @@ test('definitive returned tool error remains a completed tool response', async t
     assert.equal(h.gateway.signal.aborted, false);
     assert.deepEqual(h.gateway.result().toolStates, [{ id: 'draw-failed', name: 'draw', state: 'completed' }]);
 });
+
+test('native marker remains bounded while expanded history is complete and fully budgeted', async t => {
+    const large = 'synthetic-history-'.repeat(70000);
+    const transcript = createTranscript({ id: 'large' }, { messages: [{ role: 'user', content: large }] });
+    assert.ok(Buffer.byteLength(transcript.prompt) < 512);
+    const other = createTranscript({ id: 'large' }, { messages: [{ role: 'user', content: large + 'changed' }] });
+    assert.notEqual(JSON.parse(transcript.prompt.split('\n')[1]).transcriptSha256, JSON.parse(other.prompt.split('\n')[1]).transcriptSha256);
+    const fallback = createTranscript({}, { messages: [{ role: 'user', content: large }] }, 'structured-transcript');
+    assert.ok(fallback.prompt.includes(large));
+    let dispatched = 0;
+    for (const inputBudget of [2000000, 10000]) {
+        const gateway = createSdkGateway({ protocol: 'responses', connection, transcript, inputBudget, maxOutputTokens: 100,
+            fetch: async (_url, init) => {
+                dispatched++; assert.equal(JSON.parse(init.body).input[0].content[0].text, large);
+                return answer();
+            } });
+        t.after(() => gateway.close());
+        const response = await gateway.handle(new Request('http://localhost/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${gateway.token}` },
+            body: JSON.stringify({ model: 'synthetic', input: [{ role: 'user', content: transcript.prompt }] }) }));
+        assert.equal(response.status, inputBudget === 2000000 ? 200 : 422);
+    }
+    assert.equal(dispatched, 1);
+});
