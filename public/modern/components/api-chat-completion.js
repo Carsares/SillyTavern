@@ -1,4 +1,12 @@
 import { CHAT_COMPLETION_NUMBER_FIELDS } from '../actions/api-chat-completion-connection.js';
+import {
+    CHAT_COMPLETION_CONTEXT_DEFAULT,
+    CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX,
+    CHAT_COMPLETION_RESPONSE_DEFAULT,
+    describeChatCompletionContextHint,
+    getChatCompletionContextLimits,
+    getChatCompletionContextRange,
+} from '../actions/chat-completion-limits.js';
 
 export function createApiChatCompletionComponents(ctx) {
     const {
@@ -11,6 +19,7 @@ export function createApiChatCompletionComponents(ctx) {
         getApiModelSuggestions,
         getApiSourceUiState,
         getNumberSetting,
+        formatNumber,
     } = ctx;
 
     // 数值输入框的 min / max 与保存前校验共用同一份范围定义。
@@ -29,6 +38,12 @@ export function createApiChatCompletionComponents(ctx) {
             ? chatCompletionSourceOptions
             : [{ id: source, label: `${source} (当前来源)` }, ...chatCompletionSourceOptions];
         const openAiPresetNames = getPresetGroups().find(group => group.id === 'openai')?.names || [];
+        // 上下文长度：范围随来源、模型和「解锁上限」变化，来源 / 模型 / 勾选变化后由 routes/api-events.js 更新 min、max 和说明
+        const contextUnlocked = Boolean(settings.max_context_unlocked);
+        const contextLimits = getChatCompletionContextLimits({ source, model, unlocked: contextUnlocked });
+        const contextRange = getChatCompletionContextRange(contextLimits);
+        const contextValue = getNumberSetting(settings, 'openai_max_context', CHAT_COMPLETION_CONTEXT_DEFAULT);
+        const maxTokensValue = getNumberSetting(settings, 'openai_max_tokens', CHAT_COMPLETION_RESPONSE_DEFAULT);
 
         return `
         <form class="settings-form" data-api-connection-form autocomplete="off" novalidate>
@@ -93,10 +108,22 @@ export function createApiChatCompletionComponents(ctx) {
                         <span>Temperature</span>
                         <input class="text-input" type="number" step="0.01" ${renderNumberRange('temperature')} data-api-temperature value="${escapeHtml(getNumberSetting(settings, 'temp_openai', 1))}">
                     </label>
-                    <label class="field-label">
+                    <label class="field-label api-limit-field">
                         <span>Max Tokens</span>
-                        <input class="text-input" type="number" step="1" ${renderNumberRange('maxTokens')} data-api-max-tokens value="${escapeHtml(getNumberSetting(settings, 'openai_max_tokens', 300))}">
+                        <input class="text-input" type="number" step="1" ${renderNumberRange('maxTokens')} data-api-max-tokens value="${escapeHtml(maxTokensValue)}">
                     </label>
+                    <label class="field-label api-limit-field">
+                        <span>上下文长度</span>
+                        <input class="text-input" type="number" step="1" min="${contextRange.min}" max="${contextRange.max}" data-api-max-context value="${escapeHtml(contextValue)}">
+                        <span class="api-context-hint" data-api-context-hint>${escapeHtml(describeChatCompletionContextHint({ limits: contextLimits, context: contextValue, maxTokens: maxTokensValue }))}</span>
+                    </label>
+                    <div class="field-label api-limit-field api-context-unlock">
+                        <span>解锁上限</span>
+                        <label class="checkbox-card">
+                            <input type="checkbox" data-api-max-context-unlocked ${contextUnlocked ? 'checked' : ''}>
+                            <span>取消按模型的上限（最大 ${escapeHtml(formatNumber(CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX))}），仅在模型确实支持更长上下文时开启</span>
+                        </label>
+                    </div>
                     <label class="field-label">
                         <span>Top P</span>
                         <input class="text-input" type="number" step="0.01" ${renderNumberRange('topP')} data-api-top-p value="${escapeHtml(getNumberSetting(settings, 'top_p_openai', 1))}">

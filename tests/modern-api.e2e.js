@@ -501,6 +501,8 @@ test.describe('Modern API page', () => {
                     custom_model: 'custom/saved-model',
                     custom_url: 'https://saved.example/v1',
                     temp_openai: 0.7,
+                    // Max Tokens 128000 (the last save below) has to stay under the context length
+                    openai_max_context: 200000,
                     openai_max_tokens: 300,
                     top_p_openai: 0.9,
                     freq_pen_openai: 0.1,
@@ -986,6 +988,283 @@ test.describe('Modern API page', () => {
             },
         });
         expect(savedSettings.textgenerationwebui_settings.openrouter_model).toBe('openrouter/auto');
+    });
+});
+
+// 上下文长度（openai_max_context）此前在现代页任何地方都不能改，实际一直是旧版默认的 4095。
+// 范围按来源、模型和「解锁上限」变化，对齐旧版 onModelChange；提示词预算 = 上下文 − Max Tokens。
+test.describe('Modern API context length', () => {
+    const chatBundle = (oaiSettings = {}) => ({
+        settings: JSON.stringify({
+            main_api: 'openai',
+            oai_settings: {
+                chat_completion_source: 'custom',
+                custom_model: 'custom/saved-model',
+                custom_url: 'https://saved.example/v1',
+                openai_max_context: 4095,
+                openai_max_tokens: 300,
+                ...oaiSettings,
+            },
+        }),
+        textgenerationwebui_preset_names: [],
+        textgenerationwebui_presets: [],
+        openai_setting_names: ['Chat Preset A'],
+        openai_settings: [JSON.stringify({ name: 'Chat Preset A', openai_max_context: 4095 })],
+    });
+
+    async function routeSettingsSave(page, settingsBundle, order = []) {
+        const saved = { bodies: [] };
+        await page.route('**/api/settings/save', route => {
+            const body = route.request().postDataJSON();
+            saved.bodies.push(body);
+            settingsBundle.settings = JSON.stringify(body);
+            order.push('settings saved');
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+        return saved;
+    }
+
+    test('saves a larger context length and the unlock flag, then reloads the engine settings', async ({ page }) => {
+        const order = [];
+        const settingsBundle = chatBundle();
+        const bridgeCalls = await mockModernApiShell(page, settingsBundle, {}, {
+            replies: { reloadSettings: () => { order.push('engine reloaded'); } },
+        });
+        const saved = await routeSettingsSave(page, settingsBundle, order);
+
+        await page.goto('/modern/?view=api');
+
+        const contextInput = page.locator('[data-api-max-context]');
+        const hint = page.locator('[data-api-context-hint]');
+        // Without the field the budget was fixed at 4095 - 300 = 3795 tokens
+        await expect(contextInput).toHaveValue('4095');
+        await expect(contextInput).toHaveAttribute('min', '512');
+        await expect(contextInput).toHaveAttribute('max', '2000000');
+        await expect(hint).toContainText('上限 2,000,000');
+        await expect(hint).toContainText('提示词预算 = 上下文 − Max Tokens（当前 3,795）');
+        await expect(page.locator('[data-api-max-context-unlocked]')).not.toBeChecked();
+
+        await contextInput.fill('32000');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.openai_max_context).toBe(32000);
+        expect(saved.bodies.at(-1).oai_settings).toMatchObject({ max_context_unlocked: false, openai_max_tokens: 300 });
+        // The engine is told to reload after the file is written, not before
+        await expect.poll(() => order).toEqual(['settings saved', 'engine reloaded']);
+        expect(bridgeCalls.map(call => call.action)).toContain('reloadSettings');
+        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+        await expect(contextInput).toHaveValue('32000');
+        await expect(hint).toContainText('（当前 31,700）');
+    });
+
+    test('the allowed range follows the source, the model and the unlock checkbox', async ({ page }) => {
+        const settingsBundle = chatBundle({
+            chat_completion_source: 'openai',
+            openai_model: 'gpt-4o',
+            deepseek_model: 'deepseek-chat',
+            openrouter_model: 'openai/gpt-4.1',
+        });
+        await mockModernApiShell(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+
+        const contextInput = page.locator('[data-api-max-context]');
+        const hint = page.locator('[data-api-context-hint]');
+        await expect(contextInput).toHaveAttribute('max', '128000');
+        await expect(hint).toContainText('上限 128,000；提示词预算 = 上下文 − Max Tokens');
+
+        // Typing another model refreshes the limit when the field loses focus
+        await page.locator('[data-api-model]').fill('gpt-4');
+        await page.locator('[data-api-model]').blur();
+        await expect(contextInput).toHaveAttribute('max', '8191');
+        await expect(hint).toContainText('上限 8,191');
+
+        await page.locator('[data-api-max-context-unlocked]').check();
+        await expect(contextInput).toHaveAttribute('max', '2000000');
+        await expect(hint).toContainText('已解锁，上限 2,000,000');
+        await page.locator('[data-api-max-context-unlocked]').uncheck();
+        await expect(contextInput).toHaveAttribute('max', '8191');
+
+        // A model suggestion fills the model without a change event, the limit still follows
+        await page.locator('[data-api-model-suggestion="gpt-4.1"]').click();
+        await expect(page.locator('[data-api-model]')).toHaveValue('gpt-4.1');
+        await expect(contextInput).toHaveAttribute('max', '1000000');
+
+        await page.locator('[data-api-source]').selectOption('deepseek');
+        await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-chat');
+        await expect(contextInput).toHaveAttribute('max', '1000000');
+        await page.locator('[data-api-max-context-unlocked]').check();
+        await expect(contextInput).toHaveAttribute('max', '2000000');
+        await page.locator('[data-api-max-context-unlocked]').uncheck();
+
+        // The remote model list decides here: the page can only offer the legacy fallback as a reference
+        await page.locator('[data-api-source]').selectOption('openrouter');
+        await expect(hint).toContainText('参考上限 128,000');
+        await expect(hint).toContainText('旧版可能按实际模型再收紧');
+        await expect(contextInput).toHaveAttribute('max', '2000000');
+
+        await page.locator('[data-api-source]').selectOption('custom');
+        await expect(hint).toContainText('上限 2,000,000（该来源固定，不受“解锁上限”影响）');
+        await expect(contextInput).toHaveAttribute('max', '2000000');
+    });
+
+    test('blocks saving and testing when the context length is out of range or Max Tokens is not below it', async ({ page }) => {
+        const settingsBundle = chatBundle({ chat_completion_source: 'openai', openai_model: 'gpt-4' });
+        const generateBodies = [];
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+        await page.route('**/api/backends/chat-completions/generate', route => {
+            generateBodies.push(route.request().postDataJSON());
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: 'OK' } }] }) });
+        });
+
+        await page.goto('/modern/?view=api');
+
+        const contextInput = page.locator('[data-api-max-context]');
+        const contextError = page.locator('[data-api-field-error="maxContext"]');
+        const maxTokensError = page.locator('[data-api-field-error="maxTokens"]');
+
+        // gpt-4 only has an 8k window in the legacy limits
+        await contextInput.fill('100000');
+        await page.locator('[data-save-api-connection]').click();
+        await expect(contextError).toHaveText('上下文长度 需为 512 到 8,191 之间的整数（模型确实支持更长上下文时，可勾选“解锁上限”放宽到 2,000,000）');
+        await expect(contextInput).toHaveAttribute('aria-invalid', 'true');
+        await expect(contextInput).toHaveAttribute('aria-describedby', 'api-field-error-maxContext');
+        await expect(page.locator('.toast', { hasText: '连接配置未保存' })).toContainText('上下文长度 需为 512 到 8,191');
+        await expect(contextInput).toBeFocused();
+
+        // The same check guards the connection test, which must not send out-of-range settings either
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试未执行' })).toBeVisible();
+        expect(generateBodies).toEqual([]);
+        expect(saved.bodies).toEqual([]);
+
+        // Lowering the field clears its error; Max Tokens that fills the whole context is the next problem
+        await contextInput.fill('5000');
+        await page.locator('[data-api-max-tokens]').fill('6000');
+        await page.locator('[data-save-api-connection]').click();
+        await expect(maxTokensError).toHaveText('Max Tokens 需小于上下文长度（5,000），否则没有空间放提示词');
+        await expect(page.locator('[data-api-max-tokens]')).toHaveAttribute('aria-invalid', 'true');
+        await expect(contextError).toBeHidden();
+        expect(saved.bodies).toEqual([]);
+
+        // Raising the context length answers the Max Tokens error without touching that field
+        await contextInput.fill('8000');
+        await contextInput.blur();
+        await expect(maxTokensError).toBeHidden();
+        await expect(page.locator('[data-api-max-tokens]')).not.toHaveAttribute('aria-invalid', 'true');
+
+        await page.locator('[data-save-api-connection]').click();
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        expect(saved.bodies[0].oai_settings).toMatchObject({ openai_max_context: 8000, openai_max_tokens: 6000, openai_model: 'gpt-4' });
+        // The toast comes after the page re-rendered with the saved values, so later edits are not overwritten
+        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+        await expect(page.locator('.field-error:visible')).toHaveCount(0);
+
+        // Unlocking lifts the model limit
+        await contextInput.fill('100000');
+        await page.locator('[data-api-max-context-unlocked]').check();
+        await page.locator('[data-save-api-connection]').click();
+        await expect.poll(() => saved.bodies.length).toBe(2);
+        expect(saved.bodies[1].oai_settings).toMatchObject({ openai_max_context: 100000, max_context_unlocked: true });
+    });
+
+    test('edits the text completion context length, response length and unlock flag', async ({ page }) => {
+        const order = [];
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'textgenerationwebui',
+                max_context: 8192,
+                amount_gen: 350,
+                power_user: { max_context_unlocked: false, keep_me: 'untouched' },
+                textgenerationwebui_settings: {
+                    type: 'ooba',
+                    server_urls: { ooba: 'http://127.0.0.1:5000' },
+                    custom_model: 'ooba/saved-model',
+                },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: [],
+            openai_settings: [],
+        };
+        const bridgeCalls = await mockModernApiShell(page, settingsBundle, {}, {
+            replies: { reloadSettings: () => { order.push('engine reloaded'); } },
+        });
+        const saved = await routeSettingsSave(page, settingsBundle, order);
+
+        await page.goto('/modern/?view=api');
+
+        const contextInput = page.locator('[data-textgen-max-context]');
+        const responseInput = page.locator('[data-textgen-amount-gen]');
+        const hint = page.locator('[data-textgen-context-hint]');
+        const unlocked = page.locator('[data-textgen-max-context-unlocked]');
+        await expect(contextInput).toHaveValue('8192');
+        await expect(responseInput).toHaveValue('350');
+        await expect(unlocked).not.toBeChecked();
+        await expect(hint).toContainText('上下文 512 到 8,192，回复 16 到 2,048');
+        await expect(hint).toContainText('提示词预算 = 上下文 − 回复长度（当前 7,842）');
+
+        // Locked: 16384 is beyond the legacy slider, so nothing is written
+        await contextInput.fill('16384');
+        await responseInput.fill('99999');
+        await page.locator('[data-save-api-connection]').click();
+        await expect(page.locator('[data-api-field-error="textMaxContext"]')).toHaveText('上下文长度 需为 512 到 8,192 之间的整数（模型确实支持更长时，可勾选“解锁上限”放宽）');
+        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toContainText('回复长度 需为 16 到 2,048 之间的整数');
+        await expect(page.locator('.toast', { hasText: '文本补全连接未保存' })).toBeVisible();
+        expect(saved.bodies).toEqual([]);
+
+        // Unlocking widens both ranges and re-judges the visible errors
+        await unlocked.check();
+        await expect(hint).toContainText('已解锁');
+        await expect(page.locator('[data-api-field-error="textMaxContext"]')).toBeHidden();
+        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toContainText('16 到 65,536');
+
+        // The reply cannot fill the whole context
+        await responseInput.fill('20000');
+        await page.locator('[data-save-api-connection]').click();
+        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toHaveText('回复长度 需小于上下文长度（16,384），否则没有空间放提示词');
+        expect(saved.bodies).toEqual([]);
+
+        await responseInput.fill('4096');
+        await page.locator('[data-save-api-connection]').click();
+
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        expect(saved.bodies[0]).toMatchObject({
+            main_api: 'textgenerationwebui',
+            max_context: 16384,
+            amount_gen: 4096,
+            power_user: { max_context_unlocked: true, keep_me: 'untouched' },
+        });
+        await expect.poll(() => order).toEqual(['settings saved', 'engine reloaded']);
+        expect(bridgeCalls.map(call => call.action)).toContain('reloadSettings');
+        await expect(contextInput).toHaveValue('16384');
+        await expect(unlocked).toBeChecked();
+    });
+
+    test('saving the current configuration as a preset keeps the context length and unlock flag', async ({ page }) => {
+        const settingsBundle = chatBundle({
+            preset_settings_openai: 'Chat Preset A',
+            openai_max_context: 32000,
+            max_context_unlocked: true,
+            siliconflow_model: 'ignored',
+        });
+        let presetSave = null;
+        await mockModernApiShell(page, settingsBundle);
+        await routeSettingsSave(page, settingsBundle);
+        await page.route('**/api/presets/save', route => {
+            presetSave = route.request().postDataJSON();
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: presetSave.name }) });
+        });
+
+        await page.goto('/modern/?view=presets');
+        await page.locator('[data-select-preset="Chat Preset A"][data-preset-api="openai"]').click();
+        await page.locator('[data-save-openai-preset]').click();
+
+        // The stored preset still says 4095, which is what applying it would write back over the setting
+        await expect.poll(() => presetSave?.preset?.openai_max_context).toBe(32000);
+        expect(presetSave).toMatchObject({ apiId: 'openai', name: 'Chat Preset A', overwrite: true });
+        expect(presetSave.preset).toMatchObject({ openai_max_context: 32000, max_context_unlocked: true, openai_max_tokens: 300 });
     });
 });
 

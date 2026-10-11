@@ -1,4 +1,4 @@
-import { createApiChatCompletionConnectionActions } from './api-chat-completion-connection.js';
+import { createApiChatCompletionConnectionActions, refreshChatCompletionContextUi } from './api-chat-completion-connection.js';
 import { createApiTextCompletionConnectionActions } from './api-text-completion-connection.js';
 import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
 import { createApiNovelConnectionActions } from './api-novel-connection.js';
@@ -46,6 +46,8 @@ export function createApiConnectionActions({
         if (input) {
             input.value = model;
             input.focus();
+            // 程序改值不会触发 change：模型换了，上下文长度的上限和说明也要跟着更新
+            refreshChatCompletionContextUi(elements.content);
         }
     }
 
@@ -118,6 +120,9 @@ export function createApiConnectionActions({
         if (secretKey) {
             secretKey.textContent = uiState.secretKey;
         }
+
+        // 换来源后上下文长度的上限（旧版按来源钳制）和说明文字一起更新
+        refreshChatCompletionContextUi(elements.content);
     }
 
     function getNumberSetting(settings, key, fallback) {

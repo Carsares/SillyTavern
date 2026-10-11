@@ -1,4 +1,5 @@
-import { refreshChatCompletionFieldError } from '../actions/api-chat-completion-connection.js';
+import { refreshChatCompletionContextUi, refreshChatCompletionFieldError } from '../actions/api-chat-completion-connection.js';
+import { handleTextCompletionLimitChange } from '../actions/api-text-completion-connection.js';
 
 export function createApiEvents(ctx) {
     const {
@@ -92,6 +93,19 @@ export function createApiEvents(ctx) {
 
         if (event.target instanceof HTMLSelectElement && event.target.matches('[data-textgen-type]')) {
             updateTextCompletionTypeFields(event.target.value);
+            return true;
+        }
+
+        // 模型、「解锁上限」、上下文长度、Max Tokens 变化：更新上下文长度的 min / max 和「上限 N；提示词预算 …」说明，
+        // 同时重新判断已显示的上下文长度 / Max Tokens 错误
+        if (event.target instanceof HTMLInputElement
+            && event.target.matches('[data-api-model], [data-api-max-context-unlocked], [data-api-max-context], [data-api-max-tokens]')) {
+            refreshChatCompletionContextUi(event.target.closest('form'));
+            return true;
+        }
+
+        // 文本补全的上下文长度 / 回复长度 / 解锁勾选：同样只更新说明文字和已显示的错误
+        if (handleTextCompletionLimitChange(event.target)) {
             return true;
         }
 

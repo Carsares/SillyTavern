@@ -1,5 +1,6 @@
 import { resolveSlotHtml } from '../core/test-flags.js';
 import { createChatConnectionChipComponent } from './chat-connection-chip.js';
+import { createChatUsageLabelComponent } from './chat-usage-label.js';
 
 // 只在发送受阻或正在生成时显示状态行；空草稿的提示已由输入框占位符说明，不再常驻一行。
 function getComposerStatusText(state, hasTarget) {
@@ -20,6 +21,7 @@ export function createChatComposerComponents(ctx) {
         getSelectedChatEntity,
     } = ctx;
     const { renderChatConnectionChip } = createChatConnectionChipComponent(ctx);
+    const { renderChatUsageLabel } = createChatUsageLabelComponent(ctx);
 
     function renderChatComposer(messages) {
         const draft = getCurrentDraft();
@@ -28,8 +30,9 @@ export function createChatComposerComponents(ctx) {
         const hasTarget = Boolean(entity);
         const canSend = !state.engine.generating && hasTarget && draftLength > 0;
         const statusText = getComposerStatusText(state, hasTarget);
-        // 输入框下方的元信息行（B1 连接标签等）；插槽返回空字符串时不渲染这一行
-        const metaHtml = resolveSlotHtml('chatConnectionChip', renderChatConnectionChip());
+        // 输入框下方的元信息行：B1 的连接标签（插槽）在前，上次发送的用量标签在后；两者都为空时不渲染这一行。
+        // 用量标签只读缓存的提示词分解快照，渲染时不发请求（见 components/chat-usage-label.js）
+        const metaHtml = `${resolveSlotHtml('chatConnectionChip', renderChatConnectionChip())}${renderChatUsageLabel()}`;
 
         // Manual group activation (strategy 2): let the user pick which enabled member speaks next
         const manualSpeakers = !state.engine.generating && entity && String(entity.activation_strategy) === '2' && Array.isArray(entity.members)

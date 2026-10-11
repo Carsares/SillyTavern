@@ -1,4 +1,5 @@
 import { formatCharacterCreator } from '../actions/character-data.js';
+import { formatPercent, getUsageSummary } from '../actions/chat-completion-limits.js';
 import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { routeLabels } from '../core/constants.js';
 import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
@@ -90,13 +91,18 @@ export function createInspectorSections({
             return '<p class="muted">暂无最近生成的提示词分解数据。</p>';
         }
 
+        // 快照里的 maxContext 是引擎算出的「上下文 − 回复上限」，即提示词预算，不是上下文本身；
+        // 上下文上限另从设置读取，占用 = 提示词总量 ÷ 提示词预算
+        const usage = getUsageSummary(data, state.settings);
         const metaRows = [
             ['主 API', data.apiFriendlyName || data.mainApi || '未知'],
             ['模型', data.modelUsed || '未知'],
             ['预设', data.presetName || '未知'],
             ['分词器', data.tokenizer || '未知'],
-            ['最大上下文', `${formatNumber(data.maxContext)} tokens`],
+            ['上下文上限', usage?.contextLimit == null ? '未设置' : `${formatNumber(usage.contextLimit)} tokens`],
+            ['提示词预算（上下文−回复上限）', `${formatNumber(data.maxContext)} tokens`],
             ['提示词总量', `${formatNumber(data.totalTokens)} tokens`],
+            ['占用', usage?.percent == null ? '无法计算' : `${formatPercent(usage.percent)}%`],
         ];
         const partRows = data.parts.map(part => [part.name, `${formatNumber(part.tokens)} tokens`]);
 

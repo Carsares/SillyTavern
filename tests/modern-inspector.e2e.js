@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { mockBridgeFrame } from './modern-test-utils.js';
 
 /* global document, window */
 
@@ -12,7 +13,7 @@ function fulfillJson(route, body, status = 200) {
 
 // openPreference seeds the 设置「默认展开上下文抽屉」preference (the pre-upgrade single key) on every load;
 // null leaves storage alone
-async function mockModernInspectorWorkspace(page, { openPreference = 'true' } = {}) {
+async function mockModernInspectorWorkspace(page, { openPreference = 'true', oaiSettings = {} } = {}) {
     const now = Date.now();
     if (openPreference !== null) {
         await page.addInitScript(`localStorage.setItem("st-modern-inspector-open", "${openPreference}")`);
@@ -39,6 +40,7 @@ async function mockModernInspectorWorkspace(page, { openPreference = 'true' } = 
                 chat_completion_source: 'siliconflow',
                 siliconflow_model: 'deepseek-ai/DeepSeek-V3',
                 preset_settings_openai: 'Inspector Preset',
+                ...oaiSettings,
             },
         }),
         openai_setting_names: ['Inspector Preset'],
@@ -433,5 +435,139 @@ test.describe('Modern inspector', () => {
             expect(row.right, `${row.key} value ends inside the drawer`).toBeLessThanOrEqual(layout.right + 0.5);
         }
         expect(layout.rows.map(row => row.key)).toEqual(expect.arrayContaining(['聊天类型', '当前对象', '会话数量']));
+    });
+});
+
+// 提示词分解快照里的 maxContext 是引擎算出的「上下文 − 回复上限」，即提示词预算；旧界面把它叫「最大上下文」，名不副实。
+// 现在抽屉里分开显示上下文上限（来自设置）、提示词预算和占用，聊天输入框下方的标签读同一份缓存的快照。
+test.describe('Modern inspector prompt usage', () => {
+    const itemizedSnapshot = totalTokens => ({
+        available: true,
+        mesId: 3,
+        mainApi: 'openai',
+        apiFriendlyName: 'Chat Completion',
+        modelUsed: 'deepseek-v4-flash',
+        presetName: 'Inspector Preset',
+        tokenizer: 'tiktoken',
+        maxContext: 31700,
+        totalTokens,
+        parts: [
+            { name: '聊天历史', tokens: totalTokens - 500 },
+            { name: '主提示词', tokens: 500 },
+        ],
+    });
+    const usageSettings = { chat_completion_source: 'custom', custom_model: 'deepseek-v4-flash', openai_max_context: 32000, openai_max_tokens: 300 };
+
+    async function mockUsageWorkspace(page, { openPreference, replies = {} }) {
+        const calls = await mockBridgeFrame(page, { replies });
+        await mockModernInspectorWorkspace(page, { openPreference, oaiSettings: usageSettings });
+        return calls;
+    }
+
+    const kvRow = (section, key) => section.locator('.kv-row', { has: section.page().locator('.kv-key', { hasText: key }) });
+
+    test('names the prompt budget correctly and adds the context limit and the usage percent', async ({ page }) => {
+        const calls = await mockUsageWorkspace(page, { openPreference: 'true', replies: { getItemizedPrompt: itemizedSnapshot(12345) } });
+
+        await page.goto('/modern/?view=chat');
+        const section = page.locator('.inspector-section', { hasText: '本次生成提示词分解' });
+        await expect(section.locator('.kv-key', { hasText: '分词器' })).toHaveCount(0);
+
+        await section.locator('[data-refresh-itemized-prompt]').click();
+        await expect(section.locator('.kv-key', { hasText: '分词器' })).toHaveCount(1);
+
+        await expect(kvRow(section, '上下文上限')).toContainText('32,000 tokens');
+        await expect(kvRow(section, '提示词预算（上下文−回复上限）')).toContainText('31,700 tokens');
+        await expect(kvRow(section, '提示词总量')).toContainText('12,345 tokens');
+        await expect(kvRow(section, '占用')).toContainText('38.9%');
+        await expect(section).not.toContainText('最大上下文');
+        expect(calls.filter(call => call.action === 'getItemizedPrompt')).toHaveLength(1);
+
+        // The composer label reads the same cached snapshot and appeared without re-rendering the chat page
+        const label = page.locator('.composer [data-chat-usage-label]');
+        await expect(label).toHaveText('上次发送 12,345 / 预算 31,700 token');
+        await expect(label).toHaveAttribute('title', /占提示词预算的 38\.9%.*提示词预算 = 上下文 32,000 − 回复上限 300/);
+        await expect(label).toHaveAttribute('data-usage-percent', '38.9%');
+        await expect(page.locator('.composer [data-composer-meta]')).toHaveCount(1);
+    });
+
+    test('refreshes the usage label after a generation finishes without opening the drawer', async ({ page }) => {
+        let itemizedReads = 0;
+        const calls = await mockUsageWorkspace(page, {
+            openPreference: 'false',
+            replies: {
+                generate: { chat: 'existing-chat.jsonl', messageCount: 4, saved: true, type: 'normal' },
+                getItemizedPrompt: () => itemizedSnapshot(itemizedReads++ === 0 ? 12345 : 29000),
+            },
+        });
+
+        await page.goto('/modern/?view=chat');
+        await expect(page.locator('[data-select-chat="existing-chat"]')).toBeVisible();
+        // Rendering the page, the composer and the closed drawer never asks the engine for the breakdown
+        await expect(page.locator('.composer')).toBeVisible();
+        await expect(page.locator('[data-chat-usage-label]')).toHaveCount(0);
+        expect(calls.filter(call => call.action === 'getItemizedPrompt')).toHaveLength(0);
+
+        await page.locator('[data-chat-input]').fill('first message');
+        await page.locator('[data-send-message]').click();
+
+        const label = page.locator('.composer [data-chat-usage-label]');
+        await expect(label).toHaveText('上次发送 12,345 / 预算 31,700 token');
+        expect(calls.map(call => call.action).filter(action => action === 'generate' || action === 'getItemizedPrompt'))
+            .toEqual(['generate', 'getItemizedPrompt']);
+
+        await page.locator('[data-chat-input]').fill('second message');
+        await page.locator('[data-send-message]').click();
+        await expect(label).toHaveText('上次发送 29,000 / 预算 31,700 token');
+        // 29000 / 31700 is above 90%, so the label turns into a warning
+        await expect(label).toHaveClass(/is-high/);
+        expect(calls.filter(call => call.action === 'getItemizedPrompt')).toHaveLength(2);
+
+        // Opening the drawer afterwards shows the same cached snapshot without asking again
+        await page.locator('.topbar [data-toggle-inspector]').click();
+        await expect(page.locator('#inspector')).toHaveClass(/open/);
+        const section = page.locator('.inspector-section', { hasText: '本次生成提示词分解' });
+        await expect(kvRow(section, '提示词总量')).toContainText('29,000 tokens');
+        await expect(kvRow(section, '占用')).toContainText('91.5%');
+        expect(calls.filter(call => call.action === 'getItemizedPrompt')).toHaveLength(2);
+    });
+
+    test('updates the label in place, keeping the draft, and sits beside the connection chip', async ({ page }) => {
+        await page.addInitScript(() => {
+            window.__modernTestFlags = { slotHtml: { chatConnectionChip: '<span data-test-chip>连接标签</span>' } };
+        });
+        let itemizedReads = 0;
+        await mockUsageWorkspace(page, {
+            openPreference: 'true',
+            replies: { getItemizedPrompt: () => itemizedSnapshot(itemizedReads++ === 0 ? 1000 : 2000) },
+        });
+
+        await page.goto('/modern/?view=chat');
+        const meta = page.locator('.composer [data-composer-meta]');
+        await expect(meta.locator('[data-test-chip]')).toHaveText('连接标签');
+        await expect(meta.locator('[data-chat-usage-label]')).toHaveCount(0);
+
+        await page.locator('[data-chat-input]').fill('unsent draft');
+        await page.locator('.inspector-section [data-refresh-itemized-prompt]').click();
+        const label = meta.locator('[data-chat-usage-label]');
+        await expect(label).toHaveText('上次发送 1,000 / 预算 31,700 token');
+        // The chip stays first, the usage label comes after it
+        await expect(meta.locator('> :first-child')).toHaveAttribute('data-test-chip', '');
+        await expect(meta.locator('> :nth-child(2)')).toHaveAttribute('data-chat-usage-label', '');
+
+        await page.locator('.inspector-section [data-refresh-itemized-prompt]').click();
+        await expect(label).toHaveText('上次发送 2,000 / 预算 31,700 token');
+        await expect(page.locator('[data-chat-input]')).toHaveValue('unsent draft');
+    });
+
+    test('keeps the label hidden when the engine has nothing to report', async ({ page }) => {
+        await mockUsageWorkspace(page, { openPreference: 'true', replies: { getItemizedPrompt: { available: false } } });
+
+        await page.goto('/modern/?view=chat');
+        const section = page.locator('.inspector-section', { hasText: '本次生成提示词分解' });
+        await section.locator('[data-refresh-itemized-prompt]').click();
+        await expect(section).toContainText('暂无最近生成的提示词分解数据');
+        await expect(page.locator('[data-chat-usage-label]')).toHaveCount(0);
+        await expect(page.locator('[data-composer-meta]')).toHaveCount(0);
     });
 });

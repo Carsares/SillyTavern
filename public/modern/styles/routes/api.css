@@ -68,3 +68,48 @@
 .api-profile-card .secondary-button {
     width: fit-content;
 }
+
+/* ===== 上下文长度与用量提示（A1）===== */
+
+/* 同一行里相邻字段带着错误或说明变高时，输入框不跟着被拉高 */
+.api-limit-field {
+    align-content: start;
+}
+
+/* 「上限 N；提示词预算 = 上下文 − Max Tokens」说明：预留两行高度，切换来源 / 模型时文字长短变化不会让下面的保存按钮跳动 */
+.api-context-hint {
+    min-height: 2.8em;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.api-context-hint.is-warning {
+    color: var(--warning);
+}
+
+/* 「解锁上限」复选框与左边输入框对齐：上方的小标题与输入框标题同一行高 */
+.api-context-unlock .checkbox-card {
+    align-self: start;
+    font-weight: 500;
+}
+
+/* 聊天输入框下方的「上次发送 X / 预算 Y token」标签（components/chat-usage-label.js），靠右排在连接标签之后 */
+.chat-usage-label {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    cursor: help;
+}
+
+.chat-usage-label.is-high {
+    color: var(--warning);
+}
+
+.chat-usage-label.is-over {
+    color: var(--danger);
+}

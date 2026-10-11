@@ -1,3 +1,12 @@
+import {
+    describeTextCompletionLimitHint,
+    getTextCompletionLimits,
+} from '../actions/chat-completion-limits.js';
+
+// 设置里没有 max_context / amount_gen 时的显示值，与 default/content/settings.json 的默认设置一致
+const TEXT_COMPLETION_CONTEXT_FALLBACK = 8192;
+const TEXT_COMPLETION_RESPONSE_FALLBACK = 350;
+
 const textCompletionSamplingFields = [
     { key: 'temp', label: '温度', step: '0.01', fallback: 0.7 },
     { key: 'top_p', label: 'Top P', step: '0.01', fallback: 0.5 },
@@ -24,6 +33,12 @@ export function createApiTextCompletionEditorComponents(ctx) {
         const textgenPresetNames = getPresetGroups().find(group => group.id === 'textgenerationwebui')?.names || [];
         const secretUiState = getTextCompletionSecretUiState(profile.source);
         const typeOptions = getTextCompletionTypeOptions(profile.source);
+        // 上下文长度 / 回复长度是顶层 max_context / amount_gen，「解锁」是 power_user.max_context_unlocked（与旧版一致）。
+        // 输入框不设 min / max / step：这个表单没有 novalidate（端点输入框靠浏览器校验网址），范围由保存时的字段级错误把关
+        const limitsUnlocked = Boolean(state.settings?.power_user?.max_context_unlocked);
+        const limits = getTextCompletionLimits({ unlocked: limitsUnlocked });
+        const contextValue = getNumberSetting(state.settings || {}, 'max_context', TEXT_COMPLETION_CONTEXT_FALLBACK);
+        const responseValue = getNumberSetting(state.settings || {}, 'amount_gen', TEXT_COMPLETION_RESPONSE_FALLBACK);
 
         return `
         <form class="settings-form" data-api-connection-form autocomplete="off">
@@ -64,6 +79,27 @@ export function createApiTextCompletionEditorComponents(ctx) {
                         </select>
                     </label>
                 </div>
+            </section>
+            <section class="form-section">
+                <div>
+                    <h3 class="form-section-title">上下文与回复长度</h3>
+                    <p class="panel-subtitle">对应旧版的 Context 和 Response 滑块；超出提示词预算的历史会被旧版从最早的消息开始丢弃。</p>
+                </div>
+                <div class="form-grid two-columns">
+                    <label class="field-label api-limit-field">
+                        <span>上下文长度</span>
+                        <input class="text-input" type="number" step="any" data-textgen-max-context value="${escapeHtml(contextValue)}">
+                    </label>
+                    <label class="field-label api-limit-field">
+                        <span>回复长度</span>
+                        <input class="text-input" type="number" step="any" data-textgen-amount-gen value="${escapeHtml(responseValue)}">
+                    </label>
+                </div>
+                <label class="checkbox-card">
+                    <input type="checkbox" data-textgen-max-context-unlocked ${limitsUnlocked ? 'checked' : ''}>
+                    <span>解锁上限，仅在模型确实支持更长上下文时开启</span>
+                </label>
+                <span class="api-context-hint" data-textgen-context-hint>${escapeHtml(describeTextCompletionLimitHint({ limits, context: contextValue, response: responseValue }))}</span>
             </section>
             <section class="form-section">
                 <div>

@@ -1,3 +1,5 @@
+import { notifyGenerationFinished } from '../actions/inspector-itemized.js';
+import { syncChatUsageLabels } from '../components/chat-usage-label.js';
 import { routeLabels } from '../core/constants.js';
 import { createInspectorSections } from './inspector-sections.js';
 
@@ -51,6 +53,25 @@ export function createInspector({
         state.inspectorOpen = storedOpen;
     }
 
+    // 生成状态由 actions/chat-generation.js 改动后紧接着整页渲染，这里借渲染钩子发现 generating 从真变回假，
+    // 通知提示词分解自动刷新（订阅在 actions/inspector-itemized.js），这样不用改生成动作本身。
+    // 生成开始时的聊天也记下来：生成期间切到别的聊天，结束时引擎里的快照属于原来的聊天，不能当作现在这个聊天的用量。
+    let wasGenerating = Boolean(state.engine?.generating);
+    let generationStartChat = '';
+
+    function observeGenerationFinished() {
+        const generating = Boolean(state.engine?.generating);
+        if (generating && !wasGenerating) {
+            generationStartChat = state.selected.chat || '';
+        }
+        const finished = wasGenerating && !generating;
+        wasGenerating = generating;
+        if (finished && (!generationStartChat || generationStartChat === state.selected.chat)) {
+            // 放到微任务里：当前这轮渲染先完成，刷新动作再自己触发下一轮抽屉渲染
+            queueMicrotask(notifyGenerationFinished);
+        }
+    }
+
     function renderInspector() {
         const provider = getProviderInfo();
         const selectedCharacter = state.characters.find(character => character.avatar === state.selected.character);
@@ -90,6 +111,10 @@ export function createInspector({
                 ` : '<p class="muted">暂无错误。</p>'}
             </section>
         `;
+
+        // 提示词分解快照变化（抽屉刷新、生成结束后的自动刷新）时，聊天页输入框下方的用量标签跟着更新
+        syncChatUsageLabels(state);
+        observeGenerationFinished();
     }
 
     function setInspectorOpen(open) {

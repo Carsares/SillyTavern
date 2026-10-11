@@ -1,19 +1,85 @@
 import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
+import { formatNumber } from '../core/utils.js';
+import {
+    CHAT_COMPLETION_CONTEXT_DEFAULT,
+    CHAT_COMPLETION_CONTEXT_MIN,
+    CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX,
+    describeChatCompletionContextHint,
+    getChatCompletionContextLimits,
+    getChatCompletionContextRange,
+    getPromptBudget,
+} from './chat-completion-limits.js';
 
 // 聊天补全数值参数的允许范围，与旧版界面一致：public/index.html 中 #temp_openai、#top_p_openai、
 // #freq_pen_openai、#pres_pen_openai 滑块和 #openai_max_tokens 输入框的 min / max。
 export const CHAT_COMPLETION_NUMBER_FIELDS = Object.freeze([
     Object.freeze({ key: 'temperature', selector: '[data-api-temperature]', label: 'Temperature', min: 0, max: 2, integer: false }),
     Object.freeze({ key: 'maxTokens', selector: '[data-api-max-tokens]', label: 'Max Tokens', min: 1, max: 128000, integer: true }),
+    // 上下文长度的上限随来源、模型和「解锁上限」变化：min / max 只是兜底，实际范围在校验时按表单当前值重新计算（见 getFieldRange）。
+    Object.freeze({ key: 'maxContext', selector: '[data-api-max-context]', label: '上下文长度', min: CHAT_COMPLETION_CONTEXT_MIN, max: CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX, integer: true, dynamicRange: true }),
     Object.freeze({ key: 'topP', selector: '[data-api-top-p]', label: 'Top P', min: 0, max: 1, integer: false }),
     Object.freeze({ key: 'frequencyPenalty', selector: '[data-api-frequency-penalty]', label: 'Frequency Penalty', min: -2, max: 2, integer: false }),
     Object.freeze({ key: 'presencePenalty', selector: '[data-api-presence-penalty]', label: 'Presence Penalty', min: -2, max: 2, integer: false }),
 ]);
 
 /**
+ * 读出表单里「来源 / 模型 / 解锁上限」当前选择对应的上下文范围，表单里没有这些控件时返回 null。
+ * @param {Element | null | undefined} form 聊天补全连接表单（或包含它的容器）
+ * @returns {ReturnType<typeof getChatCompletionContextLimits> | null} 范围
+ */
+function readContextLimitsFromForm(form) {
+    const sourceInput = form?.querySelector('[data-api-source]');
+    if (!(sourceInput instanceof HTMLSelectElement)) {
+        return null;
+    }
+    const modelInput = form.querySelector('[data-api-model]');
+    const unlockedInput = form.querySelector('[data-api-max-context-unlocked]');
+    return getChatCompletionContextLimits({
+        source: sourceInput.value,
+        model: modelInput instanceof HTMLInputElement ? modelInput.value.trim() : '',
+        unlocked: unlockedInput instanceof HTMLInputElement && unlockedInput.checked,
+    });
+}
+
+/**
+ * 字段当前允许的范围。上下文长度按表单里的来源、模型和解锁状态重新计算，其余字段用定义里的固定范围。
+ * @param {{ min: number, max: number, dynamicRange?: boolean }} field 字段定义
+ * @param {HTMLInputElement} input 字段输入框
+ * @returns {{ min: number, max: number, limits: ReturnType<typeof getChatCompletionContextLimits> | null }} 范围
+ */
+function getFieldRange(field, input) {
+    if (field.dynamicRange) {
+        const limits = readContextLimitsFromForm(input.closest('form'));
+        if (limits) {
+            return { ...getChatCompletionContextRange(limits), limits };
+        }
+    }
+    return { min: field.min, max: field.max, limits: null };
+}
+
+/**
+ * Max Tokens 必须小于上下文长度，否则提示词预算（上下文 − Max Tokens）不大于 0。
+ * 上下文长度还没填或不是有效数字时不比较，由它自己的错误提示。
+ * @param {HTMLInputElement} maxTokensInput Max Tokens 输入框
+ * @param {number} maxTokens 已通过范围校验的 Max Tokens
+ * @returns {string} 错误文案，没有问题时为空字符串
+ */
+function getMaxTokensBudgetError(maxTokensInput, maxTokens) {
+    const contextInput = maxTokensInput.closest('form')?.querySelector('[data-api-max-context]');
+    if (!(contextInput instanceof HTMLInputElement) || !String(contextInput.value ?? '').trim()) {
+        return '';
+    }
+    const context = Number(contextInput.value);
+    if (!Number.isFinite(context) || getPromptBudget(context, maxTokens) > 0) {
+        return '';
+    }
+    return `Max Tokens 需小于上下文长度（${formatNumber(context)}），否则没有空间放提示词`;
+}
+
+/**
  * 返回数值字段的错误文案，合法时返回空字符串。
- * @param {{ label: string, min: number, max: number, integer: boolean }} field 字段定义
+ * @param {{ key: string, label: string, min: number, max: number, integer: boolean, dynamicRange?: boolean }} field 字段定义
  * @param {HTMLInputElement} input 字段输入框
  * @returns {string} 错误文案
  */
@@ -26,12 +92,22 @@ function getChatCompletionNumberFieldError(field, input) {
         return `请填写 ${field.label}`;
     }
     const value = Number(text);
-    const outOfRange = !Number.isFinite(value) || value < field.min || value > field.max;
+    const { min, max, limits } = getFieldRange(field, input);
+    const outOfRange = !Number.isFinite(value) || value < min || value > max;
+    // 上下文长度的数字较大，用千分位显示；其余字段保持原来的写法
+    const show = field.dynamicRange ? formatNumber : String;
+    // 该来源还能靠「解锁上限」放宽时，在错误里提示一句
+    const unlockHint = limits && limits.unlockApplies && !limits.unlocked && max < CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX
+        ? `（模型确实支持更长上下文时，可勾选“解锁上限”放宽到 ${formatNumber(CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX)}）`
+        : '';
     if (field.integer && (outOfRange || !Number.isInteger(value))) {
-        return `${field.label} 需为 ${field.min} 到 ${field.max} 之间的整数`;
+        return `${field.label} 需为 ${show(min)} 到 ${show(max)} 之间的整数${unlockHint}`;
     }
     if (outOfRange) {
-        return `${field.label} 需在 ${field.min} 到 ${field.max} 之间`;
+        return `${field.label} 需在 ${show(min)} 到 ${show(max)} 之间${unlockHint}`;
+    }
+    if (field.key === 'maxTokens') {
+        return getMaxTokensBudgetError(input, value);
     }
     return '';
 }
@@ -40,7 +116,7 @@ function findChatCompletionNumberField(input) {
     return CHAT_COMPLETION_NUMBER_FIELDS.find(item => input.matches(item.selector)) || null;
 }
 
-function getChatCompletionFieldErrorElement(input, field) {
+export function getChatCompletionFieldErrorElement(input, field) {
     return input.parentElement?.querySelector(`[data-api-field-error="${field.key}"]`) || null;
 }
 
@@ -51,7 +127,7 @@ function getChatCompletionFieldErrorElement(input, field) {
  * @param {{ key: string }} field 字段定义
  * @param {string} message 错误文案，空字符串表示移除
  */
-function showChatCompletionFieldError(input, field, message) {
+export function showChatCompletionFieldError(input, field, message) {
     const errorId = `api-field-error-${field.key}`;
     let errorElement = getChatCompletionFieldErrorElement(input, field);
     if (!message) {
@@ -75,6 +151,37 @@ function showChatCompletionFieldError(input, field, message) {
     errorElement.textContent = message;
 }
 
+function findFieldByKey(key) {
+    return CHAT_COMPLETION_NUMBER_FIELDS.find(item => item.key === key) || null;
+}
+
+/**
+ * 已显示的字段错误重新计算：改对了就隐藏提示但保留占位，仍不合法就更新文案；不插入也不移除元素。
+ * @param {Element | null | undefined} input 字段输入框
+ * @param {{ key: string, label: string, min: number, max: number, integer: boolean, dynamicRange?: boolean } | null} field 字段定义
+ */
+function refreshVisibleFieldError(input, field) {
+    if (!(input instanceof HTMLInputElement) || !field) {
+        return;
+    }
+    const errorElement = getChatCompletionFieldErrorElement(input, field);
+    if (!(errorElement instanceof HTMLElement)) {
+        return;
+    }
+    const message = getChatCompletionNumberFieldError(field, input);
+    if (message) {
+        input.setAttribute('aria-invalid', 'true');
+        errorElement.style.visibility = '';
+        errorElement.textContent = message;
+    } else {
+        input.removeAttribute('aria-invalid');
+        errorElement.style.visibility = 'hidden';
+    }
+}
+
+// 上下文长度和 Max Tokens 互相约束（Max Tokens < 上下文长度）：一个改了，另一个已显示的错误也要重新判断
+const crossCheckedFieldKey = { maxContext: 'maxTokens', maxTokens: 'maxContext' };
+
 /**
  * 字段改动（change）后刷新已显示的错误：改对了就隐藏提示但保留占位，仍不合法就更新文案；不插入也不移除元素。
  * change 常在用户按下「保存」时因输入框失焦触发，若此刻提示增删导致按钮位移，松开鼠标时点击会落空。
@@ -90,20 +197,48 @@ export function refreshChatCompletionFieldError(target) {
     if (!field) {
         return false;
     }
-    const errorElement = getChatCompletionFieldErrorElement(target, field);
-    if (!(errorElement instanceof HTMLElement)) {
-        return true;
-    }
-    const message = getChatCompletionNumberFieldError(field, target);
-    if (message) {
-        target.setAttribute('aria-invalid', 'true');
-        errorElement.style.visibility = '';
-        errorElement.textContent = message;
-    } else {
-        target.removeAttribute('aria-invalid');
-        errorElement.style.visibility = 'hidden';
+    refreshVisibleFieldError(target, field);
+    const partner = findFieldByKey(crossCheckedFieldKey[field.key]);
+    if (partner) {
+        refreshVisibleFieldError(target.closest('form')?.querySelector(partner.selector), partner);
     }
     return true;
+}
+
+/**
+ * 来源、模型、「解锁上限」、上下文长度或 Max Tokens 变化后，按表单当前值更新上下文长度输入框的 min / max 和说明文字，
+ * 并重新判断已显示的上下文长度、Max Tokens 错误。只改现有元素，不重绘页面，用户未保存的输入不会丢。
+ * @param {Element | null | undefined} container 表单或包含表单的容器（通常是 #content）
+ */
+export function refreshChatCompletionContextUi(container) {
+    const contextInput = container?.querySelector('[data-api-max-context]');
+    if (!(contextInput instanceof HTMLInputElement)) {
+        return;
+    }
+    const form = contextInput.closest('form');
+    const limits = readContextLimitsFromForm(form);
+    if (!form || !limits) {
+        return;
+    }
+
+    const range = getChatCompletionContextRange(limits);
+    contextInput.min = String(range.min);
+    contextInput.max = String(range.max);
+
+    const maxTokensInput = form.querySelector('[data-api-max-tokens]');
+    const maxTokensText = maxTokensInput instanceof HTMLInputElement ? maxTokensInput.value : '';
+    const hint = form.querySelector('[data-api-context-hint]');
+    if (hint) {
+        hint.textContent = describeChatCompletionContextHint({ limits, context: contextInput.value, maxTokens: maxTokensText });
+        const context = Number(contextInput.value);
+        const budget = getPromptBudget(context, Number(maxTokensText));
+        const hasProblem = contextInput.value.trim() !== '' && Number.isFinite(context)
+            && (context < range.min || context > range.max || (Number.isFinite(budget) && budget <= 0));
+        hint.classList.toggle('is-warning', hasProblem);
+    }
+
+    refreshVisibleFieldError(contextInput, findFieldByKey('maxContext'));
+    refreshVisibleFieldError(maxTokensInput, findFieldByKey('maxTokens'));
 }
 
 export function createApiChatCompletionConnectionActions({
@@ -227,6 +362,15 @@ export function createApiChatCompletionConnectionActions({
         oaiSettings.preset_settings_openai = presetInput?.value || oaiSettings.preset_settings_openai || '';
         oaiSettings.temp_openai = numberInput(elements.content.querySelector('[data-api-temperature]')?.value, getNumberSetting(oaiSettings, 'temp_openai', 1));
         oaiSettings.openai_max_tokens = numberInput(elements.content.querySelector('[data-api-max-tokens]')?.value, getNumberSetting(oaiSettings, 'openai_max_tokens', 300));
+        // 上下文长度和「解锁上限」：旧版把它们存在 oai_settings 里，引擎重载设置时按来源和模型再钳制一次
+        const contextInput = elements.content.querySelector('[data-api-max-context]');
+        if (contextInput) {
+            oaiSettings.openai_max_context = numberInput(contextInput.value, getNumberSetting(oaiSettings, 'openai_max_context', CHAT_COMPLETION_CONTEXT_DEFAULT));
+        }
+        const unlockedInput = elements.content.querySelector('[data-api-max-context-unlocked]');
+        if (unlockedInput instanceof HTMLInputElement) {
+            oaiSettings.max_context_unlocked = unlockedInput.checked;
+        }
         oaiSettings.top_p_openai = numberInput(elements.content.querySelector('[data-api-top-p]')?.value, getNumberSetting(oaiSettings, 'top_p_openai', 1));
         oaiSettings.freq_pen_openai = numberInput(elements.content.querySelector('[data-api-frequency-penalty]')?.value, getNumberSetting(oaiSettings, 'freq_pen_openai', 0));
         oaiSettings.pres_pen_openai = numberInput(elements.content.querySelector('[data-api-presence-penalty]')?.value, getNumberSetting(oaiSettings, 'pres_pen_openai', 0));
