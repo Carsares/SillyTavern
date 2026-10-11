@@ -35,7 +35,25 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
     if (configError) return { ...scope, status: 'blocked', reason: configError, evidence: 'not-run', dataset: dataset.fingerprint,
         conditions: plan.map(condition => ({ ...condition, status: 'blocked', reason: configError })), measurements: [], quality: null };
     const budget = config.budget, startedAt = now(), measurements = [], conditions = [];
-    const ledger = { reservedCostUsd: 0, reservedRequests: 0, reservedInputTokens: 0, reservedOutputTokens: 0, actualCostUsd: 0, actualCostComplete: true };
+    // reserved = settled conservative consumption + unresolved full quotations.
+    // quoted is historical admission volume, not the remaining budget occupation.
+    const dimensions = ['CostUsd', 'Requests', 'InputTokens', 'OutputTokens'];
+    const ledger = { actualCostUsd: 0, actualCostComplete: true };
+    for (const key of dimensions) for (const prefix of ['reserved', 'quoted', 'settled', 'currentHeld']) ledger[prefix + key] = 0;
+    const hold = quote => {
+        for (const key of dimensions) {
+            ledger['quoted' + key] += quote['max' + key];
+            ledger['currentHeld' + key] = quote['max' + key];
+            ledger['reserved' + key] = ledger['settled' + key] + ledger['currentHeld' + key];
+        }
+    };
+    const settle = amounts => {
+        for (const key of dimensions) {
+            ledger['settled' + key] += amounts[key];
+            ledger['currentHeld' + key] = 0;
+            ledger['reserved' + key] = ledger['settled' + key];
+        }
+    };
     const batchSize = config.batchSize ?? 50;
     const coldCompleted = new Set();
     let halted;
@@ -65,21 +83,21 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
             }
             if (now() - startedAt >= budget.deadlineMs || signal?.aborted) { reason = halted = 'deadline-exceeded'; break; }
             // Never refund uncertain reservations; retries require a separate explicitly budgeted run.
-            ledger.reservedCostUsd += quote.maxCostUsd; ledger.reservedRequests += quote.maxRequests;
-            ledger.reservedInputTokens += quote.maxInputTokens; ledger.reservedOutputTokens += quote.maxOutputTokens;
+            hold(quote);
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), Math.max(1, budget.deadlineMs - (now() - startedAt)));
             const forward = () => controller.abort(); signal?.addEventListener('abort', forward, { once: true });
             const before = now();
             const row = { conditionId: condition.id, batch: start / batchSize, questionIds: questions.map(q => q.id), status: 'unknown', evidence,
                 model: cap.model, modelVersion: cap.modelVersion, modelResolution: cap.modelResolution ?? null, quote: { maxCostUsd: quote.maxCostUsd, maxRequests: quote.maxRequests, maxInputTokens: quote.maxInputTokens, maxOutputTokens: quote.maxOutputTokens, hardUpperBound: true }, firstTokenMs: null };
-            let abortListener;
+            let abortListener, responseReceived = false;
             try {
                 await onRecord({ phase: 'intent', conditionId: condition.id, batch: row.batch, quote: row.quote, modelResolution: row.modelResolution, evidence });
                 controller.signal.throwIfAborted();
                 const aborted = new Promise((_, reject) => { abortListener = () => reject(new Error('aborted')); controller.signal.addEventListener('abort', abortListener, { once: true }); });
                 const response = await Promise.race([Promise.resolve().then(() => adapter.run({ ...request, signal: controller.signal, ceiling: { ...quote },
                     onFirstToken: () => { row.firstTokenMs ??= now() - before; } })), aborted]);
+                responseReceived = true;
                 controller.signal.throwIfAborted();
                 row.elapsedMs = now() - before;
                 const u = response?.usage;
@@ -91,28 +109,48 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
                     row.usage = { costUsd: costKnown ? u.costUsd : null, costUpperBoundUsd: boundedCost ? u.costUpperBoundUsd : null, inputTokens: u.inputTokens, outputTokens: u.outputTokens, providerRequests: u.providerRequests, complete: true };
                     if (costKnown) ledger.actualCostUsd += u.costUsd; else ledger.actualCostComplete = false;
                     if (u.costUsd > quote.maxCostUsd || boundedCost && u.costUpperBoundUsd > quote.maxCostUsd || u.inputTokens > quote.maxInputTokens || u.outputTokens > quote.maxOutputTokens || u.providerRequests > quote.maxRequests) reason = halted = 'adapter-exceeded-reservation';
-                    else if (condition.cache !== 'uncontrolled' && response.cache?.verified !== true || response.cache?.mode !== condition.cache || response.cache.sessionKey !== condition.sessionKey) reason = 'cache-condition-unverified';
-                    else {
+                    if (!reason && (condition.cache !== 'uncontrolled' && response.cache?.verified !== true || response.cache?.mode !== condition.cache || response.cache?.sessionKey !== condition.sessionKey)) reason = 'cache-condition-unverified';
+                    if (!reason) {
                         row.score = scoreAnswers(questions, response.output);
                         row.status = 'completed';
                         let parsed = response.output;
                         try { if (typeof parsed === 'string') parsed = JSON.parse(parsed); } catch { parsed = null; }
                         combined.push(...(Array.isArray(parsed?.answers) ? parsed.answers : []));
                     }
+                    if (reason !== 'adapter-exceeded-reservation') {
+                        // Both declared costs were checked against the quote above. Prefer the
+                        // larger verified upper bound when present; never report it as actual cost.
+                        const cost = Math.max(costKnown ? u.costUsd : 0, boundedCost ? u.costUpperBoundUsd : 0);
+                        settle({ CostUsd: cost, Requests: u.providerRequests, InputTokens: u.inputTokens, OutputTokens: u.outputTokens });
+                        row.budgetSettlement = { status: 'settled', costUsd: cost, costBasis: boundedCost ? 'configured-price-upper-bound' : 'known-cost' };
+                    }
                 }
                 if (reason) { row.reason = reason; row.status = validUsage ? 'failed' : 'unknown'; }
             } catch (error) {
-                if (error.blocked && error.dispatched === false) {
-                    reason = error.code; row.status = 'blocked'; row.elapsedMs = now() - before; row.reason = reason;
+                // Diagnostics never authorize a refund on an uncertain dispatched outcome.
+                row.dispatch = {};
+                if (typeof error.dispatched === 'boolean') row.dispatch.dispatched = error.dispatched;
+                if (Number.isSafeInteger(error.providerRequests) && error.providerRequests >= 0) row.dispatch.providerRequests = error.providerRequests;
+                const reservations = {};
+                for (const key of ['requests', 'input', 'output', 'costUpper']) {
+                    const value = error.reservations?.[key];
+                    if ((key === 'costUpper' ? Number.isFinite(value) : Number.isSafeInteger(value)) && value >= 0) reservations[key] = value;
+                }
+                if (Object.keys(reservations).length) row.dispatch.reservations = reservations;
+                if (!responseReceived && !controller.signal.aborted && error.blocked && error.dispatched === false && !(error.providerRequests > 0) && !(error.reservations?.requests > 0)) {
+                    settle({ CostUsd: 0, Requests: 0, InputTokens: 0, OutputTokens: 0 });
+                    row.budgetSettlement = { status: 'released-not-dispatched', costUsd: 0 };
+                    reason = error.code || 'adapter-blocked-before-dispatch'; row.status = 'blocked'; row.elapsedMs = now() - before; row.reason = reason;
                 } else {
-                ledger.actualCostComplete = false;
-                reason = halted = controller.signal.aborted ? 'aborted-outcome-unknown' : 'provider-outcome-unknown';
-                row.elapsedMs = now() - before; row.reason = reason;
+                    ledger.actualCostComplete = false;
+                    reason = halted = controller.signal.aborted ? 'aborted-outcome-unknown' : 'provider-outcome-unknown';
+                    row.elapsedMs = now() - before; row.reason = reason;
                 }
             } finally {
                 clearTimeout(timeout); signal?.removeEventListener('abort', forward);
                 if (abortListener) controller.signal.removeEventListener('abort', abortListener);
             }
+            row.budgetSettlement ??= { status: 'held', costUsd: quote.maxCostUsd };
             rows.push(row); measurements.push(row);
             await onRecord(structuredClone(row));
             if (reason) break;
@@ -126,6 +164,6 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
     const complete = conditions.every(c => c.status === 'completed');
     return { ...scope, status: complete ? 'completed' : 'blocked', evidence, dataset: dataset.fingerprint, datasetId: dataset.id,
         quality: complete ? (conditions.every(c => c.score.gate === 'passed') ? 'passed' : 'failed') : null,
-        conditions, measurements, ledger: { ...ledger, actualCostUsd: ledger.actualCostComplete ? ledger.actualCostUsd : null },
+        conditions, measurements, ledger: { ...ledger, actualCostUnknown: !ledger.actualCostComplete, actualCostUsd: ledger.actualCostComplete ? ledger.actualCostUsd : null },
         summary: summarizeMeasurements(measurements) };
 }

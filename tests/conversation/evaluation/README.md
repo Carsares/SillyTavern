@@ -187,7 +187,12 @@ The enforced dollar ceiling is conditional on the operator's declared maximum
 rates and the provider honoring output limits; client-side admission cannot
 control an upstream billing violation. A detected usage/bound violation fails the
 run. Cancellation and deadlines stop further dispatch. Unknown paid outcomes stop
-the matrix and are never retried automatically. No budget reservations are refunded.
+the matrix and are never retried automatically. Their full quotations remain held.
+An explicitly confirmed pre-dispatch rejection releases its reservation. Complete,
+within-quote usage settles the reservation to the larger of the known billed cost
+and configured price upper bound, when available. Unknown billed cost stays null.
+The ledger separates cumulative quotations, settled consumption and unresolved
+held quotations; only settled plus held amounts occupy the remaining budget.
 
 Current composition integration gaps are listed in `INTEGRATION-NOTES.md`; pure
 unit success does not establish successful integrated execution.

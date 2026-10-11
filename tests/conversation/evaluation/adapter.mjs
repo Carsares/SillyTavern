@@ -120,6 +120,8 @@ export function createEvaluationAdapter({ executor = 'pi', config = {}, env = pr
             } catch (error) {
                 const failure = blocked(/^[a-z][a-z0-9-]{0,100}$/.test(error?.code ?? '') ? error.code : 'evaluation-run-failed');
                 failure.dispatched = transport.dispatched > 0;
+                failure.providerRequests = transport.dispatched;
+                failure.reservations = transport.reservations;
                 throw failure;
             } finally {
                 if (abort) request.signal?.removeEventListener('abort', abort);

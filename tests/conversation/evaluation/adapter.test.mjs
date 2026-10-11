@@ -177,7 +177,10 @@ test('full-history compaction fails before generation and cleans up without repo
         },
     } });
     const request = input();
-    await assert.rejects(adapter.run({ ...request, ceiling: await adapter.quote(request) }), { code: 'full-history-budget-blocked', dispatched: false });
+    await assert.rejects(adapter.run({ ...request, ceiling: await adapter.quote(request) }), {
+        code: 'full-history-budget-blocked', dispatched: false, providerRequests: 0,
+        reservations: { requests: 0, input: 0, output: 0, costUpper: 0 },
+    });
     assert.equal(compacted, false); assert.equal(removed, true);
 });
 
