@@ -1,11 +1,14 @@
 import { isValidGroupAvatarUrl, stripJsonlExtension } from '../core/utils.js';
+import { MODERN_MESSAGE_SOURCE, listCharacterGreetings, resolveCharacterName, resolveUserName } from './chat-greetings.js';
 
 // extra.api of messages the Modern UI writes itself (new-chat greetings): a source marker, not an API name.
-export const MODERN_MESSAGE_SOURCE = 'modern';
+export { MODERN_MESSAGE_SOURCE };
 
 export function createChatContextSelectorHelpers({
     state,
     getCharacterAvatarUrl,
+    // 群聊开场白从候选里随机挑一条（旧版 getFirstCharacterMessage 用 Math.random）；测试里注入固定值
+    random = Math.random,
 }) {
     function getSelectedCharacter() {
         return state.characters.find(character => character.avatar === state.selected.character) || state.characters[0] || null;
@@ -195,20 +198,11 @@ export function createChatContextSelectorHelpers({
     }
 
     function getCharacterName(character) {
-        return character?.name || character?.data?.name || '未命名角色';
+        return resolveCharacterName(character);
     }
 
     function getUserName() {
-        return state.settings.name1 || state.me?.name || state.me?.handle || 'You';
-    }
-
-    function formatTemplate(value, character) {
-        const userName = getUserName();
-        const characterName = getCharacterName(character);
-        return String(value ?? '')
-            .replaceAll('{{user}}', userName)
-            .replaceAll('{{char}}', characterName)
-            .trim();
+        return resolveUserName(state);
     }
 
     function getMessageTimestamp() {
@@ -230,8 +224,63 @@ export function createChatContextSelectorHelpers({
         };
     }
 
+    /**
+     * 角色卡的全部开场白（first_mes 在前，备用开场白在后，宏已替换）。first_mes 为空时第一条备用开场白就是开场白。
+     * 摘要卡（懒加载列表里的 shallow 卡）没有这些字段，调用前要先取完整卡。
+     * @param {object} character 角色卡
+     * @returns {string[]} 开场白文本
+     */
+    function getCharacterGreetings(character) {
+        return listCharacterGreetings(character, getUserName());
+    }
+
     function getCharacterGreeting(character) {
-        return formatTemplate(character?.data?.first_mes || character?.first_mes || '', character);
+        return getCharacterGreetings(character)[0] || '';
+    }
+
+    /**
+     * 单人聊天新建时的第一条消息：有多条开场白时带 swipes / swipe_id / swipe_info，每个候选的 swipe_info.extra
+     * 都保留 Modern 来源标记；只有一条时是普通消息，没有开场白返回 null。
+     * @param {object} character 完整角色卡
+     * @returns {object | null} 消息对象
+     */
+    function createGreetingMessage(character) {
+        const greetings = getCharacterGreetings(character);
+        if (!greetings.length) {
+            return null;
+        }
+
+        const message = createAssistantMessage(greetings[0], character);
+        if (greetings.length > 1) {
+            message.swipe_id = 0;
+            message.swipes = [...greetings];
+            message.swipe_info = greetings.map(() => ({
+                send_date: message.send_date,
+                extra: structuredClone(message.extra),
+            }));
+        }
+        return message;
+    }
+
+    /**
+     * 新建群聊时某个成员的开场白（旧版 getFirstCharacterMessage）：在 first_mes 和备用开场白里随机挑一条，
+     * 不带候选；消息记下成员头像文件名（original_avatar）和缩略图地址（force_avatar），与引擎写出的群聊消息一致。
+     * @param {object} character 成员的完整角色卡
+     * @returns {object | null} 消息对象，成员没有开场白时为 null
+     */
+    function createGroupMemberGreetingMessage(character) {
+        const greetings = getCharacterGreetings(character);
+        if (!greetings.length) {
+            return null;
+        }
+
+        const index = Math.min(greetings.length - 1, Math.floor(random() * greetings.length));
+        const message = createAssistantMessage(greetings[index], character);
+        if (character?.avatar) {
+            message.original_avatar = character.avatar;
+            message.force_avatar = `/thumbnail?type=avatar&file=${encodeURIComponent(character.avatar)}`;
+        }
+        return message;
     }
 
     function getSelectedChatMetadata(entity, chatId, groupMode = isGroupChatMode()) {
@@ -240,8 +289,11 @@ export function createChatContextSelectorHelpers({
 
     return {
         createAssistantMessage,
+        createGreetingMessage,
+        createGroupMemberGreetingMessage,
         createModernChatId,
         getCharacterGreeting,
+        getCharacterGreetings,
         getCharacterName,
         getChatCacheKey,
         getChatContextKey,

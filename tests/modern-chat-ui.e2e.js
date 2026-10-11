@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createModernResourceFixture, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, mockBridgeFrame, mockModernWorkspace } from './modern-test-utils.js';
 
 /* global document, window, HTMLElement, requestAnimationFrame */
 
@@ -826,5 +826,227 @@ test.describe('Modern chat backups with indistinguishable owners', () => {
         await expect.poll(() => fixture.chatRequests.imports.length).toBe(2);
         expect(fixture.chatRequests.imports[1]).toEqual({ fileName: 'chat_ui____a_20261010-130000.jsonl', avatarUrl: 'UI自检角色A.png' });
         await expect(drawer.locator('[data-chat-backup-restore-confirm]')).toHaveCount(0);
+    });
+});
+
+// 开场白候选（A4）：只有开场白、没有对话过的聊天里左右切换在 Modern 本地完成（改文件 + 通知引擎重开聊天），
+// 不发 swipe；已对话（聊天头有 tainted）的聊天仍交给引擎。
+test.describe('Modern chat opening greetings', () => {
+    test.use({ viewport: desktopViewport });
+
+    function createGreetingFixture({ metadata = {}, messageText = 'Hello from Alice.', alternates = null } = {}) {
+        const fixture = createChatUiFixture({ messageCount: 2 });
+        const now = Date.now();
+        const sendDate = new Date(now - 5000).toISOString();
+        const swipes = [messageText, 'Second hello.', 'Third hello.'];
+        fixture.chatLists['alice.png'] = [
+            { file_id: 'greeting-chat', file_name: 'greeting-chat.jsonl', chat_items: 1, file_size: '1 KB', last_mes: now },
+        ];
+        fixture.messagesByChat['greeting-chat'] = [{
+            name: 'Alice Fixture',
+            is_user: false,
+            is_system: false,
+            send_date: sendDate,
+            mes: messageText,
+            extra: { api: 'modern', model: '' },
+            ...(alternates ? {} : {
+                swipe_id: 0,
+                swipes,
+                swipe_info: swipes.map(() => ({ send_date: sendDate, extra: { api: 'modern', model: '' } })),
+            }),
+        }];
+        fixture.chatMetadata = { 'greeting-chat': { integrity: 'int-1', ...metadata } };
+        if (alternates) {
+            fixture.characters[0].data.alternate_greetings = alternates;
+        }
+        return fixture;
+    }
+
+    async function mockGreetingRoutes(page, fixture) {
+        const saves = [];
+        await mockChatUiRoutes(page, fixture);
+        await page.route('**/api/chats/get', route => {
+            const payload = postJson(route);
+            const chatId = stripJsonlExtension(payload.file_name);
+            return fulfillJson(route, [
+                { chat_metadata: structuredClone(fixture.chatMetadata?.[chatId] || {}), user_name: 'Modern E2E User', character_name: payload.ch_name },
+                ...structuredClone(fixture.messagesByChat[chatId] || []),
+            ]);
+        });
+        await page.route('**/api/chats/save', route => {
+            const payload = postJson(route);
+            saves.push(payload);
+            const chatId = stripJsonlExtension(payload.file_name);
+            const [header, ...messages] = payload.chat;
+            fixture.messagesByChat[chatId] = messages;
+            const integrity = `int-${saves.length + 1}`;
+            fixture.chatMetadata[chatId] = { ...header.chat_metadata, integrity };
+            return fulfillJson(route, { ok: true, integrity });
+        });
+        return saves;
+    }
+
+    test('switches greetings locally, writes swipe_id and mes, and never sends a swipe to the engine', async ({ page }) => {
+        const fixture = createGreetingFixture();
+        const saves = await mockGreetingRoutes(page, fixture);
+        const calls = await mockBridgeFrame(page);
+        await openChat(page);
+
+        const counter = page.locator('[data-greeting-counter]');
+        const openingBody = page.locator('.message-opening .message-body');
+        await expect(counter).toHaveText('开场白 1/3');
+        await expect(page.locator('.message-foot')).toHaveCount(0);
+        await expect(page.locator('[data-swipe-message="0"][data-swipe-direction="left"]')).toHaveAttribute('title', '上一个开场白');
+        await expect(page.locator('[data-swipe-message="0"][data-swipe-direction="right"]')).toHaveAttribute('title', '下一个开场白');
+
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="right"]').click();
+        await expect(counter).toHaveText('开场白 2/3');
+        await expect(openingBody).toContainText('Second hello.');
+
+        expect(saves).toHaveLength(1);
+        const [header, message] = saves[0].chat;
+        expect(saves[0]).toMatchObject({ file_name: 'greeting-chat', avatar_url: 'alice.png' });
+        expect(header.chat_metadata).toEqual({ integrity: 'int-1' });
+        expect(message).toMatchObject({
+            swipe_id: 1,
+            mes: 'Second hello.',
+            swipes: ['Hello from Alice.', 'Second hello.', 'Third hello.'],
+            extra: { api: 'modern', model: '' },
+        });
+        expect(message.send_date).toBe(fixture.messagesByChat['greeting-chat'][0].send_date);
+        await expect.poll(() => calls.filter(call => call.action === 'reloadChat').map(call => call.payload)).toEqual([{ avatar: 'alice.png', chat: 'greeting-chat' }]);
+
+        // left from the second goes to the first, left again wraps to the last; each save carries the revision the server issued last
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="left"]').click();
+        await expect(counter).toHaveText('开场白 1/3');
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="left"]').click();
+        await expect(counter).toHaveText('开场白 3/3');
+        await expect(openingBody).toContainText('Third hello.');
+        expect(saves.map(save => save.chat[0].chat_metadata.integrity)).toEqual(['int-1', 'int-2', 'int-3']);
+        expect(saves.at(-1).chat[1]).toMatchObject({ swipe_id: 2, mes: 'Third hello.' });
+
+        // right from the last wraps to the first
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="right"]').click();
+        await expect(counter).toHaveText('开场白 1/3');
+        await expect(openingBody).toContainText('Hello from Alice.');
+
+        expect(calls.map(call => call.action)).not.toContain('swipe');
+        expect(calls.map(call => call.action)).not.toContain('generate');
+    });
+
+    test('reports a failed engine reload next to the saved switch', async ({ page }) => {
+        const fixture = createGreetingFixture();
+        const saves = await mockGreetingRoutes(page, fixture);
+        await mockBridgeFrame(page, { replies: { reloadChat: () => { throw new Error('engine offline'); } } });
+        await openChat(page);
+
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="right"]').click();
+
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 2/3');
+        expect(saves).toHaveLength(1);
+        await expect(page.locator('.toast')).toContainText('开场白已切换');
+        await expect(page.locator('.toast')).toContainText('engine offline');
+    });
+
+    test('sends the switch to the engine once the chat has been talked in', async ({ page }) => {
+        const fixture = createGreetingFixture({ metadata: { tainted: true } });
+        const saves = await mockGreetingRoutes(page, fixture);
+        const calls = await mockBridgeFrame(page, {
+            replies: {
+                swipe: ({ chat, messageIndex }) => {
+                    const message = fixture.messagesByChat[stripJsonlExtension(chat)][messageIndex];
+                    message.swipe_id = 1;
+                    message.mes = message.swipes[1];
+                    return { chat: `${stripJsonlExtension(chat)}.jsonl`, messageIndex, swipeId: 1, swipeCount: 3, saved: true };
+                },
+            },
+        });
+        await openChat(page);
+
+        // the buttons are plain candidate buttons here, and the counter still names the greeting
+        await expect(page.locator('[data-swipe-message="0"][data-swipe-direction="right"]')).toHaveAttribute('title', '下一个候选');
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 1/3');
+
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="right"]').click();
+
+        await expect.poll(() => calls.filter(call => call.action === 'swipe').map(call => call.payload)).toEqual([
+            { avatar: 'alice.png', groupId: null, chat: 'greeting-chat', integrity: 'int-1', messageIndex: 0, direction: 'right' },
+        ]);
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 2/3');
+        expect(saves).toHaveLength(0);
+    });
+
+    test('keeps the engine in charge of a greeting that is followed by other messages', async ({ page }) => {
+        const fixture = createGreetingFixture();
+        const sendDate = fixture.messagesByChat['greeting-chat'][0].send_date;
+        fixture.messagesByChat['greeting-chat'][0].swipe_id = 1;
+        fixture.messagesByChat['greeting-chat'][0].mes = 'Second hello.';
+        fixture.messagesByChat['greeting-chat'].push(
+            { name: 'Modern E2E User', is_user: true, mes: 'moving on', send_date: sendDate },
+            { name: 'Alice Fixture', is_user: false, mes: 'a reply', send_date: sendDate },
+        );
+        fixture.chatLists['alice.png'][0].chat_items = 3;
+        const saves = await mockGreetingRoutes(page, fixture);
+        const calls = await mockBridgeFrame(page);
+        await openChat(page);
+
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 2/3');
+        // only the last message carries swipe buttons, and the opening message does not repeat the counter in a footer
+        await expect(page.locator('[data-swipe-message="0"]')).toHaveCount(0);
+        await expect(page.locator('.message-list > .message').first().locator('.message-foot')).toHaveCount(0);
+        expect(saves).toHaveLength(0);
+        expect(calls.map(call => call.action)).not.toContain('swipe');
+    });
+
+    test('loads the card alternates into an old greeting-only chat', async ({ page }) => {
+        const fixture = createGreetingFixture({ alternates: ['Alt A for {{user}}.', 'Alt B.'] });
+        const saves = await mockGreetingRoutes(page, fixture);
+        const calls = await mockBridgeFrame(page);
+        await openChat(page);
+
+        const button = page.locator('[data-load-alternate-greetings]');
+        await expect(button).toContainText('载入备用开场白（2 条）');
+        await expect(page.locator('[data-greeting-counter]')).toHaveCount(0);
+
+        await button.click();
+
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 1/3');
+        await expect(button).toHaveCount(0);
+        expect(saves).toHaveLength(1);
+        expect(saves[0].chat[1]).toMatchObject({
+            mes: 'Hello from Alice.',
+            swipe_id: 0,
+            swipes: ['Hello from Alice.', 'Alt A for Modern E2E User.', 'Alt B.'],
+        });
+        expect(saves[0].chat[1].swipe_info).toHaveLength(3);
+        await expect.poll(() => calls.filter(call => call.action === 'reloadChat').length).toBe(1);
+
+        // the new candidates are switchable straight away
+        await page.locator('[data-swipe-message="0"][data-swipe-direction="right"]').click();
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 2/3');
+        expect(calls.map(call => call.action)).not.toContain('swipe');
+    });
+
+    test('does not load alternates when the first message is not one of the card greetings', async ({ page }) => {
+        const fixture = createGreetingFixture({ alternates: ['Alt A.', 'Alt B.'], messageText: 'A first message nobody wrote on the card.' });
+        const saves = await mockGreetingRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openChat(page);
+
+        await page.locator('[data-load-alternate-greetings]').click();
+
+        await expect(page.locator('.toast')).toContainText('当前开场白和角色卡上的开场白不一致');
+        expect(saves).toHaveLength(0);
+        await expect(page.locator('[data-greeting-counter]')).toHaveCount(0);
+    });
+
+    test('does not offer to load alternates once the chat has been talked in', async ({ page }) => {
+        const fixture = createGreetingFixture({ alternates: ['Alt A.', 'Alt B.'], metadata: { tainted: true } });
+        await mockGreetingRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openChat(page);
+
+        await expect(page.locator('.message-list')).toContainText('Hello from Alice.');
+        await expect(page.locator('[data-load-alternate-greetings]')).toHaveCount(0);
     });
 });

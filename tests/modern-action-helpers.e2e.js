@@ -7,6 +7,13 @@ import { createChatFileActions } from '../public/modern/actions/chat-files.js';
 import { createChatFileManagementActions } from '../public/modern/actions/chat-file-management.js';
 import { createChatGenerationActions } from '../public/modern/actions/chat-generation.js';
 import { createChatContextLoaderActions } from '../public/modern/actions/chat-context-loaders.js';
+import { createChatContextSelectorHelpers } from '../public/modern/actions/chat-context-selectors.js';
+import {
+    canOfferAlternateGreetings,
+    canSwitchGreetingLocally,
+    planAlternateGreetingLoad,
+    switchGreetingMessage,
+} from '../public/modern/actions/chat-greetings.js';
 import { createGroupActions } from '../public/modern/actions/groups.js';
 import { buildOpenAiPresetFromSettings, useOpenAiPresetFields } from '../public/modern/actions/openai-preset-fields.js';
 import { createPersonaActions } from '../public/modern/actions/personas.js';
@@ -2277,5 +2284,179 @@ test.describe('Modern action helpers', () => {
         expect(state.backgroundFolderFilter).toBe('');
         expect(state.backgroundFolderAssignment).toBe('');
         expect(getBackgroundFolderById('folder-a')).toBeNull();
+    });
+});
+
+// 新建聊天时的开场白构造（对照旧版 getFirstMessage / getFirstCharacterMessage）和开场白候选的本地切换
+test.describe('Modern greeting helpers', () => {
+    const alice = {
+        avatar: 'alice.png',
+        name: 'Alice',
+        data: {
+            name: 'Alice',
+            first_mes: '  Hello {{user}}, I am {{char}}.  ',
+            alternate_greetings: ['Alt one for {{user}}.', '   ', 'Alt {{char}} two.', 42],
+        },
+    };
+
+    function createHelpers(random = () => 0) {
+        return createChatContextSelectorHelpers({
+            state: { settings: { name1: 'Mei' }, me: null },
+            getCharacterAvatarUrl: () => '',
+            random,
+        });
+    }
+
+    test('lists first_mes then alternate greetings with macros replaced and blanks dropped', () => {
+        const helpers = createHelpers();
+
+        expect(helpers.getCharacterGreetings(alice)).toEqual([
+            'Hello Mei, I am Alice.',
+            'Alt one for Mei.',
+            'Alt Alice two.',
+        ]);
+        expect(helpers.getCharacterGreeting(alice)).toBe('Hello Mei, I am Alice.');
+    });
+
+    test('uses the first alternate greeting when first_mes is empty', () => {
+        const helpers = createHelpers();
+        const card = { name: 'Bob', data: { name: 'Bob', first_mes: '', alternate_greetings: ['Alt only {{char}}.', 'Second.'] } };
+
+        expect(helpers.getCharacterGreetings(card)).toEqual(['Alt only Bob.', 'Second.']);
+        const message = helpers.createGreetingMessage(card);
+        expect(message.mes).toBe('Alt only Bob.');
+        expect(message.swipes).toEqual(['Alt only Bob.', 'Second.']);
+        expect(message.swipe_id).toBe(0);
+    });
+
+    test('falls back to the top-level first_mes and tolerates a missing alternate list', () => {
+        const helpers = createHelpers();
+
+        expect(helpers.getCharacterGreetings({ name: 'Old', first_mes: 'Top level.' })).toEqual(['Top level.']);
+        expect(helpers.getCharacterGreetings({ name: 'Odd', data: { first_mes: 'Fine.', alternate_greetings: 'not an array' } })).toEqual(['Fine.']);
+        expect(helpers.getCharacterGreetings({ name: 'Empty', data: { first_mes: '', alternate_greetings: [] } })).toEqual([]);
+        expect(helpers.createGreetingMessage({ name: 'Empty', data: { first_mes: '  ' } })).toBeNull();
+    });
+
+    test('creates a single greeting without swipes', () => {
+        const helpers = createHelpers();
+        const message = helpers.createGreetingMessage({ name: 'Solo', data: { first_mes: 'Hi {{user}}.', alternate_greetings: [] } });
+
+        expect(message).toMatchObject({ name: 'Solo', is_user: false, is_system: false, mes: 'Hi Mei.', extra: { api: 'modern', model: '' } });
+        expect(message).not.toHaveProperty('swipes');
+        expect(message).not.toHaveProperty('swipe_id');
+        expect(message).not.toHaveProperty('swipe_info');
+    });
+
+    test('creates swipes with swipe_info that keeps the source marker on every candidate', () => {
+        const helpers = createHelpers();
+        const message = helpers.createGreetingMessage(alice);
+
+        expect(message.mes).toBe('Hello Mei, I am Alice.');
+        expect(message.swipe_id).toBe(0);
+        expect(message.swipes).toEqual(['Hello Mei, I am Alice.', 'Alt one for Mei.', 'Alt Alice two.']);
+        expect(message.swipe_info).toHaveLength(3);
+        for (const info of message.swipe_info) {
+            expect(info).toEqual({ send_date: message.send_date, extra: { api: 'modern', model: '' } });
+        }
+        // each candidate owns its extra: editing one must not leak into the others
+        message.swipe_info[0].extra.display_text = 'x';
+        expect(message.swipe_info[1].extra).not.toHaveProperty('display_text');
+        expect(message.extra).not.toHaveProperty('display_text');
+    });
+
+    test('creates a group member greeting by picking one candidate without swipes', () => {
+        const picks = [0, 0.5, 0.999999];
+        const results = picks.map(value => createHelpers(() => value).createGroupMemberGreetingMessage(alice));
+
+        expect(results.map(message => message.mes)).toEqual(['Hello Mei, I am Alice.', 'Alt one for Mei.', 'Alt Alice two.']);
+        for (const message of results) {
+            expect(message).toMatchObject({
+                name: 'Alice',
+                is_user: false,
+                is_system: false,
+                original_avatar: 'alice.png',
+                force_avatar: '/thumbnail?type=avatar&file=alice.png',
+                extra: { api: 'modern' },
+            });
+            expect(message).not.toHaveProperty('swipes');
+        }
+        expect(createHelpers().createGroupMemberGreetingMessage({ name: 'Mute', avatar: 'mute.png', data: { first_mes: '' } })).toBeNull();
+    });
+
+    test('allows local switching only for an untouched, greeting-only chat', () => {
+        const greeting = createHelpers().createGreetingMessage(alice);
+        const userMessage = { name: 'Mei', is_user: true, mes: 'hi' };
+
+        expect(canSwitchGreetingLocally([greeting], {})).toBe(true);
+        expect(canSwitchGreetingLocally([greeting], undefined)).toBe(true);
+        expect(canSwitchGreetingLocally([greeting], { tainted: true })).toBe(false);
+        expect(canSwitchGreetingLocally([greeting, userMessage], {})).toBe(false);
+        expect(canSwitchGreetingLocally([{ ...greeting, swipes: ['only one'] }], {})).toBe(false);
+        expect(canSwitchGreetingLocally([{ ...greeting, swipes: ['a', 7] }], {})).toBe(false);
+        expect(canSwitchGreetingLocally([{ ...greeting, is_system: true }], {})).toBe(false);
+        expect(canSwitchGreetingLocally([], {})).toBe(false);
+    });
+
+    test('cycles greetings in both directions and syncs mes, send_date and extra from swipe_info', () => {
+        const greeting = createHelpers().createGreetingMessage(alice);
+        greeting.swipe_info[1] = { send_date: 'second-date', extra: { api: 'modern', model: '', note: 'second' } };
+
+        const right = switchGreetingMessage(greeting, 'right');
+        expect(right).toMatchObject({ swipeId: 1, swipeCount: 3 });
+        expect(right.message).toMatchObject({ swipe_id: 1, mes: 'Alt one for Mei.', send_date: 'second-date', extra: { api: 'modern', model: '', note: 'second' } });
+        expect(greeting.swipe_id).toBe(0);
+
+        const last = switchGreetingMessage({ ...right.message, swipe_id: 2, mes: right.message.swipes[2] }, 'right');
+        expect(last.swipeId).toBe(0);
+        expect(last.message.mes).toBe('Hello Mei, I am Alice.');
+
+        const wrapped = switchGreetingMessage(greeting, 'left');
+        expect(wrapped.swipeId).toBe(2);
+        expect(wrapped.message.mes).toBe('Alt Alice two.');
+        expect(wrapped.message.swipes).toEqual(greeting.swipes);
+    });
+
+    test('keeps ad-hoc changes of the shown greeting in its own swipe_info when switching away', () => {
+        const greeting = createHelpers().createGreetingMessage(alice);
+        const edited = { ...greeting, extra: { ...greeting.extra, display_text: 'translated' } };
+
+        const away = switchGreetingMessage(edited, 'right');
+        expect(away.message.extra).toEqual({ api: 'modern', model: '' });
+        expect(away.message.swipe_info[0].extra).toMatchObject({ display_text: 'translated' });
+
+        const back = switchGreetingMessage(away.message, 'left');
+        expect(back.message.extra).toMatchObject({ display_text: 'translated' });
+        expect(back.message.mes).toBe('Hello Mei, I am Alice.');
+    });
+
+    test('offers and plans the alternate greetings for an old greeting-only chat', () => {
+        const oldChat = [{ name: 'Alice', is_user: false, is_system: false, send_date: 'then', mes: 'Hello Mei, I am Alice.', extra: { api: 'modern', model: '' } }];
+
+        expect(canOfferAlternateGreetings({ entity: alice, groupMode: false, messages: oldChat, metadata: {} })).toBe(true);
+        expect(canOfferAlternateGreetings({ entity: alice, groupMode: true, messages: oldChat, metadata: {} })).toBe(false);
+        expect(canOfferAlternateGreetings({ entity: alice, groupMode: false, messages: oldChat, metadata: { tainted: true } })).toBe(false);
+        expect(canOfferAlternateGreetings({ entity: { name: 'Plain', data: { first_mes: 'x' } }, groupMode: false, messages: oldChat, metadata: {} })).toBe(false);
+        expect(canOfferAlternateGreetings({ entity: alice, groupMode: false, messages: [...oldChat, { is_user: true, mes: 'hi' }], metadata: {} })).toBe(false);
+
+        const plan = planAlternateGreetingLoad({ messages: oldChat, metadata: {}, character: alice, userName: 'Mei' });
+        expect(plan).toMatchObject({ swipeId: 0, swipeCount: 3 });
+        expect(plan.message.swipes).toEqual(['Hello Mei, I am Alice.', 'Alt one for Mei.', 'Alt Alice two.']);
+        expect(plan.message.swipe_info.map(info => info.extra)).toEqual(Array(3).fill({ api: 'modern', model: '' }));
+
+        // the shown text is the second greeting: it stays as it is and its index is recorded
+        const second = planAlternateGreetingLoad({ messages: [{ ...oldChat[0], mes: 'Alt one for Mei.' }], metadata: {}, character: alice, userName: 'Mei' });
+        expect(second).toMatchObject({ swipeId: 1, swipeCount: 3 });
+        expect(second.message.mes).toBe('Alt one for Mei.');
+    });
+
+    test('refuses to load alternate greetings when the first message is not one of the card greetings', () => {
+        const custom = [{ name: 'Alice', is_user: false, is_system: false, mes: 'Something the user wrote.' }];
+
+        expect(planAlternateGreetingLoad({ messages: custom, metadata: {}, character: alice, userName: 'Mei' })).toEqual({
+            error: '当前开场白和角色卡上的开场白不一致，没有载入备用开场白。',
+        });
+        expect(planAlternateGreetingLoad({ messages: custom, metadata: { tainted: true }, character: alice, userName: 'Mei' })).toHaveProperty('error');
+        expect(planAlternateGreetingLoad({ messages: custom, metadata: {}, character: { name: 'Solo', data: { first_mes: 'x' } }, userName: 'Mei' })).toEqual({ error: '角色卡没有备用开场白。' });
     });
 });

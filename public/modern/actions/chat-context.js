@@ -31,9 +31,9 @@ export function createChatContextActions({
     reloadChat = noEngineSync,
 }) {
     const {
-        createAssistantMessage,
+        createGreetingMessage,
+        createGroupMemberGreetingMessage,
         createModernChatId,
-        getCharacterGreeting,
         getCharacterName,
         getChatCacheKey,
         getChatContextKey,
@@ -604,6 +604,39 @@ export function createChatContextActions({
     }
 
     /**
+     * updateModernChat 加引擎同步：消息保存成功后，仍持有文件队列时就登记 reloadChat（排在后面的生成会在
+     * waitForEngineSync 里看到它）。engineSync 不在这里等待，调用方决定何时等：界面可以先刷新，再等引擎。
+     * 不检查是否在生成：调用方自己管理（例如开场白切换用 beginGeneration 占住界面）。
+     * @param {object} entity 角色或群聊
+     * @param {string} chatId 聊天文件 ID
+     * @param {(messages: object[]) => any} updateMessages 就地修改消息副本，抛错则不保存
+     * @param {{ groupMode?: boolean }} [options] 群聊模式，默认取当前聊天模式
+     * @returns {Promise<{ result: any, engineSync: Promise<{ ok: boolean, error?: string }> }>} result 为回调返回值，
+     * engineSync 为 reloadChat 的结果（永不 reject）
+     */
+    async function updateModernChatAndSync(entity, chatId, updateMessages, { groupMode = isGroupChatMode() } = {}) {
+        if (typeof updateMessages !== 'function') {
+            throw new Error('聊天消息更新方法无效。');
+        }
+
+        let engineSync = null;
+        const result = await runModernChatFileOperation(entity, chatId, async ({ contextKey, chatId: normalizedChatId }) => {
+            const cacheKey = getChatCacheKey(contextKey, normalizedChatId);
+            if (!state.chatMessages[cacheKey]) {
+                // 没有读过这份聊天就不能保存：用空消息覆盖会清空聊天文件
+                throw new Error('聊天记录尚未读取，无法保存。');
+            }
+            const messages = structuredClone(state.chatMessages[cacheKey]);
+            const outcome = await updateMessages(messages);
+            await saveModernChatNow(entity, normalizedChatId, messages, { contextKey, groupMode });
+            engineSync = reloadChat(buildReloadChatPayload(entity, groupMode, normalizedChatId));
+            return outcome;
+        }, { groupMode });
+
+        return { result, engineSync: Promise.resolve(engineSync).then(reload => reload || { ok: true }) };
+    }
+
+    /**
      * 聊天头元数据（chat_metadata）的读改写原语：作者注释、背景锁定等聊天级设置都经此写入。
      * 在聊天文件操作队列里克隆已知元数据，交给 mutate 就地修改，连同现有消息一起保存；保存成功后记下服务端新签发的
      * integrity，再等待引擎重开该聊天（reloadChat），使下一次生成读到新元数据且不会因旧 integrity 冲突。
@@ -662,6 +695,48 @@ export function createChatContextActions({
         return changeModernChatFile(contextKey, chatId, '删除', operation);
     }
 
+    // 懒加载角色列表（performance.lazyLoadCharacters）里的卡只有摘要，没有 first_mes / alternate_greetings，要取完整卡
+    async function resolveFullCharacter(character) {
+        if (!character?.shallow) {
+            return character;
+        }
+
+        const full = await apiFetch('/api/characters/get', { body: { avatar_url: character.avatar } });
+        if (!full || typeof full !== 'object') {
+            throw new Error(`角色卡「${getCharacterName(character)}」读取失败，无法生成开场白。`);
+        }
+        return full;
+    }
+
+    /**
+     * 新建聊天时写入的开场白消息，对照旧版：
+     * - 单人聊天：getFirstMessage，[first_mes, ...备用开场白] 作为候选，first_mes 为空时第一条备用开场白顶上；
+     * - 群聊：getGroupChat 的新聊天分支，每个成员各一条，从该成员的开场白里随机挑，没有候选、没有开场白的成员跳过。
+     * @param {object} entity 角色或群聊
+     * @param {boolean} groupMode 是否群聊
+     * @returns {Promise<object[]>} 要写进新聊天的消息
+     */
+    async function createOpeningMessages(entity, groupMode) {
+        if (!groupMode) {
+            const greeting = createGreetingMessage(await resolveFullCharacter(entity));
+            return greeting ? [greeting] : [];
+        }
+
+        const messages = [];
+        for (const member of Array.isArray(entity?.members) ? entity.members : []) {
+            const listed = state.characters.find(character => character.avatar === member || character.name === member);
+            if (!listed) {
+                continue;
+            }
+
+            const greeting = createGroupMemberGreetingMessage(await resolveFullCharacter(listed));
+            if (greeting) {
+                messages.push(greeting);
+            }
+        }
+        return messages;
+    }
+
     const chatFileCreationPromises = new Map();
 
     function createModernChatFile(entity) {
@@ -677,9 +752,9 @@ export function createChatContextActions({
         }
 
         const creation = (async () => {
+            // 先取好开场白：摘要卡没有开场白字段，读不到时不创建聊天文件
+            const messages = await createOpeningMessages(entity, groupMode);
             const chatId = createModernChatId();
-            const greeting = groupMode ? '' : getCharacterGreeting(entity);
-            const messages = greeting ? [createAssistantMessage(greeting, entity)] : [];
             const cacheKey = getChatCacheKey(contextKey, chatId);
             function clearCreatedChatState() {
                 delete state.chatMetadata[cacheKey];
@@ -804,6 +879,7 @@ export function createChatContextActions({
         deleteGroupMetadata,
         saveModernChat,
         updateModernChat,
+        updateModernChatAndSync,
         updateModernChatMetadata,
         runModernChatFileOperation,
         renameModernChatFile,

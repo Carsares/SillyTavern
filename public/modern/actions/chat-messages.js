@@ -1,3 +1,5 @@
+import { describeReloadFailure } from '../core/bridge-reload.js';
+
 export function createChatMessageActions({
     state,
     render,
@@ -15,6 +17,14 @@ export function createChatMessageActions({
     // 同步通道：消息编辑/删除保存成功后，用当前选中实体口径（与生成引擎 generate 一致）通知 iframe 重载当前聊天。
     function buildReloadChatPayload(entity, groupMode, chatId) {
         return groupMode ? { groupId: entity.id, chat: chatId } : { avatar: entity.avatar, chat: chatId };
+    }
+
+    // 等引擎重开聊天；失败时在已有的成功提示之外补一条说明（生成引擎仍可能用旧内容）
+    async function syncEngineAfterEdit(entity, groupMode, chatId, doneTitle) {
+        const reload = await reloadChat(buildReloadChatPayload(entity, groupMode, chatId));
+        if (reload && reload.ok === false) {
+            showToast(doneTitle, `已保存到聊天文件${describeReloadFailure(reload)}`);
+        }
     }
 
     function findQueuedMessageIndex(messages, originalMessage, originalIndex) {
@@ -85,9 +95,10 @@ export function createChatMessageActions({
         await refreshSelectedChatList(entity, { groupMode });
         state.chatMessageDeleteConfirm = { key: '', index: -1 };
         showToast('消息已删除', deletedMessage?.name || '当前聊天');
-        // 删除已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照。
-        await reloadChat(buildReloadChatPayload(entity, groupMode, chatId));
+        // 文件已改好：界面先刷新，不等引擎（引擎还没启动时重载要等它加载完）。
         render();
+        // 删除已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照；同步失败只提示，不当作删除失败。
+        await syncEngineAfterEdit(entity, groupMode, chatId, '消息已删除');
     }
 
     function beginModernMessageDelete(messageIndex) {
@@ -224,9 +235,10 @@ export function createChatMessageActions({
         await refreshSelectedChatList(entity, { groupMode });
         state.chatEditing = { key: '', index: -1, text: '' };
         showToast('消息已保存', nextMessage.name || '当前聊天');
-        // 编辑已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照。
-        await reloadChat(buildReloadChatPayload(entity, groupMode, chatId));
+        // 文件已改好：界面先刷新，不等引擎（引擎还没启动时重载要等它加载完）。
         render();
+        // 编辑已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照；同步失败只提示，不当作保存失败。
+        await syncEngineAfterEdit(entity, groupMode, chatId, '消息已保存');
     }
 
     return {

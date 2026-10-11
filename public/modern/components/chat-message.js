@@ -1,4 +1,5 @@
 import { MODERN_MESSAGE_SOURCE } from '../actions/chat-context-selectors.js';
+import { canOfferAlternateGreetings, canSwitchGreetingLocally, clampSwipeId, countAlternateGreetings } from '../actions/chat-greetings.js';
 import { createChatMessageContentComponents } from './chat-message-content.js';
 
 // extra.api values that mark where a message came from rather than which API produced it: greetings the
@@ -23,7 +24,9 @@ export function createChatMessageComponents({
     formatNumber,
     getCurrentMessageLimit,
     getCurrentDraftKey,
+    getSelectedChatEntity,
     getSelectedChatMessages,
+    isGroupChatMode,
 }) {
     const {
         renderEmptyReplyHint,
@@ -89,8 +92,20 @@ export function createChatMessageComponents({
         const model = getMessageSourceLabel(message.extra);
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
         const isDeleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
-        const canSwipe = !message.is_user && !message.is_system && messageIndex === getSelectedChatMessages().length - 1;
+        const chatMessages = getSelectedChatMessages();
+        const canSwipe = !message.is_user && !message.is_system && messageIndex === chatMessages.length - 1;
         const isOpeningMessage = messageIndex === 0 && !message.is_user && !message.is_system;
+        const chatMetadata = state.chatMetadata?.[getCurrentDraftKey()];
+        // 开场消息有多个候选时显示「开场白 i/N」；聊天里只有开场白、没对话过时，左右按钮切的就是开场白（本地切换，不调用引擎）
+        const greetingCount = isOpeningMessage && Array.isArray(message.swipes) ? message.swipes.length : 0;
+        const greetingCounter = greetingCount > 1 ? `开场白 ${clampSwipeId(message.swipe_id, greetingCount) + 1}/${greetingCount}` : '';
+        const swipeNoun = isOpeningMessage && canSwitchGreetingLocally(chatMessages, chatMetadata) ? '开场白' : '候选';
+        const loadAlternatesTarget = isOpeningMessage && canOfferAlternateGreetings({
+            entity: getSelectedChatEntity(),
+            groupMode: isGroupChatMode(),
+            messages: chatMessages,
+            metadata: chatMetadata,
+        }) ? getSelectedChatEntity() : null;
 
         return `
         <article class="message ${message.is_user ? 'user' : ''}">
@@ -99,10 +114,10 @@ export function createChatMessageComponents({
                 <span class="message-actions">
                     <span>${escapeHtml(formatDate(message.send_date))}</span>
                     ${canSwipe ? `
-                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="left" title="上一个候选">
+                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="left" title="上一个${swipeNoun}" aria-label="上一个${swipeNoun}">
                             <i class="fa-solid fa-chevron-left"></i>
                         </button>
-                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="right" title="下一个候选">
+                        <button class="icon-button mini" type="button" data-swipe-message="${messageIndex}" data-swipe-direction="right" title="下一个${swipeNoun}" aria-label="下一个${swipeNoun}">
                             <i class="fa-solid fa-chevron-right"></i>
                         </button>
                     ` : ''}
@@ -128,17 +143,17 @@ export function createChatMessageComponents({
                         </button>
                     </div>
                 </div>
-            ` : renderMessageBody(text, messageIndex, isOpeningMessage)}
+            ` : renderMessageBody(text, messageIndex, isOpeningMessage, { counter: greetingCounter, alternatesTarget: loadAlternatesTarget })}
             ${isEditing ? '' : renderEmptyReplyHint(message, rawText)}
             ${renderMessageReasoning(message)}
             ${renderMessageAttachments(message)}
-            ${renderMessageFoot(message, model)}
+            ${renderMessageFoot(message, model, { hideSwipeCount: !!greetingCounter && !isEditing })}
             ${isDeleting ? renderMessageManagePanel(message, messageIndex) : ''}
         </article>
     `;
     }
 
-    function renderMessageBody(text, messageIndex, isOpeningMessage) {
+    function renderMessageBody(text, messageIndex, isOpeningMessage, { counter = '', alternatesTarget = null } = {}) {
         if (!isOpeningMessage) {
             return `<div class="message-body">${renderMessageText(text)}</div>`;
         }
@@ -149,7 +164,10 @@ export function createChatMessageComponents({
         <section class="message-opening">
             ${canExpand ? `<input class="visually-hidden message-opening-toggle" id="${toggleId}" type="checkbox" data-opening-message-toggle>` : ''}
             <div class="message-opening-header">
-                <h3 class="message-opening-title">开场消息</h3>
+                <div class="message-opening-heading">
+                    <h3 class="message-opening-title">开场消息</h3>
+                    ${counter ? `<span class="message-opening-counter" data-greeting-counter>${escapeHtml(counter)}</span>` : ''}
+                </div>
                 ${canExpand ? `
                     <label class="secondary-button message-opening-action" for="${toggleId}" data-toggle-opening-message>
                         <span class="message-opening-expand"><i class="fa-solid fa-chevron-down"></i> 展开</span>
@@ -158,6 +176,14 @@ export function createChatMessageComponents({
                 ` : ''}
             </div>
             <div class="message-body">${renderMessageText(text)}</div>
+            ${alternatesTarget ? `
+                <div class="message-opening-alternates">
+                    <button class="secondary-button compact-button" type="button" data-load-alternate-greetings ${state.engine.generating ? 'disabled' : ''} title="把角色卡上的备用开场白加进这条开场消息，之后可以左右切换">
+                        <i class="fa-solid fa-layer-group"></i>
+                        载入备用开场白（${countAlternateGreetings(alternatesTarget)} 条）
+                    </button>
+                </div>
+            ` : ''}
         </section>
     `;
     }

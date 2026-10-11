@@ -579,6 +579,164 @@ test.describe('Modern chat files', () => {
         expect(await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-chat-last-used:v1') || '{}'))).toEqual({ 'mock.png': createdChatId });
     });
 
+    test('writes the card greeting and its alternates into a new chat as swipes', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.character.data.alternate_greetings = ['Alt one for {{user}}.', 'Alt {{char}} two.'];
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        const [header, greeting, ...rest] = fixture.requests.saves[0].chat;
+        expect(header.chat_metadata).toEqual({});
+        expect(rest).toEqual([]);
+        expect(greeting).toMatchObject({
+            name: 'Mock Character',
+            is_user: false,
+            mes: 'Hello Modern User.',
+            swipe_id: 0,
+            swipes: ['Hello Modern User.', 'Alt one for Modern User.', 'Alt Mock Character two.'],
+            extra: { api: 'modern' },
+        });
+        expect(greeting.swipe_info).toHaveLength(3);
+        for (const info of greeting.swipe_info) {
+            expect(info).toEqual({ send_date: greeting.send_date, extra: { api: 'modern', model: '' } });
+        }
+
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 1/3');
+        await expect(page.locator('[data-swipe-message="0"][data-swipe-direction="right"]')).toHaveAttribute('aria-label', '下一个开场白');
+        await expect(page.locator('.message-foot')).toHaveCount(0);
+    });
+
+    test('uses the first alternate greeting when the card has no first message', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.character.data.first_mes = '';
+        fixture.character.data.alternate_greetings = ['Only alternate for {{user}}.', 'Second alternate.'];
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        const greeting = fixture.requests.saves[0].chat[1];
+        expect(greeting).toMatchObject({
+            mes: 'Only alternate for Modern User.',
+            swipe_id: 0,
+            swipes: ['Only alternate for Modern User.', 'Second alternate.'],
+        });
+        await expect(page.locator('[data-greeting-counter]')).toHaveText('开场白 1/2');
+    });
+
+    test('writes a single greeting without swipes', async ({ page }) => {
+        const fixture = createChatFixture();
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        const greeting = fixture.requests.saves[0].chat[1];
+        expect(greeting).toMatchObject({ mes: 'Hello Modern User.', extra: { api: 'modern' } });
+        expect(greeting).not.toHaveProperty('swipes');
+        expect(greeting).not.toHaveProperty('swipe_id');
+        expect(greeting).not.toHaveProperty('swipe_info');
+        await expect(page.locator('[data-greeting-counter]')).toHaveCount(0);
+    });
+
+    test('creates a chat without a greeting when the card has none', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.character.data.first_mes = '';
+        fixture.character.data.alternate_greetings = ['   '];
+        await mockModernChatWorkspace(page, fixture);
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        expect(fixture.requests.saves[0].chat).toHaveLength(1);
+        expect(fixture.requests.saves[0].chat[0]).toHaveProperty('chat_metadata');
+    });
+
+    test('reads the full card before building the greeting when the character list is shallow', async ({ page }) => {
+        const fixture = createChatFixture();
+        const fullCharacter = {
+            ...fixture.character,
+            data: { ...fixture.character.data, first_mes: 'Full card hello.', alternate_greetings: ['Full card alternate.'] },
+        };
+        fixture.character = { avatar: 'mock.png', name: 'Mock Character', shallow: true, data: { name: 'Mock Character' } };
+        const cardRequests = [];
+        await mockModernChatWorkspace(page, fixture);
+        await page.route('**/api/characters/get', route => {
+            cardRequests.push(route.request().postDataJSON());
+            return fulfillJson(route, fullCharacter);
+        });
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.saves.length).toBe(1);
+        expect(cardRequests).toEqual([{ avatar_url: 'mock.png' }]);
+        expect(fixture.requests.saves[0].chat[1]).toMatchObject({
+            mes: 'Full card hello.',
+            swipes: ['Full card hello.', 'Full card alternate.'],
+        });
+    });
+
+    test('does not create a chat file when the full card cannot be read', async ({ page }) => {
+        const fixture = createChatFixture();
+        fixture.character = { avatar: 'mock.png', name: 'Mock Character', shallow: true, data: { name: 'Mock Character' } };
+        await mockModernChatWorkspace(page, fixture);
+        await page.route('**/api/characters/get', route => fulfillJson(route, { error: 'unavailable' }, 500));
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-new-chat]').click();
+
+        await expect(page.locator('.toast')).toContainText('/api/characters/get failed');
+        expect(fixture.requests.saves).toHaveLength(0);
+    });
+
+    test('creates a new group chat with one greeting per member', async ({ page }) => {
+        const fixture = createChatFixture();
+        const second = {
+            avatar: 'second.png',
+            name: 'Second Character',
+            data: { name: 'Second Character', first_mes: 'Second hello to {{user}}.', creator: 'Modern E2E' },
+        };
+        fixture.groups = [{
+            id: 'group-alpha',
+            name: 'Mock Group',
+            members: ['second.png', 'mock.png', 'missing.png'],
+            chats: [],
+            chat_id: '',
+        }];
+        await mockModernChatWorkspace(page, fixture);
+        await page.route('**/api/characters/all', route => fulfillJson(route, [fixture.character, second]));
+
+        await page.goto('/modern/?view=chat');
+        await page.locator('[data-chat-mode="group"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Mock Group');
+        await page.locator('[data-new-chat]').click();
+
+        await expect.poll(() => fixture.requests.groupSaves.length).toBe(1);
+        const [header, ...messages] = fixture.requests.groupSaves[0].chat;
+        expect(header.chat_metadata).toEqual({});
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toMatchObject({
+            name: 'Second Character',
+            is_user: false,
+            mes: 'Second hello to Modern User.',
+            original_avatar: 'second.png',
+            force_avatar: '/thumbnail?type=avatar&file=second.png',
+            extra: { api: 'modern' },
+        });
+        expect(messages[1]).toMatchObject({ name: 'Mock Character', mes: 'Hello Modern User.', original_avatar: 'mock.png' });
+        for (const message of messages) {
+            expect(message).not.toHaveProperty('swipes');
+        }
+        await expect(page.locator('.chat-thread')).toContainText('Second hello to Modern User.');
+    });
+
     test('ignores a never-opened greeting-only chat for unread badges and chat selection', async ({ page }) => {
         const fixture = createChatFixture();
         fixture.chats = [];

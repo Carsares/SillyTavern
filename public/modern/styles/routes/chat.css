@@ -262,9 +262,29 @@
     gap: 10px;
 }
 
+.message-opening-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    min-width: 0;
+}
+
 .message-opening-title {
     margin: 0;
     font-size: 13px;
+}
+
+/* 备用开场白（A4）：标题旁的「开场白 i/N」计数，以及旧聊天里「载入备用开场白」按钮 */
+.message-opening-counter {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.message-opening-alternates {
+    display: flex;
+    justify-content: flex-start;
 }
 
 .message-opening-action {
@@ -537,6 +557,119 @@
     min-height: 0;
     overflow: auto;
     scrollbar-gutter: stable;
+}
+
+/* 作者注释（A5）：聊天工具抽屉里的「作者注释」面板（components/chat-tool-authors-note.js） */
+.authors-note {
+    display: grid;
+    gap: 12px;
+}
+
+.authors-note-sections {
+    grid-auto-columns: minmax(0, 1fr);
+}
+
+.authors-note-form {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.authors-note-label {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.authors-note-chip {
+    min-height: 20px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.authors-note-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.authors-note-schedule {
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+    font-size: 12px;
+}
+
+.authors-note-radios {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.authors-note-radios legend {
+    padding: 0;
+    margin-bottom: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 680;
+}
+
+.authors-note-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.authors-note-feedback {
+    display: grid;
+    gap: 8px;
+}
+
+.authors-note-message {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.authors-note-message.error {
+    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+    color: var(--danger);
+}
+
+.authors-note-message.warning {
+    border-color: color-mix(in srgb, var(--warning) 42%, transparent);
+    background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+    color: var(--text);
+}
+
+.authors-note-message.success {
+    border-color: color-mix(in srgb, var(--success) 40%, transparent);
+    background: color-mix(in srgb, var(--success) 12%, var(--surface));
+    color: var(--text);
+}
+
+.authors-note-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.authors-note-actions .badge {
+    margin-right: auto;
 }
 
 .backup-toolbar {

@@ -127,10 +127,11 @@ export function createChatMessageContentComponents({
     `;
     }
 
-    function renderMessageFoot(message, model) {
+    // hideSwipeCount：开场消息的候选计数已经显示在它自己的标题栏里（「开场白 i/N」），页脚不再重复
+    function renderMessageFoot(message, model, { hideSwipeCount = false } = {}) {
         const details = [
             model,
-            Array.isArray(message.swipes) && message.swipes.length > 1 ? `候选 ${(message.swipe_id || 0) + 1}/${message.swipes.length}` : '',
+            !hideSwipeCount && Array.isArray(message.swipes) && message.swipes.length > 1 ? `候选 ${(message.swipe_id || 0) + 1}/${message.swipes.length}` : '',
             message.extra?.token_count ? `${formatNumber(message.extra.token_count)} tokens` : '',
         ].filter(Boolean);
 

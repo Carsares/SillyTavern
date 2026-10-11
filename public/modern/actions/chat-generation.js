@@ -1,5 +1,7 @@
 import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
+import { describeReloadFailure } from '../core/bridge-reload.js';
 import { stripJsonlExtension } from '../core/utils.js';
+import { canSwitchGreetingLocally, planAlternateGreetingLoad, switchGreetingMessage } from './chat-greetings.js';
 
 export function createChatGenerationActions({
     state,
@@ -22,6 +24,9 @@ export function createChatGenerationActions({
     runModernChatFileOperation,
     // 等待在途的引擎同步（reloadChat / Settings / Character / WorldInfo）完成，有上限；未注入时无需等待
     waitForEngineSync = async (/** @type {{ timeoutMs?: number }} */ _options = {}) => ({ settled: true }),
+    // 在聊天文件队列里改消息、保存，并登记 reloadChat（chat-context.js 的 updateModernChatAndSync）。
+    // 未注入时开场白切换退回引擎的 SWIPE，「载入备用开场白」不可用。
+    updateModernChatAndSync = null,
 }) {
     let generationSequence = 0;
     let activeGenerationToken = 0;
@@ -302,6 +307,45 @@ export function createChatGenerationActions({
         }
     }
 
+    /**
+     * 在聊天文件队列里改第 0 条消息（开场白）并保存，界面先刷新，再等引擎重开聊天。引擎不参与消息修改：
+     * 只有开场白、未对话的聊天里，开场白之间的切换是纯文件操作，对应旧版 PRISTINE_GREETING 的循环行为。
+     * @param {object} options 参数
+     * @param {object} options.entity 角色
+     * @param {boolean} options.groupMode 是否群聊
+     * @param {string} options.chatId 聊天文件 ID
+     * @param {string} options.status 引擎状态栏文字
+     * @param {string} options.failedStatus 失败时的状态栏文字
+     * @param {string} options.detail 开始时的详情
+     * @param {(messages: object[]) => { swipeId: number, swipeCount: number }} options.mutate 就地改消息副本，抛错则不保存
+     * @param {(result: { swipeId: number, swipeCount: number }) => string} options.describeDone 完成后的详情
+     * @param {string} options.doneTitle 引擎同步失败时的提示标题
+     * @returns {Promise<{ swipeId: number, swipeCount: number }>} 新的候选下标和数量
+     */
+    async function editGreetingMessage({ entity, groupMode, chatId, status, failedStatus, detail, mutate, describeDone, doneTitle }) {
+        // 占住「生成中」状态：期间发送、编辑、再次切换都被挡住，直到文件保存完
+        const token = beginGeneration(status, detail);
+        let outcome;
+        let engineSync;
+        try {
+            ({ result: outcome, engineSync } = await updateModernChatAndSync(entity, chatId, mutate, { groupMode }));
+            state.engine.status = '就绪';
+            state.engine.detail = `${chatId} · ${describeDone(outcome)}`;
+        } catch (error) {
+            failGeneration(token, error, failedStatus);
+            throw error;
+        } finally {
+            finishGeneration(token);
+        }
+
+        // 文件已保存、界面已刷新；引擎重开聊天失败只提示，不当作保存失败
+        const reload = await engineSync;
+        if (reload.ok === false) {
+            showToast(doneTitle, `已保存到聊天文件${describeReloadFailure(reload)}`);
+        }
+        return outcome;
+    }
+
     async function swipeModernMessage(messageIndex, direction) {
         if (state.engine.generating) {
             return;
@@ -319,6 +363,32 @@ export function createChatGenerationActions({
         const messages = getSelectedChatMessages();
         if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
             throw new Error('消息位置无效，请刷新后重试。');
+        }
+
+        // 只有开场白、没有对话过的聊天：开场白候选之间本地切换，不调用引擎。其余情况（已对话、不止一条消息、候选不足）
+        // 都交给引擎，保持旧版语义（例如已对话后在最后一个候选上右切会生成新回复）。
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        if (index === 0 && typeof updateModernChatAndSync === 'function' && canSwitchGreetingLocally(messages, state.chatMetadata?.[cacheKey])) {
+            await editGreetingMessage({
+                entity,
+                groupMode,
+                chatId,
+                status: '开场白切换中',
+                failedStatus: '开场白切换失败',
+                detail: `${chatId} · ${direction === 'left' ? '上一个开场白' : '下一个开场白'}`,
+                mutate: latestMessages => {
+                    // 排队期间聊天可能已变化（例如另一次生成刚结束）：条件不再成立就不改文件
+                    if (!canSwitchGreetingLocally(latestMessages, state.chatMetadata?.[cacheKey])) {
+                        throw new Error('开场白已变化，请刷新后重试。');
+                    }
+                    const switched = switchGreetingMessage(latestMessages[0], direction);
+                    latestMessages[0] = switched.message;
+                    return switched;
+                },
+                describeDone: result => `开场白 ${formatNumber(result.swipeId + 1)}/${formatNumber(result.swipeCount)}`,
+                doneTitle: '开场白已切换',
+            });
+            return;
         }
 
         const token = beginGeneration('候选切换中', `${chatId} · ${direction === 'left' ? '上一个候选' : '下一个候选'}`);
@@ -366,6 +436,54 @@ export function createChatGenerationActions({
         } finally {
             finishGeneration(token);
         }
+    }
+
+    // 只有开场白的旧聊天（第 0 条消息还没有候选）补上角色卡的备用开场白。第 0 条必须与卡上某条开场白一致才处理。
+    async function loadAlternateGreetings() {
+        if (state.engine.generating) {
+            return null;
+        }
+        if (typeof updateModernChatAndSync !== 'function') {
+            throw new Error('当前环境不支持载入备用开场白。');
+        }
+
+        const entity = getSelectedChatEntity();
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        const chatId = state.selected.chat;
+        if (!contextKey || !chatId) {
+            throw new Error('请先选择一个聊天文件');
+        }
+        if (groupMode) {
+            throw new Error('群聊不支持载入备用开场白。');
+        }
+
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        const outcome = await editGreetingMessage({
+            entity,
+            groupMode,
+            chatId,
+            status: '载入备用开场白',
+            failedStatus: '载入备用开场白失败',
+            detail: chatId,
+            mutate: latestMessages => {
+                const plan = planAlternateGreetingLoad({
+                    messages: latestMessages,
+                    metadata: state.chatMetadata?.[cacheKey],
+                    character: entity,
+                    userName: getUserName(),
+                });
+                if ('error' in plan) {
+                    throw new Error(plan.error);
+                }
+                latestMessages[0] = plan.message;
+                return plan;
+            },
+            describeDone: result => `已载入备用开场白，共 ${formatNumber(result.swipeCount)} 个`,
+            doneTitle: '备用开场白已载入',
+        });
+        showToast('已载入备用开场白', `共 ${formatNumber(outcome.swipeCount)} 个开场白，当前是第 ${formatNumber(outcome.swipeId + 1)} 个。`);
+        return outcome;
     }
 
     function appendOptimisticUserMessage(cacheKey, message) {
@@ -542,5 +660,6 @@ export function createChatGenerationActions({
         continueModernReply,
         triggerGroupMemberModernReply,
         swipeModernMessage,
+        loadAlternateGreetings,
     };
 }

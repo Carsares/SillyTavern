@@ -10,6 +10,7 @@ export function createChatMessageEvents(ctx) {
         continueModernReply,
         triggerGroupMemberModernReply,
         swipeModernMessage,
+        loadAlternateGreetings,
         copyModernMessage,
         beginModernMessageDelete,
         cancelModernMessageDelete,
@@ -88,6 +89,17 @@ export function createChatMessageEvents(ctx) {
             } catch (error) {
                 state.errors.push({ key: 'swipe-message', message: error.message });
                 showToast('候选切换失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-load-alternate-greetings]')) {
+            try {
+                await loadAlternateGreetings();
+            } catch (error) {
+                state.errors.push({ key: 'load-alternate-greetings', message: error.message });
+                showToast('载入备用开场白失败', error.message);
                 render();
             }
             return true;

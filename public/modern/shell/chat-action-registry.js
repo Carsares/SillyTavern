@@ -132,6 +132,8 @@ export function createChatActionRegistry({
         createModernChatFile,
         runModernChatFileOperation,
         waitForEngineSync: bridgeReload.waitForPendingReloads,
+        // 开场白在未对话的聊天里本地切换 / 载入备用开场白：改消息、保存并登记 reloadChat
+        updateModernChatAndSync: chatContextActions.updateModernChatAndSync,
     });
 
     const groupActions = createGroupActions({
