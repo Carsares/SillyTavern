@@ -8,6 +8,8 @@ export function createWorldbookDetailActions({
     showToast,
     // 同步通道：世界书文件变化后通知隐藏的生成引擎丢弃缓存（core/bridge-reload.js 的 reloadWorldInfo，永不 reject）
     reloadWorldInfo = noEngineSync,
+    // 全局启用的世界书和扫描深度、预算等全局参数存在 settings.json，改完通知引擎重载设置（同样永不 reject）
+    reloadSettings = noEngineSync,
 }) {
     const worldbookQueue = new KeyedPromiseQueue();
     const worldbookDeleteBarriers = new Map();
@@ -23,6 +25,17 @@ export function createWorldbookDetailActions({
                 await reloadWorldInfo(names, options);
             } catch (error) {
                 console.warn('Modern bridge reloadWorldInfo failed', error);
+            }
+        })();
+    }
+
+    // 全局世界书设置变了：与 syncEngineWorldInfo 同理不等引擎确认，生成发出前会等这次在途的同步
+    function syncEngineSettings() {
+        (async () => {
+            try {
+                await reloadSettings();
+            } catch (error) {
+                console.warn('Modern bridge reloadSettings failed', error);
             }
         })();
     }
@@ -174,6 +187,7 @@ export function createWorldbookDetailActions({
 
         state.settings.world_info_settings.world_info.globalSelect = nextGlobalWorlds;
         await saveSettingsSerialized(apiFetch, state.settings);
+        syncEngineSettings();
         await loadData({ silent: true });
         showToast(nextGlobalWorlds.includes(worldbookId) ? '世界书已启用' : '世界书已停用', worldbookId);
     }
@@ -183,6 +197,7 @@ export function createWorldbookDetailActions({
         state.settings.world_info_settings = state.settings.world_info_settings || {};
         state.settings.world_info_settings[field] = value;
         await saveSettingsSerialized(apiFetch, state.settings);
+        syncEngineSettings();
     }
 
     return {
@@ -197,5 +212,6 @@ export function createWorldbookDetailActions({
         isGlobalWorldEnabled,
         toggleGlobalWorld,
         saveWorldInfoGlobalSetting,
+        syncEngineSettings,
     };
 }

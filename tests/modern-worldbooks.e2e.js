@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
-import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, gotoModern, mockBridgeFrame, mockModernWorkspace } from './modern-test-utils.js';
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -193,6 +193,7 @@ test.describe('Modern worldbooks page', () => {
     test('manages worldbooks and entries through modern controls', async ({ page }) => {
         const fixture = await mockModernWorldbooksWorkspace(page);
         const requests = fixture.requests.worldbookWorkflows;
+        const bridgeCalls = await mockBridgeFrame(page);
 
         await gotoModern(page, 'worldbooks', '世界书');
 
@@ -219,6 +220,8 @@ test.describe('Modern worldbooks page', () => {
         await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
         expect(fixture.requests.settingsSave[0].world_info_settings.world_info.globalSelect).toEqual([]);
         await expect(page.locator('[data-select-worldbook="Lore"]')).toContainText('未启用');
+        // The hidden engine reloads its settings, so the switched-off worldbook leaves the next generation too
+        await expect.poll(() => bridgeCalls.filter(call => call.action === 'reloadSettings').length).toBe(1);
 
         await selectWorldEntry(page, '1', 1);
         await selectWorldEntry(page, '2', 2);

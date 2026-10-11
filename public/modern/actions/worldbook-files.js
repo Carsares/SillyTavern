@@ -13,6 +13,7 @@ export function createWorldbookFileActions({
     restoreWorldbookFile,
     getGlobalWorldNames,
     syncEngineWorldInfo = (/** @type {string[]} */ _names, /** @type {{ refreshList?: boolean }} */ _options = {}) => {},
+    syncEngineSettings = () => {},
 }) {
     async function getSanitizedFileName(fileName) {
         const result = await apiFetch('/api/files/sanitize-filename', { body: { fileName } });
@@ -161,6 +162,8 @@ export function createWorldbookFileActions({
         if (removeGlobal) {
             try {
                 await saveSettingsSerialized(apiFetch, state.settings);
+                // 删掉的世界书不能还留在引擎的全局启用列表里
+                syncEngineSettings();
             } catch (error) {
                 settingsError = error;
             }

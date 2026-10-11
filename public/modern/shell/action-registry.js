@@ -131,6 +131,7 @@ export function createActionRegistry({
         setObjectPath,
         worldEntryDefaults,
         reloadWorldInfo: bridgeReload.reloadWorldInfo,
+        reloadSettings: bridgeReload.reloadSettings,
     });
     const {
         loadWorldDetail,

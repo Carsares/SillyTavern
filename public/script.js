@@ -51,6 +51,7 @@ import {
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
     invalidateWorldInfoCache,
+    updateWorldInfoSettings,
 } from './scripts/world-info.js';
 
 import {
@@ -6498,8 +6499,9 @@ async function handleModernBridgeReloadSettings() {
     loadHordeSettings(settings);
     await loadPowerUserSettings(settings, data);
     applyPowerUserSettings();
-    // 刻意不调 setWorldInfoSettings：它每次都注册 CHAT_CHANGED 等 eventSource 监听且无 .off()，随 reload 次数无界累积；
-    // WI 全局配置改动少见，需要时刷新页面即可，避免在隐藏 iframe 内堆积重复 handler。
+    // 刻意不调 setWorldInfoSettings：它每次都注册 CHAT_CHANGED 等 eventSource 监听且无 .off()，随 reload 次数无界累积。
+    // 世界书的全局参数和全局启用列表改走只赋值的 applyModernBridgeWorldInfoSettings。
+    applyModernBridgeWorldInfoSettings(settings.world_info_settings);
 
     if (settings.main_api) {
         main_api = settings.main_api === 'poe' ? 'openai' : settings.main_api;
@@ -6511,6 +6513,30 @@ async function handleModernBridgeReloadSettings() {
     await syncModernBridgeExtensionSettings(settings);
     await validateDisabledSamplers();
     return { ok: true };
+}
+
+/**
+ * 把 settings.world_info_settings 里的世界书全局参数（扫描深度、预算、递归……）、全局启用的世界书和角色附加世界书
+ * 写进引擎的模块变量。Modern 的世界书页改这些设置后会重载设置，不同步的话生成一直用启动时的那份。
+ * 只赋值，不注册任何监听，重复调用不累积；全局启用列表与 setWorldInfoSettings 一样只保留引擎认识的世界书。
+ * @param {object} worldInfoSettings 新读到的 settings.world_info_settings
+ */
+function applyModernBridgeWorldInfoSettings(worldInfoSettings) {
+    if (!worldInfoSettings || typeof worldInfoSettings !== 'object') {
+        return;
+    }
+    const freshWorldInfo = worldInfoSettings.world_info;
+    const globalSelect = Array.isArray(freshWorldInfo?.globalSelect)
+        ? freshWorldInfo.globalSelect.filter(name => world_names.includes(name))
+        : [];
+    // 传浅拷贝：updateWorldInfoSettings 会删掉入参上的 world_info 键
+    updateWorldInfoSettings({ ...worldInfoSettings }, globalSelect);
+    // 角色附加世界书（charLore）在 world_info 对象上，生成时按它找角色的附加世界书
+    if (Array.isArray(freshWorldInfo?.charLore)) {
+        world_info.charLore = freshWorldInfo.charLore;
+    } else {
+        delete world_info.charLore;
+    }
 }
 
 // modern 侧会写、且会影响生成的扩展设置：记忆（摘要注入位置 / 深度 / 模板）、翻译、连接档案、作者注释的全局默认值。

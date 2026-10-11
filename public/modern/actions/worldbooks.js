@@ -20,6 +20,7 @@ export function createWorldbookActions({
     setObjectPath,
     worldEntryDefaults,
     reloadWorldInfo,
+    reloadSettings,
 }) {
     const {
         createWorldEntry,
@@ -55,6 +56,7 @@ export function createWorldbookActions({
         loadData,
         showToast,
         reloadWorldInfo,
+        reloadSettings,
     });
     const {
         loadWorldDetail,
@@ -67,6 +69,7 @@ export function createWorldbookActions({
         isGlobalWorldEnabled,
         toggleGlobalWorld,
         saveWorldInfoGlobalSetting,
+        syncEngineSettings,
     } = detailActions;
     const fileActions = createWorldbookFileActions({
         state,
@@ -81,6 +84,7 @@ export function createWorldbookActions({
         restoreWorldbookFile,
         getGlobalWorldNames,
         syncEngineWorldInfo,
+        syncEngineSettings,
     });
     const entryBulkActions = createWorldbookEntryBulkActions({
         state,

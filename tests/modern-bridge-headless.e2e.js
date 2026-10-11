@@ -964,6 +964,61 @@ test.describe('Modern bridge engine sync', () => {
         expect(engine.memoryPrompt).toMatchObject({ value: '<<story so far>>', position: 1, depth: 7, role: 2 });
     });
 
+    // The worldbook page saves the globally enabled worldbooks and the scan parameters into settings.json; reloadSettings
+    // used to skip them, so a worldbook switched on in the modern UI took part in generation only after a page reload.
+    test('reloadSettings applies the global worldbooks and world info parameters', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        let worldInfoSettings = {
+            world_info_depth: 2,
+            world_info_budget: 25,
+            world_info: { globalSelect: [] },
+        };
+        await routePatchedSettings(page, (settings, body) => {
+            settings.world_info_settings = { ...(settings.world_info_settings || {}), ...structuredClone(worldInfoSettings) };
+            body.world_names = ['book-a', 'book-b'];
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'world-settings-boot')).error).toBeFalsy();
+        const readEngine = () => page.evaluate(async () => {
+            const worldInfo = await import('/scripts/world-info.js');
+            const current = worldInfo.getWorldInfoSettings();
+            return {
+                selected: [...worldInfo.selected_world_info],
+                depth: current.world_info_depth,
+                budget: current.world_info_budget,
+                recursive: current.world_info_recursive,
+                charLore: current.world_info.charLore ?? null,
+            };
+        });
+        expect(await readEngine()).toMatchObject({ selected: [], depth: 2, budget: 25 });
+
+        // Enable a worldbook globally, change two parameters and link an extra character book; a name the engine does not
+        // know is dropped, like the legacy startup does
+        worldInfoSettings = {
+            world_info_depth: 6,
+            world_info_budget: 40,
+            world_info_recursive: true,
+            world_info: { globalSelect: ['book-b', 'missing-book'], charLore: [{ name: 'hero.png', extraBooks: ['book-a'] }] },
+        };
+        const enable = await callBridge(page, 'reloadSettings', {}, 'world-settings-enable');
+        expect(enable.error).toBeFalsy();
+        expect(await readEngine()).toEqual({
+            selected: ['book-b'],
+            depth: 6,
+            budget: 40,
+            recursive: true,
+            charLore: [{ name: 'hero.png', extraBooks: ['book-a'] }],
+        });
+
+        // Switching it off again reaches the engine as well
+        worldInfoSettings = { world_info_depth: 6, world_info_budget: 40, world_info_recursive: true, world_info: { globalSelect: [] } };
+        const disable = await callBridge(page, 'reloadSettings', {}, 'world-settings-disable');
+        expect(disable.error).toBeFalsy();
+        expect(await readEngine()).toMatchObject({ selected: [], charLore: null });
+    });
+
     test('repeated reloadSettings calls do not pile up engine listeners', async ({ page }) => {
         test.setTimeout(90_000);
 
