@@ -270,3 +270,151 @@ test('parent five-option injection accepts resolver endpoint and provider unknow
     assert.equal(result.usage.requests[0].normalized.input, null);
     assert.equal(result.usage.complete, false);
 });
+
+test('verified extended media survives real SDK context and uses per-type costs', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    const { validateCapabilities } = await import('../../../../src/conversation/capabilities/core/index.js');
+    const { estimatePiContext } = await import('../../../../src/conversation/providers/core/index.js');
+    const media = [{ type: 'audio', mimeType: 'audio/wav', data: 'YQ==' }, { type: 'video', mimeType: 'video/mp4', data: 'Yg==' }, { type: 'document', mimeType: 'application/pdf', data: 'Yw==', name: 'source.pdf' }];
+    const capabilities = { ...getCapabilities(connection), media: ['text', 'audio', 'video', 'document'], verified: true, mediaTokenCost: { audio: 100, video: 200, document: 300 } };
+    assert.equal(validateCapabilities(connection, capabilities).supported, true);
+    assert.equal(validateCapabilities(connection, { ...capabilities, mediaTokenCost: { audio: 100, video: 200 } }).supported, false);
+    let actual;
+    const executor = createPiExecutor({ capabilityResolver: () => capabilities, streamFn: createPiStreamBridge({ generate: async input => {
+        assert.deepEqual(input.messages[0].content, media);
+        return { content: 'Read media', finishReason: 'stop' };
+    } }) });
+    const result = await run(executor, { requestPlan: { messages: [{ role: 'user', content: media }] }, beforeRequest: context => { actual = context; } });
+    assert.equal(result.content, 'Read media');
+    assert.equal(actual.estimatedTokens, estimatePiContext(actual.messages, capabilities));
+    assert.ok(actual.estimatedTokens >= 600 && actual.estimatedTokens < 1200);
+    await assert.rejects(run(createPiExecutor({ capabilityResolver: () => capabilities }), { requestPlan: { messages: [{ role: 'user', content: media }] } }), { code: 'unsupported-media' });
+    const invalid = structuredClone(media); invalid[0].mimeType = 'application/pdf';
+    await assert.rejects(run(executor, { requestPlan: { messages: [{ role: 'user', content: invalid }] } }), { code: 'unsupported-media' });
+});
+
+test('native reasoning controls survive real SDK loop without entering SDK thinking levels', async () => {
+    const { getChatCapabilities } = await import('../../../../src/conversation/capabilities/chat/index.js');
+    const { validateCapabilities } = await import('../../../../src/conversation/capabilities/core/index.js');
+    const { createProviderStream, createProviderModel } = await import('../../../../src/conversation/providers/chat/bridge.js');
+    const cases = [
+        { provider: 'anthropic', reasoning: 'budget', expected: { type: 'enabled', budget_tokens: 2048 } },
+        { provider: 'anthropic', reasoning: 'adaptive', expected: { type: 'adaptive' } },
+        { provider: 'google', reasoning: 'budget', expected: { thinkingBudget: 2048, includeThoughts: true } },
+        { provider: 'cohere', reasoning: 'on', expected: { type: 'enabled' } },
+        { provider: 'cohere', reasoning: 'budget', expected: { type: 'enabled', token_budget: 2048 } },
+    ];
+    for (const entry of cases) {
+        const c = { ...connection, executor: 'native', provider: entry.provider, reasoning: entry.reasoning, reasoningBudget: 2048,
+            maxOutputTokens: 4096, outputLimit: 4096, stream: false, capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: [entry.reasoning] } };
+        assert.equal(validateCapabilities(c, getChatCapabilities(c)).supported, true);
+        let body, sdkReasoning = 'not-called';
+        const native = createProviderStream(c);
+        const result = await run(createPiExecutor({ capabilityResolver: getChatCapabilities, model: createProviderModel(c),
+            streamFn: (model, context, options) => { sdkReasoning = options.reasoning; return native(model, context, options); },
+            fetch: async request => {
+                body = await request.json();
+                if (entry.provider === 'anthropic') return Response.json({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn', usage: { input_tokens: 4, output_tokens: 1 } });
+                if (entry.provider === 'google') return Response.json({ candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 1 } });
+                return Response.json({ message: { content: [{ type: 'text', text: 'done' }] }, finish_reason: 'COMPLETE', usage: { tokens: { input_tokens: 4, output_tokens: 1 } } });
+            },
+        }), { connection: c, requestPlan: { messages: [{ role: 'user', content: 'hello' }] } });
+        assert.equal(result.content, 'done');
+        assert.equal(sdkReasoning, undefined);
+        assert.deepEqual(entry.provider === 'google' ? body.generationConfig.thinkingConfig : body.thinking, entry.expected);
+        assert.equal(body.reasoning_effort, undefined);
+        assert.equal(c.reasoning, entry.reasoning);
+    }
+});
+
+test('native reasoning retains verified model and protocol boundaries', async () => {
+    const { getChatCapabilities } = await import('../../../../src/conversation/capabilities/chat/index.js');
+    const { validateCapabilities } = await import('../../../../src/conversation/capabilities/core/index.js');
+    const c = { ...connection, provider: 'anthropic', reasoning: 'adaptive', capabilities: { verified: true, reasoningEnabled: true } };
+    assert.equal(validateCapabilities(c, getChatCapabilities(c)).supported, true);
+    for (const changed of [
+        { ...c, capabilities: { verified: false, reasoningEnabled: true } },
+        { ...c, capabilities: { verified: true, reasoningEnabled: false } },
+        { ...c, capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: ['budget'] } },
+        { ...c, reasoning: 'unknown' },
+    ]) assert.equal(validateCapabilities(changed, getChatCapabilities(changed)).supported, false);
+    await assert.rejects(run(createPiExecutor({ capabilityResolver: getChatCapabilities }), { connection: c }), { code: 'unsupported-reasoning' });
+    assert.equal(getCapabilities({ ...connection, reasoning: 'budget', capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: ['budget'] } }).supported, false);
+});
+
+test('providerParts is authoritative and budgeted once in declared order', async () => {
+    const { estimatePiContext } = await import('../../../../src/conversation/providers/core/index.js');
+    const parts = [{ type: 'text', text: 'before' }, { type: 'audio', mimeType: 'audio/wav', data: 'YQ==' }, { type: 'text', text: 'after' }];
+    const caps = { ...getCapabilities(connection), media: ['text', 'audio'], verified: true, mediaTokenCost: { audio: 200 } };
+    const converted = toPiMessages([{ role: 'user', content: 'stale', providerParts: parts, media: [{ type: 'image', data: 'ignored' }] }], createPrimaryModel(connection), caps);
+    assert.deepEqual(converted[0].providerParts, parts);
+    assert.deepEqual(converted[0].content, [parts[0], parts[2]]);
+    assert.equal(estimatePiContext(converted, caps), estimatePiContext([{ ...converted[0], content: parts, providerParts: undefined }], caps));
+});
+
+test('final providerUsage is retained when the stream has no usage event', async () => {
+    const reported = { inputTokens: 8, outputTokens: 2, totalTokens: 10, cacheReadIncludedInInput: true, reasoningIncludedInOutput: true, raw: { vendor_count: 10 } };
+    const streamFn = (model) => {
+        const stream = new AssistantMessageEventStream();
+        stream.push({ type: 'done', reason: 'stop', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], api: model.api, provider: model.provider, model: model.id, timestamp: 0, stopReason: 'stop',
+            usage: { input: 8, output: 2, totalTokens: 10 }, providerUsage: reported } });
+        return stream;
+    };
+    const result = await run(createPiExecutor({ streamFn }));
+    assert.deepEqual(result.usage.requests[0].raw, reported);
+    assert.equal(result.usage.totalTokens, 10);
+});
+
+test('KoboldCpp and Ollama media pass frozen template and actual native codecs', async () => {
+    const { getTextCapabilities } = await import('../../../../src/conversation/capabilities/text/index.js');
+    const { createProviderStream, createProviderModel } = await import('../../../../src/conversation/providers/chat/bridge.js');
+    const { frozenTextPrompt } = await import('../../../../src/conversation/composition/helpers.js');
+    for (const provider of ['koboldcpp', 'ollama']) {
+        const c = { ...connection, provider, executor: 'native', type: 'text', stream: false,
+            capabilities: { verified: true, mediaTokenCost: { image: 100, audio: 200 } } };
+        const media = [{ type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }, ...(provider === 'koboldcpp' ? [{ type: 'audio', mimeType: 'audio/wav', data: 'YQ==' }] : [])];
+        const requestPlan = { mode: 'text', prompt: '<user>describe</user>', messages: [{ role: 'user', content: [{ type: 'text', text: 'describe' }, ...media] }] };
+        const renderPrompt = frozenTextPrompt(requestPlan);
+        const tampered = structuredClone(requestPlan.messages); tampered[0].content[1].data = 'YmFk';
+        assert.throws(() => renderPrompt({ messages: tampered, tools: [] }), { code: 'text-context-changed' });
+        let body;
+        const result = await run(createPiExecutor({ capabilityResolver: getTextCapabilities, model: createProviderModel(c), streamFn: createProviderStream(c, { renderPrompt }), fetch: async request => {
+            body = await request.json();
+            return Response.json(provider === 'ollama' ? { response: 'done', done: true } : { results: [{ text: 'done' }] });
+        } }), { connection: c, requestPlan });
+        assert.equal(result.content, 'done'); assert.equal(body.prompt, requestPlan.prompt);
+        assert.deepEqual(body.images, ['aGVsbG8=']);
+        if (provider === 'koboldcpp') assert.deepEqual(body.audio, ['YQ==']);
+    }
+});
+
+test('negative guidance context blocks before network even with beforeRequest injected', async () => {
+    let sent = 0;
+    await assert.rejects(run(createPiExecutor({ streamFn: () => { sent++; throw new Error('must not stream'); } }), {
+        connection: { ...connection, workingBudget: 200, parameters: { negative_prompt: 'n'.repeat(300) } }, beforeRequest() {},
+    }), { code: 'budget-blocked' });
+    assert.equal(sent, 0);
+});
+
+test('final negative payload and compiled text overhead respect the frozen budget', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    let sent = 0;
+    const streamFn = createPiStreamBridge({ generate: async input => {
+        await input.onPayload({ negative_prompt: 'n'.repeat(800) });
+        sent++;
+        return { content: 'must not send' };
+    } });
+    await assert.rejects(run(createPiExecutor({ streamFn }), { requestPlan: { ...plan, budget: { workingBudget: 700 } }, beforeRequest() {} }), { code: 'budget-blocked' });
+    assert.equal(sent, 0);
+});
+
+test('real SDK cached usage is normalized to inclusive input before persistence', async () => {
+    const raw = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 30, cache_write_tokens: 10 }, completion_tokens_details: { reasoning_tokens: 8 } };
+    let event;
+    const result = await run(createPiExecutor({ fetch: async () => response({ content: 'done' }, 'stop', raw) }), { onEvent: value => { if (value.type === 'usage.updated') event = value; } });
+    assert.equal(result.usage.inputTokens, 100); assert.equal(result.usage.outputTokens, 20); assert.equal(result.usage.totalTokens, 120);
+    assert.equal(result.usage.inputTokensIncludesCache, true); assert.equal(result.usage.outputTokensIncludesReasoning, true);
+    assert.equal(result.usage.requests[0].complete, true); assert.equal(result.usage.requests[0].usageComplete, true);
+    assert.deepEqual(result.usage.requests[0].raw, raw);
+    assert.deepEqual(event.usage, result.usage);
+});

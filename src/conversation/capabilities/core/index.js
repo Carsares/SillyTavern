@@ -7,22 +7,35 @@ export function reasoningEffort(connection) {
     return connection.effort ?? (typeof connection.reasoning === 'string' ? connection.reasoning : connection.reasoning?.effort) ?? 'off';
 }
 
+/** Native codecs own the control vocabulary; the default SDK transport uses EFFORTS. */
+export function reasoningCapabilityError(connection, capability) {
+    const native = Array.isArray(capability.reasoning);
+    const protocolModes = native ? capability.reasoning.filter(mode => mode !== 'off') : EFFORTS;
+    const configured = capability.reasoningEfforts;
+    const modes = native && (!configured || configured.length === 0) ? protocolModes : configured;
+    if (capability.reasoningEnabled && (capability.verified !== true || !Array.isArray(modes) || !modes.length
+        || modes.some(mode => typeof mode !== 'string' || !mode || !protocolModes.includes(mode))))
+        return 'Reasoning requires verified controls supported by the provider protocol';
+    const requested = reasoningEffort(connection);
+    if (requested !== 'off' && (!capability.reasoningEnabled || !modes?.includes(requested))) return 'Unsupported reasoning control';
+    if (connection.reasoningEnabled === true && requested === 'off') return 'An enabled reasoning request requires an explicit control';
+}
+
 /** Validate provider-owned capabilities without claiming support for unknown combinations. */
 export function validateCapabilities(connection, capability) {
     const c = connection?.data ?? connection ?? {};
     const result = { ...capability };
     if (!result.supported) return result;
     let reason;
+    const reasoningError = reasoningCapabilityError(c, result);
     if (!['native', 'pi'].includes(c.executor)) reason = 'Unsupported executor';
     else if (typeof c.model !== 'string' || !c.model.trim()) reason = 'A model ID is required';
     else if (![result.contextWindow, result.inputLimit, result.outputLimit, result.maxOutputTokens, result.workingBudget].every(positive)) reason = 'Finite positive integer budgets are required';
     else if (result.inputLimit > result.contextWindow || result.maxOutputTokens > result.outputLimit || result.maxOutputTokens >= result.contextWindow || result.workingBudget > Math.min(result.inputLimit, result.contextWindow - result.maxOutputTokens)) reason = 'Inconsistent model budgets';
     else if (!Array.isArray(result.types) || !result.types.length || result.types.some(type => !TYPES.includes(type)) || typeof result.tools !== 'boolean') reason = 'Invalid provider capability shape';
-    else if (!Array.isArray(result.media) || !result.media.includes('text') || result.media.some(type => !['text', 'image'].includes(type))) reason = 'Unsupported media capability';
-    else if (result.media.includes('image') && (result.verified !== true || !positive(result.mediaTokenCost?.image))) reason = 'Images require verified positive mediaTokenCost.image';
-    else if (result.reasoningEnabled && (result.verified !== true || !Array.isArray(result.reasoningEfforts) || !result.reasoningEfforts.length || result.reasoningEfforts.some(level => !EFFORTS.includes(level)))) reason = 'Reasoning requires verified finite effort levels';
-    else if (reasoningEffort(c) !== 'off' && (!result.reasoningEnabled || !result.reasoningEfforts.includes(reasoningEffort(c)))) reason = 'Unsupported reasoning effort';
-    else if (c.reasoningEnabled === true && reasoningEffort(c) === 'off') reason = 'An enabled reasoning request requires an explicit effort';
+    else if (!Array.isArray(result.media) || !result.media.includes('text') || result.media.some(type => !['text', 'image', 'audio', 'video', 'document'].includes(type))) reason = 'Unsupported media capability';
+    else if (result.media.some(type => type !== 'text' && (result.verified !== true || !positive(result.mediaTokenCost?.[type])))) reason = 'Media requires verified positive mediaTokenCost for every type';
+    else if (reasoningError) reason = reasoningError;
     else {
         try {
             const url = new URL(result.baseUrl ?? c.baseUrl);
@@ -46,5 +59,6 @@ export function getCapabilities(connection) {
         workingBudget: c.workingBudget,
     };
     if (!PROVIDERS.has(c.provider) || c.type && c.type !== 'chat') return { ...result, supported: false, types: [], tools: false, reason: 'Unsupported primary provider/type; register a provider capability resolver and stream' };
+    if (result.media.some(type => !['text', 'image'].includes(type))) return { ...result, supported: false, types: [], tools: false, reason: 'Extended media requires a protocol capability resolver and stream' };
     return validateCapabilities(c, result);
 }

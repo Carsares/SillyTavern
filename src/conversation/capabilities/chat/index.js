@@ -57,7 +57,7 @@ export function describeCapability(connection, registry, type) {
     if (!controls || typeof controls !== 'object' || Array.isArray(controls) || Object.keys(controls).some(key => !p.parameters.includes(key))) reason = 'Unsupported parameter';
     return { ...p, provider: c.provider, baseUrl, type, supported: !reason, reason,
         types: reason ? [] : [...GENERATION_TYPES], tools: !reason && p.tools,
-        protocolMedia: [...p.media], media: p.media.filter(item => item === 'text' || (Number.isSafeInteger((c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[item]) && (c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)[item] > 0)),
+        protocolMedia: [...p.media], media: p.media.filter(item => item === 'text' || (Number.isSafeInteger((c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[item]) && (c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[item] > 0)),
         mediaTokenCost: c.mediaTokenCost ?? c.capabilities?.mediaTokenCost,
         verified: c.capabilities?.verified === true,
         reasoningEnabled: c.capabilities?.reasoningEnabled === true,

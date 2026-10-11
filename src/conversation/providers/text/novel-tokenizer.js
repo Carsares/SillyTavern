@@ -21,8 +21,7 @@ export function createNovelTokenizer() {
             return instance;
         })());
         let instance;
-        try { instance = await instances.get(family); }
-        catch { instances.delete(family); throw fail('tokenizer-unavailable', 'Could not load the local NovelAI tokenizer'); }
+        try { instance = await instances.get(family); } catch { instances.delete(family); throw fail('tokenizer-unavailable', 'Could not load the local NovelAI tokenizer'); }
         signal?.throwIfAborted();
         return Array.from(family === 'erato' ? instance.encode(text) : instance.encodeIds(text));
     };

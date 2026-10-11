@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { invariant, canonicalJson } from '../../../public/shared/conversation/schemas/index.js';
+import { inlineMedia } from '../providers/core/media.js';
 import { estimatePiContext } from '../providers/core/index.js';
 
 export function requireNewDirectory(directory) {
@@ -14,12 +15,8 @@ export function hydrateParts(parts, attachments, capabilities) {
     invariant(Array.isArray(parts), 'invalid-media', 'Expected typed content parts');
     return parts.map(part => {
         if (!part.attachmentId) return structuredClone(part);
-        invariant(part.type === 'image' && capabilities.media?.includes('image') && capabilities.verified === true
-            && Number.isSafeInteger(capabilities.mediaTokenCost?.image) && capabilities.mediaTokenCost.image > 0,
-        'unsupported-media', 'Attachment input requires verified image capability and token cost', 422);
         const attachment = attachments.read(part.attachmentId);
-        invariant(['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mime), 'unsupported-media', 'Unsupported image attachment MIME', 422);
-        return { type: 'image', data: attachment.bytes.toString('base64'), mimeType: attachment.mime };
+        return inlineMedia({ type: part.type, data: attachment.bytes.toString('base64'), mimeType: attachment.mime, name: attachment.name }, capabilities);
     });
 }
 
@@ -35,8 +32,16 @@ export function assertRequestBudget(context, connection, capability, plan) {
 /** Use exactly the already-compiled template; never flatten text-provider history ad hoc. */
 export function frozenTextPrompt(plan) {
     invariant(plan.mode === 'text' && typeof plan.prompt === 'string', 'missing-text-template', 'Text connections require a compiled text preset', 422);
-    const normalize = messages => messages.map(message => ({ role: message.role, content: typeof message.content === 'string' ? message.content
-        : message.content.map(part => { invariant(part.type === 'text', 'unsupported-media', 'Text requests require text content'); return part.text; }).join('') }));
+    const normalize = messages => messages.map(message => {
+        const content = message.providerParts ?? message.content;
+        if (typeof content === 'string') return { role: message.role, content };
+        invariant(Array.isArray(content), 'unsupported-content', 'Text context requires typed content');
+        const normalized = content.map(part => {
+            invariant(['text', 'image', 'audio', 'video', 'document'].includes(part.type), 'unsupported-content', 'Invalid text-provider content');
+            return part;
+        });
+        return { role: message.role, content: normalized.every(part => part.type === 'text') ? normalized.map(part => part.text).join('') : normalized };
+    });
     const expected = canonicalJson(normalize(plan.messages));
     return ({ messages, tools }) => {
         invariant(!tools.length && canonicalJson(normalize(messages)) === expected, 'text-context-changed', 'Text context changed after compiling its template', 422);

@@ -42,15 +42,20 @@ export function createCapturedFetch({ fetchImpl = globalThis.fetch, onRequest, r
 /** Upper-bound byte estimate, not a tokenizer or provider-reported usage. */
 export function estimateContext(messages) { return Buffer.byteLength(JSON.stringify(messages), 'utf8') + 64; }
 
-/** Replace image bytes with verified token costs for the fallback estimate. */
+/** Replace media bytes with verified token costs for the fallback estimate. */
 export function estimatePiContext(messages, capabilities) {
-    let imageTokens = 0;
-    const stripped = messages.map(message => ({ ...message, content: Array.isArray(message.content) ? message.content.map(part => {
-        if (part.type !== 'image') return part;
-        const cost = capabilities?.mediaTokenCost?.image;
-        if (!capabilities?.verified || !Number.isSafeInteger(cost) || cost <= 0) throw fail('unsupported-media', 'Image token cost must be verified');
-        imageTokens += cost;
-        return { type: 'image' };
-    }) : message.content }));
-    return estimateContext(stripped) + imageTokens;
+    let mediaTokens = 0;
+    const stripped = messages.map(message => {
+        const { providerParts, content, ...rest } = message;
+        const parts = providerParts ?? content;
+        if (providerParts !== undefined && !Array.isArray(providerParts)) throw fail('unsupported-content', 'Invalid providerParts');
+        return { ...rest, content: Array.isArray(parts) ? parts.map(part => {
+            if (!['image', 'audio', 'video', 'document'].includes(part.type)) return part;
+            const cost = capabilities?.mediaTokenCost?.[part.type];
+            if (!capabilities?.verified || !Number.isSafeInteger(cost) || cost <= 0) throw fail('unsupported-media', 'Media token cost must be verified');
+            mediaTokens += cost;
+            return { type: part.type };
+        }) : parts };
+    });
+    return estimateContext(stripped) + mediaTokens;
 }

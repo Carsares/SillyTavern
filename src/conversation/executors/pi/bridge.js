@@ -33,8 +33,8 @@ export function createPiStreamBridge({ generate }) {
                 options.signal?.throwIfAborted();
                 const messages = context.messages.map(entry => {
                     if (entry.role === 'system') return { role: 'system', content: getSystemMessageText(entry) };
-                    if (entry.role === 'toolResult') return { role: 'tool', toolCallId: entry.toolCallId, toolName: entry.toolName, content: entry.content, isError: entry.isError };
-                    if (entry.role === 'user') return { role: 'user', content: entry.content };
+                    if (entry.role === 'toolResult') return { role: 'tool', toolCallId: entry.toolCallId, toolName: entry.toolName, content: entry.providerParts ?? entry.content, isError: entry.isError };
+                    if (entry.role === 'user') return { role: 'user', content: entry.providerParts ?? entry.content };
                     if (entry.role !== 'assistant') throw new TypeError('Unsupported SDK role');
                     return { role: 'assistant', content: entry.content.filter(part => part.type === 'text'),
                         reasoning: entry.content.filter(part => part.type === 'thinking').map(part => part.thinking).join(''),

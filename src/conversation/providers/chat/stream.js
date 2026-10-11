@@ -29,8 +29,7 @@ export async function* readSSE(response, signal) {
                     frameSize += line.length;
                     if (frameSize > 8 * 1024 * 1024) throw fail('provider-response-invalid', 'Oversized stream frame');
                     data.push(line.slice(5).replace(/^ /, ''));
-                }
-                else if (line.startsWith('event:')) event = line.slice(6).trim();
+                } else if (line.startsWith('event:')) event = line.slice(6).trim();
             }
             if (chunk.done) { if (data.length) yield { event, data: data.join('\n') }; break; }
         }
@@ -72,15 +71,12 @@ export async function decodeChatStream(api, response, { signal, onEvent } = {}) 
                 const block = state.content[item.index];
                 if (!block) throw fail('provider-response-invalid', 'Delta before content block');
                 const d = item.delta;
-                if (d.type === 'text_delta') { block.text = (block.text ?? '') + d.text; await delta('text.delta', d.text); }
-                else if (d.type === 'thinking_delta') { block.thinking = (block.thinking ?? '') + d.thinking; await delta('reasoning.delta', d.thinking); }
-                else if (d.type === 'signature_delta') block.signature = (block.signature ?? '') + d.signature;
+                if (d.type === 'text_delta') { block.text = (block.text ?? '') + d.text; await delta('text.delta', d.text); } else if (d.type === 'thinking_delta') { block.thinking = (block.thinking ?? '') + d.thinking; await delta('reasoning.delta', d.thinking); } else if (d.type === 'signature_delta') block.signature = (block.signature ?? '') + d.signature;
                 else if (d.type === 'input_json_delta') {
                     jsonBuffers.set(item.index, (jsonBuffers.get(item.index) ?? '') + d.partial_json);
                     await delta('tool.delta', d.partial_json, { index: item.index, id: block.id, name: block.name });
                 }
-            } else if (item.type === 'message_delta') { Object.assign(state, item.delta); Object.assign(state.usage, item.usage); }
-            else if (item.type === 'message_stop') terminal = true;
+            } else if (item.type === 'message_delta') { Object.assign(state, item.delta); Object.assign(state.usage, item.usage); } else if (item.type === 'message_stop') terminal = true;
         } else if (api.startsWith('google')) {
             if (item.responseId) state.responseId = item.responseId;
             if (item.usageMetadata) Object.assign(state.usageMetadata, item.usageMetadata);
