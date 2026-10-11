@@ -455,12 +455,17 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         listTools: cid => { const s = read(); conv(s, cid); return redact(s[UNIT].values('tools', cid)); },
         saveTrace: input => tx(s => {
             conv(s, input.conversationId);
+            invariant(input.events === undefined || Array.isArray(input.events) && input.events.every(e => e && typeof e === 'object' && !Array.isArray(e)), 'invalid-trace', 'Trace events must be an array of objects');
             const traceId = input.id ?? id();
             invariant(typeof traceId === 'string' && traceId && !['__proto__', 'constructor', 'prototype'].includes(traceId), 'invalid-trace', 'Invalid trace ID');
             if (input.turnId) invariant(get(s.turns, input.turnId).conversationId === input.conversationId, 'invalid-trace', 'Trace turn conversation mismatch');
             const previous = s.traces[traceId];
             invariant(!previous || previous.conversationId === input.conversationId && (previous.turnId ?? null) === (input.turnId ?? null), 'trace-conflict', 'Trace identity cannot change', 409);
             const trace = redact({ ...previous, ...copy(input), id: traceId }); s.traces[traceId] = trace; return trace;
+        }),
+        appendTraceEvent: (rid, input) => tx(s => {
+            invariant(input && typeof input === 'object' && !Array.isArray(input), 'invalid-trace', 'Trace event must be an object');
+            return s[UNIT].appendTraceEvent(rid, redact(copy(input)));
         }),
         getTrace: rid => get(read().traces, rid),
         listTraces: cid => Object.values(read().traces).filter(t => !cid || t.conversationId === cid),
