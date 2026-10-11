@@ -14,6 +14,7 @@ import {
     substituteParamsExtended,
     generateRaw,
     getMaxPromptTokens,
+    isModernBridgeMode,
     setExtensionPrompt,
     streamingProcessor,
     animation_easing,
@@ -38,6 +39,7 @@ const MODULE_NAME = '1_memory';
 let lastMessageHash = null;
 let lastMessageId = null;
 let inApiCall = false;
+let memoryExtensionReady = false;
 
 /**
  * Count the number of tokens in the provided text.
@@ -556,6 +558,26 @@ async function summarizeChat(context) {
 }
 
 /**
+ * Counts the messages and words that came after the latest summary, walking back from the last message to the first one
+ * that holds a summary (that message is not counted; when the last message holds one, the result is 0).
+ * @param {ChatMessage[]} chat Chat messages
+ * @returns {{ messagesSinceLastSummary: number, wordsSinceLastSummary: number }} Counters
+ */
+function countChatSinceLastSummary(chat) {
+    let messagesSinceLastSummary = 0;
+    let wordsSinceLastSummary = 0;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i].extra && chat[i].extra.memory) {
+            break;
+        }
+        messagesSinceLastSummary++;
+        wordsSinceLastSummary += extractAllWords(chat[i].mes).length;
+    }
+
+    return { messagesSinceLastSummary, wordsSinceLastSummary };
+}
+
+/**
  * Check if the chat should be summarized based on the current conditions.
  * Return summary prompt if it should be summarized.
  * @param {any} context ST context
@@ -590,16 +612,8 @@ async function getSummaryPromptForNow(context, force) {
         return '';
     }
 
-    let messagesSinceLastSummary = 0;
-    let wordsSinceLastSummary = 0;
+    const { messagesSinceLastSummary, wordsSinceLastSummary } = countChatSinceLastSummary(context.chat);
     let conditionSatisfied = false;
-    for (let i = context.chat.length - 1; i >= 0; i--) {
-        if (context.chat[i].extra && context.chat[i].extra.memory) {
-            break;
-        }
-        messagesSinceLastSummary++;
-        wordsSinceLastSummary += extractAllWords(context.chat[i].mes).length;
-    }
 
     if (messagesSinceLastSummary >= extension_settings.memory.promptInterval) {
         conditionSatisfied = true;
@@ -625,7 +639,21 @@ async function getSummaryPromptForNow(context, force) {
     return prompt;
 }
 
-async function summarizeChatWebLLM(context, force) {
+/**
+ * @callback SummaryStore
+ * @param {string} value Summary text
+ * @param {boolean} saveToMessage Whether the summary should be written to a chat message
+ * @param {number|null} [index] Message index to write to (the pre-last message when empty)
+ * @returns {*} Ignored
+ */
+
+/**
+ * @param {*} context ST context
+ * @param {boolean} force Summarize regardless of the update conditions
+ * @param {SummaryStore} [store] Where a finished summary goes. The modern bridge passes its own to learn the index and to save at once.
+ * @returns {Promise<string|null|undefined>} The summary; null when there was nothing to summarize; undefined when skipped or empty
+ */
+async function summarizeChatWebLLM(context, force, store = setMemoryContext) {
     if (!isWebLlmSupported()) {
         return;
     }
@@ -671,14 +699,21 @@ async function summarizeChatWebLLM(context, force) {
             return;
         }
 
-        setMemoryContext(summary, true, lastUsedIndex);
+        store(summary, true, lastUsedIndex);
         return summary;
     } finally {
         inApiCall = false;
     }
 }
 
-async function summarizeChatMain(context, force, skipWIAN) {
+/**
+ * @param {*} context ST context
+ * @param {boolean} force Summarize regardless of the update conditions
+ * @param {boolean} skipWIAN Leave World Info and Author's Note out of the request
+ * @param {SummaryStore} [store] Where a finished summary goes, see summarizeChatWebLLM
+ * @returns {Promise<string|null|undefined>} The summary; null when there was nothing to summarize; undefined when skipped or empty
+ */
+async function summarizeChatMain(context, force, skipWIAN, store = setMemoryContext) {
     const prompt = await getSummaryPromptForNow(context, force);
 
     if (!prompt) {
@@ -748,7 +783,7 @@ async function summarizeChatMain(context, force, skipWIAN) {
         return;
     }
 
-    setMemoryContext(summary, true, index);
+    store(summary, true, index);
     return summary;
 }
 
@@ -971,12 +1006,183 @@ export function reapplyMemorySettings() {
 }
 
 /**
+ * Whether the extension finished its own initialization (controls added, settings loaded, listeners registered).
+ * The activation hook runs before the engine reports itself ready, but it does not run at all when the extension is disabled.
+ * @returns {boolean} True once init() has completed
+ */
+export function isMemoryExtensionReady() {
+    return memoryExtensionReady;
+}
+
+/**
+ * Why the modern bridge cannot summarize right now, or an empty string when it can. Only the main API and WebLLM sources can
+ * run here: the Extras source needs a connected Extras server, which the modern UI never sets up.
+ * @returns {string} A message for the user, empty when summarizing is possible
+ */
+export function getSummaryBridgeBlocker() {
+    if (!memoryExtensionReady) {
+        return '摘要扩展没有加载（可能已在扩展页被禁用）。';
+    }
+
+    const source = extension_settings.memory.source;
+    if (source === summary_sources.extras) {
+        return '摘要来源是 Extras API，它需要连接 Extras 服务器，这里没有连接。请在「设置 → 聊天工具」把来源切换为主模型。';
+    }
+    if (source === summary_sources.webllm && !isWebLlmSupported()) {
+        return '摘要来源是 WebLLM，但 WebLLM 扩展或浏览器的 WebGPU 不可用。请在「设置 → 聊天工具」把来源切换为主模型。';
+    }
+    if (source !== summary_sources.main && source !== summary_sources.webllm) {
+        return `未知的摘要来源：${source}。`;
+    }
+
+    return '';
+}
+
+/**
+ * The extension's own check whether an automatic summary is due now, without waiting and without calling a model.
+ * Same rules as onChatEvent and getSummaryPromptForNow: paused extension, interval 0 (everything off, including the word
+ * trigger), fewer messages than the interval, then messages or words since the latest summary reaching their thresholds.
+ * @param {ChatMessage[]} [chat] Chat messages, the open chat by default
+ * @returns {{ due: boolean, reason: string, messagesSince: number, wordsSince: number }} reason: frozen, off, empty, too-short, no-prompt, waiting, interval or words
+ */
+export function isSummaryDue(chat = getContext().chat) {
+    const settings = extension_settings.memory;
+    const { messagesSinceLastSummary: messagesSince, wordsSinceLastSummary: wordsSince } = countChatSinceLastSummary(chat);
+    const result = (due, reason) => ({ due, reason, messagesSince, wordsSince });
+
+    if (settings.memoryFrozen) {
+        return result(false, 'frozen');
+    }
+    if (settings.promptInterval === 0) {
+        return result(false, 'off');
+    }
+    if (!chat.length) {
+        return result(false, 'empty');
+    }
+    if (chat.length < settings.promptInterval) {
+        return result(false, 'too-short');
+    }
+    if (!String(settings.prompt ?? '').trim()) {
+        return result(false, 'no-prompt');
+    }
+    if (messagesSince >= settings.promptInterval) {
+        return result(true, 'interval');
+    }
+    if (settings.promptForceWords && wordsSince >= settings.promptForceWords) {
+        return result(true, 'words');
+    }
+
+    return result(false, 'waiting');
+}
+
+/**
+ * The modern bridge's entry point (SUMMARIZE action): summarizes the open chat with the main API or WebLLM, writes the summary
+ * to the message that holds the latest one (or the pre-last message), and saves the chat right away, so the modern UI can read
+ * the result from the chat file as soon as this resolves. Unlike the autonomous trigger, nothing here is debounced or fire and forget.
+ * @param {object} [options] Options
+ * @param {boolean} [options.force=false] Summarize regardless of the update conditions. Otherwise only when isSummaryDue() says so.
+ * @param {() => boolean} [options.shouldStop] Reports whether the user asked to stop; checked before the request and after a failure
+ * @returns {Promise<{ due: boolean, summary: string, index: number, saved: boolean, reason: string, messagesSince: number, wordsSince: number }>}
+ * reason is empty when a summary was written. Otherwise: not due (see isSummaryDue), no-prompt, nothing (no unsummarized messages left),
+ * empty-summary (the model returned nothing, or the chat changed meanwhile), stopped, or save-failed (the written summary was rolled back)
+ * @throws {Error} When the extension cannot summarize at all (getSummaryBridgeBlocker) or is already summarizing
+ */
+export async function summarizeForModernBridge({ force = false, shouldStop = () => false } = {}) {
+    const blocker = getSummaryBridgeBlocker();
+    if (blocker) {
+        throw new Error(blocker);
+    }
+
+    const context = getContext();
+    const chat = context.chat;
+    const progress = isSummaryDue(chat);
+    const outcome = (due, reason, extra = {}) => ({
+        due,
+        summary: '',
+        index: -1,
+        saved: false,
+        reason,
+        messagesSince: progress.messagesSince,
+        wordsSince: progress.wordsSince,
+        ...extra,
+    });
+
+    if (!chat.length) {
+        return outcome(force, 'empty');
+    }
+    if (!force && !progress.due) {
+        return outcome(false, progress.reason);
+    }
+    if (inApiCall) {
+        throw new Error('摘要正在生成中，请稍后再试。');
+    }
+    if (!String(extension_settings.memory.prompt ?? '').trim()) {
+        return outcome(true, 'no-prompt');
+    }
+    if (shouldStop()) {
+        return outcome(true, 'stopped');
+    }
+
+    /** @type {{ index: number, previous: string|undefined } | null} */
+    let written = null;
+    /** @type {SummaryStore} */
+    const store = (value, saveToMessage, index = null) => {
+        const target = resolveSummaryMessageIndex(chat, index);
+        const previous = chat[target]?.extra?.memory;
+        const stored = setMemoryContext(value, saveToMessage, index, { debounceSave: false });
+        written = stored >= 0 ? { index: stored, previous } : null;
+    };
+
+    let summary;
+    try {
+        summary = extension_settings.memory.source === summary_sources.main
+            ? await summarizeChatMain(context, force, extension_settings.memory.SkipWIAN, store)
+            : await summarizeChatWebLLM(context, force, store);
+    } catch (error) {
+        if (shouldStop()) {
+            return outcome(true, 'stopped');
+        }
+        throw error;
+    }
+
+    if (!written) {
+        if (shouldStop()) {
+            return outcome(true, 'stopped');
+        }
+        // null: the raw prompt builders found no unsummarized message. undefined: empty prompt, empty reply, or the chat changed meanwhile
+        return outcome(true, summary === null ? 'nothing' : 'empty-summary');
+    }
+
+    const { index, previous } = /** @type {{ index: number, previous: string|undefined }} */ (written);
+    const saved = (await context.saveChat()) === true;
+    if (!saved) {
+        // The chat file did not take the summary (typically its revision moved on). Keep the engine's copy equal to what the
+        // file holds, so a later generation does not inject a summary that exists nowhere
+        const message = chat[index];
+        if (message?.extra) {
+            if (previous === undefined) {
+                delete message.extra.memory;
+            } else {
+                message.extra.memory = previous;
+            }
+        }
+        setMemoryContext(getLatestMemoryFromChat(chat), false);
+        return outcome(true, 'save-failed', { summary, index });
+    }
+
+    return { due: true, summary, index, saved, reason: '', messagesSince: progress.messagesSince, wordsSince: progress.wordsSince };
+}
+
+/**
  * Set the summary value to the context and save it to the chat message extra.
  * @param {string} value Value of a summary
  * @param {boolean} saveToMessage Should the summary be saved to the chat message extra
  * @param {number|null} index Index of the chat message to save the summary to. If null, the pre-last message is used.
+ * @param {object} [options] Options
+ * @param {boolean} [options.debounceSave=true] Schedule the 1 second debounced chat save. The modern bridge turns it off and saves on its own.
+ * @returns {number} Index of the message the summary was written to, -1 when it was not written to a message
  */
-function setMemoryContext(value, saveToMessage, index = null) {
+function setMemoryContext(value, saveToMessage, index = null, { debounceSave = true } = {}) {
     setExtensionPrompt(MODULE_NAME, formatMemoryValue(value), extension_settings.memory.position, extension_settings.memory.depth, extension_settings.memory.scan, extension_settings.memory.role);
     $('#memory_contents').val(value);
 
@@ -987,16 +1193,35 @@ function setMemoryContext(value, saveToMessage, index = null) {
 
     const context = getContext();
     if (saveToMessage && context.chat.length) {
-        const idx = index ?? context.chat.length - 2;
-        const mes = context.chat[idx < 0 ? 0 : idx];
+        const idx = resolveSummaryMessageIndex(context.chat, index);
+        const mes = context.chat[idx];
 
         if (!mes.extra) {
             mes.extra = {};
         }
 
         mes.extra.memory = value;
-        saveChatDebounced();
+        // The modern UI owns every chat file write. A save that fires on its own 1 second later carries whatever integrity
+        // revision the engine knew back then and is either rejected or makes the modern UI's next save fail, so in bridge mode
+        // the summary is saved explicitly by summarizeForModernBridge and never by this timer.
+        if (debounceSave && !isModernBridgeMode) {
+            saveChatDebounced();
+        }
+        return idx;
     }
+
+    return -1;
+}
+
+/**
+ * Index of the message a summary is written to: the given one, else the pre-last message (never below 0).
+ * @param {ChatMessage[]} chat Chat messages
+ * @param {number|null} [index] Requested index
+ * @returns {number} Message index
+ */
+function resolveSummaryMessageIndex(chat, index = null) {
+    const idx = index ?? chat.length - 2;
+    return idx < 0 ? 0 : idx;
 }
 
 function doPopout(e) {
@@ -1092,9 +1317,15 @@ export async function init() {
     await addExtensionControls();
     loadSettings();
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
-    eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onChatEvent);
-    for (const event of [event_types.MESSAGE_DELETED, event_types.MESSAGE_UPDATED, event_types.MESSAGE_SWIPED]) {
-        eventSource.on(event, onChatEvent);
+    // In the modern bridge the engine never summarizes on its own. The modern UI decides when (after each successful
+    // generation, through the SUMMARIZE bridge action and summarizeForModernBridge), so a summary request, its model call
+    // and its chat save can never run at a moment the modern UI does not know about and race its own chat file writes.
+    // CHAT_CHANGED stays: it re-inserts the stored summary into the prompt whenever the chat is (re)opened.
+    if (!isModernBridgeMode) {
+        eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onChatEvent);
+        for (const event of [event_types.MESSAGE_DELETED, event_types.MESSAGE_UPDATED, event_types.MESSAGE_SWIPED]) {
+            eventSource.on(event, onChatEvent);
+        }
     }
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'summarize',
@@ -1143,4 +1374,6 @@ export async function init() {
             () => summaryMacroHandler(),
             'Returns the latest memory/summary from the current chat.');
     }
+
+    memoryExtensionReady = true;
 }

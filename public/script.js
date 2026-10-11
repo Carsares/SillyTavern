@@ -6358,6 +6358,68 @@ async function handleModernBridgeSwipe(payload = {}, task = beginModernBridgeTas
     }
 }
 
+// 摘要（A6）：由 Modern 决定何时摘要、摘要哪个聊天，引擎只执行。bridge 模式下摘要扩展自己的自动触发已经关闭
+// （memory/index.js 的 init），所以摘要只会出现在这个动作里：和 GENERATE 一样排进同一条串行队列、登记为可被 STOP 中止的任务，
+// 摘要写进消息的 extra.memory 后立即保存（不走扩展原来 1 秒后的防抖保存），Modern 收到回复就能从聊天文件读到结果。
+// 回复 { avatar, groupId, chat, messageCount, due, summary, index, saved, reason, ... }：
+//   auto 且没到点 → due:false、reason 说明原因，不调用模型；写入成功 → reason 为空串；其余 reason 见 summarizeForModernBridge。
+async function handleModernBridgeSummarize(payload = {}, task = beginModernBridgeTask()) {
+    const params = payload || {};
+    try {
+        const mode = params.mode;
+        if (mode !== 'force' && mode !== 'auto') {
+            throw new Error('摘要请求的 mode 必须是 force 或 auto。');
+        }
+        if (!(params.groupId || params.avatar) || !params.chat) {
+            throw new Error('摘要请求需要指定角色或群聊，以及聊天文件。');
+        }
+
+        await waitForModernBridgeReady();
+        // 配置类问题在切换聊天之前就报出来：扩展被禁用、来源是 Extras（需要 Extras 服务器，这里没有）
+        if (extension_settings.disabledExtensions?.includes('memory')) {
+            throw new Error('摘要扩展已被禁用，无法生成摘要。请先在扩展页启用它。');
+        }
+        const memory = await import('./scripts/extensions/memory/index.js');
+        const blocker = memory.getSummaryBridgeBlocker();
+        if (blocker) {
+            throw new Error(blocker);
+        }
+
+        const context = await useModernBridgeChatContext(params);
+        ensureModernBridgeOnlineStatus();
+
+        // 摘要用的是 quiet 生成，它会把「下一条消息」的提示词分解记进 itemizedPrompts；不还原的话，Modern 之后读到的
+        // 「最近一次提示词分解」就是摘要请求而不是刚才那条回复。保存后的缓存也要写回，否则重开聊天时又会读到它。
+        const itemizedBefore = Array.isArray(itemizedPrompts) ? [...itemizedPrompts] : [];
+        let outcome;
+        try {
+            outcome = await memory.summarizeForModernBridge({
+                force: mode === 'force',
+                shouldStop: () => task.stopRequested,
+            });
+        } finally {
+            const changed = Array.isArray(itemizedPrompts)
+                && (itemizedPrompts.length !== itemizedBefore.length || itemizedPrompts.some((item, index) => item !== itemizedBefore[index]));
+            if (changed) {
+                itemizedPrompts.splice(0, itemizedPrompts.length, ...itemizedBefore);
+                await saveItemizedPrompts(getCurrentChatId());
+            }
+        }
+
+        const group = context.group ? groups.find(x => x.id === context.group.id) : null;
+        return {
+            avatar: context.group ? '' : (characters[this_chid]?.avatar || ''),
+            groupId: group?.id || '',
+            chat: group?.chat_id || characters[this_chid]?.chat || '',
+            messageCount: chat.length,
+            ...outcome,
+            ...(task.stopRequested ? { stopped: true } : {}),
+        };
+    } finally {
+        endModernBridgeTask(task);
+    }
+}
+
 async function handleModernBridgeExtensionInstalled(payload = {}) {
     await waitForModernBridgeReady();
     await completeExtensionInstallLifecycle(payload.response || {});
@@ -6609,6 +6671,10 @@ window.addEventListener('message', async (event) => {
         }
         if (action === BRIDGE_ACTIONS.SWIPE) {
             postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeSwipe, payload));
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.SUMMARIZE) {
+            postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeSummarize, payload));
             return;
         }
         if (action === BRIDGE_ACTIONS.STOP) {

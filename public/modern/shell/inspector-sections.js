@@ -1,5 +1,13 @@
 import { formatCharacterCreator } from '../actions/character-data.js';
 import { formatPercent, getUsageSummary } from '../actions/chat-completion-limits.js';
+import {
+    describeSummarySource,
+    getAutoSummaryGate,
+    getLatestChatSummary,
+    getSummaryProgress,
+    previewSummaryHolder,
+    readSummarySettings,
+} from '../core/chat-summary.js';
 import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { routeLabels } from '../core/constants.js';
 import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
@@ -56,12 +64,16 @@ export function createInspectorSections({
         renderAssetContextSection,
     } = createInspectorAssetSection({ state, renderSection });
 
+    function getInspectedChatMessages(selectedCharacter, selectedGroup) {
+        return state.chatMessages?.[`${isGroupChatMode() ? `group:${selectedGroup?.id || ''}` : selectedCharacter?.avatar || ''}::${state.selected.chat || ''}`] || [];
+    }
+
     function renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat) {
         const selectedGroupMembers = selectedGroup?.members?.length ?? 0;
         const currentContextDetail = isGroupChatMode()
             ? ['群聊成员', selectedGroup ? `${formatNumber(selectedGroupMembers)} 个` : '未选中']
             : ['角色文件', selectedCharacter?.avatar || '未选中'];
-        const chatMessages = state.chatMessages?.[`${isGroupChatMode() ? `group:${selectedGroup?.id || ''}` : selectedCharacter?.avatar || ''}::${state.selected.chat || ''}`] || [];
+        const chatMessages = getInspectedChatMessages(selectedCharacter, selectedGroup);
 
         return renderSection('聊天状态', [
             ['聊天类型', getChatModeLabel()],
@@ -131,6 +143,39 @@ export function createInspectorSections({
                     </div>
                 </div>
                 ${view.expanded ? renderItemizedPromptBody(view) : ''}
+            </section>
+        `;
+    }
+
+    // 只读展示：当前聊天的摘要（A6）。内容、所在消息、自动摘要的进度和来源都从已载入的聊天消息和设置里算出，不发请求；
+    // 编辑、清除、重新摘要在聊天页「聊天工具 → 聊天摘要」。
+    function renderChatSummarySection(messages) {
+        if (!state.selected.chat) {
+            return '';
+        }
+
+        const memory = readSummarySettings(state.settings);
+        const latest = getLatestChatSummary(messages);
+        const gate = getAutoSummaryGate(state.settings);
+        const progress = getSummaryProgress(messages, memory);
+        const rows = [
+            ['摘要来源', describeSummarySource(memory.source)],
+            ['自动摘要', gate.eligible ? '已开启' : gate.message],
+            ['距上次摘要', `${formatNumber(progress.messagesSince)} 条消息 / 间隔 ${progress.interval ? `${formatNumber(progress.interval)} 条` : '已关闭'}`],
+        ];
+        if (latest.index >= 0) {
+            rows.splice(1, 0, ['摘要位置', `第 ${formatNumber(latest.index + 1)} 条消息（${previewSummaryHolder(messages[latest.index])}）`]);
+        }
+
+        return `
+            <section class="inspector-section" data-inspector-chat-summary>
+                <h2 class="inspector-title">聊天摘要</h2>
+                <div class="kv-list">
+                    ${rows.map(([label, value]) => renderKeyValue(label, value)).join('')}
+                </div>
+                ${latest.index >= 0
+        ? `<pre class="inspector-summary-text" data-inspector-summary-text>${escapeHtml(latest.text)}</pre>`
+        : '<p class="muted">这个聊天还没有摘要。</p>'}
             </section>
         `;
     }
@@ -294,7 +339,9 @@ export function createInspectorSections({
             case 'dashboard':
                 return renderDashboardContextSection(provider);
             case 'chat':
-                return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat) + renderItemizedPromptSection();
+                return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat)
+                    + renderItemizedPromptSection()
+                    + renderChatSummarySection(getInspectedChatMessages(selectedCharacter, selectedGroup));
             case 'api':
                 return renderApiContextSection(provider);
             case 'worldbooks':

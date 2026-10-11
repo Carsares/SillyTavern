@@ -286,3 +286,24 @@
     gap: 10px;
     margin: 12px 0;
 }
+
+/* 聊天摘要设置（A6）：设置页「聊天工具」标签里的摘要分区（components/settings-tool-summary.js）；横幅、提示和按钮行复用 routes/chat.css 里的 .chat-summary-* */
+.chat-summary-settings {
+    gap: 12px;
+}
+
+.chat-summary-subtitle {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 680;
+}
+
+.chat-summary-inline-actions {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.chat-summary-settings textarea {
+    min-height: 0;
+}

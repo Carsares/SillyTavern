@@ -21,6 +21,11 @@ export const BRIDGE_ACTIONS = {
     RELOAD_WORLDINFO: 'reloadWorldInfo',
     // 只读观测：读取最近一次生成的 itemized 提示词分解快照（各部分 token 与总量），不触碰任何生成状态。
     GET_ITEMIZED_PROMPT: 'getItemizedPrompt',
+    // payload { avatar | groupId, chat, integrity?, mode: 'force' | 'auto' }：让摘要扩展（主模型或 WebLLM 来源）为这个聊天生成摘要，
+    // 写进消息的 extra.memory 并立即保存。force 一定生成；auto 先按扩展自己的触发条件（间隔 / 字数 / 暂停）判断，没到点返回 { due: false }。
+    // 与 GENERATE 同样排队串行，可被 STOP 中止。回复 { due, summary, index, saved, reason, ... }，来源是 Extras 或扩展被禁用时回复错误。
+    // 引擎在 bridge 模式下不再自行触发摘要（见 memory/index.js），何时摘要完全由 Modern 决定。
+    SUMMARIZE: 'summarize',
 };
 
 // 各链路的超时档位（毫秒）。LOAD 为 iframe 加载超时；DEFAULT 覆盖 generate/swipe 这类重生成动作。
@@ -34,6 +39,8 @@ export const BRIDGE_TIMEOUTS = {
     RELOAD: 30000,
     // GENERATE / SWIPE 发出前等待在途重载完成的上限；超时后照常发送（引擎侧同样会让重载先于生成执行）。
     RELOAD_WAIT: 10000,
+    // SUMMARIZE 要等一次模型调用，和 GENERATE 同档。
+    SUMMARIZE: 180000,
 };
 
 // legacy → modern 的单向事件（不带 id、无响应）。生成期流式增量经此推送，modern 定点渲染。

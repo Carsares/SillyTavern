@@ -1231,3 +1231,150 @@
     display: block;
     margin-top: 2px;
 }
+
+/* 聊天摘要（A6）：聊天工具抽屉里的「聊天摘要」面板（components/chat-tool-summary.js），设置页分区（settings-tool-summary.js）和上下文抽屉的摘要段共用这些类 */
+.chat-summary {
+    display: grid;
+    gap: 12px;
+}
+
+.chat-summary-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.chat-summary-form {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.chat-summary-form textarea {
+    min-height: 180px;
+}
+
+.chat-summary-label {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-summary-callout {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--warning) 42%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.chat-summary-callout p {
+    margin: 0;
+}
+
+.chat-summary-feedback {
+    display: grid;
+    gap: 8px;
+}
+
+.chat-summary-message {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.chat-summary-message.error {
+    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+    color: var(--danger);
+}
+
+.chat-summary-message.warning {
+    border-color: color-mix(in srgb, var(--warning) 42%, transparent);
+    background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+    color: var(--text);
+}
+
+.chat-summary-message.success {
+    border-color: color-mix(in srgb, var(--success) 40%, transparent);
+    background: color-mix(in srgb, var(--success) 12%, var(--surface));
+    color: var(--text);
+}
+
+.chat-summary-message.info {
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+    color: var(--text);
+}
+
+.chat-summary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.chat-summary-actions .badge {
+    margin-right: auto;
+}
+
+.chat-summary-confirm {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-summary-run {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.chat-summary-run p {
+    margin: 0;
+}
+
+.chat-summary-run-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.chat-summary-unavailable {
+    margin: 0;
+}
+
+/* 上下文抽屉里的摘要内容：摘要可能很长，限高滚动，保留换行 */
+.inspector-summary-text {
+    max-height: 220px;
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* 持有最新摘要的消息上的小标记（A6）：样式在这里备好，标记本身由消息渲染（components/chat-message.js）按 getLatestChatSummary 输出 */
+.message-summary-marker {
+    min-height: 20px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 600;
+}

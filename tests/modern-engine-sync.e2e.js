@@ -205,6 +205,204 @@ test.describe('Modern generation waits for engine sync', () => {
     });
 });
 
+// Chat summary (A6): after a successful generation the modern UI decides whether the engine should summarize; the engine side
+// (SUMMARIZE, the extension's own trigger) is covered by modern-bridge-headless.e2e.js, the panel by modern-chat-summary.e2e.js.
+function createSummaryGenerationFixture({ memory = {}, messageCount = 6, bridge = {} } = {}) {
+    const character = { avatar: 'alice.png', name: 'Alice' };
+    const cacheKey = 'alice.png::chat-a';
+    const fileMessages = Array.from({ length: messageCount }, (_, index) => ({ name: 'Alice', mes: `m${index}`, send_date: String(index) }));
+    const state = {
+        selected: { chat: 'chat-a' },
+        engine: { generating: false, checking: false, ready: false, status: '', error: '', detail: '', settingsSyncPending: 0 },
+        errors: [],
+        chatDrafts: {},
+        chatMessages: { [cacheKey]: fileMessages },
+        chatMetadata: { [cacheKey]: { integrity: 'int-7' } },
+        chatSummary: {},
+        settings: { extension_settings: { memory: { source: 'main', promptInterval: 4, promptForceWords: 0, memoryFrozen: false, ...memory } } },
+    };
+    const events = [];
+    const toasts = [];
+    const actions = createChatGenerationActions({
+        state,
+        render: () => {},
+        showToast: (title, message) => toasts.push([title, message]),
+        subscribeProgress: () => () => {},
+        callLegacyBridge: async (action, payload, timeoutMs) => {
+            events.push({ action, payload, timeoutMs, generating: state.engine.generating, status: state.engine.status });
+            if (Object.hasOwn(bridge, action)) {
+                return bridge[action](payload);
+            }
+            return { chat: 'chat-a', saved: true };
+        },
+        formatNumber: String,
+        getSelectedChatEntity: () => character,
+        getChatContextKey: () => character.avatar,
+        getChatEntityName: entity => entity.name,
+        isGroupChatMode: () => false,
+        getSelectedChatMessages: () => state.chatMessages[cacheKey] || [],
+        getCurrentDraftKey: () => cacheKey,
+        getChatCacheKey: (contextKey, chatId) => `${contextKey}::${chatId}`,
+        getUserName: () => 'You',
+        // syncGeneratedChat drops the cached messages and reads the chat file again; the stand-in puts the same chat back
+        loadChatMessages: async () => {
+            events.push({ action: 'load messages', generating: state.engine.generating });
+            state.chatMessages[cacheKey] = fileMessages;
+            state.chatMetadata[cacheKey] = { integrity: 'int-7' };
+        },
+        refreshSelectedChatList: async () => {},
+        createModernChatFile: async () => 'chat-a',
+        runModernChatFileOperation: (_entity, _chatId, operation) => operation(),
+    });
+    return { actions, events, state, toasts, cacheKey };
+}
+
+test.describe('Modern chat summary after a generation', () => {
+    test('asks the engine for an automatic summary after syncing the reply, while the chat is still locked', async () => {
+        const { actions, events, state } = createSummaryGenerationFixture({
+            bridge: { summarize: () => ({ due: true, summary: 'S', index: 4, saved: true, reason: '' }) },
+        });
+
+        await actions.continueModernReply();
+
+        expect(events.map(event => event.action)).toEqual(['generate', 'load messages', 'summarize', 'load messages']);
+        const summarize = events.find(event => event.action === 'summarize');
+        expect(summarize).toMatchObject({
+            payload: { avatar: 'alice.png', groupId: null, chat: 'chat-a', integrity: 'int-7', mode: 'auto' },
+            timeoutMs: BRIDGE_TIMEOUTS.SUMMARIZE,
+            generating: true,
+            status: '摘要生成中',
+        });
+        expect(state.engine.generating).toBe(false);
+        expect(state.engine.status).toBe('就绪');
+        expect(state.chatSummary.running).toBe(false);
+        expect(state.chatSummary.notice).toMatchObject({ key: 'alice.png::chat-a', kind: 'success' });
+    });
+
+    test('does not ask when the source is Extras, the summary is paused or off, the interval is not reached, or the extension is disabled', async () => {
+        const cases = [
+            { memory: { source: 'extras' } },
+            { memory: { memoryFrozen: true } },
+            { memory: { promptInterval: 0 } },
+            { memory: { promptInterval: 50 } },
+        ];
+        for (const options of cases) {
+            const { actions, events } = createSummaryGenerationFixture(options);
+            await actions.continueModernReply();
+            expect(events.map(event => event.action)).toEqual(['generate', 'load messages']);
+        }
+
+        const disabled = createSummaryGenerationFixture();
+        disabled.state.settings.extension_settings.disabledExtensions = ['memory'];
+        await disabled.actions.continueModernReply();
+        expect(disabled.events.map(event => event.action)).toEqual(['generate', 'load messages']);
+    });
+
+    test('a summary that fails never fails the generation and leaves a quiet notice', async () => {
+        const { actions, events, state, toasts } = createSummaryGenerationFixture({
+            bridge: { summarize: () => { throw new Error('模型接口超时'); } },
+        });
+
+        const outcome = await actions.continueModernReply();
+
+        expect(outcome).toBeUndefined();
+        expect(events.map(event => event.action)).toEqual(['generate', 'load messages', 'summarize']);
+        expect(state.engine.generating).toBe(false);
+        expect(state.engine.error).toBe('');
+        expect(state.engine.status).toBe('就绪');
+        expect(state.chatSummary.notice).toMatchObject({ kind: 'warning', text: '摘要没有更新：模型接口超时' });
+        expect(toasts.some(([title]) => title === '聊天摘要未更新')).toBe(true);
+    });
+
+    test('the engine saying "not due" or the summary not being saved is reported without marking the generation failed', async () => {
+        const quiet = createSummaryGenerationFixture({ bridge: { summarize: () => ({ due: false, summary: '', index: -1, saved: false, reason: 'waiting' }) } });
+        await quiet.actions.continueModernReply();
+        expect(quiet.state.chatSummary.notice).toBeNull();
+        expect(quiet.events.map(event => event.action)).toEqual(['generate', 'load messages', 'summarize']);
+
+        const refused = createSummaryGenerationFixture({ bridge: { summarize: () => ({ due: true, summary: 'lost', index: 4, saved: false, reason: 'save-failed' }) } });
+        await refused.actions.continueModernReply();
+        expect(refused.state.chatSummary.notice).toMatchObject({ kind: 'warning' });
+        // nothing was written, so the chat is not read again
+        expect(refused.events.map(event => event.action)).toEqual(['generate', 'load messages', 'summarize']);
+        expect(refused.state.engine.error).toBe('');
+    });
+
+    test('a stopped generation and a swipe are not followed by a summary request', async () => {
+        const stopped = createSummaryGenerationFixture({ bridge: { generate: () => ({ chat: 'chat-a', saved: true, stopped: true, started: true }) } });
+        await stopped.actions.continueModernReply();
+        expect(stopped.events.map(event => event.action)).not.toContain('summarize');
+
+        const swiped = createSummaryGenerationFixture({ bridge: { swipe: () => ({ chat: 'chat-a', saved: true, swipeId: 1, swipeCount: 2 }) } });
+        await swiped.actions.swipeModernMessage(5, 'right');
+        expect(swiped.events.map(event => event.action)).not.toContain('summarize');
+    });
+
+    test('a stop pressed during the automatic summary reaches the engine and ends in the stopped state', async () => {
+        const gate = createDeferred();
+        const { actions, events, state } = createSummaryGenerationFixture({
+            bridge: {
+                summarize: async () => {
+                    await gate.promise;
+                    return { due: true, summary: '', index: -1, saved: false, reason: 'stopped', stopped: true };
+                },
+                stop: () => {
+                    gate.resolve();
+                    return { stopped: true };
+                },
+            },
+        });
+
+        const generation = actions.continueModernReply();
+        await expect.poll(() => events.some(event => event.action === 'summarize')).toBe(true);
+        expect(state.chatSummary.running).toBe(true);
+        await actions.stopModernGeneration();
+        await generation;
+
+        expect(events.map(event => event.action)).toContain('stop');
+        expect(state.engine.generating).toBe(false);
+        expect(state.engine.status).toBe('已停止');
+        expect(state.engine.detail).toContain('摘要已停止');
+        expect(state.chatSummary.running).toBe(false);
+    });
+
+    test('a manual summary is forced, refuses the Extras source before reaching the engine, and holds the busy state', async () => {
+        const extras = createSummaryGenerationFixture({ memory: { source: 'extras' } });
+        await expect(extras.actions.summarizeModernChat()).rejects.toThrow('Extras');
+        expect(extras.events).toEqual([]);
+        expect(extras.state.engine.generating).toBe(false);
+
+        const gate = createDeferred();
+        const { actions, events, state } = createSummaryGenerationFixture({
+            memory: { promptInterval: 0, memoryFrozen: true },
+            bridge: { summarize: async () => (await gate.promise, { due: true, summary: 'S', index: 4, saved: true, reason: '' }) },
+        });
+        const summary = actions.summarizeModernChat();
+        await expect.poll(() => events.some(event => event.action === 'summarize')).toBe(true);
+        expect(state.engine.generating).toBe(true);
+        expect(state.chatSummary.running).toBe(true);
+        // a second request while one runs does nothing
+        expect(await actions.summarizeModernChat()).toBeNull();
+        gate.resolve();
+        expect(await summary).toMatchObject({ written: true, stopped: false });
+
+        expect(events.filter(event => event.action === 'summarize')).toHaveLength(1);
+        expect(events.find(event => event.action === 'summarize').payload).toEqual({ avatar: 'alice.png', groupId: null, chat: 'chat-a', integrity: 'int-7', mode: 'force' });
+        expect(state.engine.generating).toBe(false);
+        expect(state.chatSummary.running).toBe(false);
+    });
+
+    test('a failing manual summary reports the error, unlocks the chat and rethrows for the panel', async () => {
+        const { actions, state } = createSummaryGenerationFixture({ bridge: { summarize: () => { throw new Error('boom'); } } });
+
+        await expect(actions.summarizeModernChat()).rejects.toThrow('boom');
+
+        expect(state.engine.generating).toBe(false);
+        expect(state.chatSummary.running).toBe(false);
+        expect(state.chatSummary.notice).toMatchObject({ kind: 'error', text: '摘要失败：boom' });
+    });
+});
+
 function createWorldbookFixture({ reloadWorldInfo, apiFetch }) {
     const state = {
         worldDetails: { Lore: { name: 'Lore', entries: { 1: { uid: 1, comment: 'one' } } } },

@@ -1,5 +1,6 @@
 import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
 import { describeReloadFailure } from '../core/bridge-reload.js';
+import { describeSummaryOutcome, getAutoSummaryGate, getManualSummaryGate, getSummaryProgress, readSummarySettings } from '../core/chat-summary.js';
 import { stripJsonlExtension } from '../core/utils.js';
 import { canSwitchGreetingLocally, planAlternateGreetingLoad, switchGreetingMessage } from './chat-greetings.js';
 
@@ -138,6 +139,139 @@ export function createChatGenerationActions({
 
         state.engine.detail = detail;
         showToast(toastTitle, toastMessage);
+    }
+
+    // 聊天摘要（A6）----------------------------------------------------------------------------------------------------
+    // 谁决定何时摘要：Modern。引擎在 bridge 模式下不再自己触发摘要（public/scripts/extensions/memory/index.js 的 init），
+    // 所以摘要的模型调用和聊天文件保存不会在 Modern 不知道的时刻发生，不会和 Modern 的保存抢 integrity。
+    // 两个入口都在聊天文件队列里、占着「生成中」状态执行，期间不能发送、编辑，可以停止：
+    //   - 自动：每次生成成功并同步到界面之后（runLegacyChatGeneration），先按设置和本地进度判断，到点才请求引擎；
+    //   - 手动：聊天工具「聊天摘要」里的「重新摘要」（summarizeModernChat）。
+    // 失败、没到点、被停止都只是一条提示，绝不让生成本身失败。
+
+    function setSummaryNotice(cacheKey, notice) {
+        state.chatSummary.notice = notice ? { key: cacheKey, ...notice } : null;
+    }
+
+    /**
+     * 请求引擎摘要一次，写入成功后把聊天消息从文件重读进界面。
+     * @param {object} options 参数
+     * @param {any} options.entity 角色或群聊
+     * @param {boolean} options.groupMode 是否群聊
+     * @param {string} options.contextKey 聊天上下文键
+     * @param {string} options.chatId 聊天文件 ID
+     * @param {'force' | 'auto'} options.mode force 一定摘要，auto 由引擎按扩展自己的触发条件判断
+     * @param {number} options.token 当前生成令牌（用于判断是否被停止）
+     * @returns {Promise<{ stopped: boolean, written: boolean, result: any }>} 引擎回复；stopped 为真表示等待同步期间收到了停止请求
+     */
+    async function requestChatSummary({ entity, groupMode, contextKey, chatId, mode, token }) {
+        if (!await waitForSyncBeforeEngine(token)) {
+            return { stopped: true, written: false, result: { reason: 'stopped' } };
+        }
+
+        const result = await callLegacyBridge(BRIDGE_ACTIONS.SUMMARIZE, {
+            avatar: groupMode ? null : entity.avatar,
+            groupId: groupMode ? entity.id : null,
+            chat: chatId,
+            integrity: getKnownChatIntegrity(contextKey, chatId),
+            mode,
+        }, BRIDGE_TIMEOUTS.SUMMARIZE);
+        const written = Boolean(result?.summary) && result?.saved === true && !result?.reason;
+        if (written && isGenerationContextCurrent(contextKey, chatId)) {
+            // 摘要只改了消息的 extra，聊天文件已由引擎保存；重读文件拿到摘要和新的 integrity
+            await loadChatMessages(entity, chatId, {
+                force: true,
+                groupMode,
+                isContextCurrent: () => isGenerationContextCurrent(contextKey, chatId),
+            });
+        }
+        return { stopped: result?.stopped === true || result?.reason === 'stopped', written, result };
+    }
+
+    async function runAutoSummaryAfterGeneration({ entity, groupMode, contextKey, chatId, token }) {
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        // 只在摘要来源可用且已开启时才打扰引擎；来源是 Extras 时（用户现状）这里什么也不做
+        if (!getAutoSummaryGate(state.settings).eligible) {
+            return;
+        }
+        const progress = getSummaryProgress(state.chatMessages[cacheKey], readSummarySettings(state.settings));
+        if (!progress.due) {
+            return;
+        }
+
+        const previousStatus = state.engine.status;
+        const previousDetail = state.engine.detail;
+        state.chatSummary.running = true;
+        state.engine.status = '摘要生成中';
+        state.engine.detail = `${chatId} · 距上次摘要已有 ${formatNumber(progress.messagesSince)} 条消息，正在更新聊天摘要`;
+        render();
+        let stopped = false;
+        try {
+            const outcome = await requestChatSummary({ entity, groupMode, contextKey, chatId, mode: 'auto', token });
+            stopped = outcome.stopped;
+            const notice = describeSummaryOutcome(outcome.result, { mode: 'auto' });
+            setSummaryNotice(cacheKey, notice);
+            if (notice && notice.kind !== 'success') {
+                showToast('聊天摘要', notice.text);
+            }
+        } catch (error) {
+            setSummaryNotice(cacheKey, { kind: 'warning', text: `摘要没有更新：${error.message}` });
+            showToast('聊天摘要未更新', `${error.message}（这条回复本身已正常保存）`);
+        } finally {
+            state.chatSummary.running = false;
+            if (activeGenerationToken === token) {
+                state.engine.status = stopped ? '已停止' : previousStatus;
+                state.engine.detail = stopped ? `${chatId} · 摘要已停止` : previousDetail;
+            }
+        }
+    }
+
+    /**
+     * 手动「重新摘要」：一定摘要一次，写入摘要所在的那条消息（已有摘要就覆盖，不产生第二份）。
+     * @returns {Promise<{ stopped: boolean, written: boolean, notice: { kind: string, text: string } | null } | null>} 正在生成时返回 null
+     */
+    async function summarizeModernChat() {
+        if (state.engine.generating) {
+            return null;
+        }
+
+        const entity = getSelectedChatEntity();
+        const groupMode = isGroupChatMode();
+        const contextKey = getChatContextKey(entity, groupMode);
+        const chatId = state.selected.chat;
+        if (!entity || !contextKey || !chatId) {
+            throw new Error('请先选择一个聊天文件');
+        }
+
+        const cacheKey = getChatCacheKey(contextKey, chatId);
+        const gate = getManualSummaryGate(state.settings, (state.chatMessages[cacheKey] || []).length);
+        if (!gate.ok) {
+            throw new Error(gate.message);
+        }
+
+        setSummaryNotice(cacheKey, null);
+        state.chatSummary.running = true;
+        const token = beginGeneration('摘要生成中', `${getChatEntityName(entity)} · ${chatId}`);
+        try {
+            return await runModernChatFileOperation(entity, chatId, async () => {
+                const outcome = await requestChatSummary({ entity, groupMode, contextKey, chatId, mode: 'force', token });
+                const notice = describeSummaryOutcome(outcome.result, { mode: 'force' });
+                setSummaryNotice(cacheKey, notice);
+                state.engine.status = outcome.stopped ? '已停止' : '就绪';
+                state.engine.detail = `${chatId} · ${notice?.text || '摘要已更新'}`;
+                if (notice) {
+                    showToast(outcome.written ? '聊天摘要已更新' : '聊天摘要', notice.text);
+                }
+                return { stopped: outcome.stopped, written: outcome.written, notice };
+            }, { groupMode });
+        } catch (error) {
+            failGeneration(token, error, '摘要失败');
+            setSummaryNotice(cacheKey, { kind: 'error', text: `摘要失败：${error.message}` });
+            throw error;
+        } finally {
+            state.chatSummary.running = false;
+            finishGeneration(token);
+        }
     }
 
     async function checkLegacyGenerationEngine({ quiet = false } = {}) {
@@ -290,6 +424,10 @@ export function createChatGenerationActions({
                     toastMessage: stopped ? describeStoppedReply(result) : toastMessage,
                     status: stopped ? '已停止' : '就绪',
                 });
+                // 回复已落盘并同步到界面：再由 Modern 决定要不要摘要。停止的回复、已离开这个聊天时不摘要，下一次回复结束后会补上
+                if (!stopped && !stoppedGenerationTokens.has(token) && isGenerationContextCurrent(contextKey, nextChatId)) {
+                    await runAutoSummaryAfterGeneration({ entity, groupMode, contextKey, chatId: nextChatId, token });
+                }
                 return { stopped, started: result?.started !== false };
             }, { groupMode });
         } catch (error) {
@@ -661,5 +799,6 @@ export function createChatGenerationActions({
         triggerGroupMemberModernReply,
         swipeModernMessage,
         loadAlternateGreetings,
+        summarizeModernChat,
     };
 }

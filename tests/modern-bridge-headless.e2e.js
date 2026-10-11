@@ -106,13 +106,14 @@ async function routeStubbedChatCompletion(page, reply, { patchSettings = null } 
 
 // Streams a chat-completion reply through a fetch the page controls: the chunks are delivered at once, then the
 // stream stays open until the request is aborted, the way a slow model looks when the user presses stop.
-async function routeOpenStreamingChatCompletion(page, chunks) {
+async function routeOpenStreamingChatCompletion(page, chunks, { patchSettings = null } = {}) {
     await page.route('**/api/settings/get', async route => {
         const response = await route.fetch();
         const body = await response.json();
         const settings = JSON.parse(body.settings || '{}');
         settings.main_api = 'openai';
         settings.oai_settings = { ...(settings.oai_settings || {}), chat_completion_source: 'deepseek', stream_openai: true, show_thoughts: true };
+        patchSettings?.(settings);
         return route.fulfill({ response, json: { ...body, settings: JSON.stringify(settings) } });
     });
     await page.route('**/api/backends/**', route => fulfillJson(route, {}));
@@ -1197,5 +1198,448 @@ test.describe('Modern bridge engine sync', () => {
         expect(await getBridgeReplyTime(page, 'queue-character')).toBeGreaterThanOrEqual(settingsTime);
         expect(settingsFetches - fetchesDuringGeneration).toBe(1);
         expect(errors).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Chat summary (A6): the SUMMARIZE action and the memory extension's behavior inside the bridge
+// ---------------------------------------------------------------------------------------------------------------------
+
+// One character with a chat of `messageCount` messages (the greeting first, then alternating user and character).
+// Saves behave like the server: a save that carries an older revision is rejected, an accepted one issues a new revision
+// and replaces the file, so a test can read back what the engine wrote.
+async function routeSummaryFixture(page, { messageCount = 6, memories = {} } = {}) {
+    const character = createBridgeCharacter({ name: 'Summary Fixture', avatar: 'summary-fixture.png' });
+    const chatId = 'Modern 2026-10-11T10-00-00-000Z';
+    const messages = Array.from({ length: messageCount }, (_, index) => {
+        const isUser = index % 2 === 1;
+        return {
+            name: isUser ? 'You' : character.name,
+            is_user: isUser,
+            is_system: false,
+            send_date: `2026-10-11T10:00:0${index}.000Z`,
+            mes: index === 0 ? character.first_mes : `${isUser ? 'user' : 'reply'} message ${index}`,
+            extra: memories[index] ? { memory: memories[index] } : {},
+        };
+    });
+    const file = { integrity: 'int-1', messages, rejectSaves: false };
+    const chatSaves = [];
+    const chatLoads = [];
+    const errors = [];
+    let savedCardChat = '';
+    page.on('pageerror', error => errors.push(error.message));
+
+    await page.route('**/api/characters/all', route => fulfillJson(route, [character]));
+    await page.route('**/api/characters/get', route => fulfillJson(route, savedCardChat ? { ...character, chat: savedCardChat } : character));
+    await page.route('**/api/characters/edit', route => {
+        savedCardChat = multipartFieldValue(route.request().postData() || '', 'chat');
+        return route.fulfill({ status: 200, contentType: 'text/plain', body: 'OK' });
+    });
+    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/chats/get', route => {
+        if (stripJsonlExtension(postJson(route)?.file_name) !== chatId) {
+            return fulfillJson(route, []);
+        }
+        chatLoads.push(file.integrity);
+        return fulfillJson(route, [{ chat_metadata: { integrity: file.integrity }, user_name: 'unused', character_name: 'unused' }, ...structuredClone(file.messages)]);
+    });
+    await page.route('**/api/chats/save', route => {
+        const payload = postJson(route);
+        if (!payload || stripJsonlExtension(payload.file_name) !== chatId) {
+            return fulfillJson(route, { ok: true });
+        }
+        const sentIntegrity = payload.chat[0]?.chat_metadata?.integrity;
+        const savedMessages = payload.chat.slice(1);
+        if (file.rejectSaves || sentIntegrity !== file.integrity) {
+            chatSaves.push({ sentIntegrity, rejected: true, messages: savedMessages });
+            return fulfillJson(route, { error: 'integrity' }, 400);
+        }
+        file.integrity = `int-saved-${chatSaves.length + 1}`;
+        file.messages = savedMessages;
+        chatSaves.push({ sentIntegrity, rejected: false, issued: file.integrity, messages: savedMessages });
+        return fulfillJson(route, { ok: true, integrity: file.integrity });
+    });
+    return { character, chatId, file, chatSaves, chatLoads, errors };
+}
+
+const summaryMemory = (memory = {}) => settings => {
+    settings.extension_settings = {
+        ...(settings.extension_settings || {}),
+        memory: { ...(settings.extension_settings?.memory || {}), source: 'main', promptInterval: 4, promptForceWords: 0, prompt_builder: 0, memoryFrozen: false, ...memory },
+    };
+};
+
+const summaryPayload = (fixture, mode, extra = {}) => ({ avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId, mode, ...extra });
+
+test.describe('Modern bridge summaries', () => {
+    test('answers a malformed or unsupported summarize request with a bridge error and keeps serving', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const fixture = await routeSummaryFixture(page);
+        // No patch: the default settings carry the Extras source, which is what the user has today
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'summary-error-boot')).error).toBeFalsy();
+
+        for (const mode of [undefined, 'sometimes', 'FORCE']) {
+            const rejected = await callBridge(page, 'summarize', summaryPayload(fixture, mode), `summary-error-mode-${mode}`);
+            expect(rejected.result).toBeNull();
+            expect(rejected.error?.message).toContain('mode');
+        }
+
+        // No chat selected: neither a character nor a group, or no chat file
+        const noTarget = await callBridge(page, 'summarize', { mode: 'force' }, 'summary-error-target');
+        expect(noTarget.result).toBeNull();
+        expect(noTarget.error?.message).toContain('指定角色或群聊');
+        const noChat = await callBridge(page, 'summarize', { mode: 'auto', avatar: fixture.character.avatar }, 'summary-error-chat');
+        expect(noChat.error?.message).toContain('聊天文件');
+
+        // The Extras source needs an Extras server, which is not connected: a structured error, in both modes
+        for (const mode of ['force', 'auto']) {
+            const extras = await callBridge(page, 'summarize', summaryPayload(fixture, mode), `summary-error-extras-${mode}`);
+            expect(extras.result).toBeNull();
+            expect(extras.error?.message).toContain('Extras');
+            expect(extras.error?.message).toContain('切换为主模型');
+        }
+
+        // Still serving, and nothing was saved
+        const status = await callBridge(page, 'status', {}, 'summary-error-status');
+        expect(status.error).toBeFalsy();
+        expect(fixture.chatSaves).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('refuses to summarize when the summary extension is disabled', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const fixture = await routeSummaryFixture(page);
+        await routePatchedSettings(page, settings => {
+            summaryMemory()(settings);
+            settings.extension_settings.disabledExtensions = [...(settings.extension_settings.disabledExtensions || []), 'memory'];
+        });
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'summary-disabled-boot')).error).toBeFalsy();
+
+        const disabled = await callBridge(page, 'summarize', summaryPayload(fixture, 'force'), 'summary-disabled');
+        expect(disabled.result).toBeNull();
+        expect(disabled.error?.message).toContain('已被禁用');
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('a forced summary is written on the pre-last message, saved at once, and leaves the prompt breakdown alone', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { memories: { 2: 'an older summary' } });
+        const modelRequests = await routeStubbedChatCompletion(page, 'The knight swore an oath.', { patchSettings: summaryMemory() });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', { avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId }, 'summary-force-open')).error).toBeFalsy();
+        expect((await callBridge(page, 'getItemizedPrompt', {}, 'summary-force-itemized-before')).result).toEqual({ available: false });
+
+        const summary = await callBridge(page, 'summarize', summaryPayload(fixture, 'force', { integrity: 'int-1' }), 'summary-force');
+        expect(summary.error).toBeFalsy();
+        // 6 messages: the summary goes on the pre-last one, index 4. It was saved before the reply was sent.
+        expect(summary.result).toMatchObject({
+            chat: fixture.chatId,
+            messageCount: 6,
+            due: true,
+            summary: 'The knight swore an oath.',
+            index: 4,
+            saved: true,
+            reason: '',
+        });
+        expect(fixture.chatSaves).toHaveLength(1);
+        expect(fixture.chatSaves[0]).toMatchObject({ sentIntegrity: 'int-1', rejected: false });
+        // The older summary stays where it was (legacy keeps earlier summaries; clearing the new one restores it)
+        expect(fixture.file.messages.map(message => message.extra?.memory || '')).toEqual(['', '', 'an older summary', '', 'The knight swore an oath.', '']);
+
+        // The main model got the summary instruction (the classic builder adds it to the regular prompt)
+        expect(modelRequests).toHaveLength(1);
+        expect(JSON.stringify(modelRequests[0])).toContain('Summarize the most important facts');
+        // The next generation injects the new summary
+        const injected = await page.evaluate(() => window.SillyTavern.getContext().extensionPrompts['1_memory']?.value);
+        expect(injected).toBe('[Summary: The knight swore an oath.]');
+        // The summary request itself must not become "the last prompt breakdown" the modern UI shows
+        expect((await callBridge(page, 'getItemizedPrompt', {}, 'summary-force-itemized-after')).result).toEqual({ available: false });
+
+        // A second forced summary writes on the same message again instead of creating a third summary
+        const again = await callBridge(page, 'summarize', summaryPayload(fixture, 'force', { integrity: fixture.file.integrity }), 'summary-force-again');
+        expect(again.error).toBeFalsy();
+        expect(again.result).toMatchObject({ index: 4, saved: true, reason: '' });
+        expect(fixture.file.messages.filter(message => message.extra?.memory)).toHaveLength(2);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('an automatic summary runs the extension\'s own due check and only calls the model when it is due', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page);
+        let memory = { promptInterval: 10 };
+        const modelRequests = await routeStubbedChatCompletion(page, 'Auto summary.', { patchSettings: settings => summaryMemory(memory)(settings) });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', { avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId }, 'summary-auto-open')).error).toBeFalsy();
+
+        // Fewer messages than the interval: answered at once, no model call, no save
+        const early = await callBridge(page, 'summarize', summaryPayload(fixture, 'auto', { integrity: 'int-1' }), 'summary-auto-early');
+        expect(early.error).toBeFalsy();
+        expect(early.result).toMatchObject({ due: false, reason: 'too-short', summary: '', index: -1, saved: false, messagesSince: 6 });
+        expect(modelRequests).toHaveLength(0);
+        expect(fixture.chatSaves).toHaveLength(0);
+
+        // Interval 0 switches the automatic summary off, paused likewise
+        memory = { promptInterval: 0 };
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-auto-off-reload')).error).toBeFalsy();
+        expect((await callBridge(page, 'summarize', summaryPayload(fixture, 'auto'), 'summary-auto-off')).result).toMatchObject({ due: false, reason: 'off' });
+        memory = { promptInterval: 4, memoryFrozen: true };
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-auto-frozen-reload')).error).toBeFalsy();
+        expect((await callBridge(page, 'summarize', summaryPayload(fixture, 'auto'), 'summary-auto-frozen')).result).toMatchObject({ due: false, reason: 'frozen' });
+        expect(modelRequests).toHaveLength(0);
+
+        // Due: the same call now summarizes. A forced summary ignores the pause.
+        memory = { promptInterval: 4 };
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-auto-due-reload')).error).toBeFalsy();
+        const due = await callBridge(page, 'summarize', summaryPayload(fixture, 'auto', { integrity: 'int-1' }), 'summary-auto-due');
+        expect(due.error).toBeFalsy();
+        expect(due.result).toMatchObject({ due: true, summary: 'Auto summary.', index: 4, saved: true, reason: '' });
+        expect(modelRequests).toHaveLength(1);
+
+        // Right after the summary only 1 message follows it: not due again until the interval has passed
+        const after = await callBridge(page, 'summarize', summaryPayload(fixture, 'auto', { integrity: fixture.file.integrity }), 'summary-auto-after');
+        expect(after.result).toMatchObject({ due: false, reason: 'waiting', messagesSince: 1 });
+        expect(modelRequests).toHaveLength(1);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('rolls the summary back when the chat file does not take it, so the engine never injects a summary the file lacks', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page);
+        await routeStubbedChatCompletion(page, 'A summary the file will refuse.', { patchSettings: summaryMemory() });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', { avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId }, 'summary-rollback-open')).error).toBeFalsy();
+
+        // Someone else saved the chat meanwhile: the engine's save carries an older revision and is rejected
+        fixture.file.rejectSaves = true;
+        const refused = await callBridge(page, 'summarize', summaryPayload(fixture, 'force', { integrity: 'int-1' }), 'summary-rollback');
+        expect(refused.error).toBeFalsy();
+        expect(refused.result).toMatchObject({ due: true, saved: false, reason: 'save-failed', index: 4, summary: 'A summary the file will refuse.' });
+        expect(fixture.chatSaves.at(-1)).toMatchObject({ rejected: true });
+        const engine = await page.evaluate(() => {
+            const context = window.SillyTavern.getContext();
+            return { memories: context.chat.map(message => message.extra?.memory || ''), injected: context.extensionPrompts['1_memory']?.value };
+        });
+        expect(engine.memories.every(memory => memory === '')).toBe(true);
+        expect(engine.injected).toBe('');
+        expect(fixture.errors).toEqual([]);
+    });
+
+    // The extension used to summarize on its own after every reply and save the chat 1 second later. In the bridge that save
+    // would carry whatever revision the engine knew back then and either be rejected or make the modern UI's next save fail.
+    test('the extension never summarizes on its own in the bridge, so a reply is followed by no model call and no save', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { messageCount: 4 });
+        const modelRequests = await routeStubbedChatCompletion(page, 'a reply', { patchSettings: summaryMemory({ promptInterval: 2 }) });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', { avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId }, 'summary-own-open')).error).toBeFalsy();
+
+        // The extension's listeners: the chat-changed one that re-inserts a stored summary is there, the triggering ones are not
+        const listeners = await page.evaluate(() => {
+            const { eventSource, eventTypes } = window.SillyTavern.getContext();
+            const names = type => (eventSource.events[type] || []).map(listener => listener.name);
+            return {
+                chatChanged: names(eventTypes.CHAT_CHANGED),
+                rendered: names(eventTypes.CHARACTER_MESSAGE_RENDERED),
+                deleted: names(eventTypes.MESSAGE_DELETED),
+                updated: names(eventTypes.MESSAGE_UPDATED),
+                swiped: names(eventTypes.MESSAGE_SWIPED),
+            };
+        });
+        expect(listeners.chatChanged).toContain('onChatChanged');
+        for (const triggers of [listeners.rendered, listeners.deleted, listeners.updated, listeners.swiped]) {
+            expect(triggers).not.toContain('onChatEvent');
+        }
+
+        // In the old behavior this reply (chat of 6 messages, interval 2) would be followed by a summary request
+        const generate = await callBridge(page, 'generate', summaryPayload(fixture, 'normal', { type: 'normal', message: 'keep going', integrity: 'int-1' }), 'summary-own-generate');
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ saved: true, messageCount: 6 });
+        const savesAfterGenerate = fixture.chatSaves.length;
+        // Intentional wait: we assert the ABSENCE of a late summary request and save, so let the debounce window pass
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(3000);
+        expect(modelRequests).toHaveLength(1);
+        expect(fixture.chatSaves).toHaveLength(savesAfterGenerate);
+        expect(fixture.file.messages.some(message => message.extra?.memory)).toBe(false);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('a summarize request waits behind a running generation, and stop reaches it', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { messageCount: 4 });
+        await routeOpenStreamingChatCompletion(page, [{ content: 'Partial answer' }], { patchSettings: summaryMemory({ promptInterval: 50 }) });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'generate', summaryPayload(fixture, 'normal', { type: 'normal', message: 'hold the engine' }), 'summary-queue-generate');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 1);
+        await startBridgeCall(page, 'summarize', summaryPayload(fixture, 'auto'), 'summary-queue-summarize');
+        // Intentional wait: the point is that nothing answers while the reply is still streaming
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(1500);
+        expect(await hasBridgeReply(page, 'summary-queue-summarize')).toBe(false);
+
+        const stop = await callBridge(page, 'stop', {}, 'summary-queue-stop');
+        expect(stop.error).toBeFalsy();
+        const generate = await awaitBridgeReply(page, 'summary-queue-generate');
+        const summarize = await awaitBridgeReply(page, 'summary-queue-summarize');
+        expect(generate.result).toMatchObject({ stopped: true, saved: true });
+        // It ran after the generation and carries the stop mark, like a queued generate would
+        expect(summarize.error).toBeFalsy();
+        expect(summarize.result).toMatchObject({ stopped: true, due: false });
+        expect(await getBridgeReplyTime(page, 'summary-queue-generate')).toBeLessThan(await getBridgeReplyTime(page, 'summary-queue-summarize'));
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('a stop that arrives while the summary request is running ends it without writing anything', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page);
+        // A non-streaming chat completion that never answers until the request is aborted
+        await page.route('**/api/settings/get', async route => {
+            const response = await route.fetch();
+            const body = await response.json();
+            const settings = JSON.parse(body.settings || '{}');
+            settings.main_api = 'openai';
+            settings.oai_settings = { ...(settings.oai_settings || {}), chat_completion_source: 'openai', stream_openai: false };
+            summaryMemory()(settings);
+            return route.fulfill({ response, json: { ...body, settings: JSON.stringify(settings) } });
+        });
+        let modelRequestStarted = false;
+        await page.route('**/api/backends/**', route => {
+            if (route.request().url().endsWith('/chat-completions/generate')) {
+                modelRequestStarted = true;
+                return new Promise(() => {});
+            }
+            return fulfillJson(route, route.request().url().endsWith('/chat-completions/status') ? { data: [{ id: 'gpt-4-turbo' }] } : {});
+        });
+        await page.route('**/api/horde/**', route => fulfillJson(route, { error: 'horde disabled in tests' }, 500));
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await startBridgeCall(page, 'summarize', summaryPayload(fixture, 'force'), 'summary-stop');
+        await expect.poll(() => modelRequestStarted, { timeout: 30_000 }).toBe(true);
+        const stop = await callBridge(page, 'stop', {}, 'summary-stop-call');
+        expect(stop.error).toBeFalsy();
+        const summarize = await awaitBridgeReply(page, 'summary-stop');
+
+        expect(summarize.error).toBeFalsy();
+        expect(summarize.result).toMatchObject({ stopped: true, summary: '', saved: false, reason: 'stopped' });
+        expect(fixture.chatSaves).toEqual([]);
+        const engine = await page.evaluate(() => window.SillyTavern.getContext().chat.some(message => message.extra?.memory));
+        expect(engine).toBe(false);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('summarizes a group chat and saves it through the group chat file', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const member = createBridgeCharacter({ name: 'Summary Member', avatar: 'summary-member.png' });
+        const groupId = 'summary-group';
+        const chatId = 'Modern 2026-10-11T11-00-00-000Z';
+        const group = {
+            id: groupId,
+            name: 'Summary Group',
+            avatar_url: '',
+            members: [member.avatar],
+            disabled_members: [],
+            chats: [chatId],
+            chat_id: chatId,
+            allow_self_responses: false,
+            activation_strategy: 0,
+            generation_mode: 0,
+            fav: false,
+        };
+        const messages = Array.from({ length: 5 }, (_, index) => ({
+            name: index % 2 ? 'You' : member.name,
+            is_user: index % 2 === 1,
+            is_system: false,
+            send_date: `2026-10-11T11:00:0${index}.000Z`,
+            mes: `group message ${index}`,
+            extra: {},
+        }));
+        const file = { integrity: 'int-1', messages };
+        const saves = [];
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+
+        const modelRequests = await routeStubbedChatCompletion(page, 'Group summary.', { patchSettings: summaryMemory() });
+        await page.route('**/api/characters/all', route => fulfillJson(route, [member]));
+        await page.route('**/api/characters/get', route => fulfillJson(route, member));
+        await page.route('**/api/groups/all', route => fulfillJson(route, [group]));
+        await page.route('**/api/groups/edit', route => {
+            Object.assign(group, postJson(route) || {});
+            return fulfillJson(route, { ok: true });
+        });
+        await page.route('**/api/chats/group/get', route => fulfillJson(route, [{ chat_metadata: { integrity: file.integrity }, user_name: 'unused', character_name: 'unused' }, ...structuredClone(file.messages)]));
+        await page.route('**/api/chats/group/save', route => {
+            const payload = postJson(route);
+            const sentIntegrity = payload?.chat?.[0]?.chat_metadata?.integrity;
+            if (sentIntegrity !== file.integrity) {
+                saves.push({ sentIntegrity, rejected: true });
+                return fulfillJson(route, { error: 'integrity' }, 400);
+            }
+            file.integrity = `int-saved-${saves.length + 1}`;
+            file.messages = payload.chat.slice(1);
+            saves.push({ sentIntegrity, rejected: false });
+            return fulfillJson(route, { ok: true, integrity: file.integrity });
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        const summary = await callBridge(page, 'summarize', { avatar: null, groupId, chat: chatId, mode: 'force', integrity: 'int-1' }, 'summary-group');
+
+        expect(summary.error).toBeFalsy();
+        expect(summary.result).toMatchObject({ groupId, chat: chatId, due: true, summary: 'Group summary.', index: 3, saved: true, reason: '' });
+        expect(modelRequests).toHaveLength(1);
+        expect(saves).toEqual([{ sentIntegrity: 'int-1', rejected: false }]);
+        expect(file.messages.map(message => message.extra?.memory || '')).toEqual(['', '', '', 'Group summary.', '']);
+        expect(errors).toEqual([]);
+    });
+
+    // The one-click「切换为主模型」saves the settings and reloads them into the engine: it must accept summaries right after
+    test('after reloadSettings changes the source from Extras to the main model, summarize is accepted, and repeating the reload changes nothing', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page);
+        let source = 'extras';
+        await routeStubbedChatCompletion(page, 'unused', {
+            patchSettings: settings => summaryMemory({ source, promptInterval: 50 })(settings),
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', { avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId }, 'summary-switch-open')).error).toBeFalsy();
+        const before = await callBridge(page, 'summarize', summaryPayload(fixture, 'auto'), 'summary-switch-before');
+        expect(before.error?.message).toContain('Extras');
+
+        source = 'main';
+        const readMemory = () => page.evaluate(() => {
+            const context = window.SillyTavern.getContext();
+            const { source: memorySource, promptInterval, position, depth } = context.extensionSettings.memory;
+            return { source: memorySource, promptInterval, position, depth, prompt: context.extensionPrompts['1_memory'] };
+        });
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-switch-reload')).error).toBeFalsy();
+        const first = await readMemory();
+        expect(first.source).toBe('main');
+        const after = await callBridge(page, 'summarize', summaryPayload(fixture, 'auto'), 'summary-switch-after');
+        expect(after.error).toBeFalsy();
+        expect(after.result).toMatchObject({ due: false, reason: 'too-short' });
+
+        // Reloading again is a no-op for the memory settings and the inserted prompt
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-switch-reload-2')).error).toBeFalsy();
+        expect((await callBridge(page, 'reloadSettings', {}, 'summary-switch-reload-3')).error).toBeFalsy();
+        expect(await readMemory()).toEqual(first);
+        expect(fixture.errors).toEqual([]);
     });
 });

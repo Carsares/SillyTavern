@@ -20,6 +20,7 @@ export function createChatToolsEvents(ctx) {
     const { state, render } = ctx;
     const registry = getChatToolsRegistry(ctx);
     // 连接标签不属于抽屉，但和工具共用同一套转发约定，省得 routes/chat.js 再单独接一遍
+    /** @type {{ handleClick?: Function, handleInput?: Function, handleChange?: Function, handleKeydown?: Function, afterRender?: Function }[]} */
     const toolHandlers = [
         bindChatToolAuthorsNoteEvents(ctx),
         bindChatToolSummaryEvents(ctx),
