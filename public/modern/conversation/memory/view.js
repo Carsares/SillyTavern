@@ -1,3 +1,4 @@
+import { jobView } from '../jobs/view.js';
 import { sourcesView } from './sources.js';
 import { MEMORY_KINDS, memoryInput } from './model.js';
 import { el, button, empty, field, input, select } from '../core/dom.js';
@@ -38,13 +39,13 @@ export function createMemory(app) {
         creationSnapshot = snapshot;
         creationControls.disabled = !snapshot || !terminal(app.state.turn) || !!snapshot?.conversation.activeTurnId;
         const events = (app.state.activity || []).filter(event => event.type === 'job.updated' || event.type === 'memory.updated' && event.payload?.status === 'failed');
-        jobs.replaceChildren(el('h3', {}, '后台任务与事件'), ...savedJobs.filter(job => job.conversationId === snapshot?.conversation.id).map(job => el('article', { class: 'card' }, el('pre', {}, JSON.stringify(redact(job), null, 2)))), ...(events.length ? events.map(event => el('article', { class: 'card' }, el('pre', {}, JSON.stringify(redact(event.payload), null, 2)))) : [empty('尚未收到后台任务状态；这不代表任务已成功')]));
+        jobs.replaceChildren(el('h3', {}, '后台任务与事件'), ...savedJobs.filter(job => job.conversationId === snapshot?.conversation.id).map(job => jobView(app, job, load)), ...(events.length ? [el('details', {}, el('summary', {}, '任务事件记录'), ...events.map(event => el('article', { class: 'card' }, el('pre', {}, JSON.stringify(redact(event.payload), null, 2)))))] : [empty('尚未收到后台任务状态；这不代表任务已成功')]));
         const disabled = !terminal(app.state.turn) || !!snapshot?.conversation.activeTurnId;
         const blocks = [...(snapshot?.memories || []).map(b => ({ ...b, blockType: 'memory' })), ...(snapshot?.summaries || []).map(b => ({ ...b, blockType: 'summary' })), ...(snapshot?.folds || []).map(b => ({ ...b, blockType: 'fold' }))];
         rows.replaceChildren(...(blocks.length ? blocks.map(block => {
             const draftKey = `${snapshot.conversation.id}:${block.id}`;
             const draft = drafts.get(draftKey);
-            const content = el('textarea', { value: draft?.content ?? block.content ?? '', rows: 4, 'aria-label': '记忆内容', disabled: disabled || block.blockType !== 'memory', oninput: event => {
+            const content = el('textarea', { value: draft?.content ?? block.content ?? '', rows: 4, 'aria-label': block.blockType === 'summary' ? '摘要内容' : '记忆内容', maxLength: block.blockType === 'summary' ? 16000 : 8000, disabled: disabled || block.blockType === 'fold', oninput: event => {
                 drafts.set(draftKey, { content: event.target.value, revision: draft?.revision ?? block.revision });
             } });
             const version = { blockId: block.id, expectedBlockRevision: block.revision };
@@ -52,6 +53,15 @@ export function createMemory(app) {
                 el('h3', {}, `${block.blockType} · ${block.status} ${block.locked ? '· 已锁定' : ''}`),
                 el('small', {}, `${block.id} · 版本 ${block.revision}`), content,
                 sourcesView(app, block),
+                ...(block.blockType === 'summary' ? [
+                    el('p', {}, '人工编辑保留来源并增加摘要版本，依赖旧版本的摘要与折叠会失效。'),
+                    button('保存摘要', () => app.run(async () => {
+                        if (!content.value.trim() || content.value.length > 16000) throw new Error('摘要须为 1 至 16000 字符');
+                        await app.applyCommand('summary.edit', { summaryId: block.id, expectedBlockRevision: drafts.get(draftKey)?.revision ?? block.revision, content: content.value });
+                        drafts.delete(draftKey); render();
+                    }), disabled),
+                    button('丢弃摘要编辑', () => { drafts.delete(draftKey); render(); }, disabled),
+                ] : []),
                 ...(block.blockType === 'memory' ? [
                     button('保存记忆', () => app.run(async () => {
                         await app.applyCommand('memory.edit', { ...version, expectedBlockRevision: drafts.get(draftKey)?.revision ?? block.revision, content: content.value });

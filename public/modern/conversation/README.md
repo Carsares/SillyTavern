@@ -185,8 +185,8 @@ never becomes an automatic remote image request. Unsafe URL schemes are not link
 
 ## Remaining integration boundaries
 
-1. Browser, live HTTP, backend persistence, SDK/provider and end-to-end tests were
-   intentionally not run. Final root composition and routing belong to the primary.
+1. Headless browser checks now cover isolated local HTTP fixtures; live paid SDK/provider
+   validation and final root composition remain owned by the primary.
 2. Typed media request shape is `{type,attachmentId,mimeType,name,size}`. The UI
    uploads and previews files and submits only attachment references. The runtime
    must resolve references and the capabilities endpoint must declare media support
@@ -207,14 +207,14 @@ never becomes an automatic remote image request. Unsafe URL schemes are not link
 
 ## Focused checks
 
-`node --test tests/conversation/modules/client/*.test.mjs`: 56 tests passed at
+`node --test tests/conversation/modules/client/*.test.mjs`: 68 tests passed at
 client handoff. Includes request versions, structured failures, fragmented UTF-8
 SSE, reconnect/deduplication/cursor reset, recovered content offsets, terminal
 safety, redaction, canonical resource defaults, SDK mode labels and media gates. Additional regression tests cover snapshot/command readback, member delta isolation, memory kinds, server usage tables, candidate panel state, complete tool result reads, UTF-8 backup envelope sizing and the full static module graph. DOM checks use an in-memory test double, not a browser.
 
 `./node_modules/.bin/eslint public/modern/conversation/**/*.js public/modern/conversation/app.js`:
 passed after correcting reported brace formatting.
-No browser/integration/provider tests or real user-data writes were performed.
+Browser checks used only temporary local protocol fixtures; no paid provider calls or real user-data writes were performed.
 
 
 Auxiliary connection selectors save `auxiliaryConnectionId`, `embeddingConnectionId`
@@ -223,3 +223,50 @@ Connection resource guidance documents `type`, `effort`, `reasoningBudget`,
 `capabilities.reasoningEnabled/reasoningEfforts/media/mediaTokenCost/verified`.
 Examples are explanatory and never automatically applied or marked verified.
 `memoryFrequency` guidance documents the positive-integer conversation setting.
+
+
+## Final scope additions and verified contracts
+
+- `memory/view.js`: `summary.edit {summaryId,expectedBlockRevision,content}`;
+  edits retain their original block revision on conflict.
+- `chat/view.js`: `message.hide {messageId,hidden}` independently controls
+  `userHidden`, with reversible presentation separate from automatic folding.
+- `retrieval/view.js`: GET `/conversations/:id/retrieval` and
+  `retrieval.updated {status,semanticReady,count,error?}`. Events supersede pending
+  reads; conversation changes discard stale responses. Unknown/error states stay visible.
+- `jobs/view.js`: GET `/conversations/:id/jobs`, POST
+  `/conversations/:id/jobs/:jobId/resume` and `/cancel` with schemaVersion 1.
+  Only image provider jobs with persisted payload.jobId and an idle conversation
+  expose enabled controls. Missing handles never permit resubmission. Completed
+  payload.result.media uses `/attachments/:id`; old messages remain unchanged.
+- `resources/view.js`: proxy is write-only `data.proxy:{url}`. Blank preserves;
+  explicit clear sends null. The entire proxy object is redacted and input cleared.
+- `diagnostics/usage.js`: costEstimated=true labels known costs as estimates;
+  null costs remain unknown. Token subcounts never inflate totalTokens.
+- `maintenance/view.js`: status traceCount/traceBytes/detailBytes are labeled as
+  UTF-8 JSON logical bytes, not SQLite physical storage. Cleanup preview takes
+  traceRetentionMs; changing retention invalidates its token. Export validates
+  conversation-v1-export effective history; backup validates conversation-v1-backup
+  and credentialsIncluded=false. Restore still requires a full backup.
+
+### Browser evidence, 2026-10-11
+
+Only headless CLI session conversation-ui-more was used. The primary session and
+port 60320 were not managed. Local services used temporary directories, not user data.
+New scope checks passed against actual HTTP/store behavior: summary revision and
+readback; user hiding across reload and exclusion from effective export; proxy
+write/blank/clear with no echo; trace cleanup (3 details pruned, 3 calls/75 tokens
+still displayed); distinct effective export and full backup; full backup restored
+into an empty store with edited summary and hidden state retained; retrieval
+ready/error/ready transitions after edits; image cancel-requested to completed,
+real attachment image load, completed controls disabled. The image peer recorded
+exactly one original submission and one cancellation, with no resubmission.
+At 390px, document width was 390px. Screenshots are in output/playwright/child-scope-*.png.
+Earlier browser phase covered six resource CRUD flows, bindings, manual memory,
+stop/reload partial replies, message attachments, candidates/regenerate/continue,
+auxiliary and impersonation drafts, and group sending.
+
+`tests/conversation/modules/client/browser-jobs-fixture.mjs` is a manual local-only
+browser fixture, not an automatically executed unit test. It starts a seeded image
+job and a separate empty store for restore checks, and checks submission count on
+SIGTERM/SIGINT shutdown. It never discovers credentials or forwards requests.

@@ -115,6 +115,7 @@ export function createChat(app) {
                         edits.set(message.id, { content: message.content, media: structuredClone(message.media || []), snapshot: app.state.snapshot });
                         editMessage(message, details);
                     }, active),
+                    button(message.userHidden ? '取消用户隐藏' : '用户隐藏', () => app.command('message.hide', { messageId: message.id, hidden: !message.userHidden }), active),
                     button('删除', () => { if (confirm('删除这条消息？相关记忆和摘要可能失效。')) app.command('message.delete', { messageId: message.id }); }, active),
                     ...(message.role === 'assistant' ? [
                         button('候选', () => candidates(message, details), active),
@@ -125,7 +126,7 @@ export function createChat(app) {
                 if (edits.has(message.id)) editMessage(message, details);
                 const node = el('article', { class: `message role-${message.role}`, tabIndex: -1 },
                     el('header', {}, `${message.role} · ${message.status || 'saved'} · 版本 ${message.revision}`),
-                    el('pre', {}, message.content || '（空内容）'),
+                    message.userHidden ? el('details', {}, el('summary', {}, '用户隐藏：已排除上下文与检索（独立于自动折叠）'), el('pre', {}, message.content || '（空内容）')) : el('pre', {}, message.content || '（空内容）'),
                     ...(message.media?.length ? [el('details', {}, el('summary', {}, `${message.media.length} 项媒体`), ...message.media.map(part => mediaView(app.api, part, snapshot.attachments?.[part.attachmentId])))] : []),
                     actions, details,
                 );

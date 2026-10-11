@@ -61,6 +61,8 @@ export function createResources(app) {
         const name = input(resource?.name || '', { required: true });
         const data = el('textarea', { rows: 16, value: JSON.stringify(redact(resource?.data || resourceDefaults(resourceKind)), null, 2), spellcheck: false, 'aria-label': '资源 JSON' });
         const key = input('', { type: 'password', autocomplete: 'new-password', placeholder: '留空保留已有密钥' });
+        const proxy = input('', { type: 'password', autocomplete: 'new-password', 'aria-label': '代理 URL（只写）', placeholder: '留空保留已有代理' });
+        const clearProxy = input('', { type: 'checkbox', 'aria-label': '清除已保存代理' });
         const headers = el('textarea', { rows: 2, placeholder: '可选私密请求头 JSON（写入后不回显）', 'aria-label': '私密请求头' });
         const form = el('form', {}, el('h3', {}, resource ? `编辑${names[resourceKind]}` : `新建${names[resourceKind]}`),
             field('名称', name), ...commonFields, field('资源内容 JSON（上方字段优先；其余字段原样提交）', data),
@@ -71,7 +73,7 @@ export function createResources(app) {
                 value[key] = [...(value[key] || []), resourceKind === 'worldbook' ? newWorldEntry(crypto.randomUUID()) : newPromptBlock(crypto.randomUUID())];
                 data.value = JSON.stringify(value, null, 2);
             }))] : []),
-            ...(resourceKind === 'connection' ? [connectionGuidance(), el('p', {}, '上下文和输出上限请填写所选模型的实际能力，界面不猜测默认额度。默认请求原生角色消息输入；保存后可在设置中检查服务端报告的实际输入模式与可用性。'), field('API 密钥（只写）', key), field('私密请求头（只写）', headers), el('p', {}, '密钥和请求头不会回显；密钥留空保留，私密请求头需重新填写。模型和执行器可用性以能力检查结果为准。')] : []),
+            ...(resourceKind === 'connection' ? [connectionGuidance(), el('p', {}, '上下文和输出上限请填写所选模型的实际能力，界面不猜测默认额度。默认请求原生角色消息输入；保存后可在设置中检查服务端报告的实际输入模式与可用性。'), field('API 密钥（只写）', key), field('代理 URL（只写，可含认证信息）', proxy), field('清除已保存代理', clearProxy), el('p', {}, '代理使用 http(s) URL，仅用于此连接，不继承环境代理。留空保留已有值；勾选清除提交 proxy:null，优先于输入。'), field('私密请求头（只写）', headers), el('p', {}, '密钥和请求头不会回显；密钥留空保留，私密请求头需重新填写。模型和执行器可用性以能力检查结果为准。')] : []),
             el('button', { type: 'submit' }, '保存资源'), button('取消', () => editor.replaceChildren()),
         );
         form.addEventListener('submit', event => {
@@ -96,6 +98,12 @@ export function createResources(app) {
                         } else if (fieldName === 'historyMode' && !control.value) delete parsed[fieldName];
                         else parsed[fieldName] = control.value;
                     }
+                    if (clearProxy.checked) parsed.proxy = null;
+                    else if (proxy.value.trim()) {
+                        let url; try { url = new URL(proxy.value.trim()); } catch { throw new Error('代理须为有效 HTTP(S) URL'); }
+                        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('代理仅支持 HTTP(S)');
+                        parsed.proxy = { url: proxy.value.trim() };
+                    }
                     if (key.value) parsed.apiKey = key.value;
                     if (headers.value.trim()) parsed.headers = parseObject(headers.value);
                 }
@@ -103,7 +111,7 @@ export function createResources(app) {
                     if (resource) await app.api.updateResource(resource.id, { expectedRevision: resource.revision, name: name.value, data: parsed });
                     else await app.api.createResource({ kind: resourceKind, name: name.value, data: parsed });
                     editor.replaceChildren(); await load(); app.notice('资源已保存');
-                } finally { key.value = ''; headers.value = ''; }
+                } finally { key.value = ''; headers.value = ''; proxy.value = ''; clearProxy.checked = false; }
             });
         });
         editor.replaceChildren(form);

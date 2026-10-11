@@ -233,3 +233,115 @@ test('conflicting message media edits retain the staged removal and text for rev
     assert.equal(descendants(view.root).filter(node => node.tag === 'button' && node.textContent === '移除此附件').length, 0);
     assert.equal(snap.messages[0].media.length, 1);
 }));
+
+test('summary edit uses summary identity and captured block revision and retains conflicting drafts', () => withDOM(async () => {
+    const { createMemory } = await import('../../../../public/modern/conversation/memory/view.js');
+    const snap = snapshot(); snap.summaries = [{ id: 'summary', revision: 4, status: 'valid', content: 'before', sourceRefs: [] }];
+    let command;
+    const app = { state: { snapshot: snap, turn: null }, run: action => action(), applyCommand: async (...args) => { command = args; throw new Error('conflict'); } };
+    const view = createMemory(app); view.render();
+    const editor = descendants(view.root).find(node => node['aria-label'] === '摘要内容');
+    assert.equal(editor.disabled, false); editor.value = 'manual summary'; editor.listeners.input({ target: editor });
+    app.state.snapshot = { ...snap, summaries: [{ ...snap.summaries[0], revision: 5 }] }; view.render();
+    const save = descendants(view.root).find(node => node.tag === 'button' && node.textContent === '保存摘要');
+    await assert.rejects(save.listeners.click(), /conflict/);
+    assert.deepEqual(command, ['summary.edit', { summaryId: 'summary', expectedBlockRevision: 4, content: 'manual summary' }]);
+    view.render(); assert.equal(descendants(view.root).find(node => node['aria-label'] === '摘要内容').value, 'manual summary');
+}));
+test('user-hidden message remains reversible independently of folds', () => withDOM(async () => {
+    const snap = snapshot(); snap.messages = [{ id: 'm', role: 'user', content: 'hidden text', revision: 1, userHidden: true }];
+    let command;
+    const app = { state: { snapshot: snap, turn: null, activity: [] }, command: (...args) => { command = args; } };
+    const view = createChat(app); view.render();
+    assert.match(view.root.textContent, /独立于自动折叠/);
+    const show = descendants(view.root).find(node => node.tag === 'button' && node.textContent === '取消用户隐藏');
+    show.listeners.click(); assert.deepEqual(command, ['message.hide', { messageId: 'm', hidden: false }]);
+}));
+test('image jobs never offer resubmission without a handle and query only when idle', () => withDOM(async () => {
+    const { jobView, imageJobState } = await import('../../../../public/modern/conversation/jobs/view.js');
+    const job = { id: 'job', conversationId: 'c', kind: 'provider-request', dependencies: { kind: 'image' }, payload: { state: 'unknown' } };
+    const app = { id: () => 'c', state: { snapshot: snapshot(), turn: null }, run: action => action(), notice() {}, api: {} };
+    assert.equal(imageJobState(job, app.state).actionable, false);
+    const unknown = jobView(app, job, async () => {});
+    assert.match(unknown.textContent, /不能重新提交/);
+    assert.ok(descendants(unknown).filter(node => node.tag === 'button').every(node => node.disabled));
+    job.payload.jobId = 'persisted-handle';
+    assert.equal(imageJobState(job, { ...app.state, turn: { status: 'generating' } }).actionable, false);
+    let calls = 0; app.api.resumeJob = async (...args) => { assert.deepEqual(args, ['c', 'job']); calls++; return { state: 'running' }; };
+    const view = jobView(app, job, async () => {});
+    await descendants(view).find(node => node.tag === 'button' && node.textContent.startsWith('查询')).listeners.click();
+    assert.equal(calls, 1);
+    job.payload.state = 'completed'; job.payload.result = { media: [{ type: 'image', attachmentId: 'real', mimeType: 'image/png' }] };
+    app.api.attachmentUrl = id => `/attachments/${id}`;
+    const complete = jobView(app, job, async () => {});
+    assert.equal(descendants(complete).find(node => node.tag === 'img').src, '/attachments/real');
+    assert.ok(descendants(complete).filter(node => node.tag === 'button').every(node => node.disabled));
+}));
+
+test('index not-ready and error states are visible without claiming semantic success', () => withDOM(async () => {
+    const { indexStatusView } = await import('../../../../public/modern/conversation/retrieval/view.js');
+    const pending = indexStatusView({ status: 'not-ready', semanticReady: false, count: 0 });
+    assert.match(pending.textContent, /语义索引未就绪/);
+    assert.match(pending.textContent, /关键词检索仍可用/);
+    const error = indexStatusView({ status: 'error', semanticReady: false, error: { code: 'index-failed', message: 'embedding failed' } });
+    assert.match(error.textContent, /embedding failed/);
+    assert.match(error.textContent, /语义索引失败/);
+    assert.throws(() => indexStatusView(null));
+}));
+test('changing retention invalidates the old cleanup preview token', () => withDOM(async () => {
+    const { createMaintenance } = await import('../../../../public/modern/conversation/maintenance/view.js');
+    const calls = [];
+    const app = { id: () => 'c', run: action => action(), api: { maintenance: async (action, body) => { calls.push([action, body]); return { token: 'private-token', entries: [], traces: [{ id: 't' }], bytes: 0 }; } } };
+    const view = createMaintenance(app);
+    const click = label => descendants(view.root).find(node => node.tag === 'button' && node.textContent === label).listeners.click();
+    await click('查看清理预览');
+    assert.deepEqual(calls[0], ['cleanup-preview', { traceRetentionMs: 2592000000 }]);
+    assert.match(view.root.textContent, /轨迹明细 1 项/);
+    assert.doesNotMatch(view.root.textContent, /private-token/);
+    const retention = descendants(view.root).find(node => node['aria-label'] === '轨迹明细保留天数');
+    retention.value = '0'; retention.listeners.input();
+    await assert.rejects(click('执行已预览的清理'), /预览/);
+    assert.equal(calls.length, 1);
+}));
+
+test('proxy controls never echo secrets, blank preserves, explicit clear sends null', () => withDOM(async () => {
+    const { createResources } = await import('../../../../public/modern/conversation/resources/view.js');
+    const resource = { id: 'r', kind: 'connection', name: 'local', revision: 1, data: { provider: 'openai', executor: 'pi', type: 'chat', model: 'local', proxy: { url: 'http://secret:password@localhost:3128' } } };
+    let pending; const writes = [];
+    const app = { run: action => { pending = action(); return pending; }, notice() {}, api: { resources: async () => [resource], resource: async () => resource, updateResource: async (id, body) => { writes.push(body); } } };
+    const view = createResources(app); await view.load();
+    const click = text => descendants(view.root).find(node => node.tag === 'button' && node.textContent === text).listeners.click();
+    const submit = async () => { descendants(view.root).find(node => node.tag === 'form').listeners.submit({ preventDefault() {} }); await pending; };
+    await click('编辑');
+    assert.doesNotMatch(view.root.textContent, /secret:password/);
+    let proxy = descendants(view.root).find(node => node['aria-label'] === '代理 URL（只写）');
+    assert.equal(proxy.value, ''); await submit(); assert.equal(Object.hasOwn(writes[0].data, 'proxy'), false);
+    await click('编辑'); proxy = descendants(view.root).find(node => node['aria-label'] === '代理 URL（只写）');
+    proxy.value = 'http://user:pass@localhost:3128'; await submit();
+    assert.deepEqual(writes[1].data.proxy, { url: 'http://user:pass@localhost:3128' }); assert.equal(proxy.value, '');
+    await click('编辑'); descendants(view.root).find(node => node['aria-label'] === '清除已保存代理').checked = true;
+    await submit(); assert.equal(writes[2].data.proxy, null);
+}));
+
+test('storage status labels logical UTF-8 bytes and preserves unknown values', () => withDOM(async () => {
+    const { storageStatusView } = await import('../../../../public/modern/conversation/maintenance/view.js');
+    const view = storageStatusView({ traceCount: 2, traceBytes: 128, detailBytes: 0 });
+    assert.match(view.textContent, /轨迹数量：2 · 轨迹逻辑字节：128 · 明细逻辑字节：0/);
+    assert.match(view.textContent, /不代表 SQLite/);
+    assert.match(storageStatusView({}).textContent, /轨迹数量：未知/);
+}));
+test('retrieval event supersedes pending reads and conversation changes discard stale responses', () => withDOM(async () => {
+    const { createRetrievalStatus } = await import('../../../../public/modern/conversation/retrieval/view.js');
+    let resolve;
+    const app = { state: { snapshot: snapshot() }, api: { retrievalStatus: () => new Promise(done => { resolve = done; }) } };
+    const view = createRetrievalStatus(app);
+    const pending = view.load();
+    view.onEvent({ type: 'retrieval.updated', conversationId: 'c', payload: { status: 'ready', semanticReady: true, count: 5 } });
+    resolve({ status: 'indexing', semanticReady: false, count: 1 }); await pending;
+    assert.match(view.root.textContent, /语义索引已就绪/);
+    const next = view.load(); view.clear(); app.state.snapshot.conversation.id = 'other';
+    resolve({ status: 'ready', semanticReady: true, count: 5 }); await next;
+    assert.doesNotMatch(view.root.textContent, /语义索引已就绪/);
+    app.api.retrievalStatus = async () => { throw new Error('offline'); }; await view.load();
+    assert.match(view.root.textContent, /索引状态未知：offline/);
+}));

@@ -86,3 +86,28 @@ test('message history uses the agreed envelope and enforces conversation/message
     assert.throws(() => validateHistory(payload, 'c', 'other'));
     assert.equal(matchesSource({ id: 'm', revision: 1, candidateId: 'wrong', candidateRevision: 1 }, { messageId: 'm', revision: 1, candidateId: 'original', candidateRevision: 1 }), false);
 });
+
+test('existing image job actions use only schema-versioned resume/cancel endpoints', async () => {
+    const calls = [];
+    const api = createClient({ csrf: false, fetcher: async (url, options) => { calls.push([url, JSON.parse(options.body)]); return new Response('{}'); } });
+    await api.resumeJob('c', 'j'); await api.cancelJob('c', 'j');
+    assert.deepEqual(calls, [['/api/conversation/v1/conversations/c/jobs/j/resume', { schemaVersion: 1 }], ['/api/conversation/v1/conversations/c/jobs/j/cancel', { schemaVersion: 1 }]]);
+});
+
+test('maintenance separates effective export from recoverable backup and validates retention milliseconds', async () => {
+    const { effectiveExport, cleanupRequest } = await import('../../../../public/modern/conversation/maintenance/model.js');
+    const data = { format: 'conversation-v1-export', schemaVersion: 1, conversations: [] };
+    assert.equal(effectiveExport(data), data);
+    assert.throws(() => effectiveExport({ format: 'conversation-v1-backup', schemaVersion: 1, conversations: [] }));
+    assert.deepEqual(cleanupRequest('30'), { traceRetentionMs: 2592000000 });
+    assert.deepEqual(cleanupRequest('0'), { traceRetentionMs: 0 });
+    for (const invalid of ['', '-1', 'invalid', 'Infinity']) assert.throws(() => cleanupRequest(invalid));
+});
+
+test('estimated cost is labeled per aggregate and missing estimated cost remains unknown', () => {
+    assert.equal(usageValue(0.02, 'costUsd', true), '0.02（估算）');
+    assert.equal(usageValue(null, 'costUsd', true), '未知');
+    assert.equal(usageValue(0, 'costUsd', false), '0');
+    const rows = usageRows({ totals: { costUsd: 1, costEstimated: true }, categories: { generation: { costUsd: null, costEstimated: true } } });
+    assert.deepEqual(rows.find(row => row.label === '费用 USD').cells.slice(0, 2), ['1（估算）', '未知']);
+});

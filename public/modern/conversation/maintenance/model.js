@@ -6,3 +6,13 @@ export function restoreBody(data, limit = BACKUP_MAX_BYTES) {
     if (new TextEncoder().encode(JSON.stringify(body)).byteLength > limit) throw new Error(`恢复请求连同包体超过 256 MiB。${BACKUP_COPY_GUIDANCE}`);
     return { data };
 }
+
+export function cleanupRequest(days) {
+    const value = Number(days);
+    if (String(days).trim() === '' || !Number.isFinite(value) || value < 0 || !Number.isSafeInteger(value * 86400000)) throw new Error('轨迹保留天数须为非负数，换算后须为整数毫秒');
+    return { traceRetentionMs: value * 86400000 };
+}
+export function effectiveExport(data) {
+    if (data?.format !== 'conversation-v1-export' || data.schemaVersion !== 1 || !Array.isArray(data.conversations)) throw new Error('服务器未返回有效历史导出格式，未下载');
+    return data;
+}

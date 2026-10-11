@@ -1,3 +1,4 @@
+import { createRetrievalStatus } from './retrieval/view.js';
 import { acceptedTurn, applySnapshotCommand, refreshAfterWrite, requireSnapshot } from './core/operations.js';
 import { createClient, subscribe } from './core/client.js';
 import { initialState, hydrate, reduceEvent, turnRequest, terminal, list } from './core/state.js';
@@ -29,7 +30,7 @@ const app = {
     async choose(id) {
         disconnect?.(); clearTimeout(refreshTimer); refreshTimer = null; refreshHint = null; this.epoch++; this.refreshSerial = 0;
         this.state = { ...initialState(), busy: this.state.busy };
-        chat.clearDraft(); render();
+        chat.clearDraft(); indexStatus.clear(); render();
         const epoch = this.epoch;
         const snapshot = requireSnapshot(await this.api.snapshot(id), id);
         if (epoch !== this.epoch) return;
@@ -59,6 +60,7 @@ const app = {
                 if (epoch !== this.epoch) return;
                 this.state = reduceEvent(this.state, event);
                 settings.onEvent(event);
+                indexStatus.onEvent(event);
                 if (event.turnId) refreshHint = event.turnId;
                 if (this.state.needsRefresh) {
                     if (!refreshTimer) refreshTimer = setTimeout(() => {
@@ -79,6 +81,7 @@ const app = {
             },
         });
         renderList();
+        await indexStatus.load();
         await activate(this.currentTab, false);
     },
     async refresh(hintTurnId) {
@@ -148,6 +151,7 @@ let disconnect;
 let refreshTimer;
 let refreshHint;
 const chat = createChat(app);
+const indexStatus = createRetrievalStatus(app);
 const resources = createResources(app);
 const memory = createMemory(app);
 const settings = createSettings(app);
@@ -171,7 +175,7 @@ const sidebar = el('aside', { class: 'sidebar' }, el('h2', {}, '会话'), title,
     })), button('刷新列表', () => app.run(() => app.reloadConversations())), rows,
 );
 const main = el('main', {}, el('header', { class: 'topbar' }, el('h1', {}, 'Modern · Conversation'), status,
-    button('重新读取会话', () => app.run(async () => { await app.refresh(); await activate(app.currentTab, false); }))), navigation, error, notice, panelRoot);
+    button('重新读取会话', () => app.run(async () => { await app.refresh(); await indexStatus.load(); await activate(app.currentTab, false); }))), navigation, error, notice, indexStatus.root, panelRoot);
 document.querySelector('#conversation-app').replaceChildren(el('div', { class: 'shell' }, sidebar, main));
 for (const [id, label] of Object.entries(labels)) navigation.append(button(label, () => app.run(() => activate(id))));
 async function activate(id, setTab = true) {

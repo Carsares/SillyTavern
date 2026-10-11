@@ -50,7 +50,7 @@ export function estimateRequest(draft, media = [], type = 'send') {
 export function redact(value) {
     if (Array.isArray(value)) return value.map(redact);
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(api.?key|authorization|password|secret|accessToken|refreshToken|token|headers)$/i.test(key)).map(([key, item]) => [key, redact(item)]));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(api.?key|authorization|password|secret|accessToken|refreshToken|token|headers|proxy)$/i.test(key)).map(([key, item]) => [key, redact(item)]));
 }
 export function list(value, key) {
     const result = Array.isArray(value) ? value : value?.[key];
