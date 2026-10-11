@@ -732,6 +732,9 @@ test.describe('Modern workspace', () => {
         await page.locator('[data-select-preset="Preset B"][data-preset-api="openai"]').click();
         await expect(page.locator('.preset-detail .detail-title')).toHaveText('Preset B');
         await expect(page.locator('[data-preset-json-input]')).toContainText('model-b');
+        // 选中预设后会探测它有没有内置默认版本，探测结束时整页重新渲染并替换文本框；
+        // 在这之前填写会因文本框被替换而丢失输入，所以等探测结束再填
+        await expect(page.locator('[data-restore-preset="Preset B"]')).not.toHaveAttribute('data-restore-status', 'checking');
 
         await page.locator('[data-preset-json-input]').fill(JSON.stringify({
             chat_completion_source: 'siliconflow',

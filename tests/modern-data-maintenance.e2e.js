@@ -248,7 +248,7 @@ test.describe('Modern data maintenance', () => {
         await mockMaintenance(page);
         await openMaintenance(page);
 
-        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/界面与请求/, /账户与资源/, /设置快照/, /数据维护/, /原始设置/, /安全诊断/]);
+        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/界面与请求/, /聊天工具/, /账户与资源/, /设置快照/, /数据维护/, /原始设置/, /安全诊断/]);
         await expect(page.locator('[data-maintenance-section]')).toHaveCount(6);
         for (const section of ['storage', 'data-maid', 'duplicate-greetings', 'snapshots', 'chat-backups', 'export']) {
             await expect(page.locator(`[data-maintenance-section="${section}"]`)).toBeVisible();
