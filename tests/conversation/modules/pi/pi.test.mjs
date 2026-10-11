@@ -247,3 +247,26 @@ test('bridge rejects duplicate tool calls before any side effect', async () => {
     await assert.rejects(run(createPiExecutor({ streamFn }), { tools: [{ ...tool, execute: async () => { executed++; } }] }), { code: 'provider-error' });
     assert.equal(executed, 0);
 });
+
+test('parent five-option injection accepts resolver endpoint and provider unknown usage', async () => {
+    const c = { ...connection, provider: 'provider-owned', executor: 'native', baseUrl: undefined };
+    const model = { ...createPrimaryModel(connection), api: 'provider-owned-api' };
+    const executor = createPiExecutor({
+        onRequest: () => {}, fetch: () => { throw new Error('No network'); }, model,
+        capabilityResolver: () => ({ ...getCapabilities(connection), baseUrl: connection.baseUrl, provider: c.provider }),
+        streamFn: () => {
+            const stream = new AssistantMessageEventStream();
+            const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, content: [{ type: 'text', text: 'unknown usage' }], usage: { input: NaN, output: NaN, cacheRead: 0, cacheWrite: 0, totalTokens: NaN, cost: { total: NaN } }, stopReason: 'stop', timestamp: 0 };
+            stream.push({ type: 'start', partial: message });
+            stream.push({ type: 'text_delta', contentIndex: 0, delta: 'unknown usage', partial: message });
+            stream.push({ type: 'done', reason: 'stop', message });
+            return stream;
+        },
+    });
+    const result = await run(executor, { connection: c });
+    assert.equal(result.content, 'unknown usage');
+    assert.equal(result.usage.inputTokens, null);
+    assert.equal(result.usage.totalTokens, null);
+    assert.equal(result.usage.requests[0].normalized.input, null);
+    assert.equal(result.usage.complete, false);
+});

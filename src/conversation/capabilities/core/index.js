@@ -25,7 +25,7 @@ export function validateCapabilities(connection, capability) {
     else if (c.reasoningEnabled === true && reasoningEffort(c) === 'off') reason = 'An enabled reasoning request requires an explicit effort';
     else {
         try {
-            const url = new URL(c.baseUrl);
+            const url = new URL(result.baseUrl ?? c.baseUrl);
             if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) reason = 'Invalid provider base URL';
         } catch { reason = 'Invalid provider base URL'; }
     }

@@ -157,11 +157,13 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                         else if (!['stop', 'length', 'toolUse'].includes(finishReason)) stop(fail('unsupported-finish', 'Unsupported provider completion state'));
                         if (fatal) return;
                         const u = message.usage;
-                        const entry = { requestIndex: requests, model: message.model, responseModel: message.responseModel, normalized: u ? { input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, totalTokens: u.totalTokens, reasoning: u.reasoning, cacheWrite1h: u.cacheWrite1h } : null, raw: rawUsage ?? null, cost: null };
+                        const known = value => Number.isFinite(value) && value >= 0 ? value : null;
+                        const add = (total, value) => total === null || known(value) === null ? null : total + value;
+                        const entry = { requestIndex: requests, model: message.model, responseModel: message.responseModel, normalized: u ? { input: known(u.input), output: known(u.output), cacheRead: known(u.cacheRead), cacheWrite: known(u.cacheWrite), totalTokens: known(u.totalTokens), reasoning: known(u.reasoning), cacheWrite1h: known(u.cacheWrite1h) } : null, raw: rawUsage ?? null, cost: null };
                         usage.requests.push(entry);
-                        usage.inputTokens += u?.input ?? 0; usage.outputTokens += u?.output ?? 0;
-                        usage.cacheReadTokens += u?.cacheRead ?? 0; usage.cacheWriteTokens += u?.cacheWrite ?? 0; usage.totalTokens += u?.totalTokens ?? 0;
-                        usage.reasoningTokens += u?.reasoning ?? 0; usage.cacheWrite1hTokens += u?.cacheWrite1h ?? 0;
+                        usage.inputTokens = add(usage.inputTokens, u?.input); usage.outputTokens = add(usage.outputTokens, u?.output);
+                        usage.cacheReadTokens = add(usage.cacheReadTokens, u?.cacheRead); usage.cacheWriteTokens = add(usage.cacheWriteTokens, u?.cacheWrite); usage.totalTokens = add(usage.totalTokens, u?.totalTokens);
+                        usage.reasoningTokens = add(usage.reasoningTokens, u?.reasoning); usage.cacheWrite1hTokens = add(usage.cacheWrite1hTokens, u?.cacheWrite1h);
                         usage.complete = usage.requests.every(r => (Number.isFinite(r.raw?.prompt_tokens) && Number.isFinite(r.raw?.completion_tokens)) || (Number.isFinite(r.raw?.inputTokens) && Number.isFinite(r.raw?.outputTokens)) || (Number.isFinite(r.raw?.input_tokens) && Number.isFinite(r.raw?.output_tokens)));
                         await emit({ type: 'usage.updated', usage: structuredClone(usage) });
                     }
