@@ -30,6 +30,8 @@ import { createImageJobService } from './image-jobs.js';
 import { createConnectionFetch, validateConnectionProxy } from '../providers/core/proxy.js';
 
 const needsMediaBridge = c => [...(c.capabilities?.media ?? []), ...Object.keys(c.mediaTokenCost ?? {})].some(type => ['audio', 'video', 'document'].includes(type));
+// Same clock and field meaning as createTraceService: createdAt when first saved, finishedAt at a terminal status.
+const timestamp = () => new Date().toISOString();
 
 const defaults = { createStore, createRuntime, createMemoryService, createRetrieval, createToolRegistry, createGroupScheduler, createTraceService, createMaintenance, createResourceService, createAttachmentService, createPiExecutor, createClaudeExecutor, createCodexExecutor, getPiCapabilities, getChatCapabilities, getTextCapabilities, getAuxiliaryCapabilities, createProviderAdapter, compileContext, createProviderStream, createProviderModel };
 
@@ -112,18 +114,24 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
         }
         function requestTrace(connection, metadata) {
             const scrub = createRedactor(connection);
-            return request => store.saveTrace(redact(scrub({ ...metadata,
+            return request => store.saveTrace(redact(scrub({ ...metadata, createdAt: timestamp(),
                 kind: ['GET', 'HEAD', 'DELETE'].includes(request.method?.toUpperCase()) ? 'outbound-poll' : 'outbound-request',
                 provider: connection.provider, executor: connection.executor, request })));
         }
         function auxiliaryTrace(connection, metadata, category, id = randomUUID()) {
-            const previous = store.listTraces?.(metadata.conversationId).find(item => item.id === id);
+            // Read only this record; listing would load every trace and event. New usage IDs are the normal not-found case.
+            let previous;
+            try { previous = store.getTrace(id); } catch (error) { if (error?.code !== 'not-found') throw error; }
+            if (previous?.conversationId !== metadata.conversationId) previous = undefined;
             if (previous) metadata = { ...metadata, turnId: previous.turnId };
             let attemptedRequests = previous?.attemptedRequests ?? 0;
+            const createdAt = previous?.createdAt ?? timestamp();
             const scrub = createRedactor(connection);
+            // A resumed record is pending again, so a finish time from an earlier attempt is cleared.
             const save = (usage = null, status = 'pending') => store.saveTrace(redact(scrub({
                 ...metadata, id, kind: `${category}-usage`, provider: connection.provider,
                 executor: connection.executor, usage, status, attemptedRequests, usageMissing: usage == null,
+                createdAt, finishedAt: status === 'pending' ? null : timestamp(),
             })));
             save();
             const capture = requestTrace(connection, { ...metadata, parentTraceId: id, category });
@@ -172,7 +180,7 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
                         const result = await chosen.runTurn({ ...options, connection: c });
                         await providerJob?.finish();
                         return { ...result, ...(result.media ? { media: await registerMedia(result.media, options.signal) } : {}) };
-                    } catch (error) { await providerJob?.fail(); throw error; } finally {
+                    } catch (error) { await providerJob?.fail(error); throw error; } finally {
                         if (turnId && activeSnapshots.get(turnId) === options.snapshot) {
                             if (previousSnapshot) activeSnapshots.set(turnId, previousSnapshot); else activeSnapshots.delete(turnId);
                         }

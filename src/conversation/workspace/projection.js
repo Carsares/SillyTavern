@@ -3,8 +3,12 @@ import { open, realpath } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { read as readCard } from '../../character-card-parser.js';
 import { ProtocolError } from '../../../public/shared/conversation/schemas/index.js';
+import { CHAT_PROVIDERS } from '../capabilities/chat/index.js';
 
 const MAX_FILE = 16 * 1024 * 1024;
+// Samplers the original request sends per source (public/scripts/openai.js createGenerationParameters); DeepSeek never receives seed.
+const SAMPLERS = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty'];
+const SOURCE_SAMPLERS = { custom: [...SAMPLERS, 'seed'], openai: [...SAMPLERS, 'seed'], deepseek: SAMPLERS };
 const REQUEST_FIELDS = new Set(['schemaVersion', 'title', 'characterId', 'personaId', 'presetId', 'worldbookIds', 'chatWorldbookId', 'executor']);
 export function unsupported(...fields) { throw new ProtocolError('workspace-unsupported', 'Selected workspace settings cannot be represented by this Agent adapter', 422, { fields }); }
 function check(ok, field) { if (!ok) unsupported(field); }
@@ -86,8 +90,10 @@ function connection(settings, secrets, executor = 'pi') {
     const keys = active?.filter(item => item.active === true) ?? [];
     check(keys.length <= 1 && keys.every(item => typeof item.value === 'string'), 'secrets.active');
     const parameters = {};
+    // PI sends samplers as-is, so keep only those the source sent originally and the target provider profile accepts.
+    const samplers = executor === 'pi' ? SOURCE_SAMPLERS[o.chat_completion_source].filter(key => CHAT_PROVIDERS[provider]?.parameters.includes(key)) : undefined;
     for (const [old, key] of Object.entries({ temp_openai: 'temperature', top_p_openai: 'top_p', freq_pen_openai: 'frequency_penalty', pres_pen_openai: 'presence_penalty', top_k_openai: 'top_k', min_p_openai: 'min_p', repetition_penalty_openai: 'repetition_penalty', seed: 'seed' })) {
-        if (o[old] === undefined || key === 'seed' && o[old] === -1) continue;
+        if (o[old] === undefined || key === 'seed' && o[old] === -1 || samplers && !samplers.includes(key)) continue;
         check(Number.isFinite(o[old]), `oai_settings.${old}`); parameters[key] = o[old];
     }
     let targetProvider = provider;

@@ -133,10 +133,19 @@ export function createMaintenance({ store, directory, retrieval, now = Date.now 
         },
         previewCleanup({ traceRetentionMs = 30 * 24 * 60 * 60 * 1000 } = {}) {
             invariant(Number.isSafeInteger(traceRetentionMs) && traceRetentionMs >= 0, 'invalid-retention', 'Trace retention must be nonnegative milliseconds');
-            const traces = (store.listTraces?.() ?? []).filter(trace => !trace.detailsPrunedAt && (trace.turnId || trace.status !== 'running')
-                && (!trace.turnId || ['completed', 'failed', 'stopped', 'interrupted'].includes(store.getTurn(trace.turnId).status))
-                && now() - new Date(trace.finishedAt ?? trace.createdAt).getTime() >= traceRetentionMs)
-                .map(trace => ({ id: trace.id, fingerprint: canonicalJson(trace) }));
+            const all = store.listTraces?.() ?? [];
+            const byId = new Map(all.map(trace => [trace.id, trace]));
+            const conversations = new Map(store.listConversations().map(conversation => [conversation.id, conversation]));
+            const traces = all.filter(trace => {
+                if (trace.detailsPrunedAt || !trace.turnId && trace.status === 'running') return false;
+                const turn = trace.turnId ? store.getTurn(trace.turnId) : undefined;
+                if (turn && !['completed', 'failed', 'stopped', 'interrupted'].includes(turn.status)) return false;
+                // Request and auxiliary usage records were once saved untimed. Prefer times no earlier than the record
+                // (parent finish, turn completion); only then times no later than it (parent start, conversation creation).
+                const parent = byId.get(trace.parentTraceId) ?? {};
+                const at = trace.finishedAt ?? trace.createdAt ?? parent.finishedAt ?? turn?.completedAt ?? parent.createdAt ?? conversations.get(trace.conversationId)?.createdAt;
+                return now() - new Date(at).getTime() >= traceRetentionMs;
+            }).map(trace => ({ id: trace.id, fingerprint: canonicalJson(trace) }));
             const entries = candidates();
             const token = randomUUID();
             previews.set(token, { entries, traces, fingerprint: hash(canonicalJson(entries)), expiresAt: now() + 300000 });

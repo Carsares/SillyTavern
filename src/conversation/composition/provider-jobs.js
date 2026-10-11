@@ -22,7 +22,11 @@ export function prepareProviderJob({ store, conversationId, turnId, memberRunId,
     const candidates = store.listJobs(conversationId).filter(item => item.kind === 'provider-request' && canonicalJson(item.dependencies) === canonicalJson(identity));
     invariant(candidates.length <= 1, 'provider-job-conflict', 'Multiple provider jobs match this operation', 409);
     let job = candidates[0];
-    if (job) {
+    if (job && !job.payload.jobId && job.payload.state === 'not-submitted') {
+        // A local refusal before dispatch left nothing at the provider, so a later attempt may submit afresh.
+        job = { ...job, payload: { ...job.payload, connectionId: connection.id, connectionRevision: connection.revision, provider: connection.provider,
+            model: connection.model, requestHash, ...(traceId ? { traceId } : {}), state: 'intent' } };
+    } else if (job) {
         invariant(job.payload.connectionId === connection.id && job.payload.connectionRevision === connection.revision
             && job.payload.provider === connection.provider && job.payload.model === connection.model,
         'provider-job-conflict', 'Provider connection changed; cannot resubmit an existing operation', 409);
@@ -54,6 +58,7 @@ export function prepareProviderJob({ store, conversationId, turnId, memberRunId,
             await onJob?.({ ...value, provider: connection.provider, providerJobRecordId: job.id });
         },
         finish: result => patch({ state: 'completed', ...(result ? { result } : {}) }, 'completed'),
-        fail: () => patch({ state: 'unknown' }, 'failed'),
+        // Only a budget refusal before any submission proves nothing reached the provider; every other failure stays unknown.
+        fail: error => patch({ state: job.payload.state === 'intent' && error?.code === 'budget-blocked' ? 'not-submitted' : 'unknown' }, 'failed'),
     };
 }

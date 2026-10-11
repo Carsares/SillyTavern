@@ -9,6 +9,7 @@ import { write as writeCard } from '../../../../src/character-card-parser.js';
 import { projectWorkspace } from '../../../../src/conversation/workspace/projection.js';
 import { createWorkspaceRouter } from '../../../../src/conversation/workspace-resources.js';
 import { getCapabilities } from '../../../../src/conversation/capabilities/core/index.js';
+import { createConversationServices } from '../../../../src/conversation/composition/index.js';
 
 const header = Buffer.alloc(13); header.writeUInt32BE(1, 0); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 6;
 const png = Buffer.from(encodePng([{ name: 'IHDR', data: header }, { name: 'IDAT', data: deflateSync(Buffer.from([0, 0, 0, 0, 255])) }, { name: 'IEND', data: Buffer.alloc(0) }]));
@@ -190,6 +191,31 @@ test('unsupported actual service capability blocks creation rather than silently
     const result = await invoke(createWorkspaceRouter(s), f.directories, { ...f.body, executor: 'claude' });
     assert.equal(requested, 'claude'); assert.equal(result.status, 422); assert.equal(s.created.length, 0);
     assert.deepEqual(result.value.error.details.fields, ['connection.capabilities']);
+});
+test('PI keeps only samplers the original source sends, so default DeepSeek and OpenAI settings pass real capability checks', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'workspace-capabilities-'));
+    const real = createConversationServices({ directory: join(root, 'conversation-v1') });
+    t.after(async () => { await real.close(); await rm(root, { recursive: true, force: true }); });
+    const defaults = JSON.parse(await readFile(new URL('../../../../default/content/settings.json', import.meta.url), 'utf8')).oai_settings;
+    // Values the original client saves from its own defaults (public/scripts/openai.js default_settings) on top of settings.json.
+    const saved = { ...defaults, min_p_openai: 0, repetition_penalty_openai: 1, seed: -1, deepseek_model: 'deepseek-chat' };
+    assert.equal(saved.top_k_openai, 0);
+    const neutral = { temperature: saved.temp_openai, top_p: saved.top_p_openai, frequency_penalty: saved.freq_pen_openai, presence_penalty: saved.pres_pen_openai };
+    for (const [source, patch, expected] of [['deepseek', {}, neutral], ['deepseek', { seed: 7, top_k_openai: 40, min_p_openai: 0.1, repetition_penalty_openai: 1.1 }, neutral],
+        ['openai', { seed: 7, top_k_openai: 40, min_p_openai: 0.1, repetition_penalty_openai: 1.1 }, { ...neutral, seed: 7 }], ['custom', { seed: 7, top_k_openai: 40 }, { ...neutral, seed: 7 }]]) {
+        const f = await setup(t, { oai_settings: { ...saved, chat_completion_source: source, custom_model: 'local-model', custom_url: 'http://127.0.0.1:9/v1', ...patch } });
+        const s = services(); s.capabilities = real.capabilities;
+        // The default prompt order disables the persona marker; that preset rule is unrelated to samplers.
+        const result = await invoke(createWorkspaceRouter(s), f.directories, { ...f.body, personaId: null });
+        assert.equal(result.status, 201, JSON.stringify(result));
+        const connection = s.created.find(r => r.kind === 'connection').data;
+        assert.equal(connection.executor, 'pi');
+        assert.deepEqual(connection.parameters, expected, source);
+        assert.equal(real.capabilities(connection).supported, true);
+    }
+    // SDK executors still reject every non-neutral sampler instead of dropping it.
+    const f = await setup(t, { oai_settings: { ...saved, chat_completion_source: 'openai', top_k_openai: 40 } });
+    await assert.rejects(projectWorkspace(f.directories, { ...f.body, personaId: null, executor: 'codex' }), error => error.details.fields.includes('executor.parameters.top_k'));
 });
 test('worldbook secondary NOT_ANY is mapped and nonrepresentable NOT_ALL is explicitly rejected', async t => {
     const f = await setup(t), filename = join(f.directories.worlds, 'Global.json');

@@ -198,3 +198,94 @@ for (const notify of [true, false]) test(`fatal tool outcomes cannot become succ
     assert.equal(nextRequest, false);
     await runtime.close();
 });
+
+function compressingMemory(counter) {
+    return {
+        async prepareCompact(snapshot, options) {
+            counter.prepared++; assert.equal(options.turnId, 'turn');
+            return { proposal: { id: counter.prepared }, snapshot: { ...snapshot, folds: [...snapshot.folds, { id: counter.prepared }] } };
+        },
+        combineProposals: proposals => ({ proposals }),
+        previewCompact: snapshot => ({ ...snapshot, folds: [{ id: 'merged' }] }),
+    };
+}
+const blocked = () => new ProtocolError('budget-blocked', 'Request exceeds the input working budget', 422);
+
+for (const surface of ['runtime-check', 'executor-check']) test(`first request blocked at execution compresses once and retries (${surface})`, async () => {
+    const counter = { prepared: 0, commits: 0 }, phases = [], folds = [];
+    const executor = { async runTurn(options) {
+        const over = !options.snapshot.folds.length;
+        folds.push(options.snapshot.folds.map(fold => fold.id));
+        // executor-check: the SDK gateway rejects its wire request before beforeRequest; runtime-check: the shared runtime check.
+        if (surface === 'executor-check' && over) throw blocked();
+        await options.beforeRequest({ messages: [], estimatedTokens: over ? 5000 : 100 });
+        await options.onEvent({ type: 'text.delta', text: 'ok' });
+        return { content: 'ok', finishReason: 'stop' };
+    } };
+    const { runtime, store } = setup(executor, { memory: compressingMemory(counter) });
+    store.commitDerived = () => { counter.commits++; return { accepted: true }; };
+    const advance = store.advanceTurn;
+    store.advanceTurn = (id, status) => { phases.push(status); advance(id, status); };
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'completed'); assert.equal(turn.content, 'ok');
+    assert.deepEqual(counter, { prepared: 1, commits: 1 });
+    assert.deepEqual(folds, [[], ['merged']]);
+    assert.deepEqual(phases, ['preparing', 'generating', 'preparing', 'generating', 'finalizing']);
+    await runtime.close();
+});
+
+for (const surface of ['runtime-check', 'executor-check']) test(`budget block after a dispatched request fails without compression (${surface})`, async () => {
+    const counter = { prepared: 0, commits: 0 };
+    let calls = 0;
+    const executor = { async runTurn(options) {
+        calls++;
+        await options.beforeRequest({ messages: [], estimatedTokens: 100 });
+        await options.onEvent({ type: 'usage.updated', usage: { inputTokens: 100 } });
+        if (surface === 'executor-check') throw blocked();
+        await options.beforeRequest({ messages: [], estimatedTokens: 5000 });
+        return { content: 'unreachable', finishReason: 'stop' };
+    } };
+    const { runtime, store } = setup(executor, { memory: compressingMemory(counter) });
+    store.commitDerived = () => { counter.commits++; return { accepted: true }; };
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'failed'); assert.equal(turn.error.code, 'budget-blocked');
+    assert.deepEqual(counter, { prepared: 0, commits: 0 });
+    assert.equal(calls, 1);
+    await runtime.close();
+});
+
+for (const scenario of ['retry-still-blocked', 'compile-compressed']) test(`execution budget retry happens at most once per member run (${scenario})`, async () => {
+    const counter = { prepared: 0, commits: 0 };
+    let calls = 0;
+    const executor = { async runTurn() { calls++; throw blocked(); } };
+    const { runtime, store } = setup(executor, { memory: compressingMemory(counter), compile(snapshot) {
+        if (scenario === 'compile-compressed' && !snapshot.folds.length) throw blocked();
+        return { messages: [], effects: [], budget: {} };
+    } });
+    store.commitDerived = () => { counter.commits++; return { accepted: true }; };
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'failed'); assert.equal(turn.error.code, 'budget-blocked');
+    assert.deepEqual(counter, { prepared: 1, commits: 1 });
+    assert.equal(calls, scenario === 'compile-compressed' ? 1 : 2);
+    await runtime.close();
+});
+
+test('wire-request estimates already include tool declarations and are not charged twice', async () => {
+    const tools = { definitions: () => [{ name: 'lookup', description: 'x'.repeat(3000), parameters: {} }], bindTurn() {}, release() {} };
+    for (const wire of [true, false]) {
+        const executor = { async runTurn(options) {
+            const declarations = options.tools.map(({ name, description, parameters }) => ({ name, description, input_schema: parameters }));
+            await options.beforeRequest({ messages: [], estimatedTokens: 3500, ...(wire ? { request: { messages: [], tools: declarations } } : {}) });
+            return { content: 'ok', finishReason: 'stop' };
+        } };
+        const { runtime } = setup(executor, { tools });
+        runtime.start('c', request);
+        const turn = await runtime.wait('turn');
+        assert.equal(turn.status, wire ? 'completed' : 'failed');
+        if (!wire) assert.equal(turn.error.code, 'budget-blocked');
+        await runtime.close();
+    }
+});

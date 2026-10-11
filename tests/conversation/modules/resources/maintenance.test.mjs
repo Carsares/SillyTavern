@@ -70,6 +70,39 @@ test('cleanup rejects a stale preview when an unused attachment becomes referenc
     assert.equal(store.getAttachment(record.id).id, record.id);
 });
 
+test('untimed request and usage records from before timestamps age from their parent, turn or conversation', t => {
+    const directory = mkdtempSync(join(tmpdir(), 'conversation-maintenance-'));
+    let clock = '2026-01-01T00:00:00.000Z';
+    const store = createStore({ directory, now: () => clock }); t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+    const c = store.createConversation({});
+    clock = '2026-03-01T00:00:00.000Z';
+    const late = store.createConversation({});
+    const { turn } = store.beginTurn(c.id, { schemaVersion: 1, type: 'send', content: 'hello', clientRequestId: 'one', expectedContentRevision: 0 });
+    store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1);
+    const usage = { complete: true, inputTokens: 2, outputTokens: 0, totalTokens: 2 };
+    const capture = { provider: 'openai-compatible', executor: 'pi', request: { method: 'POST', body: 'private input' } };
+    const auxiliary = { provider: 'openai-compatible', executor: 'pi', usage, status: 'completed', attemptedRequests: 1, usageMissing: false };
+    // A timed trace-service parent, then the untimed shapes request capture and auxiliary usage saved before timestamps.
+    for (const record of [
+        { id: 'generation', conversationId: c.id, turnId: turn.id, requestPlan: { messages: ['private prompt'] }, status: 'completed', usage, createdAt: '2026-02-01T00:00:00.000Z', finishedAt: '2026-02-01T00:00:05.000Z' },
+        { id: 'generation-request', conversationId: c.id, turnId: turn.id, parentTraceId: 'generation', category: 'generation', kind: 'outbound-request', ...capture },
+        { id: 'image', conversationId: c.id, turnId: turn.id, kind: 'image-usage', ...auxiliary },
+        { id: 'image-request', conversationId: c.id, turnId: turn.id, parentTraceId: 'image', category: 'image', kind: 'outbound-request', ...capture },
+        { id: 'embedding', conversationId: c.id, kind: 'embedding-usage', ...auxiliary },
+        { id: 'embedding-request', conversationId: c.id, parentTraceId: 'embedding', category: 'embedding', kind: 'outbound-request', ...capture },
+        { id: 'late-embedding', conversationId: late.id, kind: 'embedding-usage', ...auxiliary },
+    ]) store.saveTrace(record);
+    const selected = at => createMaintenance({ directory, store, now: () => Date.parse(at) }).previewCleanup().traces.map(trace => trace.id).sort();
+    // Parent finish (02-01) wins over turn completion (03-01); usage without turn or parent falls back to its conversation.
+    assert.deepEqual(selected('2026-03-05T00:00:00.000Z'), ['embedding', 'embedding-request', 'generation', 'generation-request']);
+    assert.deepEqual(selected('2026-04-01T00:00:00.000Z'), ['embedding', 'embedding-request', 'generation', 'generation-request', 'image', 'image-request', 'late-embedding']);
+    const totals = summarizeUsage(store.listTraces(c.id));
+    const service = createMaintenance({ directory, store, now: () => Date.parse('2026-03-05T00:00:00.000Z') });
+    assert.equal(service.cleanup({ token: service.previewCleanup().token }).tracesPruned, 4);
+    assert.equal(store.getTrace('embedding-request').request, undefined); assert.equal(store.getTrace('image-request').request.body, 'private input');
+    assert.deepEqual(summarizeUsage(store.listTraces(c.id)), totals);
+});
+
 test('interrupted restore resumes only identical attachment bytes', async t => {
     const directory = temporaryDirectory(t), id = randomUUID();
     const bytes = Buffer.from('recovered attachment');

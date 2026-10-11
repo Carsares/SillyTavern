@@ -99,34 +99,39 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             workingBudget: connection.workingBudget, tools: enabledTools,
             variables: snapshot.settings.variables ?? {}, seed: turn.id,
         };
-        for (let attempt = 0; attempt < 3; attempt++) {
+        async function compress(budget) {
+            const fingerprint = JSON.stringify(preparedSnapshot.folds);
+            invariant(fingerprint !== lastCompression, 'compression-failed', 'Compression made no progress', 422);
+            lastCompression = fingerprint;
+            phase(turn, 'preparing');
+            const prepared = await memory.prepareCompact(preparedSnapshot, { signal, budget, turnId: turn.id, attemptEpoch: turn.attemptEpoch });
+            proposals.push(prepared.proposal);
+            preparedSnapshot = prepared.snapshot;
+        }
+        // At most two speculative compressions per member run, committed once as a combined proposal.
+        async function prepare() {
+            for (let attempt = proposals.length; attempt < 3; attempt++) {
+                check();
+                try {
+                    requestPlan = compile(preparedSnapshot, compileOptions);
+                    break;
+                } catch (error) {
+                    if (error.code !== 'budget-blocked' || !memory || attempt === 2) throw error;
+                    await compress(error.details?.budget ?? connection.workingBudget);
+                }
+            }
             check();
-            try {
+            if (proposals.length) {
+                const proposal = memory.combineProposals(proposals, compressionBase);
+                preparedSnapshot = memory.previewCompact(compressionBase, proposal);
                 requestPlan = compile(preparedSnapshot, compileOptions);
-                break;
-            } catch (error) {
-                if (error.code !== 'budget-blocked' || !memory || attempt === 2) throw error;
-                const fingerprint = JSON.stringify(preparedSnapshot.folds);
-                invariant(fingerprint !== lastCompression, 'compression-failed', 'Compression made no progress', 422);
-                lastCompression = fingerprint;
-                phase(turn, 'preparing');
-                const prepared = await memory.prepareCompact(preparedSnapshot, { signal, budget: error.details?.budget ?? connection.workingBudget, turnId: turn.id, attemptEpoch: turn.attemptEpoch });
-                proposals.push(prepared.proposal);
-                preparedSnapshot = prepared.snapshot;
+                check();
+                const committed = store.commitDerived(turn.conversationId, proposal);
+                invariant(committed !== false && committed?.accepted !== false && committed?.conflict !== true, 'revision-conflict', 'Prepared compression could not commit', 409);
             }
         }
-        check();
-        if (proposals.length) {
-            const proposal = memory.combineProposals(proposals, compressionBase);
-            preparedSnapshot = memory.previewCompact(compressionBase, proposal);
-            requestPlan = compile(preparedSnapshot, compileOptions);
-            check();
-            const committed = store.commitDerived(turn.conversationId, proposal);
-            invariant(committed !== false && committed?.accepted !== false && committed?.conflict !== true, 'revision-conflict', 'Prepared compression could not commit', 409);
-        }
-        phase(turn, 'generating');
-        tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan, onFatal(error) { fatalError ??= error; fatalController.abort(fatalError); } });
-        const traceId = trace?.begin?.({ conversationId: turn.conversationId, turnId: turn.id, memberRunId: member?.id, requestPlan, connection });
+        await prepare();
+        let traceId;
         let callNumber = 0;
         const memoryProposals = [];
         const toolDefinitions = enabledTools.map(definition => ({ ...definition,
@@ -146,37 +151,58 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             },
         }));
         let result;
-        try {
-            result = await chosen.runTurn({
-                snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
-                limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
-                beforeRequest: async context => {
-                    check();
-                    const current = store.getTurn(turn.id);
-                    invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
-                    callNumber++;
-                    const task = active.get(turn.id);
-                    if (task) task.modelStep = Symbol('model-step');
-                    // The SDK calls this for every step, including tool continuations.
-                    const messages = context?.messages ?? context?.context?.messages;
-                    if (messages) {
-                        const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
-                        const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
-                        const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
-                            ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
-                        invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
-                    }
-                    trace?.record?.(traceId, { type: 'model.prepare', callNumber });
-                },
-                onEvent: async event => {
-                    check();
-                    if (event.type === 'text.delta') store.appendDelta(turn.id, { text: event.text ?? '' }, turn.attemptEpoch);
-                    else if (event.type === 'reasoning.delta') store.appendDelta(turn.id, { reasoning: event.text ?? '' }, turn.attemptEpoch);
-                    else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
-                    trace?.record?.(traceId, event);
-                },
-            });
-        } catch (error) { const failure = fatalError ?? tools?.fatalError?.(turn.id) ?? error; trace?.fail?.(traceId, failure); throw failure; }
+        for (;;) {
+            phase(turn, 'generating');
+            tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan, onFatal(error) { fatalError ??= error; fatalController.abort(fatalError); } });
+            traceId = trace?.begin?.({ conversationId: turn.conversationId, turnId: turn.id, memberRunId: member?.id, requestPlan, connection });
+            callNumber = 0;
+            let dispatched = false;
+            try {
+                result = await chosen.runTurn({
+                    snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
+                    limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
+                    beforeRequest: async context => {
+                        check();
+                        const current = store.getTurn(turn.id);
+                        invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
+                        callNumber++;
+                        const task = active.get(turn.id);
+                        if (task) task.modelStep = Symbol('model-step');
+                        // The SDK calls this for every step, including tool continuations.
+                        const messages = context?.messages ?? context?.context?.messages;
+                        if (messages) {
+                            const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
+                            const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
+                            const measured = Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0;
+                            // Wire-request estimates (SDK gateway) already count tool declarations; message-only estimates do not.
+                            const estimated = (measured ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8'))
+                                + (measured && context.request ? 0 : Buffer.byteLength(JSON.stringify(enabledTools), 'utf8'));
+                            invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
+                        }
+                        trace?.record?.(traceId, { type: 'model.prepare', callNumber });
+                    },
+                    onEvent: async event => {
+                        if (['text.delta', 'reasoning.delta', 'tool.call', 'tool.result', 'usage.updated'].includes(event.type)) dispatched = true;
+                        check();
+                        if (event.type === 'text.delta') store.appendDelta(turn.id, { text: event.text ?? '' }, turn.attemptEpoch);
+                        else if (event.type === 'reasoning.delta') store.appendDelta(turn.id, { reasoning: event.text ?? '' }, turn.attemptEpoch);
+                        else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
+                        trace?.record?.(traceId, event);
+                    },
+                });
+                break;
+            } catch (error) {
+                const failure = fatalError ?? tools?.fatalError?.(turn.id) ?? error;
+                trace?.fail?.(traceId, failure);
+                // Executors measure their own wire format only at the request boundary, so a plan that fits the compiled
+                // budget can still be blocked there. A first request blocked before any output was never dispatched:
+                // compress and recompile once, exactly like a compile-time block. Runs that already compressed do not retry.
+                if (failure !== error || error?.code !== 'budget-blocked' || dispatched || callNumber > 1 || proposals.length || !memory?.prepareCompact) throw failure;
+                check();
+                await compress(requestPlan.budget ?? connection.workingBudget);
+                await prepare();
+            }
+        }
         check();
         invariant(!['error', 'aborted'].includes(result.finishReason), 'model-failed', 'Model did not finish successfully', 502);
         trace?.finish?.(traceId, result);

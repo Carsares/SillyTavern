@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createConversationServices } from '../../../../src/conversation/composition/index.js';
+import { createStore } from '../../../../src/conversation/store/index.js';
+import { createMaintenance } from '../../../../src/conversation/maintenance/index.js';
+import { summarizeUsage } from '../../../../src/conversation/traces/usage.js';
+import { invariant } from '../../../../public/shared/conversation/schemas/index.js';
 
 const directory = '/virtual/conversation-v1';
 const config = { provider: 'openai-compatible', model: 'unit', baseUrl: 'http://stub.invalid/v1', contextWindow: 32000, inputLimit: 30000, maxOutputTokens: 1000, outputLimit: 2000, workingBudget: 16000, apiKey: 'unit-secret', headers: { 'x-custom': 'unit-header-secret' } };
 const cap = c => ({ supported: true, provider: c.provider, executor: c.executor, types: ['send', 'auxiliary'], tools: true, media: ['text'], contextWindow: c.contextWindow, inputLimit: c.inputLimit, outputLimit: c.outputLimit, maxOutputTokens: c.maxOutputTokens, workingBudget: c.workingBudget });
 function harness(overrides = {}, fetch) {
-    const calls = { closes: 0, trace: [], read: [], providers: [], retrieval: [], pi: [] };
+    const calls = { closes: 0, trace: [], traceReads: [], read: [], providers: [], retrieval: [], pi: [] };
     const resources = [{ id: 'main', revision: 1, kind: 'connection', data: structuredClone(config) }, { id: 'embed', revision: 1, kind: 'connection', data: { ...config, model: 'embedding' } }, { id: 'image', revision: 1, kind: 'connection', data: { ...config, model: 'image' } }];
     let snapshot = { conversationId: 'c', conversation: { id: 'c', activeTurnId: 't', settings: {} }, settings: { connectionId: 'main' }, resources, messages: [{ id: 'm', role: 'user', content: 'hello', media: [] }], memories: [], summaries: [], folds: [] };
     const latest = new Map(resources.map(r => [r.id, r]));
@@ -15,8 +22,10 @@ function harness(overrides = {}, fetch) {
     store.getAttachment = id => { assert.ok(attachmentRecords.has(id)); return attachmentRecords.get(id); };
     const jobs = new Map();
     store.getTurn = id => ({ id, conversationId: 'c', request: id === 'retry' ? { retryTurnId: 't' } : {} });
-    store.getTrace = () => ({});
-    store.listTraces = () => [...new Map(calls.trace.filter(item => item.id).map(item => [item.id, item])).values()];
+    // Like the store: the latest saved record, or not-found. Parent traces are begun by the runtime before runTurn.
+    const parents = new Set(['trace-id', 'generation-parent', 'first-trace', 'retry-trace']);
+    store.getTrace = id => { calls.traceReads.push(id); const found = calls.trace.findLast(item => item.id === id); if (found) return structuredClone(found); invariant(parents.has(id), 'not-found', 'Entity not found', 404); return {}; };
+    store.listTraces = () => assert.fail('usage lookups must not list every trace in the workspace');
     store.listJobs = () => [...jobs.values()].map(value => structuredClone(value));
     store.createJob = input => { const job = { ...structuredClone(input), id: `job-${jobs.size}`, status: 'pending' }; jobs.set(job.id, job); return structuredClone(job); };
     store.updateJob = async (id, patch) => { await new Promise(resolve => setImmediate(resolve)); Object.assign(jobs.get(id), structuredClone(patch)); return structuredClone(jobs.get(id)); };
@@ -183,7 +192,6 @@ test('generation and memory requests carry their usage parent and category', asy
 });
 
 test('embedding and image usage preserve attempted calls on success and failure, excluding polling', async () => {
-    const { summarizeUsage } = await import('../../../../src/conversation/traces/usage.js');
     for (const category of ['embedding', 'image']) for (const fail of [false, true]) {
         let h;
         const usage = { inputTokens: 2, outputTokens: 0, totalTokens: 2, complete: false };
@@ -221,6 +229,13 @@ test('embedding and image usage preserve attempted calls on success and failure,
         assert.equal(outbound[0].parentTraceId, last.id);
         assert.equal(outbound[0].category, category);
         assert.equal(h.calls.trace.filter(item => item.kind === 'outbound-poll').length, 2);
+        // Usage keeps one creation time, is unfinished while pending, and every captured request is timed for retention.
+        const iso = value => typeof value === 'string' && new Date(value).toISOString() === value;
+        assert.ok(iso(records[0].createdAt) && records.every(item => item.createdAt === records[0].createdAt));
+        assert.ok(records.slice(0, -1).every(item => item.status === 'pending' && item.finishedAt === null));
+        assert.ok(iso(last.finishedAt) && last.finishedAt >= last.createdAt);
+        assert.ok(h.calls.trace.filter(item => item.kind?.startsWith('outbound-')).every(item => iso(item.createdAt)));
+        assert.deepEqual(h.calls.traceReads, [last.id]);
         // Mimic store.saveTrace upsert, with unique IDs for capture records.
         const persisted = new Map(h.calls.trace.map((item, i) => [item.id ?? `request-${i}`, { ...item, id: item.id ?? `request-${i}` }]));
         const summary = summarizeUsage([...persisted.values()]);
@@ -285,7 +300,73 @@ test('Horde image recovery reuses usage identity and awaits tools owner onJob', 
     const records = h.calls.trace.filter(item => item.kind === 'image-usage');
     assert.equal(new Set(records.map(record => record.id)).size, 1);
     assert.equal(records.at(-1).attemptedRequests, 1);
+    // The resumed record keeps its creation time and is reopened until the recovery attempt finishes.
+    const reopened = records.findIndex(record => record.status === 'completed') + 1;
+    assert.ok(records.every(record => record.createdAt === records[0].createdAt));
+    assert.equal(records[reopened].status, 'pending'); assert.equal(records[reopened].finishedAt, null);
+    assert.equal(records.at(-1).status, 'completed'); assert.ok(records.at(-1).finishedAt);
     await h.services.close();
+});
+
+test('usage lookup ignores other conversations and treats only not-found as a new record', async () => {
+    let adapters = 0;
+    const h = harness({ createProviderAdapter: (_c, dependencies) => ({ embed: async () => {
+        adapters++; await dependencies.onRequest({ method: 'POST', url: 'https://stub.invalid/embed' });
+        return { model: 'stub', embeddings: [[1, 2]], usage: null };
+    } }) });
+    h.snapshot.settings.embeddingConnectionId = 'embed';
+    await h.calls.runtime.retrieval.index('c');
+    const embed = () => h.calls.retrieval[0].embed({ texts: ['text'], purpose: 'index' });
+    // Another conversation's record is not resumed, as with the former per-conversation lookup.
+    h.store.getTrace = id => ({ id, conversationId: 'other', turnId: 'foreign', attemptedRequests: 5, createdAt: '2020-01-01T00:00:00.000Z' });
+    await embed();
+    const records = h.calls.trace.filter(item => item.kind === 'embedding-usage');
+    assert.equal(records.at(-1).attemptedRequests, 1); assert.equal(records.at(-1).turnId, undefined);
+    assert.notEqual(records.at(-1).createdAt, '2020-01-01T00:00:00.000Z');
+    h.store.getTrace = () => { throw Object.assign(new Error('store unavailable'), { code: 'store-closed' }); };
+    await assert.rejects(embed(), { code: 'store-closed' });
+    assert.equal(adapters, 1);
+    await h.services.close();
+});
+
+test('request and usage records written here age out of trace-detail retention while usage stays countable', async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'conversation-trace-retention-'));
+    // An old conversation and turn: untimed records would inherit their age and be pruned while still fresh.
+    const store = createStore({ directory, now: () => '2020-01-01T00:00:00.000Z' });
+    t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+    const conversation = store.createConversation({});
+    const { turn } = store.beginTurn(conversation.id, { schemaVersion: 1, type: 'send', content: 'hello', clientRequestId: 'one', expectedContentRevision: 0 });
+    store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1);
+    for (const category of ['embedding', 'image']) {
+        let h;
+        h = harness({
+            createProviderAdapter: (_c, dependencies) => {
+                const invoke = async () => {
+                    await dependencies.onRequest({ method: 'POST', url: 'https://stub.invalid/submit', body: 'private input' });
+                    return { model: 'stub', embeddings: [[1, 2]], images: [], usage: { inputTokens: 2, outputTokens: 0, totalTokens: 2, complete: true } };
+                };
+                return { embed: invoke, generateImage: invoke };
+            },
+            createPiExecutor: () => ({ runTurn: async () => h.calls.tools.image({ conversationId: 'c', turnId: 't', prompt: 'picture' }) }),
+        });
+        h.snapshot.settings.embeddingConnectionId = 'embed'; h.snapshot.settings.imageConnectionId = 'image';
+        if (category === 'image') await h.calls.runtime.executor(config).runTurn(options(h));
+        else { await h.calls.runtime.retrieval.index('c'); await h.calls.retrieval[0].embed({ texts: ['text'], purpose: 'index' }); }
+        // Replay the exact saved shapes, in order, under real conversation and turn IDs.
+        for (const record of h.calls.trace.filter(item => !Array.isArray(item))) store.saveTrace({ ...record, conversationId: conversation.id, ...(record.turnId ? { turnId: turn.id } : {}) });
+        await h.services.close();
+    }
+    const records = store.listTraces(conversation.id);
+    assert.deepEqual(records.map(record => record.kind).sort(), ['embedding-usage', 'image-usage', 'outbound-request', 'outbound-request']);
+    const totals = summarizeUsage(records);
+    assert.equal(totals.totals.calls, 2);
+    assert.equal(createMaintenance({ directory, store }).previewCleanup().traces.length, 0);
+    const later = createMaintenance({ directory, store, now: () => Date.now() + 31 * 86400000 });
+    const preview = later.previewCleanup();
+    assert.deepEqual(preview.traces.map(item => item.id).sort(), records.map(record => record.id).sort());
+    assert.equal(later.cleanup({ token: preview.token }).tracesPruned, 4);
+    assert.ok(store.listTraces(conversation.id).every(record => record.detailsPrunedAt && record.request === undefined && record.createdAt));
+    assert.deepEqual(summarizeUsage(store.listTraces(conversation.id)), totals);
 });
 
 test('hydration preserves verified audio, video and document attachment types', async () => {

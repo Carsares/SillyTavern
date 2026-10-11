@@ -1,5 +1,9 @@
+import { createHash } from 'node:crypto';
 import { invariant, canonicalJson } from '../../../public/shared/conversation/schemas/index.js';
 import { searchableEntries } from '../memory/sources.js';
+
+// Inputs per index request: below the embedding adapter's 2048 cap and common provider batch limits (Cohere 96, Google 100).
+export const EMBED_BATCH_SIZE = 96;
 
 function checkedEmbedding(value, count) {
     invariant(value && typeof value.model === 'string' && value.model && typeof value.version === 'string' && value.version,
@@ -21,13 +25,22 @@ function cosine(a, b) {
 // when a caller supplies an older snapshot whose derived status is still valid.
 const visibleEntries = snapshot => searchableEntries({ ...snapshot, messages: snapshot.messages.filter(message => !message.userHidden) });
 const fingerprint = entry => canonicalJson([entry.key, entry.revision, entry.content, entry.sourceRefs]);
+const contentKey = text => createHash('sha256').update(text).digest('base64');
+const sameEmbedding = (a, b) => a.model === b.model && a.version === b.version && a.dimensions === b.dimensions;
 
 /** Derived index stays in memory; never opens old data paths or writes files. */
 export function createRetrieval({ store, embed, onStatus }) {
     const indexes = new Map();
     const epochs = new Map();
     const states = new Map();
+    // Content-addressed vectors outlive invalidation so only new or edited texts are embedded again.
+    const vectorCache = new Map();
     const signature = entries => canonicalJson(entries.map(fingerprint));
+    function remember(conversationId, result, keys) {
+        let cache = vectorCache.get(conversationId);
+        if (!cache || !sameEmbedding(cache, result)) vectorCache.set(conversationId, cache = { model: result.model, version: result.version, dimensions: result.dimensions, vectors: new Map() });
+        keys.forEach((key, i) => cache.vectors.set(key, result.vectors[i]));
+    }
     function status(conversationId) {
         const state = states.get(conversationId) ?? { status: embed ? 'not-ready' : 'keyword-only', semanticReady: false, count: 0 };
         const cached = indexes.get(conversationId);
@@ -59,13 +72,37 @@ export function createRetrieval({ store, embed, onStatus }) {
         }
         publish(conversationId, { status: 'indexing', count: entries.length });
         try {
-            const result = entries.length ? checkedEmbedding(await embed({ texts: entries.map(e => e.content), purpose: 'index', signal }), entries.length) : null;
+            const keys = entries.map(entry => contentKey(entry.content));
+            const texts = new Map(entries.map((entry, i) => [keys[i], entry.content]));
+            const cached = vectorCache.get(conversationId);
+            let identity = cached && { model: cached.model, version: cached.version, dimensions: cached.dimensions };
+            const found = new Map([...texts.keys()].filter(key => cached?.vectors.has(key)).map(key => [key, cached.vectors.get(key)]));
+            let pending = [...texts.keys()].filter(key => !found.has(key)), confirmed = false;
+            while (pending.length) {
+                const batch = pending.splice(0, EMBED_BATCH_SIZE);
+                const result = checkedEmbedding(await embed({ texts: batch.map(key => texts.get(key)), purpose: 'index', signal }), batch.length);
+                if (!identity || !sameEmbedding(identity, result)) {
+                    // Reused vectors from another model, version or dimension count are discarded; an index never mixes them.
+                    invariant(!confirmed, 'invalid-embedding', 'Embedding model, version or dimensions changed during indexing');
+                    identity = { model: result.model, version: result.version, dimensions: result.dimensions };
+                    found.clear();
+                    pending = [...texts.keys()].filter(key => !batch.includes(key));
+                }
+                confirmed = true;
+                // Completed batches stay reusable even if this run is superseded or aborted below.
+                remember(conversationId, result, batch);
+                batch.forEach((key, i) => found.set(key, result.vectors[i]));
+                signal?.throwIfAborted();
+                if (epochs.get(conversationId) !== epoch) return { status: 'superseded', semanticReady: false, count: 0 };
+            }
             signal?.throwIfAborted();
             if (epochs.get(conversationId) !== epoch) return { status: 'superseded', semanticReady: false, count: 0 };
             if (signature(entries) !== signature(visibleEntries(store.getConversation(conversationId)))) return invalidate(conversationId);
-            indexes.set(conversationId, { ...result, signature: signature(entries), entries: structuredClone(entries) });
-            return publish(conversationId, { status: 'ready', count: entries.length,
-                ...(result ? { model: result.model, version: result.version, dimensions: result.dimensions } : {}) });
+            const cache = vectorCache.get(conversationId);
+            if (cache && identity && sameEmbedding(cache, identity)) for (const key of cache.vectors.keys()) if (!texts.has(key)) cache.vectors.delete(key);
+            const embedded = entries.length && identity ? identity : {};
+            indexes.set(conversationId, { ...embedded, vectors: keys.map(key => found.get(key)), signature: signature(entries), entries: structuredClone(entries) });
+            return publish(conversationId, { status: 'ready', count: entries.length, ...embedded });
         } catch (error) {
             if (epochs.get(conversationId) === epoch) {
                 indexes.delete(conversationId);
@@ -107,7 +144,10 @@ export function createRetrieval({ store, embed, onStatus }) {
                         const prior = candidates.get(key);
                         candidates.set(key, { ...entry, score: Math.max(score, prior?.score ?? 0), method: prior ? 'hybrid' : 'vector' });
                     });
-                } else publish(conversationId, { status: 'error', count: cached.entries.length, error: { code: 'embedding-mismatch', message: 'Embedding model, version or dimensions changed; rebuild the semantic index' } });
+                } else {
+                    vectorCache.delete(conversationId);
+                    publish(conversationId, { status: 'error', count: cached.entries.length, error: { code: 'embedding-mismatch', message: 'Embedding model, version or dimensions changed; rebuild the semantic index' } });
+                }
             } catch (error) {
                 signal?.throwIfAborted();
                 if (error?.name === 'AbortError') throw error;
@@ -126,5 +166,5 @@ export function createRetrieval({ store, embed, onStatus }) {
             .filter(entry => { const key = canonicalJson([entry.sourceRefs, entry.content]); if (seen.has(key)) return false; seen.add(key); return true; })
             .slice(0, limit).map(({ key, content, sourceRefs, score, method }) => ({ key, kind: key.startsWith('message:') ? 'message' : 'derived', status: 'valid', content, sourceRefs: structuredClone(sourceRefs), score, method }));
     }
-    return { search, index, status, invalidate, rebuild(conversationId) { invalidate(conversationId); return index(conversationId); } };
+    return { search, index, status, invalidate, rebuild(conversationId) { vectorCache.delete(conversationId); invalidate(conversationId); return index(conversationId); } };
 }

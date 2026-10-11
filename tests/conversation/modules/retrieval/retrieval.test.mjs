@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRetrieval } from '../../../../src/conversation/retrieval/index.js';
+import { createRetrieval, EMBED_BATCH_SIZE } from '../../../../src/conversation/retrieval/index.js';
 import { fakeStore } from '../memory/fake-store.mjs';
 const vectors = texts => ({ model: 'fake', version: 'v1', dimensions: 2, vectors: texts.map(() => [1, 0]) });
 test('keyword works without embedding; stale snapshot is filtered against current state', async () => {
@@ -135,4 +135,93 @@ test('hidden sources and their derived facts are absent even with a previously i
     assert.equal(found.length, 4);
     assert.ok(found.every(item => item.sourceRefs.every(ref => ref.messageId !== source.id)));
     assert.equal(retrieval.status('c').status, 'stale');
+});
+
+test('large histories are embedded in bounded batches and stay searchable', async () => {
+    const store = fakeStore({ completed: 2100 }); const batches = [];
+    const retrieval = createRetrieval({ store, embed: async ({ texts, purpose }) => {
+        assert.ok(texts.length <= 2048, 'provider adapter rejects more than 2048 inputs');
+        if (purpose === 'index') batches.push(texts.length);
+        return vectors(texts);
+    } });
+    const state = await retrieval.index('c');
+    assert.equal(state.status, 'ready'); assert.equal(state.count, 2100);
+    assert.equal(batches.length, Math.ceil(2100 / EMBED_BATCH_SIZE));
+    assert.ok(batches.every(size => size <= EMBED_BATCH_SIZE));
+    assert.equal(batches.reduce((sum, size) => sum + size, 0), 2100);
+    assert.equal((await retrieval.search('c', 'unrelated', { limit: 1 }))[0].method, 'vector');
+});
+
+test('reindex embeds only new or edited content and rebuild embeds everything', async () => {
+    const store = fakeStore(); let embedded = [];
+    const retrieval = createRetrieval({ store, embed: async ({ texts, purpose }) => { if (purpose === 'index') embedded.push(...texts); return vectors(texts); } });
+    await retrieval.index('c');
+    assert.equal(embedded.length, 5);
+    embedded = [];
+    store.snapshot.messages[0].revision++;
+    retrieval.invalidate('c'); assert.equal((await retrieval.index('c')).status, 'ready');
+    assert.deepEqual(embedded, []);
+    store.snapshot.messages[1].content = 'dragon edited';
+    store.snapshot.messages.push({ id: 'm6', turnId: 't5', role: 'assistant', content: 'dragon arrives', status: 'completed', revision: 1, candidateId: 'a6', candidateRevision: 1 });
+    retrieval.invalidate('c'); const state = await retrieval.index('c');
+    assert.deepEqual(embedded.sort(), ['dragon arrives', 'dragon edited']);
+    assert.equal(state.count, 6); assert.equal(state.model, 'fake');
+    assert.equal((await retrieval.search('c', 'unrelated')).length, 6);
+    embedded = [];
+    await retrieval.rebuild('c');
+    assert.equal(embedded.length, 6);
+});
+
+test('changed embedding model, version or dimensions never reuses earlier vectors', async () => {
+    for (const change of [{ model: 'other' }, { version: 'v2' }, { dimensions: 3 }]) {
+        const store = fakeStore(); let current = {}, embedded = 0;
+        const embed = async ({ texts, purpose }) => {
+            if (purpose === 'index') embedded += texts.length;
+            const value = { ...vectors(texts), ...current };
+            return { ...value, vectors: texts.map(() => Array.from({ length: value.dimensions }, (_, i) => (i === 0 ? 1 : 0))) };
+        };
+        const retrieval = createRetrieval({ store, embed });
+        await retrieval.index('c');
+        current = change; embedded = 0;
+        store.snapshot.messages[0].content = 'dragon edited';
+        retrieval.invalidate('c'); const state = await retrieval.index('c');
+        assert.equal(embedded, 5);
+        assert.equal(state.model, change.model ?? 'fake'); assert.equal(state.version, change.version ?? 'v1'); assert.equal(state.dimensions, change.dimensions ?? 2);
+        assert.ok((await retrieval.search('c', 'unrelated')).every(item => item.method === 'vector'));
+    }
+});
+
+test('query embedding mismatch drops reusable vectors so the next index re-embeds', async () => {
+    const store = fakeStore(); let query = {}, embedded = 0;
+    const retrieval = createRetrieval({ store, embed: async ({ texts, purpose }) => {
+        if (purpose === 'index') embedded += texts.length;
+        return { ...vectors(texts), ...(purpose === 'query' ? query : {}) };
+    } });
+    await retrieval.index('c');
+    query = { version: 'v2' };
+    await retrieval.search('c', 'dragon');
+    assert.equal(retrieval.status('c').error.code, 'embedding-mismatch');
+    embedded = 0;
+    retrieval.invalidate('c'); await retrieval.index('c');
+    assert.equal(embedded, 5);
+});
+
+test('superseded or aborted indexing stops between batches and keeps finished batches reusable', async () => {
+    for (const interruption of ['superseded', 'aborted']) {
+        const store = fakeStore({ completed: 2100 }); const controller = new AbortController(); let calls = 0, embedded = 0;
+        const retrieval = createRetrieval({ store, embed: async ({ texts }) => {
+            calls++; embedded += texts.length;
+            if (calls === 1) { if (interruption === 'superseded') retrieval.invalidate('c'); else controller.abort(new Error('stopped')); }
+            return vectors(texts);
+        } });
+        if (interruption === 'superseded') assert.equal((await retrieval.index('c', { signal: controller.signal })).status, 'superseded');
+        else {
+            await assert.rejects(retrieval.index('c', { signal: controller.signal }), /stopped/);
+            assert.equal(retrieval.status('c').status, 'not-ready');
+        }
+        assert.equal(calls, 1); assert.equal(embedded, EMBED_BATCH_SIZE);
+        const state = await retrieval.index('c');
+        assert.equal(state.status, 'ready'); assert.equal(state.count, 2100);
+        assert.equal(embedded, 2100);
+    }
 });

@@ -81,3 +81,23 @@ test('async queue detection follows capabilities and API aliases', async () => {
     assert.equal(supportsAsyncJobs({ asyncJobs: true, api: 'future-queue' }), true);
     assert.equal(supportsAsyncJobs({ api: 'openai-auxiliary' }), false);
 });
+
+test('a budget refusal before submission allows the same turn to submit after compaction', async () => {
+    const { input, jobs } = setup();
+    const first = prepareProviderJob(input);
+    await first.fail(Object.assign(new Error('blocked'), { code: 'budget-blocked' }));
+    assert.equal(jobs.get(first.id).payload.state, 'not-submitted');
+    const second = prepareProviderJob({ ...input, request: { prompt: 'compacted' }, traceId: 'trace-second' });
+    assert.equal(second.id, first.id); assert.equal(second.jobId, undefined); assert.equal(second.traceId, 'trace-second');
+    await second.onJob({ jobId: 'remote-id', kind: 'text', state: 'submitted' });
+    assert.equal(jobs.get(first.id).payload.state, 'submitted');
+    assert.notEqual(jobs.get(first.id).payload.requestHash, undefined);
+    await second.fail(Object.assign(new Error('blocked'), { code: 'budget-blocked' }));
+    assert.equal(jobs.get(first.id).payload.state, 'unknown');
+});
+
+test('other failures before a persisted ID still refuse resubmission', async () => {
+    const { input } = setup();
+    await prepareProviderJob(input).fail(Object.assign(new Error('network'), { code: 'provider-unavailable' }));
+    assert.throws(() => prepareProviderJob(input), { code: 'provider-job-unknown' });
+});
