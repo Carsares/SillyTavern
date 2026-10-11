@@ -121,22 +121,18 @@
     },
     "version": "1.18.0",
     "scripts": {
-        "init": "node src/server-init.js",
+        "init": "node src/conversation/init.js",
         "start": "node server.js",
         "debug": "node --inspect server.js",
-        "start:global": "node server.js --global",
-        "start:electron": "cd ./src/electron && npm run start",
-        "start:deno": "deno run --allow-run --allow-net --allow-read --allow-write --allow-sys --allow-env server.js",
-        "start:bun": "bun server.js",
-        "start:no-csrf": "node server.js --disableCsrf",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
         "typecheck:modern": "tsc -p public/modern/tsconfig.json --noEmit",
-        "plugins:update": "node plugins update",
-        "plugins:install": "node plugins install"
+        "test:conversation:unit": "node --test --test-concurrency=6 tests/conversation/modules/*/*.test.mjs tests/conversation/evaluation/*.test.mjs",
+        "test:conversation:integration": "node --test --test-concurrency=6 tests/conversation/integration/*.test.mjs",
+        "lint:conversation": "eslint \"src/conversation/**/*.js\" \"public/shared/conversation/**/*.js\" \"public/modern/conversation/**/*.js\" server.js"
     },
     "bin": {
-        "sillytavern": "./src/server-global.js"
+        "sillytavern": "./server.js"
     },
     "rules": {
         "no-path-concat": "off",
