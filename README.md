@@ -24,6 +24,13 @@
 
 新版已经承接对应页面的主要浏览、编辑、导入导出和管理流程。聊天工作区包含角色/群组会话、消息操作、生成、聊天文件和备份；API 页面包含聊天补全、文本补全、KoboldAI Classic、NovelAI 和 AI Horde 的连接配置。
 
+在此基础上补充的用户可见能力（行为细节见 [MODERN_UI_ARCHITECTURE.md](MODERN_UI_ARCHITECTURE.md)，运维说明见 [MAINTENANCE.md](MAINTENANCE.md)）：
+
+- 聊天：备用开场白切换、作者注释、聊天摘要（查看、编辑、重新摘要）、聊天背景、消息翻译（只改显示，不改原文）、跨角色和群聊的聊天搜索；输入框旁有连接档案与模型切换、「上次发送 / 预算」提示词用量；
+- API 页：聊天补全和文本补全的上下文长度，连接档案的应用、创建和删除；
+- 角色：导入并关联卡内嵌世界书，把角色卡翻译为中文并填入未保存的草稿；
+- 设置：「聊天工具」标签（翻译、摘要）和「数据维护」标签（存储占用、未引用文件清理、重复的仅开场白会话、设置快照、聊天备份、完整数据导出）。
+
 ## 技术结构
 
 新版前端集中在 `public/modern/`，服务入口位于 `src/server-main.js`，远程资源后端位于 `src/remote-resources/` 和 `src/endpoints/remote-resources.js`。
@@ -141,6 +148,13 @@ POSIX shell：
 find public/modern -name '*.js' -print0 | xargs -0 -n 1 node --check
 ```
 
+运行类型检查和单元测试：
+
+```text
+npm run typecheck:modern
+npm run test:unit --prefix tests
+```
+
 运行全部 Modern E2E。
 
 PowerShell：
@@ -160,6 +174,8 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never PLAYWRIGHT_BASE_URL=http://127.0.0.1:8011 \
 ```
 
 只运行真实后端集成时，把测试参数替换为 `modern-real-backend-integration.e2e.js`。
+
+多个 Playwright 运行同时进行时，用 `PLAYWRIGHT_MOCK_PORT` 给每个运行单独的模拟服务器端口和输出目录，详见 [tests/README.md](tests/README.md)。
 
 外部依赖测试默认跳过。需要验证公网下载、真实扩展仓库或供应商 API 时，显式设置：
 

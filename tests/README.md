@@ -3,6 +3,15 @@
 Jest unit tests (`*.test.js`) and Playwright end-to-end tests (`modern-*.e2e.js`). Install the dependencies with
 `npm ci --prefix tests` once.
 
+## Running Jest
+
+```bash
+npm run test:unit --prefix tests
+cd tests && node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json modern-chat-summary.test.js
+```
+
+The first command is what CI runs (`test:unit` in `tests/package.json`, which also runs `chub-cdp.test.js` with `node --test`). The second runs the Jest files whose path matches the given name or pattern. The `*.test.js` files cover the pure Modern modules (`modern-*.test.js`) and backend pieces such as the chat search, Data Maid, backup, snapshot, and translate endpoints; the `modern-*.e2e.js` files are Playwright specs and are not picked up by Jest.
+
 ## Running Playwright
 
 Use the Playwright binary installed in `tests/`, either from `tests/` (what CI does) or by its path from the repository
