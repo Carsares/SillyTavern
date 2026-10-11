@@ -4,6 +4,18 @@ import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
 // 本文件创建的刷新动作订阅它，在不改 actions/chat-generation.js 的前提下，让生成结束后自动刷新提示词分解。
 const generationFinishedListeners = new Set();
 
+/**
+ * 订阅「一次生成刚结束」。除本文件的提示词分解自动刷新外，提示词用量预估（actions/prompt-estimate.js）也用它让生成前的估算作废。
+ * @param {() => void} listener 监听器，异常不会影响其他订阅者
+ * @returns {() => void} 取消订阅
+ */
+export function onGenerationFinished(listener) {
+    generationFinishedListeners.add(listener);
+    return () => {
+        generationFinishedListeners.delete(listener);
+    };
+}
+
 // 生成结束后等这么久再读提示词分解，见 createInspectorItemizedActions 里的说明
 const AUTO_REFRESH_DELAY_MS = 800;
 

@@ -496,7 +496,7 @@ export function formatPercent(percent) {
 
 /**
  * @typedef {object} UsageSummary
- * @property {number} used 上次发送的提示词 token 数
+ * @property {number} used 上次发送（或预估下次发送）的提示词 token 数
  * @property {number} budget 提示词预算（上下文 − 回复上限）
  * @property {number | null} percent 占用百分比，预算不大于 0 时为 null
  * @property {number | null} contextLimit 设置里的上下文上限
@@ -504,7 +504,7 @@ export function formatPercent(percent) {
  */
 
 /**
- * 把提示词分解快照（bridge 的 getItemizedPrompt 结果）整理成用量摘要。
+ * 把提示词分解快照（bridge 的 getItemizedPrompt 结果，或 estimatePrompt 的估算，两者的 totalTokens / maxContext / mainApi 含义相同）整理成用量摘要。
  * 快照里的 maxContext 是引擎按当时设置算出的「上下文 − 回复上限」，即提示词预算，不是上下文本身。
  * @param {{ available?: boolean, totalTokens?: number, maxContext?: number, mainApi?: string } | null | undefined} snapshot 提示词分解快照
  * @param {Record<string, any> | null | undefined} settings state.settings

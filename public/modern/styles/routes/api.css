@@ -114,6 +114,12 @@
     color: var(--danger);
 }
 
+/* 有可用的估算时标签显示「预估下次发送 …」（按当前设置模拟一次发送的结果），虚线下划线提示它是估算值 */
+.chat-usage-label.is-estimate {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+}
+
 /*
  * ===== 连接档案（B1）=====
  * API 页的「连接档案」区（components/api-profiles.js）和聊天输入框弹层里的切换结果明细（components/chat-connection-chip.js）。

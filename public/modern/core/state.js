@@ -310,6 +310,18 @@ export function createModernState() {
                 error: '',
                 data: null,
             },
+            // 「预估下次发送」的提示词用量（A1 第二阶段，actions/prompt-estimate.js）：data 是引擎干跑一次后回传的快照，
+            // 和 itemizedPrompt（上一次真实发送）分开存放。reason 是引擎说明为什么估不了（group / budget 等，见 bridge-protocol.js 的 ESTIMATE_PROMPT；message 是引擎附带的原始说明），
+            // error 只在手动估算失败时写入；chatId 标明这份估算属于哪个聊天；一次生成结束后整份作废（loaded 回到 false）。
+            promptEstimate: {
+                loading: false,
+                loaded: false,
+                error: '',
+                reason: '',
+                message: '',
+                chatId: '',
+                data: null,
+            },
         },
         settingsSection: localStorage.getItem('st-modern-settings-section') || 'preferences',
         activityFilter: '',

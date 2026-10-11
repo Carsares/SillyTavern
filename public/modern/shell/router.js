@@ -24,6 +24,9 @@ export function createRouter({
     refreshItemizedPromptOnInspectorOpen,
     refreshItemizedPrompt,
     toggleItemizedPrompt,
+    // 预估下次发送（actions/prompt-estimate.js）；未接入时什么也不做
+    estimatePrompt = async (/** @type {{ manual?: boolean }} */ _options = {}) => {},
+    estimatePromptOnInspectorOpen = () => {},
     closePalette,
     closeChatSidebarForMobileSelection,
     getBackgroundFilename,
@@ -98,7 +101,13 @@ export function createRouter({
             toggleInspector();
             if (state.inspectorOpen) {
                 refreshItemizedPromptOnInspectorOpen();
+                estimatePromptOnInspectorOpen();
             }
+            return;
+        }
+
+        if (event.target.closest('[data-estimate-prompt]')) {
+            await estimatePrompt({ manual: true });
             return;
         }
 

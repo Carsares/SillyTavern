@@ -10,7 +10,7 @@ import { createChatGlobalSearchActions } from '../actions/chat-global-search.js'
  *   2. 在下面的返回对象里加一行，例如 `authorsNote: createChatAuthorsNoteActions({ state, apiFetch, render, showToast, ... })`；
  *   3. 业务动作名在所有功能之间唯一，不能与已有路由上下文里的名字重复，否则启动时会直接抛错。
  *
- * deps 里能直接拿到的东西：state、apiFetch、apiFetchResponse、loadData、render、showToast、callLegacyBridge、
+ * deps 里能直接拿到的东西：state、apiFetch、apiFetchResponse、loadData、render、renderInspector、showToast、callLegacyBridge、
  * subscribeProgress、bridgeReload，以及聊天动作注册表返回的全部内容 actionRegistry
  * （例如 actionRegistry.getSelectedChatEntity、actionRegistry.chatContextActions.updateModernChat）。
  */
@@ -21,6 +21,7 @@ import { createChatSummaryActions } from '../actions/chat-summary.js';
 import { createConnectionProfileActions } from '../actions/connection-profiles.js';
 import { createMaintenanceActions } from '../actions/maintenance.js';
 import { createChatTranslationActions } from '../actions/chat-translation.js';
+import { createPromptEstimateActions } from '../actions/prompt-estimate.js';
 import { createCharacterTranslationActions } from '../actions/character-translation.js';
 
 /**
@@ -34,6 +35,7 @@ import { createCharacterTranslationActions } from '../actions/character-translat
  * @property {Function} callLegacyBridge 调用隐藏引擎。
  * @property {Function} subscribeProgress 订阅引擎进度。
  * @property {any} bridgeReload 引擎同步函数（reloadChat 等）。
+ * @property {() => void} renderInspector 重绘上下文抽屉（同时更新输入框下方的用量标签）。
  * @property {Record<string, any>} actionRegistry createActionRegistry 的完整返回值。
  */
 
@@ -52,6 +54,7 @@ export function createFeatureSlotActions(deps) {
         connectionProfiles: createConnectionProfileActions(deps), // 连接档案与聊天内切换模型（B1）
         chatTranslation: createChatTranslationActions(deps), // 聊天消息翻译和翻译设置（B3）
         characterTranslation: createCharacterTranslationActions(deps), // 角色卡翻译（B3）
+        promptEstimate: createPromptEstimateActions(deps), // 预估下次发送的提示词用量（A1 第二阶段）
         // 备用开场白（A4）：面板外的消息区按钮「载入备用开场白」，逻辑在 chat-generation.js 的 loadAlternateGreetings
         greetings: { loadAlternateGreetings: (...args) => deps.actionRegistry.chatGenerationActions.loadAlternateGreetings(...args) },
     };

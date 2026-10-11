@@ -18,6 +18,41 @@ import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from './bridge-protocol.js';
  */
 
 /**
+ * @typedef {object} BridgeReloadSettledEvent
+ * @property {string} action 刚确认完成的重载动作（BRIDGE_ACTIONS.RELOAD_*）
+ */
+
+/** @type {Set<(event: BridgeReloadSettledEvent) => void>} */
+const reloadSettledListeners = new Set();
+
+/**
+ * 订阅「引擎确认完成了一次重载」。只在成功时通知（失败、超时不通知），通知发生在这次重载已从在途计数里移除之后；
+ * 订阅者自己按 action 过滤，例如提示词预估只关心 RELOAD_SETTINGS。监听器的异常只记日志，不影响重载的调用方和其他订阅者。
+ * 所有 createBridgeReload 实例共用这一份登记表。
+ * @param {(event: BridgeReloadSettledEvent) => void} listener 监听器
+ * @returns {() => void} 取消订阅
+ */
+export function onBridgeReloadSettled(listener) {
+    reloadSettledListeners.add(listener);
+    return () => {
+        reloadSettledListeners.delete(listener);
+    };
+}
+
+/**
+ * @param {string} action 刚完成的重载动作
+ */
+function notifyBridgeReloadSettled(action) {
+    for (const listener of [...reloadSettledListeners]) {
+        try {
+            listener({ action });
+        } catch (error) {
+            console.warn('Bridge reload listener failed', error);
+        }
+    }
+}
+
+/**
  * 没有接入隐藏引擎时的占位同步：直接视为成功。供各 action 工厂给可选的注入参数设默认值（独立构造 action 的测试不必提供）。
  * @param {...any} _args 与真实 reloadXxx 相同的参数，被忽略
  * @returns {Promise<BridgeReloadResult>} 恒为 { ok: true }
@@ -82,7 +117,12 @@ export function createBridgeReload(callLegacyBridge, { state = null, timeoutMs =
             pending.delete(promise);
             publishPendingCount();
         };
-        promise.then(settle, settle);
+        promise.then(result => {
+            settle();
+            if (result.ok) {
+                notifyBridgeReloadSettled(action);
+            }
+        }, settle);
         return promise;
     }
 

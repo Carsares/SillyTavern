@@ -10,6 +10,7 @@ import {
 } from '../core/chat-summary.js';
 import { getEffectiveConnection, withRawValue } from '../core/connection-labels.js';
 import { routeLabels } from '../core/constants.js';
+import { getPromptEstimateSectionView } from '../core/prompt-estimate.js';
 import { escapeHtml, formatBytes, formatDate, formatNumber, stripJsonlExtension } from '../core/utils.js';
 import { createInspectorAssetSection } from './inspector-asset-section.js';
 
@@ -125,6 +126,45 @@ export function createInspectorSections({
             <div class="kv-list">
                 ${partRows.map(([label, value]) => renderKeyValue(label, value)).join('')}
             </div>
+        `;
+    }
+
+    // 提示词预算（A1 第二阶段）：按当前设置模拟一次发送，预估下次发送的提示词用量。状态与文案在 core/prompt-estimate.js，
+    // 请求在 actions/prompt-estimate.js（点「估算下次发送」，或抽屉打开 / 设置同步后自动估算）；这里只渲染。上次真实发送的分解在下面的分解区块。
+    function renderPromptEstimateSection() {
+        const sectionView = getPromptEstimateSectionView(state, { groupMode: isGroupChatMode() });
+        const loading = Boolean(state.inspector?.promptEstimate?.loading);
+        let body;
+        if (sectionView.kind === 'estimate') {
+            const data = sectionView.data;
+            const usage = getUsageSummary(data, state.settings);
+            const rows = [
+                ['预估下次发送', `${formatNumber(data.totalTokens)} tokens`],
+                ['提示词预算（上下文−回复上限）', `${formatNumber(data.maxContext)} tokens`],
+                ['占用', usage?.percent == null ? '无法计算' : `${formatPercent(usage.percent)}%`],
+                ['分词器', data.tokenizer || '未知'],
+            ];
+            body = `
+                <div class="kv-list">
+                    ${rows.map(([label, value]) => renderKeyValue(label, value)).join('')}
+                </div>
+                <p class="muted inspector-estimate-note">按当前设置模拟一次发送，不含输入框里未发送的文字；发送时才运行的扩展（如向量检索）不计入。</p>
+            `;
+        } else {
+            body = `<p class="muted inspector-estimate-note" data-prompt-estimate-state="${sectionView.kind}">${escapeHtml(sectionView.text)}</p>`;
+        }
+
+        return `
+            <section class="inspector-section" data-inspector-prompt-estimate>
+                <div class="inspector-estimate-head">
+                    <h2 class="inspector-title">提示词预算</h2>
+                    <button class="secondary-button compact-button" type="button" data-estimate-prompt title="${escapeHtml(sectionView.buttonTitle)}"${sectionView.buttonDisabled ? ' disabled' : ''}>
+                        <i class="fa-solid ${loading ? 'fa-circle-notch fa-spin' : 'fa-calculator'}"></i>
+                        估算下次发送
+                    </button>
+                </div>
+                ${body}
+            </section>
         `;
     }
 
@@ -340,6 +380,7 @@ export function createInspectorSections({
                 return renderDashboardContextSection(provider);
             case 'chat':
                 return renderChatContextSection(selectedCharacter, selectedGroup, selectedEntity, selectedChat)
+                    + renderPromptEstimateSection()
                     + renderItemizedPromptSection()
                     + renderChatSummarySection(getInspectedChatMessages(selectedCharacter, selectedGroup));
             case 'api':

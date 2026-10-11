@@ -26,6 +26,12 @@ export const BRIDGE_ACTIONS = {
     // 与 GENERATE 同样排队串行，可被 STOP 中止。回复 { due, summary, index, saved, reason, ... }，来源是 Extras 或扩展被禁用时回复错误。
     // 引擎在 bridge 模式下不再自行触发摘要（见 memory/index.js），何时摘要完全由 Modern 决定。
     SUMMARIZE: 'summarize',
+    // payload { avatar | groupId, chat, integrity? }：让引擎按当前设置「干跑」一次（旧版 Generate 的 dryRun，与旧版提示词管理器同一条路径）拼出下次要发的提示词，
+    // 只数 token、不请求模型，用来在发送前预估用量。与 GENERATE 同样排队串行，不会和运行中的生成交错，也不改聊天文件、提示词分解记录和消息。
+    // 回复 { available: true, estimated: true, mainApi, apiFriendlyName, tokenizer, modelUsed, presetName, maxContext, totalTokens, includesDraft: false }
+    // 或 { available: false, reason, message? }；reason 为 group（群聊暂不支持，引擎也不会切换上下文）、no-character、unsupported-api、
+    // budget（必选提示词已超出预算，message 是旧版给出的原因）、prompt-error、no-data。输入框里尚未发送的草稿不在干跑内，includesDraft 恒为 false。
+    ESTIMATE_PROMPT: 'estimatePrompt',
 };
 
 // 各链路的超时档位（毫秒）。LOAD 为 iframe 加载超时；DEFAULT 覆盖 generate/swipe 这类重生成动作。
@@ -41,6 +47,8 @@ export const BRIDGE_TIMEOUTS = {
     RELOAD_WAIT: 10000,
     // SUMMARIZE 要等一次模型调用，和 GENERATE 同档。
     SUMMARIZE: 180000,
+    // ESTIMATE_PROMPT 可能要排在一次生成之后，并在引擎里把整段提示词数一遍 token（非聊天补全的主 API 要逐段请求分词器）。
+    ESTIMATE: 60000,
 };
 
 // legacy → modern 的单向事件（不带 id、无响应）。生成期流式增量经此推送，modern 定点渲染。

@@ -1371,6 +1371,25 @@
     overflow-wrap: anywhere;
 }
 
+/* 上下文抽屉「提示词预算」区块（shell/inspector-sections.js）：标题和「估算下次发送」按钮同一行，说明文字紧随其后 */
+.inspector-estimate-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.inspector-estimate-head .inspector-title {
+    margin: 0;
+}
+
+.inspector-estimate-note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /*
  * ===== 聊天内切换连接（B1）=====
  * 输入框下方的连接标签 .connection-chip 和点开后的弹层 .connection-popover（components/chat-connection-chip.js）。

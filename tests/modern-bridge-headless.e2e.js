@@ -1643,3 +1643,246 @@ test.describe('Modern bridge summaries', () => {
         expect(fixture.errors).toEqual([]);
     });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Prompt estimate (A1 phase 2): the ESTIMATE_PROMPT action runs the legacy dry run and must leave no trace
+// ---------------------------------------------------------------------------------------------------------------------
+
+const estimatePayload = (fixture, extra = {}) => ({ avatar: fixture.character.avatar, groupId: null, chat: fixture.chatId, ...extra });
+
+// What the engine holds about the open chat, as plain data, so a test can compare it before and after an estimate
+const readEngineChat = page => page.evaluate(() => {
+    const context = window.SillyTavern.getContext();
+    return {
+        chat: JSON.parse(JSON.stringify(context.chat)),
+        chatMetadata: JSON.parse(JSON.stringify(context.chatMetadata)),
+        extensionPrompts: Object.keys(context.extensionPrompts).sort(),
+        globalVariables: JSON.parse(JSON.stringify(context.extensionSettings.variables?.global ?? null)),
+    };
+});
+
+test.describe('Modern bridge prompt estimate', () => {
+    test('estimates the next prompt with the legacy dry run and leaves the chat, its file, the prompt breakdown and the model untouched', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { messageCount: 6 });
+        const modelRequests = await routeStubbedChatCompletion(page, 'never requested', {
+            patchSettings: settings => {
+                settings.oai_settings.openai_max_context = 8000;
+                settings.oai_settings.openai_max_tokens = 500;
+            },
+        });
+        let settingsSaves = 0;
+        await page.route('**/api/settings/save', route => {
+            settingsSaves++;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', estimatePayload(fixture), 'estimate-open')).error).toBeFalsy();
+        expect((await callBridge(page, 'getItemizedPrompt', {}, 'estimate-itemized-before')).result).toEqual({ available: false });
+        // Variable macros ({{setvar}}, {{incvar}}) in a prompt are the one thing that writes while a prompt is assembled: they change the
+        // chat metadata and the global variables, and schedule a debounced chat save. A listener does the same during the dry run.
+        await page.evaluate(() => {
+            const { eventSource, eventTypes } = window.SillyTavern.getContext();
+            window.estimateDryRuns = [];
+            eventSource.on(eventTypes.CHAT_COMPLETION_PROMPT_READY, data => {
+                const { variables } = window.SillyTavern.getContext();
+                variables.local.set('estimateCounter', 1);
+                variables.global.set('estimateGlobal', 'seen');
+                window.estimateDryRuns.push({ dryRun: data.dryRun });
+            });
+        });
+        // An error left behind by an earlier generation must not be taken for the result of this dry run, and must still be there afterwards
+        await page.evaluate(async () => {
+            (await import('/scripts/openai.js')).promptManager.error = 'left over from an earlier generation';
+        });
+        const before = await readEngineChat(page);
+        expect(before.chatMetadata.variables).toBeUndefined();
+        expect(before.globalVariables).toEqual({});
+
+        const estimate = await callBridge(page, 'estimatePrompt', estimatePayload(fixture, { integrity: 'int-1' }), 'estimate-run');
+        expect(estimate.error).toBeFalsy();
+        expect(estimate.result).toMatchObject({
+            available: true,
+            estimated: true,
+            mainApi: 'openai',
+            maxContext: 7500,
+            includesDraft: false,
+        });
+        expect(estimate.result.totalTokens).toBeGreaterThan(0);
+        expect(estimate.result.totalTokens).toBeLessThan(7500);
+        expect(typeof estimate.result.tokenizer).toBe('string');
+
+        // The listener ran during the dry run, so the variables were written there and must have been put back
+        expect(await page.evaluate(() => window.estimateDryRuns)).toEqual([{ dryRun: true }]);
+        expect(await page.evaluate(async () => (await import('/scripts/openai.js')).promptManager.error)).toBe('left over from an earlier generation');
+
+        // Nothing changed in memory: messages, metadata (variables, tainted flag, in-context marker) and the extension prompt keys
+        expect(await readEngineChat(page)).toEqual(before);
+        expect((await readEngineChat(page)).chatMetadata.tainted).toBeUndefined();
+        expect((await callBridge(page, 'getItemizedPrompt', {}, 'estimate-itemized-after')).result).toEqual({ available: false });
+
+        // The debounced save a variable macro schedules must not fire: wait out the debounce window, then check the file and the requests
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(3000);
+        expect(fixture.chatSaves).toEqual([]);
+        expect(fixture.file.messages).toHaveLength(6);
+        expect(fixture.file.integrity).toBe('int-1');
+        expect(settingsSaves).toBe(0);
+        expect(modelRequests).toEqual([]);
+
+        // A second estimate of the unchanged chat gives the same number
+        const again = await callBridge(page, 'estimatePrompt', estimatePayload(fixture), 'estimate-run-again');
+        expect(again.result).toMatchObject({ available: true, totalTokens: estimate.result.totalTokens });
+        expect(fixture.errors).toEqual([]);
+    });
+
+    // The chat completion path reads the prompt manager's token total; every other API counts the assembled prompt string itself.
+    // Its dry run also moves the in-context marker (a chat metadata field that the next save would carry away).
+    test('counts the assembled prompt string for a text completion API and puts back the in-context marker', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { messageCount: 6 });
+        await routeStubbedChatCompletion(page, 'unused', {
+            patchSettings: settings => {
+                settings.main_api = 'novel';
+            },
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', estimatePayload(fixture), 'estimate-text-open')).error).toBeFalsy();
+        await page.evaluate(() => {
+            window.SillyTavern.getContext().chatMetadata.lastInContextMessageId = 'before the estimate';
+        });
+        const before = await readEngineChat(page);
+
+        const estimate = await callBridge(page, 'estimatePrompt', estimatePayload(fixture), 'estimate-text');
+        expect(estimate.error).toBeFalsy();
+        expect(estimate.result).toMatchObject({ available: true, estimated: true, mainApi: 'novel', includesDraft: false });
+        expect(estimate.result.totalTokens).toBeGreaterThan(0);
+        const expectedBudget = await page.evaluate(async () => (await import('/script.js')).getMaxPromptTokens());
+        expect(estimate.result.maxContext).toBe(expectedBudget);
+
+        expect(await readEngineChat(page)).toEqual(before);
+        expect(fixture.chatSaves).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    // The point of the estimate is to predict what the next send weighs: with an empty draft, the generation that follows sends the same
+    // prompt, so the prompt breakdown it records must report the same total and the same budget.
+    for (const mainApi of ['openai', 'novel']) {
+        test(`the ${mainApi} estimate equals the size of the prompt the next generation sends`, async ({ page }) => {
+            test.setTimeout(120_000);
+
+            const fixture = await routeSummaryFixture(page, { messageCount: 6 });
+            await routeStubbedChatCompletion(page, 'a reply', {
+                patchSettings: settings => {
+                    settings.main_api = mainApi;
+                },
+            });
+            await page.route('**/api/novelai/generate', route => fulfillJson(route, { output: 'a reply' }));
+
+            await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+            const estimate = await callBridge(page, 'estimatePrompt', estimatePayload(fixture), `estimate-compare-${mainApi}`);
+            expect(estimate.error).toBeFalsy();
+            expect(estimate.result).toMatchObject({ available: true, mainApi });
+            expect(fixture.chatSaves).toEqual([]);
+
+            const generate = await callBridge(page, 'generate', estimatePayload(fixture, { type: 'normal', message: '' }), `estimate-compare-generate-${mainApi}`);
+            expect(generate.error).toBeFalsy();
+            expect(generate.result).toMatchObject({ saved: true, messageCount: 7 });
+
+            const itemized = await callBridge(page, 'getItemizedPrompt', {}, `estimate-compare-itemized-${mainApi}`);
+            expect(itemized.result).toMatchObject({
+                available: true,
+                mainApi,
+                totalTokens: estimate.result.totalTokens,
+                maxContext: estimate.result.maxContext,
+                tokenizer: estimate.result.tokenizer,
+                presetName: estimate.result.presetName,
+                modelUsed: estimate.result.modelUsed,
+            });
+            expect(fixture.errors).toEqual([]);
+        });
+    }
+
+    test('a group payload is reported as unsupported without switching the engine to the group', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const fixture = await routeSummaryFixture(page);
+        await routeStubbedChatCompletion(page, 'unused');
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'status', estimatePayload(fixture), 'estimate-group-open')).error).toBeFalsy();
+
+        const group = await callBridge(page, 'estimatePrompt', { avatar: null, groupId: 'unknown-group', chat: 'any chat' }, 'estimate-group');
+        expect(group.error).toBeFalsy();
+        expect(group.result).toEqual({ available: false, reason: 'group' });
+
+        // The engine still sits on the character chat: an unknown group would have thrown while switching
+        const status = await callBridge(page, 'status', {}, 'estimate-group-status');
+        expect(status.result).toMatchObject({ avatar: fixture.character.avatar, groupId: '', chat: fixture.chatId, messageCount: 6 });
+
+        // A request that names neither a group nor a complete character chat is a bridge error and the engine keeps serving
+        const incomplete = await callBridge(page, 'estimatePrompt', { avatar: fixture.character.avatar }, 'estimate-incomplete');
+        expect(incomplete.result).toBeNull();
+        expect(incomplete.error?.message).toContain('聊天文件');
+        expect((await callBridge(page, 'estimatePrompt', estimatePayload(fixture), 'estimate-after-error')).result).toMatchObject({ available: true });
+        expect(fixture.chatSaves).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('reports mandatory prompts that do not fit the budget as unavailable and leaves the prompt manager error alone', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const fixture = await routeSummaryFixture(page);
+        await routeStubbedChatCompletion(page, 'unused', {
+            // A prompt budget of one token: the mandatory prompts cannot fit
+            patchSettings: settings => {
+                settings.oai_settings.openai_max_context = 500;
+                settings.oai_settings.openai_max_tokens = 499;
+            },
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        const budget = await callBridge(page, 'estimatePrompt', estimatePayload(fixture), 'estimate-budget');
+        expect(budget.error).toBeFalsy();
+        expect(budget.result).toMatchObject({ available: false, reason: 'budget' });
+        expect(budget.result.message).toContain('mandatory prompts');
+
+        // The legacy error flag is restored so the prompt manager does not show an error that no generation produced
+        const promptError = await page.evaluate(async () => (await import('/scripts/openai.js')).promptManager.error);
+        expect(promptError).toBeNull();
+        expect(fixture.chatSaves).toEqual([]);
+        expect(fixture.errors).toEqual([]);
+    });
+
+    test('an estimate requested during a generation waits for it, runs afterwards, and stop does not reach it', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const fixture = await routeSummaryFixture(page, { messageCount: 4 });
+        await routeOpenStreamingChatCompletion(page, [{ content: 'Partial answer' }]);
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'generate', estimatePayload(fixture, { type: 'normal', message: 'hold the engine' }), 'estimate-queue-generate');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 1);
+        await startBridgeCall(page, 'estimatePrompt', estimatePayload(fixture), 'estimate-queue-estimate');
+        // Intentional wait: the point is that nothing answers while the reply is still streaming
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(1500);
+        expect(await hasBridgeReply(page, 'estimate-queue-estimate')).toBe(false);
+
+        const stop = await callBridge(page, 'stop', {}, 'estimate-queue-stop');
+        expect(stop.error).toBeFalsy();
+        const generate = await awaitBridgeReply(page, 'estimate-queue-generate');
+        const estimate = await awaitBridgeReply(page, 'estimate-queue-estimate');
+        expect(generate.result).toMatchObject({ stopped: true, saved: true });
+        // It ran after the generation, on the chat as the generation left it: the user message is part of the prompt
+        expect(estimate.error).toBeFalsy();
+        expect(estimate.result).toMatchObject({ available: true, estimated: true });
+        expect(await getBridgeReplyTime(page, 'estimate-queue-generate')).toBeLessThan(await getBridgeReplyTime(page, 'estimate-queue-estimate'));
+        expect(fixture.errors).toEqual([]);
+    });
+});

@@ -116,6 +116,7 @@ import {
     loadProxyPresets,
     selected_proxy,
     initOpenAI,
+    promptManager,
 } from './scripts/openai.js';
 
 import {
@@ -6644,6 +6645,194 @@ async function handleModernBridgeGetItemizedPrompt(payload = {}) {
     return buildModernBridgeItemizedSnapshot(params, targetMesId);
 }
 
+// 预估下次发送（A1 第二阶段）：用旧版「干跑」（Generate 的第三个参数 dryRun，与旧版提示词管理器的 tryGenerate 是同一条路径）
+// 把下次要发的提示词拼一遍，只数 token、不请求模型。排进和 GENERATE / SWIPE / SUMMARIZE 同一条串行队列，不会与运行中的生成交错。
+//
+// 干跑自带的保护：不存聊天、不写 itemizedPrompts、不设 chat_metadata.tainted、不加消息、不跑生成拦截器（向量、绘图等扩展），
+// 世界书的 sticky / cooldown 计时不推进；GENERATION_STARTED / GENERATION_AFTER_COMMANDS 的监听（宏、快速回复、TTS）都看 dryRun 标志。
+// 它仍会留下的内存痕迹（含变量宏排的防抖保存），由 captureModernBridgeDryRunState 在干跑后逐项还原。
+// 输入框里还没发出去的草稿不在干跑内（干跑时 textareaText 恒为空），所以 includesDraft 恒为 false。
+//
+// 回复 { available: true, estimated: true, mainApi, apiFriendlyName, tokenizer, modelUsed, presetName, maxContext, totalTokens, includesDraft: false }
+// 或 { available: false, reason, message? }。reason：
+//   group           群聊的干跑会 setCharacterId 改写当前角色（this_chid），不走它，也不为此切换上下文
+//   no-character    没有选中角色
+//   unsupported-api Horde：干跑要先联网查 worker 的上下文上限
+//   budget          必选提示词已超出预算，message 是旧版给出的原因
+//   prompt-error    拼提示词时的其他错误（角色名含特殊字符等），message 同上
+//   no-data         干跑没有走到拼好提示词那一步（例如 Kobold 流式但服务不支持）
+async function handleModernBridgeEstimatePrompt(payload = {}) {
+    const params = payload || {};
+    await waitForModernBridgeReady();
+    if (params.groupId) {
+        return { available: false, reason: 'group' };
+    }
+    if (!params.avatar || !params.chat) {
+        throw new Error('预估请求需要指定角色和聊天文件。');
+    }
+    if (main_api === 'koboldhorde') {
+        return { available: false, reason: 'unsupported-api' };
+    }
+
+    await useModernBridgeChatContext(params);
+    if (this_chid === undefined || !characters[this_chid]) {
+        return { available: false, reason: 'no-character' };
+    }
+    if (main_api === 'openai' && !promptManager) {
+        return { available: false, reason: 'no-data' };
+    }
+
+    // 干跑里的变量宏（setvar / incvar 等）会排一次防抖的聊天保存。先把本来就排着的保存落盘，干跑后才能放心取消新排的那次
+    if (chatSaveTimeout) {
+        try {
+            await flushPendingChatSave();
+        } catch (error) {
+            console.warn('Modern bridge: the pending chat save could not be flushed before an estimate', error);
+        }
+    }
+
+    const restoreDryRunState = captureModernBridgeDryRunState();
+    let generateData = null;
+    const captureGenerateData = (data, isDryRun) => {
+        // 只认干跑自己发出的事件，不收别的生成流程的数据
+        if (isDryRun) {
+            generateData = data;
+        }
+    };
+    eventSource.on(event_types.GENERATE_AFTER_DATA, captureGenerateData);
+
+    let promptError = null;
+    let chatCompletionTokens = 0;
+    try {
+        // 旧版只在渲染提示词管理器时清掉上一次的错误；不先清，上一次生成留下的错误会被当成这次干跑的结果
+        if (promptManager) {
+            promptManager.error = null;
+        }
+        await Generate('normal', {}, true);
+        if (main_api === 'openai') {
+            // setChatCompletion 在 prepareOpenAIMessages 的 finally 里执行，干跑出错时也会刷新 tokenUsage
+            promptError = promptManager?.error || null;
+            chatCompletionTokens = Number(promptManager?.tokenUsage);
+        }
+    } finally {
+        eventSource.removeListener(event_types.GENERATE_AFTER_DATA, captureGenerateData);
+        restoreDryRunState();
+    }
+
+    if (main_api === 'openai' && promptError) {
+        const budgetMessage = t`Not enough free tokens for mandatory prompts. Raise your token limit or disable custom prompts.`;
+        return { available: false, reason: promptError === budgetMessage ? 'budget' : 'prompt-error', message: String(promptError) };
+    }
+    if (!generateData) {
+        return { available: false, reason: 'no-data' };
+    }
+
+    let totalTokens;
+    if (main_api === 'openai') {
+        // 没有可用的角色时旧版的干跑返回 [null, false]，提示词是空的
+        if (!Array.isArray(generateData.prompt)) {
+            return { available: false, reason: 'no-character' };
+        }
+        totalTokens = chatCompletionTokens;
+    } else {
+        // 非聊天补全：数拼好的整段提示词，带上设置里的 token 填充，口径与分解快照里的总量一致（Generate 自己判断是否超预算时也带填充）
+        const prompt = generateData.prompt ?? generateData.input;
+        if (typeof prompt !== 'string') {
+            return { available: false, reason: 'no-data' };
+        }
+        totalTokens = await getTokenCountAsync(prompt, power_user.token_padding);
+    }
+    if (!Number.isFinite(totalTokens)) {
+        return { available: false, reason: 'no-data' };
+    }
+
+    const model = getGeneratingModel();
+    return {
+        available: true,
+        estimated: true,
+        mainApi: main_api,
+        apiFriendlyName: $(`#rm_api_block select option[value="${main_api}"]`).first().text() || main_api,
+        // Kobold 和 Text Completion 的「模型」是连接状态文字；引擎没做过连接检查时是 no_connection，不当作模型名
+        modelUsed: model === 'no_connection' ? '' : String(model || ''),
+        presetName: getPresetManager()?.getSelectedPresetName() || '',
+        tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
+        // 与 Generate 的 this_max_context 同源（上下文 − 回复上限）；不含 Horde 自动调整和 CFG 提示词扣减，二者对本动作不适用或极少用
+        maxContext: getMaxPromptTokens(),
+        totalTokens,
+        includesDraft: false,
+    };
+}
+
+/**
+ * 记下干跑会改动的内存状态并返回还原函数。干跑本身不存聊天、不记 itemizedPrompts，但前置步骤里仍有这些写入：
+ * - Generate 入口替换模块级 abortController：STOP 靠它中止当前生成，干跑后换回原来的那个；generation_started 同理
+ * - 第一条消息被 substituteParams 展开宏（真实生成之后会存盘，干跑不该留下）
+ * - 非聊天补全的 setInContextMessages 写 chat_metadata.lastInContextMessageId（注释写明「不保存，等别的调用顺带保存」，所以会被下次保存带走）
+ * - 世界书计时效果初始化 chat_metadata.timedWorldInfo（只建空结构）
+ * - 提示词里的变量宏（setvar / incvar 等）改 chat_metadata.variables 与全局变量，并排一次防抖的聊天保存
+ * - 聊天补全拼装出错时写 promptManager.error
+ * - 扩展提示词 extension_prompts（作者注释、深度提示、人设描述、世界书注入等）被重写：每次生成开头都会重算，没有消费者在两次生成之间读取，这里仍原样还原，让干跑前后一致
+ * 提示词管理器的 token 缓存和聊天里附件消息的 fileLength 也会被刷新，同样每次生成都会重算，不还原。
+ * @returns {() => void} 还原函数
+ */
+function captureModernBridgeDryRunState() {
+    const savedAbortController = abortController;
+    const savedGenerationStarted = generation_started;
+    const savedPromptError = promptManager?.error ?? null;
+    const promptsObject = extension_prompts;
+    const savedPrompts = { ...extension_prompts };
+
+    const firstMessage = chat[0];
+    const firstMessageText = firstMessage?.mes;
+
+    const metadata = chat_metadata;
+    const hadLastInContext = Object.hasOwn(metadata, 'lastInContextMessageId');
+    const savedLastInContext = metadata.lastInContextMessageId;
+    const hadTimedWorldInfo = Object.hasOwn(metadata, 'timedWorldInfo');
+    const savedVariables = metadata.variables === undefined ? undefined : structuredClone(metadata.variables);
+    const globalVariables = extension_settings.variables;
+    const savedGlobalVariables = globalVariables?.global === undefined ? undefined : structuredClone(globalVariables.global);
+
+    return () => {
+        abortController = savedAbortController;
+        generation_started = savedGenerationStarted;
+        if (promptManager) {
+            promptManager.error = savedPromptError;
+        }
+        if (firstMessage && chat[0] === firstMessage && firstMessage.mes !== firstMessageText) {
+            firstMessage.mes = firstMessageText;
+        }
+        if (extension_prompts === promptsObject) {
+            for (const key of Object.keys(promptsObject)) {
+                if (!Object.hasOwn(savedPrompts, key)) {
+                    delete promptsObject[key];
+                }
+            }
+            Object.assign(promptsObject, savedPrompts);
+        }
+
+        if (hadLastInContext) {
+            metadata.lastInContextMessageId = savedLastInContext;
+        } else {
+            delete metadata.lastInContextMessageId;
+        }
+        if (!hadTimedWorldInfo) {
+            delete metadata.timedWorldInfo;
+        }
+        if (savedVariables === undefined) {
+            delete metadata.variables;
+        } else {
+            metadata.variables = savedVariables;
+        }
+        if (globalVariables && savedGlobalVariables !== undefined) {
+            globalVariables.global = savedGlobalVariables;
+        }
+
+        // 干跑里变量宏排的防抖保存：取消它，免得引擎在没人要求时把聊天写回文件
+        cancelDebouncedChatSave();
+    };
+}
+
 function postModernBridgeResult(event, id, result, error = null) {
     event.source?.postMessage({
         source: modernBridgeSource,
@@ -6675,6 +6864,10 @@ window.addEventListener('message', async (event) => {
         }
         if (action === BRIDGE_ACTIONS.SUMMARIZE) {
             postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeSummarize, payload));
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.ESTIMATE_PROMPT) {
+            postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeEstimatePrompt, payload));
             return;
         }
         if (action === BRIDGE_ACTIONS.STOP) {
