@@ -74,6 +74,55 @@ export const chatCompletionSourceOptions = [
     { id: 'minimax', label: 'MiniMax' },
 ];
 
+/**
+ * 旧版 `/api` 斜杠命令使用的 API 别名表（public/scripts/slash-commands.js 的 setupConnectAPIMap）。连接档案的 `api` 字段存的就是这里的键，
+ * 例如 `google`（其实是 makersuite 来源）、`openrouter`（聊天补全）与 `openrouter-text`（文本补全）。
+ * 键的顺序与旧版一致：由当前设置反查别名时取第一个匹配的键（makersuite 先命中 `google`，koboldcpp 先命中 `koboldcpp`），
+ * tests/modern-connection-profiles.test.js 会对照旧版源码里的 textgen_types / chat_completion_sources 检查有没有漏项。
+ * selected 是 main_api 的取值，source 是聊天补全来源，type 是文本补全类型。
+ */
+const legacyTextCompletionTypes = [
+    'ooba', 'mancer', 'vllm', 'aphrodite', 'tabby', 'koboldcpp', 'togetherai', 'llamacpp', 'ollama',
+    'infermaticai', 'dreamgen', 'openrouter', 'featherless', 'huggingface', 'generic',
+];
+const legacyChatCompletionSources = [
+    'openai', 'claude', 'openrouter', 'ai21', 'makersuite', 'vertexai', 'mistralai', 'custom', 'cohere', 'perplexity',
+    'groq', 'electronhub', 'chutes', 'nanogpt', 'deepseek', 'aimlapi', 'xai', 'pollinations', 'moonshot', 'fireworks',
+    'cometapi', 'azure_openai', 'zai', 'siliconflow', 'workers_ai', 'minimax',
+];
+
+function buildConnectApiMap() {
+    /** @type {Record<string, { selected: string, source?: string, type?: string }>} */
+    const map = {
+        kobold: { selected: 'kobold' },
+        horde: { selected: 'koboldhorde' },
+        novel: { selected: 'novel' },
+        koboldcpp: { selected: 'textgenerationwebui', type: 'koboldcpp' },
+        kcpp: { selected: 'textgenerationwebui', type: 'koboldcpp' },
+        openai: { selected: 'openai', source: 'openai' },
+        oai: { selected: 'openai', source: 'openai' },
+        google: { selected: 'openai', source: 'makersuite' },
+        openrouter: { selected: 'openai', source: 'openrouter' },
+        'openrouter-text': { selected: 'textgenerationwebui', type: 'openrouter' },
+    };
+    for (const type of legacyTextCompletionTypes) {
+        if (!Object.hasOwn(map, type)) {
+            map[type] = { selected: 'textgenerationwebui', type };
+        }
+    }
+    for (const source of legacyChatCompletionSources) {
+        if (!Object.hasOwn(map, source)) {
+            map[source] = { selected: 'openai', source };
+        }
+    }
+    for (const config of Object.values(map)) {
+        Object.freeze(config);
+    }
+    return Object.freeze(map);
+}
+
+export const CONNECT_API_MAP = buildConnectApiMap();
+
 export const apiModelSuggestions = {
     openai: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
     siliconflow: ['deepseek-ai/DeepSeek-V4-Pro', 'deepseek-ai/DeepSeek-V3', 'Qwen/Qwen3-235B-A22B', 'moonshotai/Kimi-K2-Instruct'],

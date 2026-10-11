@@ -1,4 +1,5 @@
 import { describeConnection, withRawValue } from '../core/connection-labels.js';
+import { readConnectionManager, findConnectionProfile } from '../actions/connection-profiles.js';
 
 export function createApiStateComponents(ctx) {
     const {
@@ -70,6 +71,27 @@ export function createApiStateComponents(ctx) {
         ];
     }
 
+    // 「连接档案」一行说的是真正保存的档案（旧版连接管理扩展的 extension_settings.connectionManager），
+    // 不是页面上由当前设置整理出的几张来源卡；一个都没有只是还没创建，不算要检查
+    function getConnectionProfilesCheck(derivedCards) {
+        const saved = readConnectionManager(state.settings || {});
+        if (!saved.profiles.length) {
+            const hasConnection = derivedCards.some(card => card.source || card.model || card.endpoint);
+            return {
+                label: '连接档案',
+                state: 'pending',
+                statusText: '未创建',
+                detail: hasConnection ? '还没有连接档案，可以把当前连接存成档案方便切换。' : '还没有连接档案，也还没有配置连接。',
+            };
+        }
+        const current = saved.selectedProfile ? findConnectionProfile(state.settings, saved.selectedProfile) : null;
+        return {
+            label: '连接档案',
+            state: 'configured',
+            detail: `${formatNumber(saved.profiles.length)} 个档案${current ? `，当前：${current.name}` : '，当前没有选中档案'}。`,
+        };
+    }
+
     function getCurrentProviderInfo() {
         const provider = getProviderInfo();
         if (getSelectedApiMain() !== 'textgenerationwebui') {
@@ -122,11 +144,7 @@ export function createApiStateComponents(ctx) {
                 state: provider.model ? 'configured' : 'warn',
                 detail: provider.model || '未读取到模型字段。',
             },
-            {
-                label: '连接档案',
-                state: profiles.some(profile => profile.source || profile.model || profile.endpoint) ? 'configured' : 'warn',
-                detail: `${formatNumber(profiles.length)} 个可见档案。`,
-            },
+            getConnectionProfilesCheck(profiles),
             {
                 label: '密钥显示',
                 state: state.secrets?.allowKeysExposure ? 'warn' : 'configured',

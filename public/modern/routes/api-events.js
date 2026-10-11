@@ -1,5 +1,7 @@
 import { refreshChatCompletionContextUi, refreshChatCompletionFieldError } from '../actions/api-chat-completion-connection.js';
 import { handleTextCompletionLimitChange } from '../actions/api-text-completion-connection.js';
+import { getSwitcherState } from '../actions/connection-profiles.js';
+import { createApiProfileComponents } from '../components/api-profiles.js';
 
 export function createApiEvents(ctx) {
     const {
@@ -13,9 +15,115 @@ export function createApiEvents(ctx) {
         updateTextCompletionTypeFields,
         refreshHordeModels,
         startOpenRouterAuth,
+        applyConnectionProfile,
+        createProfileFromCurrentConnection,
+        deleteConnectionProfile,
+        suggestConnectionProfileName,
     } = ctx;
+    const { renderConnectionProfilesSection } = createApiProfileComponents(ctx);
+
+    /**
+     * 只替换页面上的「连接档案」区，不重绘整页，上方连接表单里未保存的输入不会丢。找不到这一区时才整页重绘。
+     */
+    function replaceProfilesSection() {
+        const host = document.querySelector('[data-connection-profiles]');
+        if (!(host instanceof HTMLElement)) {
+            render();
+            return;
+        }
+        const template = document.createElement('template');
+        template.innerHTML = renderConnectionProfilesSection().trim();
+        const next = template.content.firstElementChild;
+        if (next) {
+            host.replaceWith(next);
+        }
+    }
+
+    function focusProfileElement(selector) {
+        const element = document.querySelector(selector);
+        if (element instanceof HTMLElement) {
+            element.focus();
+        }
+    }
+
+    function escapeAttribute(value) {
+        return typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&');
+    }
+
+    // 「连接档案」区的点击：创建、应用、删除（二次确认在卡片里完成，不弹窗）
+    async function handleProfileClick(event) {
+        const target = event.target;
+        if (!(target instanceof Element) || !target.closest('[data-connection-profiles]')) {
+            return false;
+        }
+        const switcher = getSwitcherState(state);
+
+        if (target.closest('[data-api-connection-profile-create-open]')) {
+            switcher.createOpen = true;
+            switcher.createName = suggestConnectionProfileName();
+            switcher.error = '';
+            replaceProfilesSection();
+            const input = document.querySelector('[data-api-connection-create-name]');
+            if (input instanceof HTMLInputElement) {
+                input.focus();
+                input.select();
+            }
+            return true;
+        }
+
+        if (target.closest('[data-api-connection-create-cancel]')) {
+            switcher.createOpen = false;
+            switcher.createName = '';
+            switcher.error = '';
+            replaceProfilesSection();
+            focusProfileElement('[data-api-connection-profile-create-open]');
+            return true;
+        }
+
+        const applyButton = target.closest('[data-api-connection-profile-apply]');
+        if (applyButton instanceof HTMLElement) {
+            const id = applyButton.dataset.apiConnectionProfileApply || '';
+            await applyConnectionProfile(id);
+            focusProfileElement(`[data-api-connection-profile-apply="${escapeAttribute(id)}"]`);
+            return true;
+        }
+
+        const deleteButton = target.closest('[data-api-connection-profile-delete]');
+        if (deleteButton instanceof HTMLElement) {
+            switcher.deleteConfirmId = deleteButton.dataset.apiConnectionProfileDelete || '';
+            replaceProfilesSection();
+            focusProfileElement('[data-api-connection-profile-delete-confirm]');
+            return true;
+        }
+
+        if (target.closest('[data-api-connection-profile-delete-cancel]')) {
+            const id = switcher.deleteConfirmId;
+            switcher.deleteConfirmId = '';
+            replaceProfilesSection();
+            focusProfileElement(`[data-api-connection-profile-delete="${escapeAttribute(id)}"]`);
+            return true;
+        }
+
+        const confirmButton = target.closest('[data-api-connection-profile-delete-confirm]');
+        if (confirmButton instanceof HTMLElement) {
+            await deleteConnectionProfile(confirmButton.dataset.apiConnectionProfileDeleteConfirm || '');
+            return true;
+        }
+
+        if (target.closest('[data-api-connection-result-dismiss]')) {
+            switcher.lastResult = null;
+            replaceProfilesSection();
+            return true;
+        }
+
+        return false;
+    }
 
     async function handleApiClick(event) {
+        if (await handleProfileClick(event)) {
+            return true;
+        }
+
         if (event.target.closest('[data-test-api]')) {
             try {
                 await testApiConnection();
@@ -80,6 +188,12 @@ export function createApiEvents(ctx) {
     }
 
     function handleApiChange(event) {
+        // 创建档案的名称框失焦后记住输入，之后只替换档案区时不会丢
+        if (event.target instanceof HTMLInputElement && event.target.matches('[data-api-connection-create-name]')) {
+            getSwitcherState(state).createName = event.target.value;
+            return true;
+        }
+
         if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-main]')) {
             state.apiMainDraft = event.target.value;
             render();
@@ -118,6 +232,21 @@ export function createApiEvents(ctx) {
     }
 
     async function handleApiSubmit(event) {
+        if (event.target instanceof HTMLFormElement && event.target.matches('[data-connection-profile-create-form]')) {
+            event.preventDefault();
+            const switcher = getSwitcherState(state);
+            const input = event.target.querySelector('[data-api-connection-create-name]');
+            if (input instanceof HTMLInputElement) {
+                switcher.createName = input.value;
+            }
+            const result = await createProfileFromCurrentConnection(switcher.createName);
+            if (!result?.ok) {
+                replaceProfilesSection();
+                focusProfileElement('[data-api-connection-create-name]');
+            }
+            return true;
+        }
+
         if (!(event.target instanceof HTMLFormElement) || !event.target.matches('[data-api-connection-form]')) {
             return false;
         }

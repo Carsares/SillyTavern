@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { mockBridgeFrame } from './modern-test-utils.js';
 
+/* global localStorage */
+
 function createTextCompletionCase(type, modelField, secretKey) {
     const initialModel = modelField ? `${type}/saved-model` : '';
     const modelValue = modelField ? `${type}/modern-model` : 'model-field-should-not-be-saved';
@@ -1442,5 +1444,275 @@ test.describe('Modern API engine sync', () => {
         await expect(toast).toBeVisible();
         await expect(toast).toContainText('生成引擎未能同步：engine unavailable');
         expect(saved.settings.oai_settings.custom_model).toBe('custom/new-model');
+    });
+});
+
+// 连接档案（B1）：API 页的「连接档案」区读写旧版连接管理扩展保存的真实档案（extension_settings.connectionManager）。
+// 映射、精确匹配和跳过原因由 tests/modern-connection-profiles.test.js 覆盖；聊天输入框旁的切换见 tests/modern-chat-connection.e2e.js。
+test.describe('Modern API connection profiles', () => {
+    const claudeProfile = {
+        id: 'p-claude',
+        mode: 'cc',
+        name: 'Claude 日常',
+        api: 'claude',
+        preset: 'Chat Preset B',
+        model: 'claude-sonnet-4',
+        'secret-id': 'claude-2',
+        exclude: [],
+    };
+    const oobaProfile = {
+        id: 'p-ooba',
+        mode: 'tc',
+        name: '本地 Ooba',
+        api: 'ooba',
+        'api-url': 'http://127.0.0.1:5001',
+        model: 'local-model',
+        sysprompt: 'Roleplay',
+        exclude: [],
+    };
+
+    function profilesBundle({ profiles = [claudeProfile, oobaProfile], selectedProfile = null } = {}) {
+        return {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                chat_completion_source: 'custom',
+                oai_settings: {
+                    chat_completion_source: 'custom',
+                    custom_model: 'custom/saved-model',
+                    custom_url: 'https://saved.example/v1',
+                    claude_model: 'claude-old',
+                    preset_settings_openai: 'Chat Preset A',
+                    temp_openai: 0.7,
+                    openai_max_tokens: 300,
+                    top_p_openai: 0.9,
+                    freq_pen_openai: 0.1,
+                    pres_pen_openai: 0.2,
+                },
+                textgenerationwebui_settings: { type: 'ooba', server_urls: { ooba: 'http://127.0.0.1:5000' }, custom_model: 'local-model' },
+                extension_settings: { connectionManager: { profiles: structuredClone(profiles), selectedProfile } },
+            }),
+            textgenerationwebui_preset_names: [],
+            textgenerationwebui_presets: [],
+            openai_setting_names: ['Chat Preset A', 'Chat Preset B'],
+            openai_settings: [JSON.stringify({ temperature: 1 }), JSON.stringify({ temperature: 0.5, openai_max_tokens: 600 })],
+        };
+    }
+
+    const secrets = () => ({
+        api_key_custom: [{ id: 'custom-1', label: 'main', value: '****', active: true }],
+        api_key_claude: [
+            { id: 'claude-1', label: 'first', value: '****', active: true },
+            { id: 'claude-2', label: 'backup', value: '****', active: false },
+        ],
+    });
+
+    // 页面刷新读到的设置和密钥状态跟着保存、切换走，和真实服务端一样
+    async function mockProfileWorkspace(page, { profiles, selectedProfile, bridgeOptions } = {}) {
+        const settingsBundle = profilesBundle({ profiles, selectedProfile });
+        const secretState = secrets();
+        const bridgeCalls = await mockModernApiShell(page, settingsBundle, secretState, bridgeOptions);
+        const saves = [];
+        const rotations = [];
+        await page.route('**/api/settings/save', route => {
+            const body = route.request().postDataJSON();
+            saves.push(body);
+            settingsBundle.settings = JSON.stringify(body);
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+        await page.route('**/api/secrets/rotate', route => {
+            const { key, id } = route.request().postDataJSON();
+            rotations.push({ key, id });
+            if (secretState[key]?.some(item => item.id === id)) {
+                secretState[key] = secretState[key].map(item => ({ ...item, active: item.id === id }));
+            }
+            return route.fulfill({ status: 204 });
+        });
+        return { bridgeCalls, saves, rotations, settingsBundle };
+    }
+
+    const section = page => page.locator('[data-connection-profiles]');
+    const card = (page, id) => page.locator(`[data-connection-profile-card="${id}"]`);
+
+    test('shows an empty state that offers to create the first profile from the current connection', async ({ page }) => {
+        const { saves, bridgeCalls } = await mockProfileWorkspace(page, { profiles: [] });
+        await page.goto('/modern/?view=api');
+
+        await expect(section(page).locator('.panel-title')).toHaveText('连接档案');
+        await expect(section(page)).toContainText('还没有连接档案');
+        await expect(section(page)).toContainText('精确匹配');
+        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('未创建');
+        // 页面上由当前设置整理出的来源卡仍在，改名为「连接来源概览」
+        await expect(page.locator('.panel-title', { hasText: '连接来源概览' })).toBeVisible();
+        await expect(page.locator('.api-profile-card')).toHaveCount(3);
+
+        await section(page).locator('[data-api-connection-profile-create-open]').click();
+        const nameInput = section(page).locator('[data-api-connection-create-name]');
+        await expect(nameInput).toBeFocused();
+        await expect(nameInput).toHaveValue('custom custom/saved-model - Chat Preset A');
+        await nameInput.fill('我的自定义连接');
+        await nameInput.press('Enter');
+
+        await expect(section(page).locator('.connection-profile-card')).toHaveCount(1);
+        await expect(section(page).locator('.connection-profile-card')).toContainText('我的自定义连接');
+        const manager = saves.at(-1).extension_settings.connectionManager;
+        expect(manager.profiles).toHaveLength(1);
+        expect(manager.profiles[0]).toMatchObject({
+            name: '我的自定义连接',
+            mode: 'cc',
+            api: 'custom',
+            preset: 'Chat Preset A',
+            model: 'custom/saved-model',
+            'api-url': 'https://saved.example/v1',
+            'secret-id': 'custom-1',
+            exclude: [],
+        });
+        expect(manager.selectedProfile).toBe(manager.profiles[0].id);
+        await expect(card(page, manager.profiles[0].id)).toContainText('当前');
+        await expect(card(page, manager.profiles[0].id)).toContainText('custom/saved-model');
+        await expect(page.locator('.toast', { hasText: '已创建连接档案' })).toBeVisible();
+        // 创建后附带同步引擎，页面其余部分不受影响
+        await expect.poll(() => bridgeCalls.filter(call => call.action === 'reloadSettings').length).toBe(1);
+        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('1 个档案，当前：我的自定义连接');
+    });
+
+    test('validates the name inline and keeps unsaved connection edits while the create form opens', async ({ page }) => {
+        const { saves } = await mockProfileWorkspace(page);
+        await page.goto('/modern/?view=api');
+
+        await page.locator('[data-api-model]').fill('custom/unsaved-edit');
+        await section(page).locator('[data-api-connection-profile-create-open]').click();
+        // 只替换档案区，上面的表单没有被重绘
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/unsaved-edit');
+
+        page.on('dialog', dialog => {
+            throw new Error(`unexpected dialog: ${dialog.message()}`);
+        });
+        const nameInput = section(page).locator('[data-api-connection-create-name]');
+        await nameInput.fill('Claude 日常');
+        await section(page).locator('[data-connection-profile-create-form] button[type="submit"]').click();
+        await expect(section(page).locator('[data-api-connection-error]')).toContainText('已经有名为“Claude 日常”的档案');
+        await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+        await expect(nameInput).toBeFocused();
+        await nameInput.fill('');
+        await nameInput.press('Enter');
+        await expect(section(page).locator('[data-api-connection-error]')).toContainText('请填写档案名称');
+        expect(saves).toHaveLength(0);
+
+        await section(page).locator('[data-api-connection-create-cancel]').click();
+        await expect(section(page).locator('[data-api-connection-create-name]')).toHaveCount(0);
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/unsaved-edit');
+    });
+
+    test('lists the saved profiles and applies one: settings, secret, engine reload and a per-item result', async ({ page }) => {
+        const { saves, rotations, bridgeCalls } = await mockProfileWorkspace(page, { selectedProfile: 'p-ooba' });
+        await page.goto('/modern/?view=api');
+
+        await expect(card(page, 'p-claude')).toContainText('Claude 日常');
+        await expect(card(page, 'p-claude')).toContainText('聊天补全');
+        await expect(card(page, 'p-claude')).toContainText('claude-sonnet-4');
+        await expect(card(page, 'p-claude')).toContainText('Chat Preset B');
+        await expect(card(page, 'p-claude')).not.toContainText('当前');
+        await expect(card(page, 'p-ooba')).toContainText('文本补全');
+        await expect(card(page, 'p-ooba')).toContainText('http://127.0.0.1:5001');
+        await expect(card(page, 'p-ooba')).toContainText('当前');
+        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('2 个档案，当前：本地 Ooba');
+
+        await card(page, 'p-claude').locator('[data-api-connection-profile-apply]').click();
+        const result = section(page).locator('[data-connection-result]');
+        await expect(result).toContainText('档案“Claude 日常”');
+        await expect(result).toContainText('已应用 4 项');
+        await expect(result.locator('.is-applied', { hasText: '模型' })).toContainText('claude-sonnet-4');
+        await expect(card(page, 'p-claude')).toContainText('当前');
+        await expect(card(page, 'p-ooba')).not.toContainText('当前');
+
+        const body = saves.at(-1);
+        expect(body.main_api).toBe('openai');
+        expect(body.chat_completion_source).toBe('claude');
+        expect(body.oai_settings).toMatchObject({
+            chat_completion_source: 'claude',
+            claude_model: 'claude-sonnet-4',
+            preset_settings_openai: 'Chat Preset B',
+            temp_openai: 0.5,
+            openai_max_tokens: 600,
+            custom_model: 'custom/saved-model',
+        });
+        expect(body.extension_settings.connectionManager.selectedProfile).toBe('p-claude');
+        expect(rotations).toEqual([{ key: 'api_key_claude', id: 'claude-2' }]);
+        await expect.poll(() => bridgeCalls.filter(call => call.action === 'reloadSettings').length).toBe(1);
+
+        // 页面上的编辑器跟着换成新的来源和模型
+        await expect(page.locator('[data-api-source]')).toHaveValue('claude');
+        await expect(page.locator('[data-api-model]')).toHaveValue('claude-sonnet-4');
+        await expect(page.locator('.toast', { hasText: '已切换到“Claude 日常”' })).toBeVisible();
+    });
+
+    test('applying a text completion profile switches the main API and lists what cannot be applied', async ({ page }) => {
+        const { saves } = await mockProfileWorkspace(page);
+        await page.goto('/modern/?view=api');
+
+        await card(page, 'p-ooba').locator('[data-api-connection-profile-apply]').click();
+        const result = section(page).locator('[data-connection-result]');
+        await expect(result).toContainText('已应用 3 项，跳过 1 项');
+        await expect(result.locator('.is-skipped')).toContainText('系统提示词');
+        await expect(result.locator('.is-skipped')).toContainText('暂不支持');
+
+        expect(saves.at(-1).main_api).toBe('textgenerationwebui');
+        expect(saves.at(-1).textgenerationwebui_settings).toMatchObject({ type: 'ooba', custom_model: 'local-model', server_urls: { ooba: 'http://127.0.0.1:5001' } });
+        await expect(page.locator('[data-textgen-type]')).toHaveValue('ooba');
+        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:5001');
+    });
+
+    test('deleting asks for a confirmation inside the card, and cancel keeps the profile', async ({ page }) => {
+        const { saves, bridgeCalls } = await mockProfileWorkspace(page, { selectedProfile: 'p-claude' });
+        await page.goto('/modern/?view=api');
+        page.on('dialog', dialog => {
+            throw new Error(`unexpected dialog: ${dialog.message()}`);
+        });
+
+        await card(page, 'p-claude').locator('[data-api-connection-profile-delete]').click();
+        await expect(card(page, 'p-claude')).toContainText('确定删除“Claude 日常”');
+        await expect(card(page, 'p-claude').locator('[data-api-connection-profile-delete-confirm]')).toBeFocused();
+        expect(saves).toHaveLength(0);
+
+        await card(page, 'p-claude').locator('[data-api-connection-profile-delete-cancel]').click();
+        await expect(card(page, 'p-claude')).not.toContainText('确定删除');
+        await expect(card(page, 'p-claude').locator('[data-api-connection-profile-delete]')).toBeFocused();
+        expect(saves).toHaveLength(0);
+
+        await card(page, 'p-claude').locator('[data-api-connection-profile-delete]').click();
+        await card(page, 'p-claude').locator('[data-api-connection-profile-delete-confirm]').click();
+        await expect(card(page, 'p-claude')).toHaveCount(0);
+        await expect(card(page, 'p-ooba')).toBeVisible();
+
+        const manager = saves.at(-1).extension_settings.connectionManager;
+        expect(manager.profiles.map(profile => profile.id)).toEqual(['p-ooba']);
+        expect(manager.selectedProfile).toBeNull();
+        // 删档案不动当前连接设置
+        expect(saves.at(-1).oai_settings.custom_model).toBe('custom/saved-model');
+        await expect(page.locator('.toast', { hasText: '已删除连接档案' })).toBeVisible();
+        await expect.poll(() => bridgeCalls.filter(call => call.action === 'reloadSettings').length).toBe(1);
+    });
+
+    test('a failed engine sync is reported next to the applied profile', async ({ page }) => {
+        const { saves } = await mockProfileWorkspace(page, {
+            bridgeOptions: { replies: { reloadSettings: () => { throw new Error('engine unavailable'); } } },
+        });
+        await page.goto('/modern/?view=api');
+
+        await card(page, 'p-claude').locator('[data-api-connection-profile-apply]').click();
+        await expect(section(page).locator('[data-connection-result]')).toContainText('生成引擎未能同步：engine unavailable');
+        expect(saves.at(-1).oai_settings.claude_model).toBe('claude-sonnet-4');
+    });
+
+    test('saving the connection records the model in the recent-model list used by the chat switcher', async ({ page }) => {
+        await mockProfileWorkspace(page);
+        await page.goto('/modern/?view=api');
+
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-save-api-connection]').click();
+        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+
+        const recent = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-recent-models') || '{}'));
+        expect(recent['openai:custom']).toEqual(['custom/new-model']);
     });
 });

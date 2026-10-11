@@ -113,3 +113,136 @@
 .chat-usage-label.is-over {
     color: var(--danger);
 }
+
+/*
+ * ===== 连接档案（B1）=====
+ * API 页的「连接档案」区（components/api-profiles.js）和聊天输入框弹层里的切换结果明细（components/chat-connection-chip.js）。
+ * 聊天弹层本身的样式（.connection-chip、.connection-popover 等）在 chat.css。
+ */
+.connection-profiles-note {
+    margin: 0 0 10px;
+    color: var(--warning);
+    font-size: 12px;
+}
+
+.connection-profiles-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 22px 14px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.connection-profiles-empty i {
+    font-size: 24px;
+}
+
+/* 同一行的卡片被网格拉成一样高时，内容仍从上往下排，不被撑开 */
+.connection-profile-card {
+    align-content: start;
+}
+
+.connection-profile-card .kv-key {
+    flex: none;
+    white-space: nowrap;
+}
+
+.connection-profile-card.is-current {
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+
+.connection-profile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.connection-profile-confirm {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--danger) 5%, var(--surface));
+    font-size: 12px;
+}
+
+.connection-profile-create {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.connection-profile-create .field-error,
+.connection-profile-create .panel-subtitle {
+    margin: 0;
+}
+
+/* 切换结果：已应用的项和跳过的项（带原因）。聊天弹层和 API 页共用 */
+.connection-result {
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+    font-size: 12px;
+}
+
+.connection-profiles > .connection-result {
+    margin-top: 12px;
+}
+
+.connection-result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.connection-result-summary,
+.connection-result-warning {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.connection-result-warning {
+    color: var(--warning);
+}
+
+.connection-result-list {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.connection-result-list li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 6px;
+    overflow-wrap: anywhere;
+}
+
+.connection-result-list strong {
+    margin-right: 6px;
+    font-weight: 650;
+}
+
+.connection-result-list .is-applied i {
+    color: var(--success);
+}
+
+.connection-result-list .is-skipped {
+    color: var(--text-muted);
+}
+
+.connection-result-list .is-skipped i {
+    color: var(--warning);
+}

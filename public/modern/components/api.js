@@ -29,6 +29,7 @@ export function createApiComponents(ctx) {
     } = createApiDiagnosticComponents(ctx);
     const {
         renderApiProfilesSection,
+        renderConnectionProfilesSection,
         renderApiRawDataPanel,
     } = createApiProfileComponents(ctx);
     const {
@@ -86,6 +87,7 @@ export function createApiComponents(ctx) {
                 ${renderApiTestHistory()}
             </section>
         </div>
+        ${renderConnectionProfilesSection()}
         ${renderApiProfilesSection(profiles)}
         ${renderApiRawDataPanel(provider)}
     `;

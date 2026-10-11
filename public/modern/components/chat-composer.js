@@ -10,6 +10,10 @@ function getComposerStatusText(state, hasTarget) {
     if (state.engine.generating) {
         return state.engine.detail || '生成中，请等待当前回复完成。';
     }
+    // 连接档案 / 模型正在切换：此刻发出的消息可能还用旧配置，等切换完成再发（components/chat-connection-chip.js）
+    if (state.connectionSwitcher?.busy) {
+        return `${state.connectionSwitcher.busyLabel || '正在切换连接'}，完成后再发送。`;
+    }
     return '';
 }
 
@@ -28,7 +32,8 @@ export function createChatComposerComponents(ctx) {
         const draftLength = draft.trim().length;
         const entity = getSelectedChatEntity();
         const hasTarget = Boolean(entity);
-        const canSend = !state.engine.generating && hasTarget && draftLength > 0;
+        const switchingConnection = Boolean(state.connectionSwitcher?.busy);
+        const canSend = !state.engine.generating && !switchingConnection && hasTarget && draftLength > 0;
         const statusText = getComposerStatusText(state, hasTarget);
         // 输入框下方的元信息行：B1 的连接标签（插槽）在前，上次发送的用量标签在后；两者都为空时不渲染这一行。
         // 用量标签只读缓存的提示词分解快照，渲染时不发请求（见 components/chat-usage-label.js）
@@ -48,11 +53,11 @@ export function createChatComposerComponents(ctx) {
                 ${state.engine.generating ? '生成中' : '发送'}
             </button>
             ${!state.engine.generating && messages.length ? `
-                <button class="secondary-button" type="button" data-continue-message>
+                <button class="secondary-button" type="button" data-continue-message ${switchingConnection ? 'disabled' : ''}>
                     <i class="fa-solid fa-forward-step"></i>
                     继续
                 </button>
-                <button class="secondary-button" type="button" data-regenerate-message>
+                <button class="secondary-button" type="button" data-regenerate-message ${switchingConnection ? 'disabled' : ''}>
                     <i class="fa-solid fa-rotate-right"></i>
                     重生成
                 </button>

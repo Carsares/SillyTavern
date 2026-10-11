@@ -1,6 +1,7 @@
 import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 import { formatNumber } from '../core/utils.js';
+import { recordRecentModel } from './connection-profiles.js';
 import {
     CHAT_COMPLETION_CONTEXT_DEFAULT,
     CHAT_COMPLETION_CONTEXT_MIN,
@@ -394,6 +395,8 @@ export function createApiChatCompletionConnectionActions({
         }
 
         await saveSettingsSerialized(apiFetch, state.settings);
+        // 记入聊天输入框旁「最近使用的模型」（actions/connection-profiles.js）
+        recordRecentModel('openai', source, model);
         // 设置已落盘：先等生成引擎重载完，再更新界面状态和提示，保存后立刻发送也用新配置
         const engineSync = await reloadSettings();
         state.apiMainDraft = '';

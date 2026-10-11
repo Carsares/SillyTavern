@@ -568,6 +568,7 @@ test.describe('Modern inspector prompt usage', () => {
         await section.locator('[data-refresh-itemized-prompt]').click();
         await expect(section).toContainText('暂无最近生成的提示词分解数据');
         await expect(page.locator('[data-chat-usage-label]')).toHaveCount(0);
-        await expect(page.locator('[data-composer-meta]')).toHaveCount(0);
+        // The connection chip (B1) now fills the row; without a usage snapshot it is the only thing in it
+        await expect(page.locator('[data-composer-meta] > :not([data-connection-switcher])')).toHaveCount(0);
     });
 });

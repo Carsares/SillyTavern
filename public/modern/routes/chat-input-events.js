@@ -67,7 +67,8 @@ export function createChatInputEvents(ctx) {
     function updateComposerSendState(input) {
         const draftLength = input.value.trim().length;
         const hasTarget = Boolean(getSelectedChatEntity());
-        const canSend = !state.engine.generating && hasTarget && draftLength > 0;
+        // 连接档案 / 模型切换中（state.connectionSwitcher.busy）也不能发送，见 components/chat-composer.js
+        const canSend = !state.engine.generating && !state.connectionSwitcher?.busy && hasTarget && draftLength > 0;
         const sendButton = input.closest('.composer')?.querySelector('[data-send-message]');
 
         if (sendButton instanceof HTMLButtonElement) {
