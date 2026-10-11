@@ -13,6 +13,7 @@
  * （例如 actionRegistry.getSelectedChatEntity、actionRegistry.chatContextActions.updateModernChat）。
  */
 
+import { createChatBackgroundActions } from '../actions/chat-background.js';
 import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
 
 /**
@@ -36,6 +37,7 @@ import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
 export function createFeatureSlotActions(deps) {
     return {
         // 目前没有任何功能接入；各功能代理在这里各加一行自己的分组
+        chatBackground: createChatBackgroundActions(deps),
         authorsNote: createChatAuthorsNoteActions(deps), // 作者注释（A5）
         // 备用开场白（A4）：面板外的消息区按钮「载入备用开场白」，逻辑在 chat-generation.js 的 loadAlternateGreetings
         greetings: { loadAlternateGreetings: (...args) => deps.actionRegistry.chatGenerationActions.loadAlternateGreetings(...args) },

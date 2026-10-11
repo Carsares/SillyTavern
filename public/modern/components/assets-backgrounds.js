@@ -9,7 +9,11 @@ export function createAssetBackgroundComponents(ctx) {
         renderInlineEmpty,
         getBackgroundFolderById,
     } = ctx;
-    const { renderBackgroundCard } = createAssetBackgroundCardComponents(ctx);
+    const {
+        createBackgroundCardContext,
+        renderBackgroundCard,
+        renderBackgroundReferenceNote,
+    } = createAssetBackgroundCardComponents(ctx);
     const { renderBackgroundFoldersPanel } = createAssetBackgroundFolderComponents({
         state,
         escapeHtml,
@@ -22,6 +26,7 @@ export function createAssetBackgroundComponents(ctx) {
         const selectionText = selection.active
             ? `已选择 ${formatNumber(selectedCount)} 个，点击卡片可勾选或取消。`
             : '点击卡片设为当前查看的背景。';
+        const cardContext = createBackgroundCardContext();
         const subtitle = `${folderFilterName} · 显示 ${formatNumber(visibleBackgrounds.length)} / ${formatNumber(totalBackgrounds)} 个匹配项。${selectionText}`;
 
         return `
@@ -48,6 +53,7 @@ export function createAssetBackgroundComponents(ctx) {
                 <div class="settings-form inline-form danger-panel">
                     <strong>删除所选背景</strong>
                     <p class="panel-subtitle">将删除 ${formatNumber(selectedCount)} 个背景文件，此操作会调用现有背景删除接口。</p>
+                    ${renderBackgroundReferenceNote(selection.filenames, 'delete')}
                     <div class="message-edit-actions">
                         <button class="secondary-button" type="button" data-cancel-background-delete ${selection.deleting ? 'disabled' : ''}>
                             <i class="fa-solid fa-xmark"></i>
@@ -61,7 +67,7 @@ export function createAssetBackgroundComponents(ctx) {
                 </div>
             ` : ''}
             <div class="background-grid">
-                ${visibleBackgrounds.map(background => renderBackgroundCard(background)).join('') || renderInlineEmpty('暂无背景')}
+                ${visibleBackgrounds.map(background => renderBackgroundCard(background, cardContext)).join('') || renderInlineEmpty('暂无背景')}
             </div>
             ${hasMoreBackgrounds ? `
                 <button class="secondary-button load-more-button" type="button" data-load-more-backgrounds>

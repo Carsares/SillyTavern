@@ -68,3 +68,31 @@
 .background-card-main .card-meta {
     display: block;
 }
+
+/* 聊天背景（B5）：背景卡片上的「全局背景 / 聊天锁定」标记，以及删除、重命名前的引用提示 */
+.background-usage-tags {
+    margin: 0;
+}
+
+.background-reference-note {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.background-reference-note.in-use {
+    border-left-color: var(--warning);
+    color: var(--text);
+}
+
+.background-reference-note p {
+    margin: 0;
+}
+
+.background-reference-note p + p {
+    margin-top: 4px;
+}

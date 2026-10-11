@@ -1,10 +1,12 @@
 import { createAssetDataHelpers } from './asset-data.js';
 import { createBackgroundFolderActions } from './background-folders.js';
+import {
+    TRANSPARENT_BACKGROUND_NAME,
+    buildBackgroundCssUrl,
+    findBackgroundReferences,
+    resetChatBackgroundImageStatus,
+} from '../core/chat-background.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
-
-function getBackgroundSettingsUrl(filename) {
-    return `url("backgrounds/${encodeURIComponent(filename)}")`;
-}
 
 export function createAssetActions({
     state,
@@ -50,6 +52,25 @@ export function createAssetActions({
         getBackgroundFolderById,
     });
 
+    // 聊天背景功能（actions/chat-background.js）登记的回调：背景被重命名或删除后，处理它负责的「当前聊天锁定」。
+    // 回调返回一段附在提示后面的说明（可为空）；全局背景的引用由本文件自己维护。
+    let referenceHooks = { afterRename: null, afterDelete: null };
+
+    function registerBackgroundReferenceHooks(hooks) {
+        referenceHooks = { ...referenceHooks, ...hooks };
+    }
+
+    async function runReferenceHook(name, ...args) {
+        if (typeof referenceHooks[name] !== 'function') {
+            return '';
+        }
+        try {
+            return (await referenceHooks[name](...args)) || '';
+        } catch (error) {
+            return `；聊天背景引用未能同步（${error.message}）`;
+        }
+    }
+
     async function uploadBackgroundFile(file) {
         if (!file) {
             return;
@@ -58,6 +79,8 @@ export function createAssetActions({
         const formData = new FormData();
         formData.set('avatar', file, file.name);
         const filename = await apiFetch('/api/backgrounds/upload', { body: formData, omitContentType: true });
+        // 同名文件被覆盖时，之前加载失败的记录不再可信
+        resetChatBackgroundImageStatus(state);
         await loadData({ silent: true });
         showToast('背景已上传', filename || file.name);
         render();
@@ -102,17 +125,17 @@ export function createAssetActions({
                 state.backgroundGridFocus = savedName;
             }
             const backgroundSettings = state.settings?.background;
-            const oldUrl = getBackgroundSettingsUrl(oldName);
-            if (backgroundSettings && (backgroundSettings.name === oldName || backgroundSettings.url === oldUrl)) {
+            if (backgroundSettings && findBackgroundReferences({ settings: state.settings, filename: oldName }).global) {
                 state.settings.background = {
                     ...backgroundSettings,
                     name: savedName,
-                    url: getBackgroundSettingsUrl(savedName),
+                    url: buildBackgroundCssUrl(savedName),
                 };
                 await saveSettingsSerialized(apiFetch, state.settings);
             }
             await loadData({ silent: true });
-            showToast('背景已重命名', `${oldName} → ${savedName}`);
+            const referenceNote = await runReferenceHook('afterRename', oldName, savedName);
+            showToast('背景已重命名', `${oldName} → ${savedName}${referenceNote}`);
         } finally {
             state.backgroundRenaming.running = false;
             render();
@@ -186,6 +209,7 @@ export function createAssetActions({
             state.backgroundSelection.deleting = false;
             if (deletedCount) {
                 await loadData({ silent: true });
+                await reconcileDeletedBackgrounds(filenames.slice(0, deletedCount));
             }
             render();
             throw error;
@@ -195,8 +219,32 @@ export function createAssetActions({
             state.selected.background = '';
         }
         await loadData({ silent: true });
-        showToast('背景已删除', `${formatNumber(filenames.length)} 个文件`);
+        const referenceNote = await reconcileDeletedBackgrounds(filenames);
+        showToast('背景已删除', `${formatNumber(filenames.length)} 个文件${referenceNote}`);
         render();
+    }
+
+    // 文件已经删掉后清理引用：全局背景指向被删文件时恢复为「无背景」（旧版透明占位图），当前聊天的锁定由聊天背景功能的回调清除。
+    async function reconcileDeletedBackgrounds(deletedNames) {
+        resetChatBackgroundImageStatus(state);
+        let note = '';
+        const background = state.settings?.background;
+        const globalDeleted = background && deletedNames.some(name => name !== TRANSPARENT_BACKGROUND_NAME
+            && findBackgroundReferences({ settings: state.settings, filename: name }).global);
+        if (globalDeleted) {
+            try {
+                state.settings.background = {
+                    ...background,
+                    name: TRANSPARENT_BACKGROUND_NAME,
+                    url: buildBackgroundCssUrl(TRANSPARENT_BACKGROUND_NAME),
+                };
+                await saveSettingsSerialized(apiFetch, state.settings);
+                note += '；全局背景已恢复为无背景';
+            } catch (error) {
+                note += `；全局背景仍指向已删除的文件，重置失败（${error.message}）`;
+            }
+        }
+        return note + await runReferenceHook('afterDelete', deletedNames);
     }
 
     function toggleAssetDownload(active = !state.assetDownload.active) {
@@ -302,6 +350,7 @@ export function createAssetActions({
         beginBackgroundRename,
         cancelBackgroundRename,
         confirmBackgroundRename,
+        registerBackgroundReferenceHooks,
         setBackgroundSelectionMode,
         toggleBackgroundSelection,
         selectVisibleBackgrounds,

@@ -25,6 +25,9 @@ export function createAssetsBackgroundEvents(ctx) {
         confirmBackgroundRename,
         toggleBackgroundSelection,
         uploadBackgroundFile,
+        setGlobalBackground,
+        lockChatBackground,
+        prepareBackgroundReferenceCheck,
     } = ctx;
 
     async function handleAssetsBackgroundClick(event) {
@@ -152,8 +155,34 @@ export function createAssetsBackgroundEvents(ctx) {
             return true;
         }
 
+        const setGlobalButton = event.target.closest('[data-background-set-global]');
+        if (setGlobalButton) {
+            try {
+                await setGlobalBackground(setGlobalButton.dataset.backgroundSetGlobal || '');
+            } catch (error) {
+                state.errors.push({ key: 'background-set-global', message: error.message });
+                showToast('设为全局背景失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        const setChatButton = event.target.closest('[data-background-set-chat]');
+        if (setChatButton) {
+            try {
+                await lockChatBackground({ file: setChatButton.dataset.backgroundSetChat || '' });
+            } catch (error) {
+                state.errors.push({ key: 'background-set-chat', message: error.message });
+                showToast('设为聊天背景失败', error.message);
+                render();
+            }
+            return true;
+        }
+
         if (event.target.closest('[data-delete-selected-backgrounds]')) {
             try {
+                // 先尽量读到当前聊天的聊天头，提示里才能写明它是否锁定了要删的背景
+                await prepareBackgroundReferenceCheck();
                 beginBackgroundBatchDelete();
             } catch (error) {
                 showToast('请选择背景', error.message);
@@ -196,6 +225,7 @@ export function createAssetsBackgroundEvents(ctx) {
 
         const backgroundRenameButton = event.target.closest('[data-background-rename]');
         if (backgroundRenameButton) {
+            await prepareBackgroundReferenceCheck();
             beginBackgroundRename(backgroundRenameButton.dataset.backgroundRename);
             return true;
         }

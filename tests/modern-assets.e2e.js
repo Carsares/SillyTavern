@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
 import sanitize from 'sanitize-filename';
-import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, gotoModern, mockBridgeFrame, mockModernWorkspace } from './modern-test-utils.js';
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -375,6 +375,99 @@ test.describe('Modern assets page', () => {
         await page.locator('[data-focus-background="castle.png"]').click();
         await expect(page.locator('[data-background-select="castle.png"]')).not.toBeChecked();
         await expect(page.locator('[data-delete-selected-backgrounds]')).toBeDisabled();
+    });
+
+    test('sets a background as the global background, keeps the fitting and syncs the engine', async ({ page }) => {
+        const fixture = await mockModernAssetsWorkspace(page);
+        const bridge = await mockBridgeFrame(page);
+        fixture.settings.background = { name: 'forest.webp', url: 'url("backgrounds/forest.webp")', fitting: 'contain', animation: true };
+
+        await gotoModern(page, 'assets', '素材库');
+
+        await expect(page.locator('.background-card[data-background-card="forest.webp"] [data-background-usage="global"]')).toContainText('全局背景');
+        await expect(page.locator('[data-background-set-global="forest.webp"]')).toBeDisabled();
+        // 没有选中聊天时不能设为聊天背景，按钮说明原因
+        await expect(page.locator('[data-background-set-chat="castle.png"]')).toBeDisabled();
+        await expect(page.locator('[data-background-set-chat="castle.png"]')).toHaveAttribute('title', '请先在聊天页选择一个会话');
+
+        await page.locator('[data-background-set-global="castle.png"]').click();
+
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].background).toEqual({
+            name: 'castle.png',
+            url: 'url("backgrounds/castle.png")',
+            fitting: 'contain',
+            animation: true,
+        });
+        await expect.poll(() => bridge.filter(call => call.action === 'reloadSettings').length).toBe(1);
+        await expect(page.locator('.background-card[data-background-card="castle.png"] [data-background-usage="global"]')).toBeVisible();
+        await expect(page.locator('.background-card[data-background-card="forest.webp"] [data-background-usage="global"]')).toHaveCount(0);
+        await expect(page.locator('[data-background-set-global="castle.png"]')).toContainText('当前全局背景');
+    });
+
+    test('warns before deleting the global background and resets it to no background', async ({ page }) => {
+        const fixture = await mockModernAssetsWorkspace(page);
+        const requests = fixture.requests.assetWorkflows;
+        fixture.settings.background = { name: 'castle.png', url: 'url("backgrounds/castle.png")', fitting: 'contain' };
+
+        await gotoModern(page, 'assets', '素材库');
+
+        await page.locator('[data-toggle-background-selection]').click();
+        await page.locator('[data-background-select="city.png"]').check();
+        await page.locator('[data-delete-selected-backgrounds]').click();
+        const unusedNote = page.locator('.danger-panel [data-background-reference-note]');
+        await expect(unusedNote).not.toHaveClass(/in-use/u);
+        await expect(unusedNote).not.toContainText('是当前全局背景');
+        await page.locator('[data-background-select="castle.png"]').check();
+        await page.locator('[data-delete-selected-backgrounds]').click();
+
+        const note = page.locator('.danger-panel [data-background-reference-note]');
+        await expect(note).toHaveClass(/in-use/u);
+        await expect(note).toContainText('「castle.png」是当前全局背景，删除后全局背景会恢复为无背景');
+        await expect(note).toContainText('其他聊天如果锁定了这些背景，会自动回退到全局背景');
+        // 确认之前没有任何写入
+        expect(requests.backgroundDeletes).toEqual([]);
+        expect(fixture.requests.settingsSave).toEqual([]);
+
+        await page.locator('[data-confirm-background-delete]').click();
+
+        await expect.poll(() => requests.backgroundDeletes.length).toBe(2);
+        expect(requests.backgroundDeletes.map(item => item.bg).sort()).toEqual(['castle.png', 'city.png']);
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].background).toEqual({
+            name: '__transparent.png',
+            url: 'url("backgrounds/__transparent.png")',
+            fitting: 'contain',
+        });
+        await expect(page.locator('[data-background-usage="global"]')).toHaveCount(0);
+    });
+
+    test('warns in the rename form when the background is the global one', async ({ page }) => {
+        const fixture = await mockModernAssetsWorkspace(page);
+        const requests = fixture.requests.assetWorkflows;
+        fixture.settings.background = { name: 'castle.png', url: 'url("backgrounds/castle.png")', fitting: 'cover' };
+
+        await gotoModern(page, 'assets', '素材库');
+
+        await page.locator('[data-background-card="forest.webp"] [data-background-rename]').click();
+        await expect(page.locator('[data-background-card="forest.webp"] [data-background-reference-note]')).not.toContainText('当前全局背景');
+        await page.locator('[data-cancel-background-rename]').click();
+
+        await page.locator('[data-background-card="castle.png"] [data-background-rename]').click();
+        await expect(page.locator('[data-background-card="castle.png"] [data-background-reference-note]')).toContainText('这是当前全局背景，重命名后会同步更新全局设置里的引用');
+        expect(requests.backgroundRenames).toEqual([]);
+
+        await page.locator('[data-background-rename-input]').fill('castle-new.png');
+        await page.locator('[data-confirm-background-rename]').click();
+
+        await expect.poll(() => requests.backgroundRenames).toEqual([{ old_bg: 'castle.png', new_bg: 'castle-new.png' }]);
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].background).toEqual({
+            name: 'castle-new.png',
+            url: 'url("backgrounds/castle-new.png")',
+            fitting: 'cover',
+        });
+        await expect(page.locator('.background-card[data-background-card="castle-new.png"] [data-background-usage="global"]')).toBeVisible();
     });
 
     test('downloads and deletes managed asset files', async ({ page }) => {
