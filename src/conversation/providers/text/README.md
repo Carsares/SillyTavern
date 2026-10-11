@@ -3,7 +3,7 @@
 All 15 `textgen_types` identifiers plus kobold/novelai/horde have concrete adapters;
 the exhaustive table is `../../capabilities/text/README.md`. **All remote platforms
 are live-unverified.** Only fake-fetch protocol tests ran. No legacy state or engine
-is imported. `createTextAdapter` (alias `createProviderAdapter`) has the same
+is imported. `createTextAdapter` has the same
 generate contract as the unified factory in `../chat/README.md`.
 
 Text requests require an explicit `prompt`; tools and media are rejected. Pi uses

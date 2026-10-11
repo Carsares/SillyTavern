@@ -7,7 +7,7 @@ const kinds = ['summaries', 'memories', 'folds'];
 export function compactSnapshot(snapshot, proposal) {
     invariant(proposal.expectedMemoryRevision === snapshot.conversation.memoryRevision, 'revision-conflict', 'Compaction base revision changed', 409);
     invariant(sourcesValid(proposal.sourceRefs, snapshot) && resourcesValid(proposal.resourceRefs, snapshot), 'source-conflict', 'Compaction sources changed', 409);
-    const view = copy(snapshot), cid = snapshot.conversationId ?? snapshot.conversation.id;
+    const view = copy(snapshot), cid = snapshot.conversationId;
     for (const kind of kinds) {
         invariant(Array.isArray(proposal[kind]), 'invalid-compaction', 'Compaction requires all derived collections');
         invariant(new Set(proposal[kind].map(b => b.id)).size === proposal[kind].length, 'invalid-compaction', 'Duplicate derived targets');
@@ -15,8 +15,8 @@ export function compactSnapshot(snapshot, proposal) {
             const index = view[kind].findIndex(b => b.id === input.id), old = view[kind][index];
             if (old) {
                 invariant(!old.locked && old.origin !== 'manual', 'memory-protected', 'Automatic compaction cannot replace protected blocks', 409);
-                invariant((input.expectedBlockRevision ?? input.expectedRevision) === old.revision, 'revision-conflict', 'Prepared block revision changed', 409);
-            } else invariant((input.expectedBlockRevision ?? input.expectedRevision ?? 0) === 0, 'revision-conflict', 'Prepared block is missing', 409);
+                invariant(input.expectedBlockRevision === old.revision, 'revision-conflict', 'Prepared block revision changed', 409);
+            } else invariant((input.expectedBlockRevision ?? 0) === 0, 'revision-conflict', 'Prepared block is missing', 409);
             const block = { ...copy(input), conversationId: cid, revision: (old?.revision ?? 0) + 1,
                 status: input.op === 'delete' ? 'stale' : 'valid', origin: 'automatic', locked: false,
                 scopeTurnId: proposal.turnId ?? null, scopeAttemptEpoch: proposal.attemptEpoch ?? null };

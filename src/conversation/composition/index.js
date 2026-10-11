@@ -29,7 +29,7 @@ import { prepareProviderJob, supportsAsyncJobs } from './provider-jobs.js';
 import { createImageJobService } from './image-jobs.js';
 import { createConnectionFetch, validateConnectionProxy } from '../providers/core/proxy.js';
 
-const needsMediaBridge = c => [...(c.capabilities?.media ?? []), ...Object.keys(c.mediaTokenCost ?? {})].some(type => ['audio', 'video', 'document'].includes(type));
+const needsMediaBridge = c => [...(c.capabilities?.media ?? []), ...Object.keys(c.capabilities?.mediaTokenCost ?? {})].some(type => ['audio', 'video', 'document'].includes(type));
 
 const defaults = { createStore, createRuntime, createMemoryService, createRetrieval, createToolRegistry, createGroupScheduler, createTraceService, createMaintenance, createResourceService, createAttachmentService, createPiExecutor, createClaudeExecutor, createCodexExecutor, getPiCapabilities, getChatCapabilities, getTextCapabilities, getAuxiliaryCapabilities, createProviderAdapter, compileContext, createProviderStream, createProviderModel };
 
@@ -81,26 +81,17 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
             const c = normalizeConnection(connection);
             try { validateConnectionProxy(c); } catch (error) { return { supported: false, reason: error.code, types: [], tools: false, media: [] }; }
             if (!['native', 'pi', 'claude', 'codex'].includes(c.executor)) return { supported: false, reason: 'Unknown executor', types: [], tools: false, media: [] };
-            if (['embedding', 'image', 'auxiliary'].includes(c.type)) return { ...getAuxiliaryCapabilities(c), types: [] };
+            if (['embedding', 'image'].includes(c.type)) return { ...getAuxiliaryCapabilities(c), types: [] };
             if (sdk[c.executor]) return { provider: c.provider, executor: c.executor, model: c.model,
                 contextWindow: c.contextWindow, inputLimit: c.inputLimit ?? c.contextWindow,
                 outputLimit: c.outputLimit ?? c.maxOutputTokens, maxOutputTokens: c.maxOutputTokens, workingBudget: c.workingBudget,
                 ...sdk[c.executor].getCapabilities(c) };
-            if (['openai', 'openai-compatible', 'openai_compatible'].includes(c.provider) && c.type !== 'text' && !needsMediaBridge(c)) return getPiCapabilities(c);
+            if (['openai', 'openai-compatible'].includes(c.provider) && c.type !== 'text' && !needsMediaBridge(c)) return getPiCapabilities(c);
             return validateCapabilities(c, c.type === 'text' ? getTextCapabilities(c) : getChatCapabilities(c));
         }
         function connectionId(snapshot, key) {
-            const settings = snapshot.settings ?? snapshot.conversation.settings;
-            if (settings[key]) return settings[key];
-            const primary = snapshot.resources.find(item => item.id === settings.connectionId && item.kind === 'connection');
-            const auxiliary = primary?.data?.auxiliary ?? {};
-            const roles = { auxiliaryConnectionId: ['memory', 'summary', 'summarization'], embeddingConnectionId: ['embedding'], imageConnectionId: ['image'] };
-            for (const role of roles[key] ?? []) {
-                const value = auxiliary[role];
-                if (typeof value === 'string' && value) return value;
-                if (value?.connectionId) return value.connectionId;
-            }
-            return key === 'auxiliaryConnectionId' ? settings.connectionId : undefined;
+            const settings = snapshot.settings;
+            return settings[key] ?? (key === 'auxiliaryConnectionId' ? settings.connectionId : undefined);
         }
         function resolveConnection(snapshot, key = 'connectionId', { current = false, optional = false } = {}) {
             const id = connectionId(snapshot, key);
@@ -148,7 +139,7 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
                     override?.preflight?.({ ...options, connection: c });
                 },
                 async runTurn(options) {
-                    const conversationId = options.snapshot.conversationId ?? options.snapshot.conversation.id;
+                    const conversationId = options.snapshot.conversationId;
                     const turnId = options.snapshot.conversation.activeTurnId ?? undefined;
                     const onRequest = requestTrace(c, { conversationId, turnId, parentTraceId: options.traceId, category: options.requestPlan.type === 'auxiliary' ? 'memory' : 'generation' });
                     const parentTrace = options.traceId ? store.getTrace(options.traceId) : undefined;
@@ -162,7 +153,7 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
                     const fetch = connectionFetch(c);
                     if (!chosen && c.executor === 'claude') chosen = createClaudeExecutor({ onRequest, fetch });
                     else if (!chosen && c.executor === 'codex') chosen = createCodexExecutor({ onRequest, fetch });
-                    else if (!chosen && ['openai', 'openai-compatible', 'openai_compatible'].includes(c.provider) && c.type !== 'text' && !needsMediaBridge(c)) chosen = createPiExecutor({ onRequest, fetch });
+                    else if (!chosen && ['openai', 'openai-compatible'].includes(c.provider) && c.type !== 'text' && !needsMediaBridge(c)) chosen = createPiExecutor({ onRequest, fetch });
                     else if (!chosen) chosen = createPiExecutor({ onRequest, fetch,
                         streamFn: createProviderStream(c, { fetch, ...(providerJob ? { jobId: providerJob.jobId, onJob: providerJob.onJob } : {}), ...(c.type === 'text' ? { renderPrompt: frozenTextPrompt(options.requestPlan) } : {}) }),
                         model: createProviderModel(c), capabilityResolver: capabilities });
@@ -209,7 +200,7 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
             invariant(hardLimit === Infinity || Number.isSafeInteger(hardLimit) && hardLimit > 0, 'budget-blocked', 'Auxiliary hard input budget is invalid', 422);
             const workingBudget = Math.min(connection.workingBudget, requestedBudget, hardLimit);
             const plan = compile(snapshot, { type: 'auxiliary', tools: [], capabilities: capability, workingBudget });
-            const record = trace.begin({ conversationId: input.snapshot.conversationId ?? input.snapshot.conversation.id, turnId: input.snapshot.conversation.activeTurnId ?? null, kind: 'memory', provider: connection.provider, connection, requestPlan: plan });
+            const record = trace.begin({ conversationId: input.snapshot.conversationId, turnId: input.snapshot.conversation.activeTurnId ?? null, kind: 'memory', provider: connection.provider, connection, requestPlan: plan });
             const scrub = createRedactor(connection);
             try {
                 const chosen = executor(connection);
@@ -266,7 +257,7 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
         const image = async ({ conversationId, prompt, turnId, idempotencyKey, recordId = idempotencyKey, snapshot: frozenSnapshot, providerJob: persistedProviderJob, jobId = persistedProviderJob?.jobId, onJob, signal }) => {
             signal?.throwIfAborted();
             const snapshot = frozenSnapshot ?? activeSnapshots.get(turnId);
-            invariant(snapshot && (snapshot.conversationId ?? snapshot.conversation.id) === conversationId, 'invalid-turn', 'Image calls require the executing turn snapshot', 409);
+            invariant(snapshot && snapshot.conversationId === conversationId, 'invalid-turn', 'Image calls require the executing turn snapshot', 409);
             const connection = resolveConnection(snapshot, 'imageConnectionId');
             const providerJob = supportsAsyncJobs(getAuxiliaryCapabilities({ ...connection, type: 'image' })) ? prepareProviderJob({ store, conversationId, turnId, recordId,
                 connection, request: { prompt }, kind: 'image', jobId, onJob }) : undefined;

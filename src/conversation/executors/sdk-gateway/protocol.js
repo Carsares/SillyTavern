@@ -1,3 +1,4 @@
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { fail } from './contracts.js';
 
 /** Replace exposed schemas with the domain registry's schemas, remove built-ins. */
@@ -116,7 +117,7 @@ export function responseInspector({ protocol, domain, requestIndex, emit, usage 
 export async function* sseFrames(stream, signal, maxBytes = 1048576) {
     const reader = stream.getReader();
     const decoder = new TextDecoder('utf-8', { fatal: true });
-    let buffer = '', frame = [];
+    let buffer = '', frame = [], framesSinceYield = 0, lastYield = performance.now();
     const abort = () => { void reader.cancel().catch(() => {}); };
     signal.addEventListener('abort', abort, { once: true });
     try {
@@ -130,7 +131,16 @@ export async function* sseFrames(stream, signal, maxBytes = 1048576) {
             while ((end = buffer.indexOf('\n')) >= 0) {
                 const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1);
                 if (!line) {
-                    if (frame.length) { yield frame.join('\n'); frame = []; }
+                    if (frame.length) {
+                        yield frame.join('\n'); frame = [];
+                        // Buffered reads and async-generator next() can form an
+                        // uninterrupted microtask chain. Give deadline timers a turn.
+                        if (++framesSinceYield >= 32 || performance.now() - lastYield >= 8) {
+                            await yieldToEventLoop();
+                            framesSinceYield = 0; lastYield = performance.now();
+                        }
+                        signal.throwIfAborted();
+                    }
                 } else frame.push(line);
             }
             if (done) {

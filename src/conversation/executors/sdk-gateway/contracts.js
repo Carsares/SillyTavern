@@ -1,3 +1,4 @@
+import { connectionShapeError } from '../../capabilities/core/index.js';
 import { validateConnectionProxy } from '../../providers/core/proxy.js';
 import { ProtocolError } from '../../../../public/shared/conversation/schemas/index.js';
 import { reasoningControls, REASONING_LEVELS } from './reasoning.js';
@@ -24,15 +25,17 @@ export function metadata(executor) {
 }
 
 export function preflight(executor, { connection, requestPlan, limits = {} } = {}) {
-    const c = connection?.data ?? connection;
+    const shapeError = connectionShapeError(connection);
+    if (shapeError) throw fail('invalid-connection', shapeError, 422);
+    const c = connection;
     if (!c || typeof c.model !== 'string' || !c.model.trim()) throw fail('invalid-connection', 'A model is required');
     if (['proxyUrl', 'proxy_url', 'httpProxy', 'httpsProxy', 'socksProxy'].some(key =>
         c[key] !== undefined && c[key] !== null && c[key] !== '' && c[key] !== false)) {
-        throw fail('unsupported-proxy', 'SDK upstream proxy transport has not been verified; refusing direct fallback', 422);
+        throw fail('unsupported-proxy', 'Use connection.proxy with an HTTP/HTTPS URL; alternate proxy fields are unsupported', 422);
     }
     validateConnectionProxy(c);
     const historyMode = c.historyMode ?? HISTORY_MODE;
-    if (!['native-transcript', 'structured-transcript'].includes(historyMode)) throw fail('unsupported-history-mode', 'Unknown SDK history mode', 422);
+    if (![HISTORY_MODE, 'structured-transcript'].includes(historyMode)) throw fail('unsupported-history-mode', 'Unknown SDK history mode', 422);
     const url = new URL(c.baseUrl);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw fail('invalid-connection', 'Invalid upstream base URL');
     const maxOutputTokens = limits.maxOutputTokens ?? c.maxOutputTokens;
@@ -44,7 +47,7 @@ export function preflight(executor, { connection, requestPlan, limits = {} } = {
     if (c.outputLimit !== undefined && (!Number.isSafeInteger(c.outputLimit) || c.outputLimit <= 0 || maxOutputTokens > c.outputLimit)) throw fail('invalid-budget', 'Invalid or exceeded output limit');
     if (c.parameters && Object.keys(c.parameters).length) throw fail('unsupported-parameters', 'SDK sampling parameters must not be silently ignored', 422);
     const reasoning = reasoningControls(executor, c.reasoning, maxOutputTokens);
-    if (requestPlan?.prompt !== undefined && !requestPlan?.messages) throw fail('unsupported-type', 'SDK structured-transcript mode requires compiled messages', 422);
+    if (requestPlan?.prompt !== undefined && !requestPlan?.messages) throw fail('unsupported-type', 'SDK execution requires compiled messages', 422);
     return { ...metadata(executor), historyMode, nativeHistory: historyMode === HISTORY_MODE, structuredTranscript: historyMode === 'structured-transcript', deepSystem: executor === 'codex', reasoning: { mode: reasoning.mode, levels: REASONING_LEVELS[executor], enforcement: 'gateway', modelSupportVerified: false }, maxOutputTokens, inputBudget: Math.min(c.workingBudget, c.inputLimit ?? c.contextWindow, c.contextWindow - maxOutputTokens) };
 }
 
@@ -53,7 +56,7 @@ export function serializeTranscript(snapshot, requestPlan) {
     if (!Array.isArray(requestPlan?.messages) || !requestPlan.messages.length) throw fail('invalid-context', 'Compiled messages are required');
     const messages = requestPlan.messages.map((message, index) => {
         if (!['system', 'user', 'assistant', 'tool', 'toolResult'].includes(message.role)) throw fail('unsupported-role', 'Unknown transcript role');
-        if (message.media?.length || (typeof message.content !== 'string' && !Array.isArray(message.content))) throw fail('unsupported-media', 'This structured transcript currently accepts text, thinking and tool blocks only', 422);
+        if (message.media?.length || (typeof message.content !== 'string' && !Array.isArray(message.content))) throw fail('unsupported-media', 'The native history encoder accepts text, thinking and tool blocks only', 422);
         if (Array.isArray(message.content) && message.content.some(p => !['text', 'thinking', 'toolCall'].includes(p.type))) throw fail('unsupported-media', 'Unsupported transcript content block', 422);
         return { index, role: message.role, content: structuredClone(message.content),
             sourceRef: message.sourceRef ?? (message.id ? { messageId: message.id, revision: message.revision, candidateId: message.candidateId, candidateRevision: message.candidateRevision } : null),

@@ -186,6 +186,9 @@ export function validateBackup(input) {
         assert(object(r.args) && owner('turns', r.turnId, r.conversationId) && identifier(r.toolCallId) && text(r.requestHash) && text(r.name) && ['intent', 'running', 'completed', 'failed', 'unknown'].includes(r.status) && integer(r.attemptEpoch, 1), 'Invalid tool record');
         const key = canonicalJson([r.turnId, r.memberRunId ?? null, r.toolCallId]); assert(!calls.has(key), 'Duplicate tool call'); calls.add(key);
     }
-    for (const r of Object.values(data.traces)) if (r.turnId) assert(owner('turns', r.turnId, r.conversationId), 'Missing trace turn');
+    for (const r of Object.values(data.traces)) {
+        if (r.turnId) assert(owner('turns', r.turnId, r.conversationId), 'Missing trace turn');
+        assert(r.events === undefined || Array.isArray(r.events) && r.events.every(object), 'Invalid trace events');
+    }
     return data;
 }

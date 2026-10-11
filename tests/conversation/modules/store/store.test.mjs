@@ -18,6 +18,29 @@ function request(store, cid, extra = {}) { return { schemaVersion: 1, clientRequ
 function complete(store, cid) { const { turn } = store.beginTurn(cid, request(store, cid)); store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1); return store.getConversation(cid); }
 const code = expected => error => error.code === expected;
 
+test('canonical command IDs retain fold expansion and memory actions while rejecting aliases atomically', t => {
+    const { store, cid } = fixture(t); const snap = complete(store, cid);
+    const sourceRefs = [sourceRef(snap.messages[0])];
+    store.commitDerived(cid, { summaries: [{ id: 'summary-id', content: 'summary', sourceRefs }], memories: [{ id: 'memory-id', content: 'memory', sourceRefs }], folds: [{ id: 'fold-id', sourceRefs, summaryRef: { id: 'summary-id', revision: 1 } }] });
+    const revision = store.getConversation(cid).conversation.contentRevision;
+    const before = store.exportData();
+    for (const fields of [{ id: 'fold-id' }, { foldId: 'fold-id', id: 'fold-id' }, { blockId: 'fold-id' }]) {
+        assert.throws(() => store.command(cid, { type: 'fold.expand', ...fields, expectedContentRevision: revision }), code('invalid-command'));
+        assert.deepEqual(store.exportData(), before);
+    }
+    for (const type of ['memory.edit', 'memory.lock', 'memory.confirm']) for (const fields of [{ id: 'memory-id' }, { memoryId: 'memory-id' }, { blockId: 'memory-id', memoryId: 'memory-id' }, { blockId: 'memory-id', id: 'memory-id' }]) {
+        assert.throws(() => store.command(cid, { type, ...fields, content: 'edit', expectedBlockRevision: 1 }), code('invalid-command'));
+        assert.deepEqual(store.exportData(), before);
+    }
+    const expanded = store.command(cid, { type: 'fold.expand', foldId: 'fold-id', blockId: 'fold-id', expectedBlockRevision: 1, expectedContentRevision: revision });
+    assert.equal(expanded.folds[0].status, 'stale'); assert.deepEqual(expanded.messages, snap.messages);
+    store.command(cid, { type: 'memory.edit', blockId: 'memory-id', expectedBlockRevision: 1, content: 'manual edit' });
+    store.command(cid, { type: 'memory.lock', blockId: 'memory-id', expectedBlockRevision: 2 });
+    store.command(cid, { type: 'memory.confirm', blockId: 'memory-id', expectedBlockRevision: 3 });
+    const memory = store.getConversation(cid).memories[0];
+    assert.equal(memory.content, 'manual edit'); assert.equal(memory.locked, true); assert.equal(memory.status, 'valid'); assert.equal(memory.revision, 4);
+});
+
 test('subscriptions run only after commit, isolate listeners and preserve reentrant event order', async t => {
     const { store, cid } = fixture(t); const seen = [];
     const stopThrowing = store.subscribe(() => { throw Error('listener failed'); });
@@ -345,7 +368,7 @@ test('regenerate and continuation preserve immutable history and stopped candida
 test('derived commits are atomic and invalidate transitive summaries, folds and locked memories', t => {
     const { store, cid } = fixture(t); const snap = complete(store, cid); const ref = sourceRef(snap.messages[0]);
     store.commitDerived(cid, { summaries: [{ id: 's1', content: 'one', sourceRefs: [ref] }, { id: 's2', content: 'two', parentSummaryRefs: [{ id: 's1', revision: 1 }] }], memories: [{ id: 'm1', content: 'fact', sourceRefs: [ref] }], folds: [{ id: 'f1', summaryRef: { id: 's2', revision: 1 } }] });
-    store.command(cid, { type: 'memory.lock', memoryId: 'm1', expectedBlockRevision: 1 });
+    store.command(cid, { type: 'memory.lock', blockId: 'm1', expectedBlockRevision: 1 });
     const before = store.exportData();
     assert.throws(() => store.commitDerived(cid, { summaries: [{ id: 'new', content: 'x' }], memories: [{ id: 'm1', revision: 2, content: 'overwrite' }] }), code('memory-protected'));
     assert.deepEqual(store.exportData(), before);

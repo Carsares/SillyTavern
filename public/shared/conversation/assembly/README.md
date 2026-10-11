@@ -1,8 +1,7 @@
 # Pure context compiler v1
 
-This module reads only the supplied frozen snapshot. It has no legacy settings,
-engine, DOM, file, clock, network, storage or random-number dependencies. All files
-in this package are ESM. Integration and persistence belong to the runtime owner.
+This module reads only the supplied frozen snapshot. It has no DOM, file, clock, network, storage or random-number dependencies. All files
+in this package are ESM. Runtime applies approved effects and persists changes.
 
 ## Public API
 
@@ -65,8 +64,9 @@ W = min(workingBudget ?? 65536, H)
 
 Inputs must be positive safe integers and H must be positive. Context window and
 output reserve have no guessed model defaults. Compiler limits come from the
-selected frozen connection, overridden by `capabilities.limits` and then direct
-capability budget fields. A known output limit is validated, never clamped.
+selected frozen connection, overridden by direct capability budget fields.
+Nested `capabilities.limits` and `capabilities.enabled` are rejected; availability
+is expressed by `capabilities.supported`. A known output limit is validated, never clamped.
 
 `budget-blocked` (status 422) carries
 `details.{budget,estimatedTokens,tokenCount,sourceRefs,compressibleSourceRefs,blocks}`.
@@ -80,7 +80,7 @@ No compression, model call, persistence or history deletion happens here.
 Resources use the existing `{id,kind,name,revision,data}` schema. Only resources
 selected by snapshot settings are read. Missing selected resources fail. The
 exports above are deeply immutable defaults; UI editors should clone them.
-These are the new resource **data** formats, with no schema or legacy changes:
+Resource **data** formats:
 
 ```js
 // kind: preset
@@ -120,12 +120,13 @@ These are the new resource **data** formats, with no schema or legacy changes:
 }
 ```
 
+`snapshot.settings` is the settings source; `conversation.settings` is not merged.
 `settings` selects `connectionId`, `presetId`, `characterId`, `personaId`, and
 `worldbookIds`. Macro values live in `settings.variables`; worldbook state is
 `settings.worldInfo = {turnIndex, state: {'bookId:entryId': timing}}`.
 The explicit turn index counts successful **parent** turns, not group members.
-Without it the compiler counts complete history groups, which is suitable for
-stateless previews but not durable cooldown accounting after history edits.
+If absent, the compiler uses turn index 0. Runtime supplies the frozen index for
+durable cooldown accounting after history edits.
 
 ## Defined semantics
 
@@ -170,22 +171,26 @@ stateless previews but not durable cooldown accounting after history edits.
 - Text mode retains typed messages and additionally returns `prompt`. Template
   macros include `role`, `content`, `name` in each message, plus global bindings;
   variable writes in text templates fail. Tool metadata/reasoning is appended as
-  explicit JSON inside message content. Text mode rejects media, never drops it.
+  explicit JSON inside message content. Text mode retains declared user media in
+  typed messages and counts its budget separately; unsupported media roles/types
+  fail explicitly, never disappear.
   An executor must explicitly support this text protocol; this is not proof of
   any provider's tool-text support. Chat mode never flattens roles.
-- The runtime provides generation-type-specific frozen history (e.g. exclusion
-  of a regenerate target) and continuation prefix blocks. The compiler validates
-  type and exposes `{{type}}`; it does not guess a target or remove messages.
+- The runtime supplies frozen history and the explicit `targetMessageId` for
+  regeneration/continuation. The compiler excludes the regenerate target and
+  subsequent history, or retains the continuation target and excludes later
+  history. It adds the generation instruction and exposes `{{type}}`; it never
+  guesses a target or mutates persisted history.
 
 ## Source validity and effects
 
 Fold format: `{id,revision,status:'valid',sourceRefs,summaryRef:{id,revision}}`.
-A fold may instead carry its own `content`/dependencies. Summary dependencies
-use `parentSummaryRefs:[{id,revision}]`. All sources, selected candidates,
+Fold content is read from the referenced summary version, never from inline fold content.
+Inline fold content is not an alternative source. Summary dependencies use `parentSummaryRefs:[{id,revision}]`. All sources, selected candidates,
 deletions, parent revisions/status and cycles are revalidated. Fold and summary
 must cover exactly the same resolved sources. Expanded/stale/partial folds
-restore raw messages. Rolling summaries sort by source coverage descending to
-avoid re-injecting their covered chapters. No summary without an effective fold
+restore raw messages. Folds are considered by source coverage descending. The newest valid rolling
+summary replaces covered chapters only when their source coverage matches. No summary without an effective fold
 can hide raw history.
 
 Optional `snapshot.retrieval` entries use

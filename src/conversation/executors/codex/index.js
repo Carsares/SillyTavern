@@ -18,9 +18,9 @@ export function codexProcessConfig({ address, tools }) {
         features: {
             shell_tool: false, unified_exec: false, apply_patch_freeform: false,
             js_repl: false, code_mode: false, code_mode_host: false,
-            apps: false, connectors: false, computer_use: false, browser_use: false,
-            image_generation: false, memories: false, memory_tool: false,
-            multi_agent: false, multi_agent_v2: false, hooks: false, codex_hooks: false,
+            apps: false, computer_use: false, browser_use: false,
+            image_generation: false, memories: false,
+            multi_agent: false, multi_agent_v2: false, hooks: false,
             enable_request_compression: false, non_prefixed_mcp_tool_names: false,
         },
         mcp_servers: tools.length ? { domain: {

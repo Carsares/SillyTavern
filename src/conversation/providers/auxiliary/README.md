@@ -48,15 +48,13 @@ protocol evidence only; no legacy state or handler is reused.
 ## Expanded source implementation and integration ports
 
 `createAuxiliaryAdapter(connection,{fetch,onRequest,onJob?,jobId?,pipelineFactory?,localWorkerFactory?})`
-(and its `createProviderAdapter` alias) returns `capabilities`, `embed`,
+returns `capabilities`, `embed`,
 `generateImage`, and `cancelJob`. Existing NovelAI classic/V4/V4.5 codec and ZIP
 bounds were preserved. No dependency, shared schema, original providers.test,
 SDK, store or composition edit belongs to this auxiliary follow-up.
 
-All 19 original embedding identifiers other than explicitly excluded webllm and
-all 24 original image identifiers now resolve to concrete codecs. Aliases are
-explicit: palm/makersuite→google, auto→automatic1111, novel→novelai,
-workersai→workers_ai, comfyui→comfy, fal→falai, mistralai→mistral.
+Provider identifiers are canonical entries in `AUXILIARY_PROVIDERS`. Old aliases
+are rejected; no migration or alias resolution is performed.
 This is implementation and injected-test coverage, not remote/model verification.
 
 Embedding additions: named compatible endpoints (including the current KoboldCpp

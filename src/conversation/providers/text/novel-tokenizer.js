@@ -13,11 +13,11 @@ export function createNovelTokenizer() {
         if (!instances.has(family)) instances.set(family, (async () => {
             if (family === 'erato') {
                 const { Tokenizer } = await import('@agnai/web-tokenizers');
-                return Tokenizer.fromJSON(await readFile(new URL('../../../tokenizers/llama3.json', import.meta.url)));
+                return Tokenizer.fromJSON(await readFile(new URL('./assets/llama3.json', import.meta.url)));
             }
             const { SentencePieceProcessor } = await import('@agnai/sentencepiece-js');
             const instance = new SentencePieceProcessor();
-            await instance.load(fileURLToPath(new URL(`../../../tokenizers/${family === 'clio' ? 'nerdstash' : 'nerdstash_v2'}.model`, import.meta.url)));
+            await instance.load(fileURLToPath(new URL(`./assets/${family === 'clio' ? 'nerdstash' : 'nerdstash_v2'}.model`, import.meta.url)));
             return instance;
         })());
         let instance;

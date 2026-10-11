@@ -20,7 +20,7 @@ function transport(t, connection, options) {
 test('strict proxy validation permits authenticated HTTP/HTTPS only and hides secrets', () => {
     assert.equal(validateConnectionProxy({}), null);
     assert.equal(validateConnectionProxy({ proxy: null }), null);
-    assert.equal(validateConnectionProxy({ data: { proxy: { url: 'https://user:p%40ss@proxy.invalid:8443/' } } }), 'https://user:p%40ss@proxy.invalid:8443/');
+    assert.equal(validateConnectionProxy({ proxy: { url: 'https://user:p%40ss@proxy.invalid:8443/' } }), 'https://user:p%40ss@proxy.invalid:8443/');
     for (const proxy of [false, '', [], {}, { url: 'http://host', rejectUnauthorized: false },
         ...['socks5://host', 'file:///secret', 'http://host/x', 'http://host/x/..', 'http://host/?', 'http://host/#', 'http://host?token=secret',
             'http://host:0', 'http://host:99999', ' http://host', 'http://host\\secret', 'http://user:%xx@host', 'http://user:%0a@host', `http://${'a'.repeat(4096)}`].map(url => ({ url }))]) {

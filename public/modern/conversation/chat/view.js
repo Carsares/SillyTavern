@@ -19,7 +19,7 @@ export function createChat(app) {
     const draft = el('textarea', { rows: 4, placeholder: '写下消息，Ctrl / ⌘ + Enter 发送', 'aria-label': '消息草稿' });
     const estimate = el('div', { class: 'estimate' });
     const send = type => app.run(async () => {
-        const connectionId = (app.state.snapshot?.settings || app.state.snapshot?.conversation.settings)?.connectionId;
+        const connectionId = app.state.snapshot?.settings?.connectionId;
         if (!connectionId) throw new Error('请先在设置中选择连接');
         const capability = await app.api.capabilities(connectionId);
         capabilityInfo.textContent = historyModeDescription(capability);
@@ -31,7 +31,7 @@ export function createChat(app) {
         if (type === 'send' || type === 'group') { draft.value = ''; attachments = []; renderAttachments(); }
     });
     draft.addEventListener('keydown', event => {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); send((app.state.snapshot?.settings || app.state.snapshot?.conversation.settings)?.groupId ? 'group' : 'send'); }
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); send(app.state.snapshot?.settings?.groupId ? 'group' : 'send'); }
     });
     const controls = el('div', { class: 'actions' },
         button('发送', () => send('send')), button('群聊发送', () => send('group')),
@@ -63,9 +63,11 @@ export function createChat(app) {
         await app.run(async () => {
             const snapshot = app.state.snapshot;
             const entries = list(await app.api.candidates(app.id(), message.id), 'candidates');
+            if (entries.some(candidate => typeof candidate.candidateId !== 'string' || !candidate.candidateId
+                || !Number.isSafeInteger(candidate.candidateRevision) || candidate.candidateRevision < 1)) throw new Error('服务器返回的候选缺少 candidateId 或 candidateRevision');
             destination.replaceChildren(entries.length ? el('div', {}, entries.map(candidate => el('article', { class: 'card' },
-                el('p', {}, `候选 ${candidate.candidateId ?? candidate.id} · 版本 ${candidate.candidateRevision ?? candidate.revision} · ${candidate.status === 'partial' ? '部分回复' : candidate.status || '状态未知'}${candidate.selected ? ' · 当前选中' : ''}`), el('pre', {}, candidate.content),
-                button('选用候选', () => app.run(() => app.applyCommand('candidate.select', { messageId: message.id, candidateId: candidate.candidateId ?? candidate.id, candidateRevision: candidate.candidateRevision ?? candidate.revision }, snapshot)), candidate.selected === true || (candidate.candidateId ?? candidate.id) === message.candidateId && (candidate.candidateRevision ?? candidate.revision) === message.candidateRevision),
+                el('p', {}, `候选 ${candidate.candidateId} · 版本 ${candidate.candidateRevision} · ${candidate.status === 'partial' ? '部分回复' : candidate.status || '状态未知'}${candidate.selected ? ' · 当前选中' : ''}`), el('pre', {}, candidate.content),
+                button('选用候选', () => app.run(() => app.applyCommand('candidate.select', { messageId: message.id, candidateId: candidate.candidateId, candidateRevision: candidate.candidateRevision }, snapshot)), candidate.selected === true || candidate.candidateId === message.candidateId && candidate.candidateRevision === message.candidateRevision),
             ))) : empty('没有候选记录'));
         });
     }

@@ -50,7 +50,7 @@ test('stream decodes UTF8 across byte boundaries and includes persisted cursor',
 });
 test('reconnect uses accepted cursor, deduplicates, and cancellation prevents retry', async () => {
     const cursors = [], received = [], queue = [];
-    const event = seq => ({ schemaVersion: 1, seq, conversationId: 'c', type: 'turn.delta', payload: {} });
+    const event = seq => ({ schemaVersion: 1, seq, conversationId: 'c', type: 'text.delta', payload: {} });
     const client = { async stream(id, cursor, { onEvent }) { cursors.push(cursor); onEvent(event(1)); onEvent(event(2)); throw new Error('offline'); } };
     const stop = subscribe(client, 'c', { onEvent: e => received.push(e.seq), schedule: fn => { queue.push(fn); return queue.length; }, unschedule: () => {} });
     await new Promise(resolve => setImmediate(resolve));

@@ -9,8 +9,8 @@ missing implementation. This replaces the obsolete auxiliary handoff gap lists.
 
 | Requirement | Current status | Evidence |
 | --- | --- | --- |
-| All named chat sources | Implemented: all 26 original identifiers plus aliases, with native Anthropic/Google/Vertex/Cohere/AI21/Azure and compatible codecs. | capabilities/chat/index.js; chat/index.js, protocol.js, stream.js |
-| Text sources | Implemented: all 15 textgen_types plus Kobold/NovelAI/Horde; tools explicitly unsupported. | capabilities/text/index.js; text/index.js, stream.js |
+| All named chat sources | Implemented: canonical provider identifiers, with native Anthropic/Google/Vertex/Cohere/AI21/Azure and compatible codecs. | capabilities/chat/index.js; chat/index.js, protocol.js, stream.js |
+| Text sources | Implemented: canonical text providers including Kobold/NovelAI/Horde; tools explicitly unsupported. | capabilities/text/index.js; text/index.js, stream.js |
 | Audio/video/document input | Implemented according to protocol: Google/Vertex audio/video/document, Anthropic PDF, OpenAI audio/PDF, KoboldCpp image/audio, Ollama image. Explicit media token costs required; unsupported combinations reject. | chat/media.js; text/media.js; bridge.js |
 | Text media/template interface | Earlier blockers removed in current code. Compiler extracts textual template content while retaining typed blocks; frozen renderer compares full typed content. Static confirmation only in this audit. | public/shared/conversation/assembly/index.js; composition/helpers.js |
 | Positive/negative guidance | Implemented for ooba/KoboldCpp with native guidance_scale/negative_prompt. Unsupported profiles reject. PI now checks negative-context budget before model work. | capabilities/text/index.js; providers/text/index.js; executors/pi/index.js |
@@ -24,15 +24,15 @@ missing implementation. This replaces the obsolete auxiliary handoff gap lists.
 
 ## Named auxiliary inventory
 
-Embedding: transformers, mistral, openai, extras, palm (Google alias), togetherai,
+Embedding: transformers, mistral, openai, extras, google, togetherai,
 nomicai, cohere, ollama, llamacpp, vllm, koboldcpp, vertexai, electronhub, openrouter,
 chutes, nanogpt, siliconflow, workers_ai. WebLLM is explicitly excluded by plan 0.2.
 These use concrete compatible/native embedding codecs; transformers has offline
 local inference with cancellation. They do not read old settings or vector state.
 
-Image: extras, horde, auto, sdcpp, novel, vlad, openai, aimlapi, comfy, togetherai,
+Image: extras, horde, automatic1111, sdcpp, novelai, vlad, openai, aimlapi, comfy, togetherai,
 drawthings, pollinations, stability, huggingface, chutes, electronhub, nanogpt, bfl,
-falai, xai, google, zai, openrouter, workersai. Aliases select implemented codecs.
+falai, xai, google, zai, openrouter, workers_ai. Removed aliases are rejected.
 NovelAI includes V4/V4.5 positive/negative multi-character encoding. Google supports
 Gemini/Imagen formats; Vertex prediction, Workers binary/JSON, and native queued
 protocols are distinct from the compatible images/generations codec.

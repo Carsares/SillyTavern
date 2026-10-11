@@ -77,3 +77,13 @@ test('merge rejects stale base, missing prepared parents, mixed epochs and a thi
     changed.conversation.memoryRevision++;
     assert.throws(() => memory.previewCompact(changed, first.proposal), { code: 'revision-conflict' });
 });
+
+test('prepared updates require expectedBlockRevision and do not interpret legacy expectedRevision', async () => {
+    const store = setup();
+    store.snapshot.memories.push({ id: 'existing', revision: 3, status: 'valid', kind: 'world-state', origin: 'automatic', locked: false, content: 'old', sourceRefs: [], resourceRefs: [] });
+    const service = createMemoryService({ store, generate: async () => ({ chapter: 'summary', memories: [{ id: 'existing', expectedBlockRevision: 3, op: 'update', content: 'new' }] }) });
+    const initial = store.getConversation(), { proposal } = await service.prepareCompact(initial, opts);
+    proposal.memories[0].expectedRevision = 3;
+    delete proposal.memories[0].expectedBlockRevision;
+    assert.throws(() => service.previewCompact(initial, proposal), { code: 'revision-conflict' });
+});

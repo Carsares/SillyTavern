@@ -20,28 +20,25 @@ export function createTraceService({ store, now = () => new Date().toISOString()
     return {
         begin(value) {
             const record = { ...redact(value), id: id(), createdAt: now(), events: [], status: 'running' };
-            pending.set(record.id, record);
             save(record);
+            pending.set(record.id, { id: record.id, conversationId: record.conversationId, turnId: record.turnId });
             return record.id;
         },
         record(traceId, event) {
             const record = pending.get(traceId);
             if (!record) return;
-            record.events.push({ ...redact(event), at: now() });
-            save(record);
+            store.appendTraceEvent(traceId, { ...redact(event), at: now() });
         },
         finish(traceId, result) {
             const record = pending.get(traceId);
             if (!record) return;
-            Object.assign(record, { status: 'completed', usage: result.usage ?? null, finishedAt: now() });
-            save(record);
+            save({ ...record, status: 'completed', usage: result.usage ?? null, finishedAt: now() });
             pending.delete(traceId);
         },
         fail(traceId, error) {
             const record = pending.get(traceId);
             if (!record) return;
-            Object.assign(record, { status: 'failed', error: { code: error.code ?? 'generation-failed', message: 'Execution failed; review sanitized request and event records' }, finishedAt: now() });
-            save(record);
+            save({ ...record, status: 'failed', error: { code: error.code ?? 'generation-failed', message: 'Execution failed; review sanitized request and event records' }, finishedAt: now() });
             pending.delete(traceId);
         },
     };

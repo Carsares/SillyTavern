@@ -16,7 +16,8 @@ class VerifiedProxyAgent extends ProxyAgent {
  * Validation errors never contain the URL or its credentials.
  */
 export function validateConnectionProxy(connection) {
-    const proxy = (connection?.data ?? connection)?.proxy;
+    if (connection && Object.hasOwn(connection, 'data')) throw fail('invalid-proxy', 'A flat connection object is required');
+    const proxy = connection?.proxy;
     if (proxy == null) return null;
     const invalid = () => fail('invalid-proxy', 'proxy must contain only an HTTP/HTTPS root URL of at most 4096 characters');
     if (typeof proxy !== 'object' || Array.isArray(proxy) || Object.keys(proxy).some(key => key !== 'url')

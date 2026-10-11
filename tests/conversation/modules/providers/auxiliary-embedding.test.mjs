@@ -25,7 +25,7 @@ for (const [provider, profile] of Object.entries(AUXILIARY_PROVIDERS).filter(([,
     });
 }
 test('all 19 required vector identifiers except explicitly excluded webllm are registered', () => {
-    const names = ['transformers','mistral','togetherai','nomicai','cohere','openai','extras','palm','ollama','llamacpp','vllm','koboldcpp','vertexai','electronhub','openrouter','chutes','nanogpt','siliconflow','workers_ai'];
+    const names = ['transformers','mistral','togetherai','nomicai','cohere','openai','extras','google','ollama','llamacpp','vllm','koboldcpp','vertexai','electronhub','openrouter','chutes','nanogpt','siliconflow','workers_ai'];
     for (const name of names) assert.ok(AUXILIARY_PROVIDERS[name].operations.includes('embed'));
     assert.equal(getAuxiliaryCapabilities(connection('webllm')).supported, false);
 });

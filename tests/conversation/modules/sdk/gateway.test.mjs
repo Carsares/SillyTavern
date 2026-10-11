@@ -153,14 +153,16 @@ test('Anthropic expansion sets compiled system, and streaming signed tool argume
     let sent;
     const gateway = createSdkGateway({ protocol: 'anthropic', connection, transcript, inputBudget: 30000, maxOutputTokens: 200,
         tools: [{ name: 'recall', parameters: { type: 'object' }, execute: async () => 'ok' }],
-        fetch: async (_url, init) => { sent = JSON.parse(init.body); return sse([
-            { type: 'message_start', message: { usage: { input_tokens: 10 } } },
-            { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'a1', name: 'mcp__domain__recall', input: {} } },
-            { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } },
-            { type: 'content_block_stop', index: 0 },
-            { type: 'message_delta', usage: { output_tokens: 2 }, delta: { stop_reason: 'tool_use' } },
-            { type: 'message_stop' },
-        ]); } }); t.after(() => gateway.close());
+        fetch: async (_url, init) => {
+            sent = JSON.parse(init.body); return sse([
+                { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+                { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'a1', name: 'mcp__domain__recall', input: {} } },
+                { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } },
+                { type: 'content_block_stop', index: 0 },
+                { type: 'message_delta', usage: { output_tokens: 2 }, delta: { stop_reason: 'tool_use' } },
+                { type: 'message_stop' },
+            ]);
+        } }); t.after(() => gateway.close());
     const response = await gateway.handle(new Request('http://127.0.0.1/v1/messages?beta=true', { method: 'POST', headers: { 'x-api-key': gateway.token }, body: JSON.stringify({ model: 'synthetic', system: 'Coding defaults', messages: [{ role: 'user', content: transcript.prompt }], tools: [] }) }));
     assert.equal(response.status, 200); await response.text();
     assert.deepEqual(sent.system, [{ type: 'text', text: 'Our system' }]);
@@ -204,15 +206,15 @@ test('definitive returned tool error remains a completed tool response', async t
 });
 
 test('native marker remains bounded while expanded history is complete and fully budgeted', async t => {
-    const large = 'synthetic-history-'.repeat(70000);
+    const large = 'synthetic-history-'.repeat(500);
     const transcript = createTranscript({ id: 'large' }, { messages: [{ role: 'user', content: large }] });
     assert.ok(Buffer.byteLength(transcript.prompt) < 512);
     const other = createTranscript({ id: 'large' }, { messages: [{ role: 'user', content: large + 'changed' }] });
     assert.notEqual(JSON.parse(transcript.prompt.split('\n')[1]).transcriptSha256, JSON.parse(other.prompt.split('\n')[1]).transcriptSha256);
-    const fallback = createTranscript({}, { messages: [{ role: 'user', content: large }] }, 'structured-transcript');
-    assert.ok(fallback.prompt.includes(large));
+    const structured = createTranscript({}, { messages: [{ role: 'user', content: large }] }, 'structured-transcript');
+    assert.ok(structured.prompt.includes(large));
     let dispatched = 0;
-    for (const inputBudget of [2000000, 10000]) {
+    for (const inputBudget of [20000, 1000]) {
         const gateway = createSdkGateway({ protocol: 'responses', connection, transcript, inputBudget, maxOutputTokens: 100,
             fetch: async (_url, init) => {
                 dispatched++; assert.equal(JSON.parse(init.body).input[0].content[0].text, large);
@@ -221,7 +223,40 @@ test('native marker remains bounded while expanded history is complete and fully
         t.after(() => gateway.close());
         const response = await gateway.handle(new Request('http://localhost/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${gateway.token}` },
             body: JSON.stringify({ model: 'synthetic', input: [{ role: 'user', content: transcript.prompt }] }) }));
-        assert.equal(response.status, inputBudget === 2000000 ? 200 : 422);
+        assert.equal(response.status, inputBudget === 20000 ? 200 : 422);
     }
     assert.equal(dispatched, 1);
+});
+
+test('buffered SSE yields to deadline timers and aborts with a stable unknown outcome', async t => {
+    const controller = new AbortController();
+    const frames = Array.from({ length: 400 }, () => 'data: ' + JSON.stringify({ type: 'response.output_text.delta', delta: 'x' }) + '\n\n').join('');
+    let delivered = 0;
+    const h = setup({ signal: controller.signal,
+        onEvent: event => { if (event.type === 'text.delta') delivered++; },
+        fetch: async () => new Response(frames, { headers: { 'content-type': 'text/event-stream' } }) });
+    t.after(() => h.gateway.close());
+    const response = await h.request({ ...h.body, stream: true });
+    const timer = setTimeout(() => controller.abort(), 0);
+    t.after(() => clearTimeout(timer));
+    await assert.rejects(response.text(), error => {
+        assert.equal(error.code, 'aborted'); assert.equal(error.details.outcome, 'unknown'); return true;
+    });
+    assert.ok(delivered > 0 && delivered < 400);
+    assert.throws(() => h.gateway.check(), { code: 'aborted' });
+});
+
+test('explicit product structured mode preserves role/source JSON for both SDK protocols', () => {
+    const messages = [{ role: 'user', content: 'first', sourceRef: { messageId: 'one', revision: 1 } },
+        { role: 'system', content: 'deep-system' }, { role: 'assistant', content: 'reply' }];
+    const transcript = createTranscript({ id: 's' }, { messages }, 'structured-transcript');
+    for (const protocol of ['anthropic', 'responses']) {
+        const field = protocol === 'anthropic' ? 'messages' : 'input';
+        const result = expandTranscript({ [field]: [{ role: 'user', content: transcript.prompt }] }, protocol, transcript);
+        assert.equal(result[field][0].content[0].text, transcript.prompt);
+        const payload = JSON.parse(transcript.prompt.split('\n')[1]);
+        assert.deepEqual(payload.messages.map(item => item.role), ['user', 'system', 'assistant']);
+        assert.equal(payload.messages[0].sourceRef.messageId, 'one');
+        assert.match(protocol === 'anthropic' ? result.system : result.instructions, /structured-transcript interpretation/);
+    }
 });

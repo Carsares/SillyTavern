@@ -75,3 +75,19 @@ test('input-mode labels respect supported native default chat and explicit capab
     assert.match(historyModeDescription({ supported: true, executor: 'pi', historyMode: 'structured-transcript' }), /结构化转录/);
     assert.match(historyModeDescription({ supported: true, executor: 'pi', type: 'image' }), /尚未/);
 });
+
+test('connection examples match flat reasoning and nested media budget contracts', async () => {
+    const { CONNECTION_GUIDANCE } = await import('../../../../public/modern/conversation/resources/guidance.js');
+    const { validateConnectionFields } = await import('../../../../public/modern/conversation/resources/model.js');
+    const { connectionShapeError } = await import('../../../../src/conversation/capabilities/core/index.js');
+    for (const value of [resourceDefaults('connection'), CONNECTION_GUIDANCE, { provider: 'google', reasoning: 'budget', reasoningBudget: 1024, capabilities: { mediaTokenCost: { video: 4096 } } }]) {
+        assert.equal(validateConnectionFields(value), value);
+        assert.equal(connectionShapeError(value), undefined);
+    }
+    assert.equal(CONNECTION_GUIDANCE.reasoning, 'high');
+    assert.deepEqual(CONNECTION_GUIDANCE.capabilities.mediaTokenCost, { image: 1024 });
+    for (const value of [{ data: { provider: 'openai' } }, { effort: 'high' }, { reasoning: { effort: 'high' } }, { mediaTokenCost: { image: 1024 } }]) {
+        assert.throws(() => validateConnectionFields(value));
+        assert.equal(typeof connectionShapeError(value), 'string');
+    }
+});

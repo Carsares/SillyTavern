@@ -393,13 +393,14 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
                 b.content = cmd.content; b.origin = 'manual'; b.revision++; c.memoryRevision++;
                 invalidate(s, cid); event(s, cid, 'memory.updated', { id: b.id, type: cmd.type });
             } else if (cmd.type.startsWith('memory.')) {
-                const b = get(s.memories, cmd.memoryId ?? cmd.blockId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Memory not found', 404); check(b.revision, cmd.expectedBlockRevision);
+                invariant(typeof cmd.blockId === 'string' && cmd.blockId && !Object.hasOwn(cmd, 'memoryId') && !Object.hasOwn(cmd, 'id'), 'invalid-command', 'Memory commands require blockId without ID aliases');
+                const b = get(s.memories, cmd.blockId); invariant(b.conversationId === cid, 'not-found', 'Memory not found', 404); check(b.revision, cmd.expectedBlockRevision);
                 if (cmd.type === 'memory.edit') { b.content = cmd.content; b.origin = 'manual'; } else if (cmd.type === 'memory.lock') b.locked = cmd.locked ?? true;
                 else if (cmd.type === 'memory.confirm') { b.sourceRefs = []; b.parentSummaryRefs = []; b.memoryRefs = []; b.resourceRefs = []; b.origin = 'manual'; b.status = 'valid'; } else invariant(false, 'invalid-command', 'Unknown memory command');
                 b.revision++; c.memoryRevision++; invalidate(s, cid); event(s, cid, 'memory.updated', { id: b.id });
             } else {
                 check(c.contentRevision, cmd.expectedContentRevision);
-                if (cmd.type === 'conversation.configure') { const turnIndex = c.settings.worldInfo?.turnIndex ?? 0; c.settings = { ...c.settings, ...copy(cmd.settings) }; c.settings.worldInfo = { ...c.settings.worldInfo, turnIndex }; if (cmd.title !== undefined) c.title = cmd.title; if (cmd.resourceRefs !== undefined) c.explicitResourceRefs = copy(cmd.resourceRefs); c.resourceRefs = refs(s, c); } else if (cmd.type === 'fold.expand') { const b = get(s.folds, cmd.foldId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Fold not found', 404); b.status = 'stale'; b.revision++; c.memoryRevision++; } else {
+                if (cmd.type === 'conversation.configure') { const turnIndex = c.settings.worldInfo?.turnIndex ?? 0; c.settings = { ...c.settings, ...copy(cmd.settings) }; c.settings.worldInfo = { ...c.settings.worldInfo, turnIndex }; if (cmd.title !== undefined) c.title = cmd.title; if (cmd.resourceRefs !== undefined) c.explicitResourceRefs = copy(cmd.resourceRefs); c.resourceRefs = refs(s, c); } else if (cmd.type === 'fold.expand') { invariant(typeof cmd.foldId === 'string' && cmd.foldId && !Object.hasOwn(cmd, 'id'), 'invalid-command', 'Fold expansion requires foldId without ID aliases'); const b = get(s.folds, cmd.foldId); invariant(b.conversationId === cid, 'not-found', 'Fold not found', 404); b.status = 'stale'; b.revision++; c.memoryRevision++; } else {
                     const m = get(s.messages, cmd.messageId); invariant(m.conversationId === cid && !m.deletedAt, 'not-found', 'Message not found', 404);
                     if (cmd.type === 'message.delete') m.deletedAt = now();
                     else if (cmd.type === 'message.hide') { invariant(typeof cmd.hidden === 'boolean', 'invalid-command', 'hidden must be boolean'); m.userHidden = cmd.hidden; } else if (cmd.type === 'message.edit') { if (cmd.media !== undefined) validateMedia(s, cmd.media); const old = current(m); const v = { ...copy(old), content: cmd.content ?? old.content, media: copy(cmd.media ?? old.media), revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateRevision: old.candidateId ? Math.max(...m.versions.filter(v => v.candidateId === old.candidateId).map(v => v.candidateRevision)) + 1 : null }; m.versions.push(v); select(m, v); } else if (cmd.type === 'candidate.select') { const v = [...m.versions].reverse().find(v => v.candidateId === cmd.candidateId && (cmd.candidateRevision === undefined || v.candidateRevision === cmd.candidateRevision)); invariant(v, 'not-found', 'Candidate not found', 404); select(m, v); } else invariant(false, 'invalid-command', 'Unknown command');
@@ -455,12 +456,17 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         listTools: cid => { const s = read(); conv(s, cid); return redact(s[UNIT].values('tools', cid)); },
         saveTrace: input => tx(s => {
             conv(s, input.conversationId);
+            invariant(input.events === undefined || Array.isArray(input.events) && input.events.every(e => e && typeof e === 'object' && !Array.isArray(e)), 'invalid-trace', 'Trace events must be an array of objects');
             const traceId = input.id ?? id();
             invariant(typeof traceId === 'string' && traceId && !['__proto__', 'constructor', 'prototype'].includes(traceId), 'invalid-trace', 'Invalid trace ID');
             if (input.turnId) invariant(get(s.turns, input.turnId).conversationId === input.conversationId, 'invalid-trace', 'Trace turn conversation mismatch');
             const previous = s.traces[traceId];
             invariant(!previous || previous.conversationId === input.conversationId && (previous.turnId ?? null) === (input.turnId ?? null), 'trace-conflict', 'Trace identity cannot change', 409);
             const trace = redact({ ...previous, ...copy(input), id: traceId }); s.traces[traceId] = trace; return trace;
+        }),
+        appendTraceEvent: (rid, input) => tx(s => {
+            invariant(input && typeof input === 'object' && !Array.isArray(input), 'invalid-trace', 'Trace event must be an object');
+            return s[UNIT].appendTraceEvent(rid, redact(copy(input)));
         }),
         getTrace: rid => get(read().traces, rid),
         listTraces: cid => Object.values(read().traces).filter(t => !cid || t.conversationId === cid),

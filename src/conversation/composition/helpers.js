@@ -8,7 +8,7 @@ export function requireNewDirectory(directory) {
     return path.resolve(directory);
 }
 
-export const normalizeConnection = connection => ({ ...(connection?.data ?? connection), executor: (connection?.data ?? connection)?.executor ?? 'native' });
+export const normalizeConnection = connection => ({ ...connection, executor: connection.executor ?? 'native' });
 
 export function hydrateParts(parts, attachments, capabilities) {
     if (parts === undefined || typeof parts === 'string') return parts;
@@ -21,7 +21,7 @@ export function hydrateParts(parts, attachments, capabilities) {
 }
 
 export function assertRequestBudget(context, connection, capability, plan) {
-    const messages = context?.messages ?? context?.context?.messages;
+    const messages = context?.messages;
     invariant(Array.isArray(messages), 'invalid-context', 'Executor must expose the complete request context');
     const limit = Math.min(connection.workingBudget, capability.inputLimit ?? connection.contextWindow,
         connection.contextWindow - connection.maxOutputTokens, plan.budget?.workingBudget ?? Infinity);

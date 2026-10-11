@@ -52,10 +52,10 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         return { turn, snapshot };
     }
     function session(turnId, conversationId, frozenSnapshot) {
-        const { turn, snapshot } = active(turnId, conversationId);
+        const { turn } = active(turnId, conversationId);
         let state = sessions.get(turnId);
         if (!state) {
-            const input = structuredClone(frozenSnapshot ?? (store.getSnapshot ? store.getSnapshot(turn.snapshotId) : snapshot));
+            const input = structuredClone(frozenSnapshot ?? store.getTurnSnapshot(turnId));
             state = { epoch: turn.attemptEpoch, snapshot: input, limits: sessionLimits(input.settings), startedAt: now(), round: 1, calls: new Map(), total: 0, proposals: new Map(), artifacts: new Map() };
             sessions.set(turnId, state);
         }
@@ -182,7 +182,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
             case 'roll_dice': return rollDice(args.expr, random);
             case 'get_time': {
                 const instant = new Date(now());
-                const timeZone = snapshot.settings?.timeZone ?? snapshot.settings?.timezone ?? 'UTC';
+                const timeZone = snapshot.settings?.timeZone ?? 'UTC';
                 return { iso: instant.toISOString(), timeZone, local: new Intl.DateTimeFormat('en-CA', { timeZone, dateStyle: 'full', timeStyle: 'long' }).format(instant) };
             }
             case 'generate_image':
@@ -275,7 +275,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
     return { definitions, execute, beginRound, toolArtifacts, imageRecovery,
         fatalError(turnId) { return sessions.get(turnId)?.fatal ?? null; },
         bindTurn({ turnId, snapshot, requestPlan, onFatal }) {
-            const conversationId = snapshot.conversationId ?? snapshot.conversation.id;
+            const conversationId = snapshot.conversationId;
             const { state } = session(turnId, conversationId, snapshot);
             if (onFatal !== undefined) { invariant(typeof onFatal === 'function', 'invalid-tool', 'onFatal must be a function'); state.onFatal = onFatal; }
             state.snapshot = structuredClone(snapshot);

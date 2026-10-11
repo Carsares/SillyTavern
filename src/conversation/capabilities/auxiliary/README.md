@@ -47,15 +47,6 @@ README for model-specific refusals and recovery semantics.
 | comfy | — | comfy-image | explicit/local |
 | bfl | — | bfl-image | https://api.bfl.ai/v1 |
 | falai | — | fal-image | https://queue.fal.run |
-| auto | — | sd-webui-image | explicit/local |
-| novel | — | novelai-image | https://image.novelai.net |
-| palm | google-embed | google-image | https://generativelanguage.googleapis.com/v1beta |
-| makersuite | google-embed | google-image | https://generativelanguage.googleapis.com/v1beta |
-| workersai | workers-embed | workers-image | https://api.cloudflare.com/client/v4 |
-| comfyui | — | comfy-image | explicit/local |
-| fal | — | fal-image | https://queue.fal.run |
-| mistralai | openai-auxiliary | — | https://api.mistral.ai/v1 |
-| openai_compatible | openai-auxiliary | openai-auxiliary | explicit/local |
 
 Operation defaults may differ: Chutes/NanoGPT have separate imageBaseUrl.
 Vertex needs its project/location/publisher path. Workers requires accountId.

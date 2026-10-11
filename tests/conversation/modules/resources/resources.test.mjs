@@ -49,3 +49,24 @@ test('proxy is validated, preserved when omitted, explicitly cleared and redacte
     assert.equal(redacted.includes('proxy-user'), false); assert.equal(redacted.includes('proxy-password'), false);
     assert.equal(JSON.stringify(redact({ proxy: privateProxy })).includes('localhost'), false);
 });
+
+test('connection preserves current native executor calls and the omitted pi default', () => {
+    const base = { kind: 'connection', name: 'local', data: { provider: 'custom', model: 'm' } };
+    for (const executor of [undefined, 'pi', 'native', 'claude', 'codex']) assert.doesNotThrow(() => validateResource({ ...base, data: { ...base.data, executor } }));
+    assert.throws(() => validateResource({ ...base, data: { ...base.data, executor: 'unknown-executor' } }), { code: 'invalid-executor' });
+});
+
+test('restore route accepts UI data envelope and never falls back to backup alias', async () => {
+    const { createRouter } = await import('../../../../src/conversation/api/index.js');
+    const calls = [];
+    const router = createRouter({ store: {}, runtime: {}, maintenance: { restore: async data => { calls.push(data); return { restored: true }; } } });
+    const handler = router.stack.find(layer => layer.route?.path === '/maintenance/restore').route.stack[0].handle;
+    const invoke = body => new Promise((resolve, reject) => handler({ body }, { json: resolve }, reject));
+    const { restoreBody } = await import('../../../../public/modern/conversation/maintenance/model.js');
+    const data = { format: 'conversation-v1-backup' };
+    assert.deepEqual(await invoke({ schemaVersion: 1, ...restoreBody(data) }), { restored: true });
+    assert.deepEqual(calls, [data]);
+    await assert.rejects(invoke({ schemaVersion: 1, backup: data }));
+    await assert.rejects(invoke({ schemaVersion: 1, data: null, backup: data }));
+    assert.equal(calls.length, 1);
+});

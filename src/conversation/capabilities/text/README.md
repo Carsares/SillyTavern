@@ -16,7 +16,7 @@ Generation types: send, regenerate, continue, impersonate, auxiliary, group. Aux
 | dreamgen | openai-text | https://dreamgen.com | api/openai/v1/completions | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | openrouter | openai-text | https://openrouter.ai/api | v1/completions | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | featherless | openai-text | https://api.featherless.ai | v1/completions | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
-| generic | openai-text | explicit connection baseUrl required | v1/completions | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
+| openai-compatible | openai-text | explicit connection baseUrl required | v1/completions | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | kobold | kobold | explicit connection baseUrl required | api/v1/generate | false | text | false | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | koboldcpp | kobold | explicit connection baseUrl required | api/v1/generate | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | novelai | novelai | https://text.novelai.net | ai/generate | false | text | true | temperature, top_p, top_k, repetition_penalty, seed |
@@ -25,9 +25,9 @@ Generation types: send, regenerate, continue, impersonate, auxiliary, group. Aux
 | ollama | ollama-generate | http://127.0.0.1:11434 | api/generate | false | text | true | temperature, top_p, top_k, min_p, repetition_penalty, seed, stop |
 | huggingface | huggingface-tgi | explicit connection baseUrl required | generate | false | text | true | temperature, top_p, top_k, repetition_penalty, seed, stop |
 
-API contracts, reasoning modes, model-specific limits, source references and composition: ../../providers/chat/README.md. This index exports its registry plus getCapabilities (alias getTextCapabilities). It does not modify capabilities/core.
+API contracts, reasoning modes, model-specific limits, source references and composition: ../../providers/chat/README.md. This index exports its registry plus getTextCapabilities. It does not modify capabilities/core.
 
-verified is accepted only from explicit connection.capabilities. liveVerified stays false. Core-owned validation still checks trusted media costs, finite budgets and verified reasoning effort declarations. Native budget/adaptive/on modes are distinct from Pi effort levels; supply connection.effort when required by core.
+verified is accepted only from explicit connection.capabilities. liveVerified stays false. Core-owned validation still checks trusted media costs, finite budgets and verified reasoning effort declarations. Native budget/adaptive/on modes use the reasoning string directly; PI scheduling does not require a separate effort field.
 
 Guidance is explicitly registered only for ooba/koboldcpp using `guidance_scale`
 and `negative_prompt`; `guidance` describes the wire fields. KoboldCpp image/audio

@@ -1,7 +1,7 @@
 import { connectionGuidance } from './guidance.js';
 import { RESOURCE_KINDS } from '../../../shared/conversation/schemas/index.js';
 import { el, button, field, input, select, parseObject, empty } from '../core/dom.js';
-import { resourceDefaults, EXECUTORS, newWorldEntry, newPromptBlock } from './model.js';
+import { resourceDefaults, EXECUTORS, newWorldEntry, newPromptBlock, validateConnectionFields } from './model.js';
 import { list, redact } from '../core/state.js';
 const names = { character: '角色', persona: '人设', preset: '预设', worldbook: '世界书', group: '群组', connection: '连接' };
 export function createResources(app) {
@@ -89,6 +89,7 @@ export function createResources(app) {
                     parsed.mode = mode.value;
                 }
                 if (resourceKind === 'connection') {
+                    validateConnectionFields(parsed);
                     for (const [fieldName, control] of Object.entries(common)) {
                         if (control.type === 'number') {
                             if (!control.value) { delete parsed[fieldName]; continue; }

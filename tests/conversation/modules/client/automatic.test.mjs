@@ -37,3 +37,8 @@ test('failed reads display unknown, and disposed reads cannot change a new view'
     const read = other.refresh(); other.dispose(); const count = states.length; resolve({ enabled: true }); await read;
     assert.equal(states.length, count);
 });
+
+
+test('automatic scheduling uses snapshot.settings only', () => {
+    assert.throws(() => automaticRequest({ conversation: { contentRevision: 8, settings: { groupId: 'g', connectionId: 'c' } } }, true, { intervalMs: 30000, content: 'go' }));
+});

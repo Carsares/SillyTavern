@@ -14,10 +14,10 @@ export function createSettings(app) {
         automatic?.dispose(); automatic = null; automaticConversationId = null;
         if (!app.state.snapshot) { form.replaceChildren(empty('请先选择会话')); return; }
         const snapshot = app.state.snapshot;
-        const settings = snapshot.settings || snapshot.conversation.settings || {};
+        const settings = snapshot.settings ?? {};
         const resources = list(await app.api.resources(), 'resources');
         const controls = {};
-        const selectors = [['connectionId', 'connection', '连接'], ['characterId', 'character', '角色'], ['personaId', 'persona', '人设'], ['presetId', 'preset', '预设'], ['groupId', 'group', '群组'], ['auxiliaryConnectionId', 'connection', '记忆／摘要连接（未选择时使用主连接或连接级配置）'], ['embeddingConnectionId', 'connection', '检索嵌入连接'], ['imageConnectionId', 'connection', '图片工具连接']];
+        const selectors = [['connectionId', 'connection', '连接'], ['characterId', 'character', '角色'], ['personaId', 'persona', '人设'], ['presetId', 'preset', '预设'], ['groupId', 'group', '群组'], ['auxiliaryConnectionId', 'connection', '记忆／摘要连接（未选择时使用主连接）'], ['embeddingConnectionId', 'connection', '检索嵌入连接'], ['imageConnectionId', 'connection', '图片工具连接']];
         const fields = selectors.map(([key, kind, label]) => {
             controls[key] = select([['', '未选择'], ...resources.filter(r => r.kind === kind).map(r => [r.id, `${r.name} · v${r.revision}`])], settings[key]);
             return field(label, controls[key]);
@@ -49,7 +49,7 @@ export function createSettings(app) {
             el('fieldset', {}, el('legend', {}, '可用工具（能力检查仍由服务器执行）'), ...tools.map(tool => field(tool.name, tool.control))),
             el('details', {}, el('summary', {}, '工具限制'), ...limitFields),
             field('高级设置 JSON（选择器中的资源选择会覆盖对应字段）', extra), budgetInfo,
-            el('p', {}, '辅助记忆使用 chat/text 连接；嵌入使用 embedding，图片使用 image。请先在资源页创建连接并设置 type，再在此选择。未选择辅助连接时仍可能继承主连接 auxiliary 配置。高级设置 memoryFrequency 为正整数，表示每隔多少次符合条件的回复触发记忆更新。'),
+            el('p', {}, '辅助记忆使用 chat/text 连接；嵌入使用 embedding，图片使用 image。请先在资源页创建连接并设置 type，再在此选择。未选择记忆／摘要连接时使用主连接；嵌入与图片工具需单独选择连接。高级设置 memoryFrequency 为正整数，表示每隔多少次符合条件的回复触发记忆更新。'),
             ...['auxiliaryConnectionId', 'embeddingConnectionId', 'imageConnectionId'].map(key => button(`检查${selectors.find(([id]) => id === key)[2]}能力`, () => app.run(async () => {
                 if (!controls[key].value) throw new Error('请先选择要检查的辅助连接');
                 capabilities.replaceChildren(json(redact(await app.api.capabilities(controls[key].value))));
@@ -68,6 +68,7 @@ export function createSettings(app) {
         form.onsubmit = event => {
             event.preventDefault(); app.run(async () => {
                 const next = parseObject(extra.value);
+                if (Object.hasOwn(next, 'auxiliary')) throw new Error('辅助连接请使用 auxiliaryConnectionId、embeddingConnectionId、imageConnectionId');
                 if (JSON.stringify(redact(next)) !== JSON.stringify(next)) throw new Error('会话设置不接受凭据；请在连接资源中配置');
                 for (const [key] of selectors) next[key] = controls[key].value || null;
                 next.tools = tools.filter(tool => tool.control.checked).map(tool => tool.name);

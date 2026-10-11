@@ -169,7 +169,7 @@ const navigation = el('nav', { 'aria-label': '功能导航' });
 const sidebar = el('aside', { class: 'sidebar' }, el('h2', {}, '会话'), title,
     button('创建', () => app.run(async () => {
         const result = await app.api.createConversation({ title: title.value.trim() || '新会话', settings: {} });
-        const id = result.conversation?.id || result.id;
+        const id = result.id;
         if (!id) throw new Error('服务器没有返回会话编号');
         title.value = ''; await app.reloadConversations(); await app.choose(id);
     })), button('刷新列表', () => app.run(() => app.reloadConversations())), rows,

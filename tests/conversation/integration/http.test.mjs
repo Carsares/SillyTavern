@@ -58,7 +58,7 @@ test('backup restores resources history and attachments into a different empty w
     const backup = await app.api('/maintenance/backup', {});
     assert.equal(backup.status, 200);
     assert.equal(JSON.stringify(backup.value).includes('local-protocol-test-key'), false);
-    const restored = await target.api('/maintenance/restore', { backup: backup.value });
+    const restored = await target.api('/maintenance/restore', { data: backup.value });
     assert.equal(restored.status, 200, JSON.stringify(restored.value));
     const snapshot = (await target.api(`/conversations/${app.conversation.id}`)).value;
     assert.equal(snapshot.messages.at(-1).content, 'Local answer');

@@ -1,4 +1,4 @@
-/** New conversation protocol. This module is shared with the browser. */
+/** Conversation v1 protocol. This module is shared with the browser. */
 export const SCHEMA_VERSION = 1;
 export const BACKUP_MAX_BYTES = 256 * 1024 * 1024;
 export const API_BASE = '/api/conversation/v1';

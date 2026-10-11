@@ -139,9 +139,8 @@ redacted thinking are reconstructed without modifying signatures.
 Core capability validation is owned by the Pi agent. This package propagates only
 the caller's `connection.capabilities.{verified,reasoningEnabled,reasoningEfforts}`;
 it never invents verification. For a verified native budget mode, set e.g.
-`reasoning:'budget', reasoningBudget:2048, effort:'medium'` and the externally
-verified finite effort list. `effort` is Pi's scheduling level; `reasoning` is the
-native wire mode. Image support likewise requires a verified explicit budget in
+`reasoning:'budget', reasoningBudget:2048` and the externally
+verified finite effort list. `reasoning` is the native wire mode; PI handles scheduling without a second effort field. Image support likewise requires a verified explicit budget in
 core. Connections without these features use text and no reasoning override.
 
 ## Evidence and limitations
@@ -267,3 +266,13 @@ error handling. Store-side final-success checks are a separate owner concern.
 
 Protocol evidence: https://openrouter.ai/docs/cookbook/administration/usage-accounting
 and https://openrouter.ai/support/ (USD-denominated credits).
+
+## Canonical application inputs
+
+Connections are flat objects. Provider IDs come directly from the capability
+registries; removed aliases are errors. Use `reasoning` as a mode string and
+`reasoningBudget` for a native token budget. Media costs belong only in
+`capabilities.mediaTokenCost`. Inline media uses `data`, `mimeType`, and optional
+`name`; input data URLs and `filename` are rejected. Provider-accessible remote
+URLs and vendor wire fields remain protocol-specific. Auxiliary connections use
+`type: embedding` or `type: image`, not an ambiguous `auxiliary` type.

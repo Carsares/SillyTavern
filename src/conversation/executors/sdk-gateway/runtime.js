@@ -26,7 +26,7 @@ export function createSdkExecutor(executor, dependencies, execute) {
             const transcript = createTranscript(args.snapshot, args.requestPlan, capabilities.historyMode);
             if (capabilities.nativeHistory) encodeHistory(transcript.messages, executor === 'claude' ? 'anthropic' : 'responses');
             const prompt = transcript.prompt;
-            const connection = structuredClone(args.connection?.data ?? args.connection);
+            const connection = structuredClone(args.connection);
             const limits = args.limits ?? {};
             const timeoutMs = positiveLimit(limits.turnTimeoutMs, 180000, 'turnTimeoutMs');
             const controller = new AbortController();

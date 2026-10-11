@@ -59,7 +59,7 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
         const text = await response.text();
         let value;
         try { value = text ? JSON.parse(text) : null; } catch {
-            throw new ApiError(response.status, { code: 'invalid-response', message: '服务器未返回有效 JSON；请检查新接口是否已挂载' });
+            throw new ApiError(response.status, { code: 'invalid-response', message: '服务器未返回有效 JSON；请检查服务器响应' });
         }
         if (!response.ok) {
             if (response.status === 403) tokenPromise = undefined;

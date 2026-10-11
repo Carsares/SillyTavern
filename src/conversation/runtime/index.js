@@ -38,8 +38,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
     });
 
     function connectionFor(snapshot) {
-        const ref = snapshot.resources.find(resource => resource.id === snapshot.settings.connectionId)
-            ?? snapshot.resources.find(resource => resource.kind === 'connection');
+        const ref = snapshot.resources.find(resource => resource.kind === 'connection' && resource.id === snapshot.settings.connectionId);
         invariant(ref, 'connection-required', 'Select a new connection before generating', 422);
         const resource = store.getConnection(ref.id, ref.revision);
         return { ...resource.data, id: resource.id, revision: resource.revision };
@@ -158,14 +157,13 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                     const task = active.get(turn.id);
                     if (task) task.modelStep = Symbol('model-step');
                     // The SDK calls this for every step, including tool continuations.
-                    const messages = context?.messages ?? context?.context?.messages;
-                    if (messages) {
-                        const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
-                        const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
-                        const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
-                            ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
-                        invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
-                    }
+                    const messages = context?.messages;
+                    invariant(Array.isArray(messages), 'invalid-model-context', 'Actual model context must provide messages', 422);
+                    const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
+                    const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
+                    const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
+                        ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
+                    invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
                     trace?.record?.(traceId, { type: 'model.prepare', callNumber });
                 },
                 onEvent: async event => {

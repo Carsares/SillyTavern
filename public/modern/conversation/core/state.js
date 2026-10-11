@@ -12,7 +12,7 @@ export function reduceEvent(state, event) {
     const next = { ...state, cursor: event.seq };
     const payload = event.payload || {};
     // Snapshot + GET turn is authoritative. Unknown events trigger refresh in the controller.
-    const isDelta = event.type === 'text.delta' || event.type === 'reasoning.delta' || event.type === 'turn.delta' || event.type === 'turn.reasoning' || event.type === 'turn.reasoning.delta';
+    const isDelta = event.type === 'text.delta' || event.type === 'reasoning.delta';
     if (isDelta && state.turn?.id === event.turnId && !terminal(state.turn)) {
         if (['messageId', 'candidateId'].some(key => payload[key] != null && state.turn[key] !== payload[key])) return { ...next, needsRefresh: true };
         const key = event.type.includes('reasoning') ? 'reasoning' : 'content';
@@ -53,7 +53,6 @@ export function redact(value) {
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(api.?key|authorization|password|secret|accessToken|refreshToken|token|headers|proxy)$/i.test(key)).map(([key, item]) => [key, redact(item)]));
 }
 export function list(value, key) {
-    const result = Array.isArray(value) ? value : value?.[key];
-    if (!Array.isArray(result)) throw new Error(`服务器缺少 ${key} 列表`);
-    return result;
+    if (!Array.isArray(value)) throw new Error(`服务器缺少 ${key} 列表`);
+    return value;
 }

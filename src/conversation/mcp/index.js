@@ -92,5 +92,3 @@ export function createMcpServer({ registry, store, now = Date.now, ttlMs = 12000
     }
     return { handler, handle, issueToken, revokeToken, close() { tokens.clear(); } };
 }
-
-export const createMcpHandler = createMcpServer;

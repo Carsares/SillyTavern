@@ -100,7 +100,7 @@ test('runtime idempotency metadata is accepted without inventing an upstream fie
     assert.ok(adapter.capabilities.operationParameters.generateImage.includes('prompt'));
 });
 
-test('multipart boundary replaces stale custom content type', async () => {
+test('multipart boundary replaces stale openai-compatible content type', async () => {
     let contentType;
     const adapter = createProviderAdapter(connection('stability', 'image', { headers: { 'content-type': 'application/json' } }), { fetch: async request => {
         contentType = request.headers.get('content-type');
@@ -118,7 +118,7 @@ test('Google audio/video/PDF and file URI preserve typed input and explicit budg
         { type: 'document', mimeType: 'application/pdf', data: 'BBBB' },
     ];
     let body;
-    await createProviderAdapter(connection('google', 'chat', { mediaTokenCost: { audio: 100, video: 200, document: 300 } }), {
+    await createProviderAdapter(connection('google', 'chat', { capabilities: { mediaTokenCost: { audio: 100, video: 200, document: 300 } } }), {
         fetch: async request => { body = await request.json(); return json({ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }); },
     }).generate({ messages: [{ role: 'user', content }] });
     assert.deepEqual(body.contents[0].parts, [
@@ -132,9 +132,9 @@ test('Google audio/video/PDF and file URI preserve typed input and explicit budg
 test('Anthropic PDF and OpenAI audio/file use their distinct native codecs', async () => {
     for (const provider of ['anthropic', 'openai']) {
         let body;
-        const content = [{ type: 'document', mimeType: 'application/pdf', data: 'AAAA', filename: 'a.pdf' }];
+        const content = [{ type: 'document', mimeType: 'application/pdf', data: 'AAAA', name: 'a.pdf' }];
         if (provider === 'openai') content.push({ type: 'audio', mimeType: 'audio/mpeg', data: 'BBBB' });
-        await createProviderAdapter(connection(provider, 'chat', { mediaTokenCost: { document: 100, audio: 100 } }), {
+        await createProviderAdapter(connection(provider, 'chat', { capabilities: { mediaTokenCost: { document: 100, audio: 100 } } }), {
             fetch: async request => { body = await request.json(); return json(provider === 'anthropic' ? { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } : { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }); },
         }).generate({ messages: [{ role: 'user', content }] });
         const actual = body.messages[0].content;
@@ -149,12 +149,12 @@ test('unsupported media and malformed MIME fail before network', async () => {
         ['openai', [{ type: 'video', mimeType: 'video/mp4', data: 'AAAA' }]],
         ['google', [{ type: 'document', mimeType: 'video/mp4', data: 'AAAA' }]],
         ['openai', [{ type: 'audio', mimeType: 'audio/wav', url: 'https://test.invalid/a.wav' }]],
-    ]) await assert.rejects(createProviderAdapter(connection(provider, 'chat', { mediaTokenCost: { audio: 100, video: 100, document: 100 } }), { fetch: () => assert.fail('network') }).generate({ messages: [{ role: 'user', content }] }));
+    ]) await assert.rejects(createProviderAdapter(connection(provider, 'chat', { capabilities: { mediaTokenCost: { audio: 100, video: 100, document: 100 } } }), { fetch: () => assert.fail('network') }).generate({ messages: [{ role: 'user', content }] }));
 });
 
 test('Pi providerParts carries full user blocks; model retains legal Pi input types', async () => {
     const providerParts = [{ type: 'text', text: 'read' }, { type: 'document', mimeType: 'application/pdf', data: 'AAAA' }];
-    const c = connection('google', 'chat', { mediaTokenCost: { document: 100 } });
+    const c = connection('google', 'chat', { capabilities: { mediaTokenCost: { document: 100 } } });
     const context = { messages: [{ role: 'user', content: [{ type: 'text', text: 'read' }], providerParts }] };
     assert.deepEqual(fromPiContext(context, 'google-generate-content').messages[0].content, providerParts);
     const model = createProviderModel(c);
@@ -191,7 +191,7 @@ test('native text multimodal side channels preserve inline bytes and reject unsu
         let body;
         const content = [{ type: 'image', mimeType: 'image/png', data: 'AAAA' }];
         if (provider === 'koboldcpp') content.push({ type: 'audio', mimeType: 'audio/wav', data: 'BBBB' });
-        const adapter = createProviderAdapter(connection(provider, 'text', { mediaTokenCost: { image: 100, audio: 100 } }), { fetch: async request => { body = await request.json(); return json(provider === 'ollama' ? { response: 'ok' } : { results: [{ text: 'ok' }] }); } });
+        const adapter = createProviderAdapter(connection(provider, 'text', { capabilities: { mediaTokenCost: { image: 100, audio: 100 } } }), { fetch: async request => { body = await request.json(); return json(provider === 'ollama' ? { response: 'ok' } : { results: [{ text: 'ok' }] }); } });
         await adapter.generate({ prompt: 'compiled', messages: [{ role: 'user', content }] });
         assert.deepEqual(body.images, ['AAAA']); if (provider === 'koboldcpp') assert.deepEqual(body.audio, ['BBBB']);
     }
@@ -208,17 +208,17 @@ test('text usage retains raw provider counters for JSON and streams; bare termin
     for (const stream of [false, true]) {
         const usage = { prompt_tokens: 9, completion_tokens: 3, vendor_units: 2 };
         const data = { choices: [{ text: 'ok', finish_reason: 'stop' }], usage };
-        const result = await createProviderAdapter(connection('generic', 'text', { stream }), { fetch: async () => stream ? new Response(`data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n`) : json(data) }).generate({ prompt: 'x' });
+        const result = await createProviderAdapter(connection('openai-compatible', 'text', { stream }), { fetch: async () => stream ? new Response(`data: ${JSON.stringify(data)}\n\ndata: [DONE]\n\n`) : json(data) }).generate({ prompt: 'x' });
         assert.deepEqual(result.usage.raw, usage); assert.equal(result.usage.totalTokens, 12);
     }
-    await assert.rejects(createProviderAdapter(connection('generic', 'text', { stream: true }), { fetch: async () => new Response('data: [DONE]\n\n') }).generate({ prompt: 'x' }), { code: 'provider-response-invalid' });
+    await assert.rejects(createProviderAdapter(connection('openai-compatible', 'text', { stream: true }), { fetch: async () => new Response('data: [DONE]\n\n') }).generate({ prompt: 'x' }), { code: 'provider-response-invalid' });
 });
 
 for (const stream of [false, true]) test(`DeepSeek explicit thinking toggle, native effort and raw usage (stream=${stream})`, async () => {
     const raw = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, prompt_cache_hit_tokens: 8, prompt_cache_miss_tokens: 12, completion_tokens_details: { reasoning_tokens: 4 } };
     for (const [settings, enabled, effort] of [
         [{}, false], [{ reasoning: 'off' }, false], [{ reasoning: 'high' }, true, 'high'], [{ reasoning: 'max' }, true, 'max'],
-        [{ reasoning: 'medium' }, true, 'high'], [{ effort: 'low' }, true, 'low'], [{ reasoning: { effort: 'max' } }, true, 'max'],
+        [{ reasoning: 'medium' }, true, 'high'], [{ reasoning: 'low' }, true, 'low'],
         [{ reasoning: 'max', reasoningEnabled: false }, false],
     ]) {
         let body;
@@ -250,7 +250,7 @@ test('DeepSeek ignored sampling controls reject before fetch and tool reasoning 
     assert.equal(body.messages[1].reasoning_content, 'preserved'); assert.equal(body.tools[0].function.name, 'lookup');
 });
 
-test('OpenRouter uses native off/effort/budget objects; generic APIs stay unchanged', async () => {
+test('OpenRouter uses native off/effort/budget objects; openai-compatible APIs stay unchanged', async () => {
     for (const [settings, expected] of [[{reasoning:'off'},{enabled:false}], [{reasoning:'high'},{enabled:true,effort:'high'}], [{reasoning:'budget',reasoningBudget:1024},{enabled:true,max_tokens:1024}], [{reasoning:'on'},{enabled:true}]]) {
         let body;
         await createProviderAdapter(connection('openrouter','chat',settings), { fetch: async request => { body=await request.json(); return json({choices:[{message:{content:'ok'}}]}); } }).generate({messages});

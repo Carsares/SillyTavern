@@ -198,3 +198,32 @@ for (const notify of [true, false]) test(`fatal tool outcomes cannot become succ
     assert.equal(nextRequest, false);
     await runtime.close();
 });
+
+test('connection preflight requires the explicitly selected connection resource', async () => {
+    for (const selection of [undefined, 'missing', 'character']) {
+        const { runtime, store, writes } = setup(fakeExecutor());
+        const snapshot = store.getConversation('c');
+        snapshot.settings.connectionId = selection;
+        snapshot.resources.push({ id: 'character', kind: 'character', revision: 1 });
+        assert.throws(() => runtime.start('c', request), { code: 'connection-required' });
+        assert.equal(writes(), 0);
+        await runtime.close();
+    }
+});
+
+test('actual model context uses direct messages and rejects the old nested context envelope', async () => {
+    for (const nested of [false, true]) {
+        let allowed = false;
+        const { runtime } = setup({ async runTurn(options) {
+            await options.beforeRequest(nested ? { context: { messages: [] } } : { messages: [] });
+            allowed = true;
+            return { content: 'local result', finishReason: 'stop' };
+        } });
+        runtime.start('c', request);
+        const turn = await runtime.wait('turn');
+        assert.equal(allowed, !nested);
+        assert.equal(turn.status, nested ? 'failed' : 'completed');
+        if (nested) assert.equal(turn.error.code, 'invalid-model-context');
+        await runtime.close();
+    }
+});

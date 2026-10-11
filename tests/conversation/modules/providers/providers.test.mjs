@@ -176,15 +176,15 @@ for (const provider of ['openai', 'openai-compatible', 'automatic1111', 'horde',
     assert.equal(result.images.length, 1); assert.equal(result.usage.cost, null);
 });
 
-test('catalogs contain every legacy enumeration without importing legacy modules', () => {
-    const chats = 'openai claude openrouter ai21 makersuite vertexai mistralai custom cohere perplexity groq electronhub chutes nanogpt deepseek aimlapi xai pollinations moonshot fireworks cometapi azure_openai zai siliconflow workers_ai minimax'.split(' ');
-    const texts = 'ooba mancer vllm aphrodite tabby koboldcpp togetherai llamacpp ollama infermaticai dreamgen openrouter featherless huggingface generic kobold novelai horde'.split(' ');
+test('canonical catalogs retain every distinct provider and protocol', () => {
+    const chats = 'openai anthropic openrouter ai21 google vertexai mistral openai-compatible cohere perplexity groq electronhub chutes nanogpt deepseek aimlapi xai pollinations moonshot fireworks cometapi azure_openai zai siliconflow workers_ai minimax'.split(' ');
+    const texts = 'ooba mancer vllm aphrodite tabby koboldcpp togetherai llamacpp ollama infermaticai dreamgen openrouter featherless huggingface openai-compatible kobold novelai horde'.split(' ');
     assert.ok(chats.every(key => CHAT_PROVIDERS[key])); assert.ok(texts.every(key => TEXT_PROVIDERS[key]));
     assert.ok(Object.keys(AUXILIARY_PROVIDERS).length >= 8); assert.equal(getChatCapabilities(base('google')).liveVerified, false);
 });
 
 for (const [provider, frames] of [
-    ['generic', [{ choices: [{ text: 'an' }] }, { choices: [{ text: 'swer', finish_reason: 'stop' }] }, '[DONE]']],
+    ['openai-compatible', [{ choices: [{ text: 'an' }] }, { choices: [{ text: 'swer', finish_reason: 'stop' }] }, '[DONE]']],
     ['llamacpp', [{ content: 'answer', stop: false }, { content: '', stop: true, tokens_evaluated: 2, tokens_predicted: 1 }]],
     ['huggingface', [{ token: { text: 'answer', special: false } }, { token: { text: '</s>', special: true }, generated_text: 'answer', details: { generated_tokens: 1 } }]],
     ['koboldcpp', [{ token: 'answer' }]], ['novelai', [{ token: 'answer' }]],
@@ -202,7 +202,7 @@ test('Ollama native NDJSON stream reports measured usage', async () => {
 
 test('explicit image budget enables wire image parts and signed Anthropic reasoning survives Pi replay', async () => {
     const mock = fake(chatResponse('anthropic-messages'));
-    const c = base('anthropic', 'chat', { mediaTokenCost: { image: 1024 } });
+    const c = base('anthropic', 'chat', { capabilities: { mediaTokenCost: { image: 1024 } } });
     await createProviderAdapter(c, mock).generate({ messages: [{ role: 'user', content: [{ type: 'image', mimeType: 'image/png', data: 'UE5H' }] }] });
     assert.equal(mock.requests[0].body.messages[0].content[0].source.data, 'UE5H');
     const replay = fromPiContext({ messages: [{ role: 'assistant', content: [{ type: 'thinking', thinking: 'thought', thinkingSignature: 'signed' }, { type: 'text', text: 'answer' }] }] }, 'anthropic-messages');

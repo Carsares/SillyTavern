@@ -1,10 +1,15 @@
 const TYPES = ['send', 'regenerate', 'continue', 'impersonate', 'auxiliary', 'group'];
-const PROVIDERS = new Set(['openai', 'openai-compatible', 'openai_compatible']);
+const PROVIDERS = new Set(['openai', 'openai-compatible']);
 const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const positive = value => Number.isSafeInteger(value) && value > 0;
+export function connectionShapeError(c) {
+    if (!c || typeof c !== 'object' || Array.isArray(c) || Object.hasOwn(c, 'data')) return 'A flat connection object is required';
+    if (Object.hasOwn(c, 'mediaTokenCost')) return 'Use capabilities.mediaTokenCost';
+    if (Object.hasOwn(c, 'effort') || c.reasoning !== undefined && typeof c.reasoning !== 'string') return 'Use a reasoning mode string';
+}
 export function reasoningEffort(connection) {
     if (connection.reasoningEnabled === false) return 'off';
-    return connection.effort ?? (typeof connection.reasoning === 'string' ? connection.reasoning : connection.reasoning?.effort) ?? 'off';
+    return connection.reasoning ?? 'off';
 }
 
 /** Native codecs own the control vocabulary; the default SDK transport uses EFFORTS. */
@@ -23,12 +28,13 @@ export function reasoningCapabilityError(connection, capability) {
 
 /** Validate provider-owned capabilities without claiming support for unknown combinations. */
 export function validateCapabilities(connection, capability) {
-    const c = connection?.data ?? connection ?? {};
+    const c = connection ?? {};
     const result = { ...capability };
     if (!result.supported) return result;
     let reason;
     const reasoningError = reasoningCapabilityError(c, result);
-    if (!['native', 'pi'].includes(c.executor)) reason = 'Unsupported executor';
+    if (connectionShapeError(c)) reason = connectionShapeError(c);
+    else if (!['native', 'pi'].includes(c.executor)) reason = 'Unsupported executor';
     else if (typeof c.model !== 'string' || !c.model.trim()) reason = 'A model ID is required';
     else if (![result.contextWindow, result.inputLimit, result.outputLimit, result.maxOutputTokens, result.workingBudget].every(positive)) reason = 'Finite positive integer budgets are required';
     else if (result.inputLimit > result.contextWindow || result.maxOutputTokens > result.outputLimit || result.maxOutputTokens >= result.contextWindow || result.workingBudget > Math.min(result.inputLimit, result.contextWindow - result.maxOutputTokens)) reason = 'Inconsistent model budgets';
@@ -47,7 +53,7 @@ export function validateCapabilities(connection, capability) {
 
 /** Default primary profile. Other provider owners supply a synchronous capabilityResolver. */
 export function getCapabilities(connection) {
-    const c = connection?.data ?? connection ?? {};
+    const c = connection ?? {};
     const profile = c.capabilities ?? {};
     const result = {
         supported: true, provider: c.provider, executor: c.executor, model: c.model,
