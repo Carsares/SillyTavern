@@ -411,8 +411,10 @@ const default_settings = {
     top_a_openai: 0,
     repetition_penalty_openai: 1,
     stream_openai: false,
-    openai_max_context: max_4k,
-    openai_max_tokens: 300,
+    // 默认上下文长度 500,000、回复长度 65,536，与 default/content/settings.json 和现代页的默认值一致；
+    // 超过各来源按模型的上限，所以默认解锁（见下面的 max_context_unlocked），否则载入设置时会被钳回上限
+    openai_max_context: 500000,
+    openai_max_tokens: 65536,
     ...chatCompletionDefaultPrompts,
     ...promptManagerDefaultPromptOrders,
     send_if_empty: '',
@@ -476,7 +478,7 @@ const default_settings = {
     tool_reasoning_mode: tool_reasoning_modes.DISABLED,
     reverse_proxy: '',
     chat_completion_source: chat_completion_sources.OPENAI,
-    max_context_unlocked: false,
+    max_context_unlocked: true,
     show_external_models: false,
     proxy_password: '',
     assistant_prefill: '',

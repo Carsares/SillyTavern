@@ -4,8 +4,8 @@
     "api_server": "http://127.0.0.1:5000/api",
     "preset_settings": "RecoveredRuins",
     "user_avatar": "user-default.png",
-    "amount_gen": 350,
-    "max_context": 8192,
+    "amount_gen": 65536,
+    "max_context": 500000,
     "main_api": "koboldhorde",
     "world_info_settings": {
         "world_info": {
@@ -142,7 +142,7 @@
         "timestamp_model_icon": true,
         "mesIDDisplay_enabled": false,
         "hideChatAvatars_enabled": false,
-        "max_context_unlocked": false,
+        "max_context_unlocked": true,
         "prefer_character_prompt": true,
         "prefer_character_jailbreak": true,
         "quick_continue": false,
@@ -462,8 +462,8 @@
         "top_p_openai": 1,
         "top_k_openai": 0,
         "stream_openai": true,
-        "openai_max_context": 4095,
-        "openai_max_tokens": 300,
+        "openai_max_context": 500000,
+        "openai_max_tokens": 65536,
         "prompts": [
             {
                 "name": "Main Prompt",
@@ -627,7 +627,7 @@
         "openrouter_model": "OR_Website",
         "reverse_proxy": "",
         "chat_completion_source": "openai",
-        "max_context_unlocked": false,
+        "max_context_unlocked": true,
         "api_url_scale": "",
         "show_external_models": false,
         "proxy_password": "",

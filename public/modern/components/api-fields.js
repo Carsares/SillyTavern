@@ -1,10 +1,11 @@
 // 「模型连接」各编辑器共用的字段片段：密钥输入框，以及文本补全类共用的上下文长度 / 回复长度分区。
 // 所有字段改动即保存（actions/api-autosave.js），这里只负责渲染。
-import { describeTextCompletionContext, TEXT_COMPLETION_INPUT_RANGE } from '../actions/chat-completion-limits.js';
-
-// 设置里没有 max_context / amount_gen 时的显示值，与 default/content/settings.json 的默认设置一致
-const TEXT_COMPLETION_CONTEXT_FALLBACK = 8192;
-const TEXT_COMPLETION_RESPONSE_FALLBACK = 350;
+import {
+    DEFAULT_CONTEXT_LENGTH,
+    DEFAULT_RESPONSE_LENGTH,
+    describeTextCompletionContext,
+    TEXT_COMPLETION_INPUT_RANGE,
+} from '../actions/chat-completion-limits.js';
 
 /**
  * @param {object} ctx 路由上下文（需要 escapeHtml）
@@ -38,8 +39,9 @@ export function createApiFieldComponents(ctx) {
      */
     function renderTextLengthSection(mainApi) {
         const settings = state.settings || {};
-        const context = getNumberSetting(settings, 'max_context', TEXT_COMPLETION_CONTEXT_FALLBACK);
-        const response = getNumberSetting(settings, 'amount_gen', TEXT_COMPLETION_RESPONSE_FALLBACK);
+        // 设置里没有 max_context / amount_gen 时按默认值显示，与 default/content/settings.json 一致
+        const context = getNumberSetting(settings, 'max_context', DEFAULT_CONTEXT_LENGTH);
+        const response = getNumberSetting(settings, 'amount_gen', DEFAULT_RESPONSE_LENGTH);
         const hint = describeTextCompletionContext({ mainApi, context, response });
         const { context: contextRange, response: responseRange } = TEXT_COMPLETION_INPUT_RANGE;
         return `

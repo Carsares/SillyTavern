@@ -23,10 +23,16 @@ const MAX_2MIL = 2000 * 1000;
 export const CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX = MAX_2MIL;
 /** 旧版上下文滑块的下限（public/index.html 的 #openai_max_context min）。 */
 export const CHAT_COMPLETION_CONTEXT_MIN = 512;
-/** 旧版 openai_max_context 的默认值（openai.js 的 max_4k），设置里没有这个字段时引擎按它处理。 */
-export const CHAT_COMPLETION_CONTEXT_DEFAULT = MAX_4K;
-/** 旧版 openai_max_tokens 的默认值。 */
-export const CHAT_COMPLETION_RESPONSE_DEFAULT = 300;
+/**
+ * 默认上下文长度（输入上限）和回复长度（输出上限），与 default/content/settings.json、openai.js 的 default_settings 一致：
+ * 设置里没有对应字段时，页面和引擎都按它们处理。
+ */
+export const DEFAULT_CONTEXT_LENGTH = 500000;
+export const DEFAULT_RESPONSE_LENGTH = 65536;
+/** 聊天补全 openai_max_context 的默认值。 */
+export const CHAT_COMPLETION_CONTEXT_DEFAULT = DEFAULT_CONTEXT_LENGTH;
+/** 聊天补全 openai_max_tokens 的默认值。 */
+export const CHAT_COMPLETION_RESPONSE_DEFAULT = DEFAULT_RESPONSE_LENGTH;
 
 // 文本补全：未解锁 8192 / 2048，解锁后 512 * 1024 / 64 * 1024（power-user.js:83-86）。
 export const TEXT_COMPLETION_CONTEXT_MIN = 512;

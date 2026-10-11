@@ -1,3 +1,5 @@
+import { CHAT_COMPLETION_RESPONSE_DEFAULT } from './chat-completion-limits.js';
+
 // 聊天补全连接测试，以及按主 API 分派到各连接类型的测试。字段的保存见 actions/api-autosave.js（改动即保存）。
 // 测试用的是已保存的设置：点「测试连接」前会先等在途的保存结束（见 routes/api-events.js）。
 
@@ -29,7 +31,7 @@ export function createApiChatCompletionConnectionActions({
             source,
             model,
             temperature: getNumberSetting(savedSettings, 'temp_openai', 1),
-            maxTokens: getNumberSetting(savedSettings, 'openai_max_tokens', 300),
+            maxTokens: getNumberSetting(savedSettings, 'openai_max_tokens', CHAT_COMPLETION_RESPONSE_DEFAULT),
             topP: getNumberSetting(savedSettings, 'top_p_openai', 1),
             frequencyPenalty: getNumberSetting(savedSettings, 'freq_pen_openai', 0),
             presencePenalty: getNumberSetting(savedSettings, 'pres_pen_openai', 0),

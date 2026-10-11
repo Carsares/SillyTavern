@@ -9,7 +9,7 @@ export function buildOpenAiPresetFromSettings({
     preset.temperature = settings.temp_openai;
     preset.openai_max_tokens = settings.openai_max_tokens;
     // 应用预设时 useOpenAiPresetFields 会把预设里的这两项写回设置。保存预设不带上的话，预设里仍是旧值
-    // （默认预设是 4095），下次应用就会把用户设好的上下文长度改回去
+    // （旧的默认预设是 4095），下次应用就会把用户设好的上下文长度改回去
     if (settings.openai_max_context !== undefined) {
         preset.openai_max_context = settings.openai_max_context;
     }

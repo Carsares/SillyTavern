@@ -233,8 +233,8 @@ describe('usage summary', () => {
         const chatSettings = { main_api: 'openai', oai_settings: { openai_max_context: 32000, openai_max_tokens: 300 }, max_context: 8192, amount_gen: 350 };
         expect(readContextSettings(chatSettings)).toEqual({ mainApi: 'openai', contextLimit: 32000, responseLimit: 300 });
         expect(readContextSettings(chatSettings, 'textgenerationwebui')).toEqual({ mainApi: 'textgenerationwebui', contextLimit: 8192, responseLimit: 350 });
-        // 聊天补全设置里没有这两个字段时，引擎按旧版默认值 4095 / 300 处理
-        expect(readContextSettings({ main_api: 'openai', oai_settings: {} })).toEqual({ mainApi: 'openai', contextLimit: 4095, responseLimit: 300 });
+        // 聊天补全设置里没有这两个字段时，页面和引擎都按默认值 500,000 / 65,536 处理（openai.js default_settings）
+        expect(readContextSettings({ main_api: 'openai', oai_settings: {} })).toEqual({ mainApi: 'openai', contextLimit: 500000, responseLimit: 65536 });
         expect(readContextSettings({ main_api: 'kobold' })).toEqual({ mainApi: 'kobold', contextLimit: null, responseLimit: null });
     });
 
