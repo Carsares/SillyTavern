@@ -46,6 +46,7 @@ export function createResourceService({ store }) {
             if (previous.kind === 'connection') previous = store.getConnection(id);
             const data = input.data ? { ...input.data } : previous.data;
             if (previous.kind === 'connection' && input.data && input.data.apiKey === undefined && previous.data.apiKey !== undefined) data.apiKey = previous.data.apiKey;
+            if (previous.kind === 'connection' && input.data && input.data.headers === undefined && previous.data.headers !== undefined) data.headers = previous.data.headers;
             const value = { kind: previous.kind, name: input.name ?? previous.name, data };
             validateResource(value); checkReferences(value);
             return store.updateResource(id, { ...value, expectedRevision: input.expectedRevision });

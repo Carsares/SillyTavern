@@ -1,5 +1,6 @@
 /** New conversation protocol. This module is shared with the browser. */
 export const SCHEMA_VERSION = 1;
+export const BACKUP_MAX_BYTES = 256 * 1024 * 1024;
 export const API_BASE = '/api/conversation/v1';
 export const TURN_TYPES = Object.freeze(['send', 'regenerate', 'continue', 'impersonate', 'auxiliary', 'group']);
 export const TERMINAL_STATES = Object.freeze(['completed', 'stopped', 'failed', 'interrupted']);

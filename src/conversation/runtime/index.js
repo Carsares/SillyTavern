@@ -19,6 +19,11 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
     }
 
     function preflight(snapshot, request) {
+        let members;
+        if (request.type === 'group') {
+            invariant(groups, 'group-unavailable', 'Group scheduler is unavailable', 422);
+            members = groups.select(snapshot, request);
+        }
         const connection = connectionFor(snapshot);
         const capability = capabilities(connection);
         invariant(capability.supported !== false, 'unsupported-connection', capability.reason || 'Connection is not supported', 422);
@@ -29,7 +34,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         invariant(Number.isFinite(connection.contextWindow) && connection.contextWindow > 0, 'model-capability-required', 'Configure the model context window', 422);
         invariant(Number.isFinite(connection.maxOutputTokens) && connection.maxOutputTokens > 0, 'model-capability-required', 'Configure the maximum output tokens', 422);
         invariant(connection.maxOutputTokens <= (connection.outputLimit ?? connection.contextWindow), 'output-limit', 'Output budget exceeds the model limit', 422);
-        return { connection, capability, chosen };
+        return { connection, capability, chosen, members };
     }
 
     function phase(turn, status) {
@@ -138,7 +143,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             let result;
             if (request.type === 'group') {
                 invariant(groups && store.commitMember, 'group-unavailable', 'Group scheduler is unavailable', 422);
-                const members = groups.select(snapshot, request);
+                const members = turn.plannedMembers ?? groups.select(snapshot, request);
                 store.appendEvent(turn.conversationId, 'group.started', { members }, turn.id);
                 const usages = [];
                 const proposals = [];
@@ -230,6 +235,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             const snapshot = store.getConversation(conversationId);
             invariant(!snapshot.conversation.activeTurnId, 'conversation-busy', 'Stop the active turn before compacting', 409);
             invariant(options.expectedContentRevision === snapshot.conversation.contentRevision, 'revision-conflict', 'Conversation changed before compression', 409);
+            invariant(options.expectedMemoryRevision === snapshot.conversation.memoryRevision, 'revision-conflict', 'Memory changed before compression', 409);
             return memory.compact(snapshot, { ...options, signal: options.signal ?? new AbortController().signal });
         },
         automaticStatus(conversationId) { store.getConversation(conversationId); return { enabled: automatic.has(conversationId) }; },

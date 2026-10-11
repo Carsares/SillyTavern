@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, lstatSync, readFileSync, mkdirSync, openSync, closeSync, writeFileSync, fsyncSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { invariant, canonicalJson } from '../../../public/shared/conversation/schemas/index.js';
+import { invariant, canonicalJson, BACKUP_MAX_BYTES } from '../../../public/shared/conversation/schemas/index.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const stripCredentials = value => {
@@ -38,7 +38,9 @@ export function createMaintenance({ store, directory, retrieval, now = Date.now 
                 invariant(hash(bytes) === record.sha256, 'attachment-corrupt', 'Attachment hash mismatch', 409);
                 return { id: record.id, base64: bytes.toString('base64') };
             });
-            return { format: 'conversation-v1-backup', schemaVersion: 1, createdAt: new Date(now()).toISOString(), credentialsIncluded: includeCredentials, repository: includeCredentials ? data : stripCredentials(data), files: attachments };
+            const backup = { format: 'conversation-v1-backup', schemaVersion: 1, createdAt: new Date(now()).toISOString(), credentialsIncluded: includeCredentials, repository: includeCredentials ? data : stripCredentials(data), files: attachments };
+            invariant(Buffer.byteLength(JSON.stringify({ schemaVersion: 1, backup })) <= BACKUP_MAX_BYTES, 'backup-size-limit', 'Backup exceeds the 256 MiB restore format limit; preserve the complete stopped data directory instead', 413);
+            return backup;
         },
         async restore(backup) {
             invariant(backup?.format === 'conversation-v1-backup' && backup.schemaVersion === 1 && Array.isArray(backup.files), 'invalid-backup', 'Expected a conversation-v1 backup');

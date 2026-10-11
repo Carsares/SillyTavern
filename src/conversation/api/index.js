@@ -1,5 +1,5 @@
 import express from 'express';
-import { SCHEMA_VERSION, RESOURCE_KINDS, requireObject, requireString, requireRevision, invariant, serializeError } from '../../../public/shared/conversation/schemas/index.js';
+import { SCHEMA_VERSION, BACKUP_MAX_BYTES, RESOURCE_KINDS, requireObject, requireString, requireRevision, invariant, serializeError } from '../../../public/shared/conversation/schemas/index.js';
 import { summarizeUsage } from '../traces/usage.js';
 
 const wrap = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(next);
@@ -7,7 +7,9 @@ const publicTurn = turn => ({ ...turn, payloadHash: undefined, request: turn.req
 
 export function createRouter({ store, runtime, capabilities, maintenance, resources, attachments }) {
     const router = express.Router();
-    router.use(express.json({ limit: '20mb' }));
+    const normalBody = express.json({ limit: '20mb' });
+    const backupBody = express.json({ limit: BACKUP_MAX_BYTES });
+    router.use((req, res, next) => (req.path === '/maintenance/restore' ? backupBody : normalBody)(req, res, next));
     router.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store');
         if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
@@ -52,6 +54,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
     router.get('/conversations/:id/traces', wrap((req, res) => { store.getConversation(req.params.id); res.json(store.listTraces(req.params.id)); }));
     router.get('/conversations/:id/usage', wrap((req, res) => { store.getConversation(req.params.id); res.json(summarizeUsage(store.listTraces(req.params.id))); }));
     router.get('/traces/:id', wrap((req, res) => res.json(store.getTrace(req.params.id))));
+    router.get('/tools/:id', wrap((req, res) => res.json(store.getTool(req.params.id))));
     router.get('/capabilities', wrap((req, res) => {
         if (req.query.connectionId) {
             const resource = store.getConnection(String(req.query.connectionId));
