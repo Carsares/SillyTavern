@@ -58,7 +58,7 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         invariant(messages.length > 0, 'budget-blocked', 'No complete unfurled turns can be compressed', 409);
         const validMemories = snapshot.memories.filter(m => derivedSources(m, snapshot));
         const eligibleCount = messages.length;
-        const batch = selectBatch(snapshot, messages, { summaries: parents, memories: validMemories, sourceRefs: parentRefs, resourceRefs: resources });
+        const batch = selectBatch(snapshot, messages, { summaries: parents, memories: validMemories, compressionPolicy: policy });
         messages = batch.messages;
         if (policy) {
             const sourceBytes = Buffer.byteLength([...messages, ...parents].map(m => m.content ?? '').join(''));

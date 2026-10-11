@@ -1,5 +1,7 @@
 import { computeBudget, groupHistory, BUDGET_DEFAULTS } from '../../../public/shared/conversation/policy/index.js';
-import { invariant, sourceRef } from '../../../public/shared/conversation/schemas/index.js';
+import { invariant } from '../../../public/shared/conversation/schemas/index.js';
+
+import { estimateTokens } from '../../../public/shared/conversation/tokens/index.js';
 
 export const SUMMARY_PROMPT_RESERVE = 2048;
 /** The composition layer must select the same frozen memory connection. */
@@ -22,20 +24,33 @@ export function auxiliaryBudget(snapshot) {
     return { ...computeBudget(connection.data), connectionId: connection.id };
 }
 
-export function selectBatch(snapshot, messages, { summaries, memories, sourceRefs, resourceRefs }) {
+export function selectBatch(snapshot, messages, { summaries, memories, compressionPolicy }) {
     const budget = auxiliaryBudget(snapshot);
-    const fixed = { summaries, memories, sourceRefs, resourceRefs };
-    const measure = items => SUMMARY_PROMPT_RESERVE + Buffer.byteLength(JSON.stringify({ ...fixed, messages: items,
-        sourceRefs: [...sourceRefs, ...items.map(sourceRef)] }), 'utf8');
-    const selected = [];
-    for (const group of groupHistory(messages)) {
-        if (!group.complete) continue;
-        const candidate = [...selected, ...group.messages];
-        if (measure(candidate) > budget.workingBudget) break;
-        selected.push(...group.messages);
+    // Match composition.generateMemory's model-visible payload. Top-level
+    // sourceRefs/resourceRefs are local proposal provenance, not prompt text.
+    // Count the JSON payload inside a chat message: quotes/backslashes are
+    // escaped again by the request serializer. Never drop protected memories.
+    const measure = items => SUMMARY_PROMPT_RESERVE + estimateTokens({ mode: 'chat', tools: [], messages: [
+        { role: 'system', content: '' },
+        { role: 'user', content: JSON.stringify({ messages: items, summaries, memories, compressionPolicy }) },
+    ] });
+    const groups = groupHistory(messages).filter(group => group.complete);
+    const fixedEstimatedTokens = measure([]);
+    const minimumBatchEstimatedTokens = groups.length ? measure(groups[0].messages) : fixedEstimatedTokens;
+    invariant(groups.length && minimumBatchEstimatedTokens <= budget.workingBudget, 'budget-blocked',
+        'The earliest complete turn and summary dependencies exceed the auxiliary input budget', 409,
+        { stage: 'auxiliary-batch', reason: fixedEstimatedTokens > budget.workingBudget ? 'fixed-context-over-budget' : 'complete-turn-over-budget',
+            budget, reservedTokens: SUMMARY_PROMPT_RESERVE, fixedEstimatedTokens, minimumBatchEstimatedTokens,
+            earliestTurnMessageCount: groups[0]?.messages.length ?? 0 });
+    // Serialized size is monotone for successive whole-turn prefixes. Binary
+    // search avoids repeatedly serializing the whole history for every turn.
+    let low = 1, high = groups.length;
+    while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (measure(groups.slice(0, middle).flatMap(group => group.messages)) <= budget.workingBudget) low = middle;
+        else high = middle - 1;
     }
-    invariant(selected.length > 0, 'budget-blocked', 'The earliest complete turn and summary dependencies exceed the auxiliary input budget', 409,
-        { budget, reservedTokens: SUMMARY_PROMPT_RESERVE });
+    const selected = groups.slice(0, low).flatMap(group => group.messages);
     return { messages: selected, budget, estimatedInputTokens: measure(selected) };
 }
 
