@@ -154,6 +154,10 @@ export function createCharacterActions({
             delete state.characterEditDrafts[fromAvatar];
             state.characterEditDrafts[toAvatar] = migrate(draft);
         }
+
+        if (state.characterTranslation?.avatar === fromAvatar) {
+            state.characterTranslation.avatar = toAvatar;
+        }
     }
 
     function forgetCharacterEditState(avatar) {
@@ -161,6 +165,11 @@ export function createCharacterActions({
             state.characterEditing = emptyCharacterEditing();
         }
         delete state.characterEditDrafts[avatar];
+        // 翻译进度跟着草稿走：草稿没了（保存、放弃、删除），还在进行的翻译一起停掉并清空
+        if (state.characterTranslation?.avatar === avatar) {
+            state.characterTranslation.controller?.abort();
+            state.characterTranslation = {};
+        }
     }
 
     function beginCharacterCreate() {

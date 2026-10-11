@@ -1,4 +1,5 @@
 import { describeReloadFailure } from '../core/bridge-reload.js';
+import { clearMessageTranslation, getMessageTranslationView, getMessageUiKey, hasMessageTranslation } from '../core/translation.js';
 
 export function createChatMessageActions({
     state,
@@ -45,7 +46,8 @@ export function createChatMessageActions({
         }
 
         const message = messages[index];
-        const text = message.extra?.display_text || message.mes || '';
+        // 复制眼前显示的那份：译文还是原文取决于「原文 / 译文」开关（见 core/translation.js 的 getMessageTranslationView）
+        const text = getMessageTranslationView(message, state.chatTranslation?.viewOriginal?.[getMessageUiKey(getCurrentDraftKey(), index)]).text;
         if (!text) {
             throw new Error('消息内容为空。');
         }
@@ -159,7 +161,8 @@ export function createChatMessageActions({
         state.chatEditing = {
             key: getChatCacheKey(contextKey, state.selected.chat),
             index,
-            text: message.extra?.display_text || message.mes || '',
+            // 编辑框始终是原文（mes）：译文只用于显示，不能让保存把译文写回原文
+            text: message.mes || '',
         };
         state.chatMessageDeleteConfirm = { key: '', index: -1 };
         render();
@@ -170,15 +173,16 @@ export function createChatMessageActions({
         render();
     }
 
+    // 返回改好的消息；原文没有变（去掉首尾空白后相同）时原样返回，不动译文。原文改了，译文就和它对不上了：
+    // 与旧版翻译扩展（自动翻译关闭时编辑会删掉 display_text）一致，清掉正文译文，推理内容的译文不受影响。
     function formatEditedModernMessage(message, text) {
-        const nextMessage = {
-            ...message,
-            mes: text,
-        };
-
-        if (nextMessage.extra?.display_text !== undefined) {
-            nextMessage.extra = { ...nextMessage.extra, display_text: text };
+        if (text === String(message.mes ?? '').trim()) {
+            return { message, translationCleared: false };
         }
+
+        const nextMessage = structuredClone(message);
+        nextMessage.mes = text;
+        const translationCleared = hasMessageTranslation(nextMessage) && clearMessageTranslation(nextMessage, { reasoning: false });
 
         if (nextMessage.swipe_id !== undefined) {
             const swipeId = Math.max(0, Number(nextMessage.swipe_id) || 0);
@@ -188,18 +192,9 @@ export function createChatMessageActions({
             }
             swipes[swipeId] = text;
             nextMessage.swipes = swipes;
-
-            if (Array.isArray(nextMessage.swipe_info)) {
-                nextMessage.swipe_info = nextMessage.swipe_info.map((item, index) => {
-                    if (index !== swipeId || item?.extra?.display_text === undefined) {
-                        return item;
-                    }
-                    return { ...item, extra: { ...item.extra, display_text: text } };
-                });
-            }
         }
 
-        return nextMessage;
+        return { message: nextMessage, translationCleared };
     }
 
     async function saveModernMessageEdit() {
@@ -223,18 +218,18 @@ export function createChatMessageActions({
         }
         const originalMessage = messages[edit.index];
 
-        const nextMessage = await updateModernChat(entity, chatId, latestMessages => {
+        const { message: nextMessage, translationCleared } = await updateModernChat(entity, chatId, latestMessages => {
             const latestIndex = findQueuedMessageIndex(latestMessages, originalMessage, edit.index);
             if (latestIndex < 0) {
                 throw new Error('编辑目标已变化，请重新选择消息。');
             }
-            const message = formatEditedModernMessage(latestMessages[latestIndex], text);
-            latestMessages[latestIndex] = message;
-            return message;
+            const edited = formatEditedModernMessage(latestMessages[latestIndex], text);
+            latestMessages[latestIndex] = edited.message;
+            return edited;
         }, { groupMode });
         await refreshSelectedChatList(entity, { groupMode });
         state.chatEditing = { key: '', index: -1, text: '' };
-        showToast('消息已保存', nextMessage.name || '当前聊天');
+        showToast('消息已保存', `${nextMessage.name || '当前聊天'}${translationCleared ? '；原有译文和新原文对不上，已移除，需要时可以重新翻译' : ''}`);
         // 文件已改好：界面先刷新，不等引擎（引擎还没启动时重载要等它加载完）。
         render();
         // 编辑已落盘，通知 iframe 生成引擎重载当前聊天，避免下次生成基于陈旧快照；同步失败只提示，不当作保存失败。

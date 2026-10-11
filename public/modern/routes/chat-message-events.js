@@ -18,7 +18,23 @@ export function createChatMessageEvents(ctx) {
         beginModernMessageEdit,
         cancelModernMessageEdit,
         saveModernMessageEdit,
+        translateModernMessage,
+        toggleModernMessageTranslationView,
+        clearModernMessageTranslation,
+        cancelModernMessageTranslationConfirm,
+        dismissModernMessageTranslationError,
     } = ctx;
+
+    // 翻译（B3）：失败说明留在消息下面，动作抛出的前置错误（生成中、位置无效）用提示告知
+    async function runTranslationAction(title, action) {
+        try {
+            await action();
+        } catch (error) {
+            state.errors.push({ key: 'translate-message', message: error.message });
+            showToast(title, error.message);
+            render();
+        }
+    }
 
     async function handleChatMessageClick(event) {
         if (event.target.closest('[data-send-message]')) {
@@ -102,6 +118,41 @@ export function createChatMessageEvents(ctx) {
                 showToast('载入备用开场白失败', error.message);
                 render();
             }
+            return true;
+        }
+
+        const confirmTranslationButton = event.target.closest('[data-confirm-message-translation]');
+        if (confirmTranslationButton) {
+            await runTranslationAction('翻译失败', () => translateModernMessage(confirmTranslationButton.dataset.confirmMessageTranslation, { confirmed: true }));
+            return true;
+        }
+
+        if (event.target.closest('[data-cancel-message-translation]')) {
+            cancelModernMessageTranslationConfirm();
+            return true;
+        }
+
+        const translateButton = event.target.closest('[data-translate-message]');
+        if (translateButton) {
+            await runTranslationAction('翻译失败', () => translateModernMessage(translateButton.dataset.translateMessage));
+            return true;
+        }
+
+        const toggleTranslationButton = event.target.closest('[data-toggle-message-translation]');
+        if (toggleTranslationButton) {
+            await runTranslationAction('切换原文和译文失败', async () => toggleModernMessageTranslationView(toggleTranslationButton.dataset.toggleMessageTranslation));
+            return true;
+        }
+
+        const clearTranslationButton = event.target.closest('[data-clear-message-translation]');
+        if (clearTranslationButton) {
+            await runTranslationAction('清除译文失败', () => clearModernMessageTranslation(clearTranslationButton.dataset.clearMessageTranslation));
+            return true;
+        }
+
+        const dismissTranslationErrorButton = event.target.closest('[data-dismiss-message-translation-error]');
+        if (dismissTranslationErrorButton) {
+            await runTranslationAction('关闭提示失败', async () => dismissModernMessageTranslationError(dismissTranslationErrorButton.dataset.dismissMessageTranslationError));
             return true;
         }
 

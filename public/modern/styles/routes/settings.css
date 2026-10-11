@@ -307,3 +307,114 @@
 .chat-summary-settings textarea {
     min-height: 0;
 }
+
+/* ===== 翻译（B3）：设置页「聊天工具」标签里的翻译分区（components/settings-tool-translate.js） ===== */
+.translate-privacy {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+    font-size: 13px;
+}
+
+.translate-privacy > i {
+    margin-top: 3px;
+    color: var(--warning);
+}
+
+.translate-privacy p {
+    margin: 4px 0 0;
+}
+
+.translate-default-hint {
+    margin: 0;
+    color: var(--warning);
+}
+
+.translate-secret-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+}
+
+.translate-secret-row {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+}
+
+.translate-secret-row[hidden] {
+    display: none;
+}
+
+.translate-secret-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.translate-secret-state.is-saved {
+    color: var(--success);
+}
+
+.translate-readonly {
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.translate-readonly .panel-subtitle {
+    margin: 2px 0 0;
+}
+
+.translate-auto-mode {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.translate-auto-mode .panel-subtitle {
+    margin: 4px 0 0;
+}
+
+.translate-auto-mode.is-active {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+
+.translate-auto-mode.is-active strong {
+    color: var(--warning);
+}
+
+.translate-auto-mode > div {
+    flex: 1 1 320px;
+    min-width: 0;
+}
+
+.translate-test-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.translate-test-result.is-ok {
+    color: var(--success);
+}
+
+.translate-test-result.is-error {
+    color: var(--danger);
+}

@@ -54,8 +54,9 @@ export function createChatMessageContentComponents({
     `;
     }
 
-    function renderMessageReasoning(message) {
-        const reasoning = getMessageReasoning(message);
+    // reasoningText：界面现在该展示的推理内容（可能是译文），省略时用消息自带的
+    function renderMessageReasoning(message, reasoningText = undefined) {
+        const reasoning = reasoningText ?? getMessageReasoning(message);
         if (!reasoning) {
             return '';
         }

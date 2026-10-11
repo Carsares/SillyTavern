@@ -1,5 +1,14 @@
 import { MODERN_MESSAGE_SOURCE } from '../actions/chat-context-selectors.js';
 import { canOfferAlternateGreetings, canSwitchGreetingLocally, clampSwipeId, countAlternateGreetings } from '../actions/chat-greetings.js';
+import { getLatestChatSummary } from '../core/chat-summary.js';
+import {
+    canTranslateMessage,
+    getLanguageShortLabel,
+    getMessageTranslationView,
+    getMessageUiKey,
+    getTranslateProvider,
+    resolveTranslateSettings,
+} from '../core/translation.js';
 import { createChatMessageContentComponents } from './chat-message-content.js';
 
 // extra.api values that mark where a message came from rather than which API produced it: greetings the
@@ -27,6 +36,8 @@ export function createChatMessageComponents({
     getSelectedChatEntity,
     getSelectedChatMessages,
     isGroupChatMode,
+    // 翻译（B3）：当前翻译服务的隐私提示，由 actions/chat-translation.js 提供
+    getChatTranslationNotice = () => ({ text: '', providerLabel: '', targetLabel: '' }),
 }) {
     const {
         renderEmptyReplyHint,
@@ -45,6 +56,8 @@ export function createChatMessageComponents({
         const limit = getCurrentMessageLimit();
         const startIndex = Math.max(messages.length - limit, 0);
         const hiddenCount = startIndex;
+        // 持有最新聊天摘要的那条消息（A6）：整个列表只算一次，传给每条消息渲染
+        const summaryIndex = getLatestChatSummary(messages).index;
 
         // data-chat-key / data-first-index let the chat route tell a chat switch or a "load earlier"
         // prepend apart from an in-place update when it restores the scroll position after render.
@@ -57,7 +70,7 @@ export function createChatMessageComponents({
                         加载更早消息 ${formatNumber(hiddenCount)}
                     </button>
                 ` : ''}
-                ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index)).join('')}
+                ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index, summaryIndex)).join('')}
                 ${renderStreamingBubble()}
             </div>
             <button class="secondary-button compact-button message-jump-latest" type="button" data-scroll-to-latest hidden>
@@ -85,9 +98,12 @@ export function createChatMessageComponents({
     `;
     }
 
-    function renderMessage(message, messageIndex) {
+    function renderMessage(message, messageIndex, summaryIndex = -1) {
         const name = message.name || (message.is_user ? 'You' : 'Character');
-        const rawText = message.extra?.display_text || message.mes || '';
+        const translationKey = getMessageUiKey(getCurrentDraftKey(), messageIndex);
+        // 译文（extra.display_text）只用于显示；「原文 / 译文」开关只在界面状态里，过期的译文默认显示原文
+        const translation = getMessageTranslationView(message, state.chatTranslation?.viewOriginal?.[translationKey]);
+        const rawText = translation.text;
         const text = rawText || '[空消息]';
         const model = getMessageSourceLabel(message.extra);
         const isEditing = state.chatEditing.key === getCurrentDraftKey() && state.chatEditing.index === messageIndex;
@@ -111,6 +127,7 @@ export function createChatMessageComponents({
         <article class="message ${message.is_user ? 'user' : ''}">
             <header class="message-meta">
                 <strong>${escapeHtml(name)}</strong>
+                ${messageIndex === summaryIndex ? '<span class="badge message-summary-marker" title="这条消息上挂着聊天摘要">摘要</span>' : ''}
                 <span class="message-actions">
                     <span>${escapeHtml(formatDate(message.send_date))}</span>
                     ${canSwipe ? `
@@ -121,6 +138,7 @@ export function createChatMessageComponents({
                             <i class="fa-solid fa-chevron-right"></i>
                         </button>
                     ` : ''}
+                    ${renderTranslateButton(message, messageIndex, translation, translationKey)}
                     <button class="icon-button mini" type="button" data-copy-message="${messageIndex}" title="复制消息">
                         <i class="fa-solid fa-copy"></i>
                     </button>
@@ -131,6 +149,7 @@ export function createChatMessageComponents({
             </header>
             ${isEditing ? `
                 <div class="message-edit">
+                    ${translation.hasTranslation ? '<p class="panel-subtitle message-edit-translation-hint" data-edit-translation-hint><i class="fa-solid fa-language"></i> 这里编辑的是原文。保存后这条消息的译文会被清除，需要时可以重新翻译。</p>' : ''}
                     <textarea data-edit-message-input="${messageIndex}">${escapeHtml(state.chatEditing.text)}</textarea>
                     <div class="message-edit-actions">
                         <button class="secondary-button" type="button" data-cancel-edit-message>
@@ -145,12 +164,89 @@ export function createChatMessageComponents({
                 </div>
             ` : renderMessageBody(text, messageIndex, isOpeningMessage, { counter: greetingCounter, alternatesTarget: loadAlternatesTarget })}
             ${isEditing ? '' : renderEmptyReplyHint(message, rawText)}
-            ${renderMessageReasoning(message)}
+            ${isEditing ? '' : renderMessageTranslation(message, messageIndex, translation, translationKey)}
+            ${renderMessageReasoning(message, translation.reasoning)}
             ${renderMessageAttachments(message)}
             ${renderMessageFoot(message, model, { hideSwipeCount: !!greetingCounter && !isEditing })}
             ${isDeleting ? renderMessageManagePanel(message, messageIndex) : ''}
         </article>
     `;
+    }
+
+    // 动作栏里的「翻译」按钮：只给 AI 回复；生成中、正在翻译、没有内容时不可点
+    function renderTranslateButton(message, messageIndex, translation, translationKey) {
+        if (!canTranslateMessage(message)) {
+            return '';
+        }
+
+        const settings = resolveTranslateSettings(state.settings);
+        const providerLabel = getTranslateProvider(settings.provider)?.label || settings.provider;
+        const busy = Boolean(state.chatTranslation?.busy?.[translationKey]);
+        const empty = !String(message.mes ?? '').trim();
+        const disabled = busy || empty || state.engine.generating;
+        const title = busy
+            ? '正在翻译…'
+            : state.engine.generating
+                ? '生成中不能翻译'
+                : `${translation.hasTranslation ? '重新翻译' : '翻译'}为${getLanguageShortLabel(settings.target_language)}（${providerLabel}）`;
+        return `
+                    <button class="icon-button mini" type="button" data-translate-message="${messageIndex}" title="${escapeHtml(title)}" aria-label="翻译消息" ${disabled ? 'disabled' : ''} ${busy ? 'aria-busy="true"' : ''}>
+                        <i class="fa-solid ${busy ? 'fa-circle-notch fa-spin' : 'fa-language'}"></i>
+                    </button>`;
+    }
+
+    // 消息下面的翻译状态条：隐私确认、翻译中、失败、有译文时的「原文 / 译文」开关；都没有时不占位置
+    function renderMessageTranslation(message, messageIndex, translation, translationKey) {
+        if (!canTranslateMessage(message)) {
+            return '';
+        }
+
+        const ui = state.chatTranslation || {};
+        if (ui.busy?.[translationKey]) {
+            return `
+            <div class="message-translation" role="status" data-message-translation="busy">
+                <i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i>
+                <span>正在翻译…</span>
+            </div>`;
+        }
+
+        if (ui.confirm === translationKey) {
+            const notice = getChatTranslationNotice();
+            return `
+            <div class="message-translation is-confirm" role="note" data-message-translation="confirm">
+                <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                <span>${escapeHtml(notice.text)}译文只用于显示，不会改动原文。要翻译成${escapeHtml(notice.targetLabel)}吗？</span>
+                <button class="secondary-button compact-button" type="button" data-cancel-message-translation>取消</button>
+                <button class="primary-button compact-button" type="button" data-confirm-message-translation="${messageIndex}">同意并翻译</button>
+            </div>`;
+        }
+
+        const error = ui.errors?.[translationKey];
+        if (error) {
+            return `
+            <div class="message-translation is-error" role="alert" data-message-translation="error">
+                <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                <span>${escapeHtml(error)}</span>
+                <button class="secondary-button compact-button" type="button" data-translate-message="${messageIndex}" ${state.engine.generating ? 'disabled' : ''}>重试</button>
+                <button class="secondary-button compact-button" type="button" data-dismiss-message-translation-error="${messageIndex}">关闭</button>
+            </div>`;
+        }
+
+        if (!translation.controls) {
+            return '';
+        }
+
+        const showingTranslation = translation.showing === 'translation';
+        const language = translation.lang ? getLanguageShortLabel(translation.lang) : '';
+        const generating = state.engine.generating;
+        return `
+            <div class="message-translation ${translation.stale ? 'is-stale' : ''}" data-message-translation="${translation.stale ? 'stale' : 'ready'}" data-translation-showing="${translation.showing}">
+                <span class="message-translation-badge">${showingTranslation ? `译文${language ? ` · ${escapeHtml(language)}` : ''}` : '原文'}</span>
+                ${translation.stale ? '<span class="message-translation-stale" data-translation-stale><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> 译文已过期：翻译之后原文变过</span>' : ''}
+                <button class="secondary-button compact-button" type="button" data-toggle-message-translation="${messageIndex}">${showingTranslation ? '显示原文' : '显示译文'}</button>
+                <button class="secondary-button compact-button" type="button" data-translate-message="${messageIndex}" ${generating ? 'disabled' : ''}>重新翻译</button>
+                <button class="secondary-button compact-button" type="button" data-clear-message-translation="${messageIndex}" ${generating ? 'disabled' : ''}>清除译文</button>
+            </div>`;
     }
 
     function renderMessageBody(text, messageIndex, isOpeningMessage, { counter = '', alternatesTarget = null } = {}) {

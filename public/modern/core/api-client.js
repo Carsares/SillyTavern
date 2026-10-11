@@ -69,8 +69,14 @@ export function createApiClient({ onTokenChange = /** @type {(token: string) => 
             throw new Error('当前会话没有访问权限，请先登录。');
         }
         if (!response.ok) {
-            const error = /** @type {Error & { status?: number }} */ (new Error(`${path} failed: ${response.status}`));
+            const error = /** @type {Error & { status?: number, body?: string }} */ (new Error(`${path} failed: ${response.status}`));
             error.status = response.status;
+            // The short body of a failed response (for example the JSON of /api/translate/*) lets callers say why it failed.
+            try {
+                error.body = (await response.text()).slice(0, 2000);
+            } catch {
+                error.body = '';
+            }
             throw error;
         }
         return response;

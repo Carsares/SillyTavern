@@ -1,10 +1,14 @@
 import { getCharacterWorldStatus } from '../actions/character-data.js';
+import { createCharacterTranslationPanel } from './character-translation-panel.js';
 
-export function createCharacterFormFieldComponents({
-    state,
-    escapeHtml,
-    uniqueValues,
-}) {
+export function createCharacterFormFieldComponents(ctx) {
+    const {
+        state,
+        escapeHtml,
+        uniqueValues,
+    } = ctx;
+    const { renderCharacterTranslationPanel } = createCharacterTranslationPanel(ctx);
+
     function renderCharacterFormContent(form, scope, { dirty = false, avatar = '' } = {}) {
         const scopeAttribute = escapeHtml(scope);
         const errors = getCharacterFormErrors(scope);
@@ -23,6 +27,7 @@ export function createCharacterFormFieldComponents({
                 ${renderCharacterCheckbox('favorite', '收藏角色', form.favorite, scopeAttribute)}
             </div>
             ${scope === 'create' ? renderCharacterCreateAvatarInput(errors) : ''}
+            ${scope === 'edit' ? renderCharacterTranslationPanel() : ''}
             ${renderCharacterTextarea('description', '描述', form.description, scopeAttribute)}
             ${renderCharacterTextarea('personality', '性格', form.personality, scopeAttribute)}
             ${renderCharacterTextarea('scenario', '场景', form.scenario, scopeAttribute)}

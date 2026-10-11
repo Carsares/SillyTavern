@@ -20,6 +20,8 @@ import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
 import { createChatSummaryActions } from '../actions/chat-summary.js';
 import { createConnectionProfileActions } from '../actions/connection-profiles.js';
 import { createMaintenanceActions } from '../actions/maintenance.js';
+import { createChatTranslationActions } from '../actions/chat-translation.js';
+import { createCharacterTranslationActions } from '../actions/character-translation.js';
 
 /**
  * @typedef {object} FeatureSlotDeps
@@ -48,6 +50,8 @@ export function createFeatureSlotActions(deps) {
         authorsNote: createChatAuthorsNoteActions(deps), // 作者注释（A5）
         chatSummary: createChatSummaryActions(deps), // 聊天摘要和摘要设置（A6）
         connectionProfiles: createConnectionProfileActions(deps), // 连接档案与聊天内切换模型（B1）
+        chatTranslation: createChatTranslationActions(deps), // 聊天消息翻译和翻译设置（B3）
+        characterTranslation: createCharacterTranslationActions(deps), // 角色卡翻译（B3）
         // 备用开场白（A4）：面板外的消息区按钮「载入备用开场白」，逻辑在 chat-generation.js 的 loadAlternateGreetings
         greetings: { loadAlternateGreetings: (...args) => deps.actionRegistry.chatGenerationActions.loadAlternateGreetings(...args) },
     };

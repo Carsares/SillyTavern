@@ -28,6 +28,11 @@ export function createCharactersEvents(ctx) {
         startCharacterEmbeddedWorldImport,
         resolveCharacterEmbeddedWorldConflict,
         dismissCharacterEmbeddedWorldPrompt,
+        translateCharacterDraft,
+        translateCharacterCopy,
+        stopCharacterTranslation,
+        cancelCharacterTranslationConfirm,
+        restoreTranslatedCharacterField,
     } = ctx;
 
     async function handleCharactersClick(event) {
@@ -78,6 +83,41 @@ export function createCharactersEvents(ctx) {
 
         if (event.target.closest('[data-dismiss-character-embedded-world-prompt]')) {
             dismissCharacterEmbeddedWorldPrompt();
+            return;
+        }
+
+        // 角色卡翻译（B3）：翻译结果只进未保存的草稿；失败说明留在翻译面板里，同时弹出提示
+        const confirmTranslationButton = event.target.closest('[data-confirm-character-translation]');
+        if (confirmTranslationButton) {
+            await runCharacterTranslation(() => confirmTranslationButton.dataset.confirmCharacterTranslation === 'copy'
+                ? translateCharacterCopy({ confirmed: true })
+                : translateCharacterDraft({ confirmed: true }));
+            return;
+        }
+
+        if (event.target.closest('[data-cancel-character-translation-confirm]')) {
+            cancelCharacterTranslationConfirm();
+            return;
+        }
+
+        if (event.target.closest('[data-translate-character-draft]')) {
+            await runCharacterTranslation(() => translateCharacterDraft());
+            return;
+        }
+
+        if (event.target.closest('[data-translate-character-copy]')) {
+            await runCharacterTranslation(() => translateCharacterCopy());
+            return;
+        }
+
+        if (event.target.closest('[data-stop-character-translation]')) {
+            stopCharacterTranslation();
+            return;
+        }
+
+        const restoreFieldButton = event.target.closest('[data-restore-character-field]');
+        if (restoreFieldButton) {
+            restoreTranslatedCharacterField(restoreFieldButton.dataset.restoreCharacterField);
             return;
         }
 
@@ -195,6 +235,16 @@ export function createCharactersEvents(ctx) {
         }
 
         return false;
+    }
+
+    async function runCharacterTranslation(action) {
+        try {
+            await action();
+        } catch (error) {
+            state.errors.push({ key: 'character-translation', message: error.message });
+            showToast('角色卡翻译失败', error.message);
+            render();
+        }
     }
 
     // 「读取完整卡」：按钮进入读取中状态，完成后用提示告诉用户补到了多少字段。

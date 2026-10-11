@@ -1641,6 +1641,72 @@
     font-size: 12px;
 }
 
+/* ===== 翻译（B3）：消息下面的翻译状态条（components/chat-message.js 的 renderMessageTranslation） ===== */
+.message-translation {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin-top: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 86%, var(--surface));
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.message-translation > span:not(.message-translation-badge) {
+    flex: 1 1 200px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.message-translation-badge {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-weight: 700;
+}
+
+.message-translation.is-stale {
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.message-translation.is-stale .message-translation-badge,
+.message-translation-stale {
+    color: var(--warning);
+}
+
+.message-translation.is-stale .message-translation-badge {
+    background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+}
+
+.message-translation.is-confirm {
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+    color: var(--text);
+}
+
+.message-translation.is-error {
+    border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
+    background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+    color: var(--text);
+}
+
+.message-translation.is-error > i {
+    color: var(--danger);
+}
+
+.message-translation .compact-button {
+    min-height: 26px;
+    padding: 2px 10px;
+}
+
+.message-edit-translation-hint {
+    margin: 0 0 6px;
+}
+
 /* 窄屏时 .composer 是 static（responsive.css），弹层改为相对标签定位 */
 @media (max-width: 860px) {
     .connection-switcher {
@@ -1659,4 +1725,9 @@
     padding: 1px 7px;
     font-size: 11px;
     font-weight: 600;
+}
+
+/* 摘要标记在消息头里紧跟名字（标记本身由 A6 定义，位置由 components/chat-message.js 输出） */
+.message-meta .message-summary-marker {
+    margin-right: auto;
 }
