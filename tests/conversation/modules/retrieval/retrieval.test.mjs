@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRetrieval, EMBED_BATCH_SIZE } from '../../../../src/conversation/retrieval/index.js';
+import { createRetrieval, EMBED_BATCH_BYTES, EMBED_BATCH_SIZE } from '../../../../src/conversation/retrieval/index.js';
 import { fakeStore } from '../memory/fake-store.mjs';
 const vectors = texts => ({ model: 'fake', version: 'v1', dimensions: 2, vectors: texts.map(() => [1, 0]) });
 test('keyword works without embedding; stale snapshot is filtered against current state', async () => {
@@ -224,4 +224,24 @@ test('superseded or aborted indexing stops between batches and keeps finished ba
         assert.equal(state.status, 'ready'); assert.equal(state.count, 2100);
         assert.equal(embedded, 2100);
     }
+});
+
+test('long entries split batches by UTF-8 bytes and an oversized entry is sent alone', async () => {
+    const store = fakeStore({ completed: 40 }); const batches = [];
+    // 16000 CJK characters (48000 bytes) is the longest summary; mixed with short messages and one entry above the byte cap.
+    store.snapshot.messages.forEach((message, i) => { message.content = i % 4 === 0 ? `${i}${'龙'.repeat(16000)}` : `dragon event ${i}`; });
+    store.snapshot.messages[7].content = `oversized ${'x'.repeat(EMBED_BATCH_BYTES + 10)}`;
+    const retrieval = createRetrieval({ store, embed: async ({ texts, purpose }) => {
+        if (purpose === 'index') batches.push(texts.map(text => Buffer.byteLength(text)));
+        return vectors(texts);
+    } });
+    const state = await retrieval.index('c');
+    assert.equal(state.status, 'ready'); assert.equal(state.count, 40);
+    assert.equal(batches.flat().length, 40);
+    for (const sizes of batches) {
+        const total = sizes.reduce((sum, size) => sum + size, 0);
+        assert.ok(sizes.length === 1 || total <= EMBED_BATCH_BYTES, `batch of ${sizes.length} inputs has ${total} bytes`);
+    }
+    assert.ok(batches.some(sizes => sizes.length === 1 && sizes[0] > EMBED_BATCH_BYTES));
+    assert.ok(batches.length > 1);
 });

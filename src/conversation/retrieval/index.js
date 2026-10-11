@@ -4,6 +4,19 @@ import { searchableEntries } from '../memory/sources.js';
 
 // Inputs per index request: below the embedding adapter's 2048 cap and common provider batch limits (Cohere 96, Google 100).
 export const EMBED_BATCH_SIZE = 96;
+// UTF-8 bytes per index request. A token spans at least one byte, so a batch stays under per-request token caps (OpenAI 300k).
+export const EMBED_BATCH_BYTES = 256 * 1024;
+
+/** Takes the next batch off pending: at most EMBED_BATCH_SIZE inputs and EMBED_BATCH_BYTES, but always at least one input. */
+function nextBatch(pending, texts) {
+    let size = 0, bytes = 0;
+    while (size < pending.length && size < EMBED_BATCH_SIZE) {
+        bytes += Buffer.byteLength(texts.get(pending[size]));
+        if (size && bytes > EMBED_BATCH_BYTES) break;
+        size++;
+    }
+    return pending.splice(0, size);
+}
 
 function checkedEmbedding(value, count) {
     invariant(value && typeof value.model === 'string' && value.model && typeof value.version === 'string' && value.version,
@@ -79,7 +92,7 @@ export function createRetrieval({ store, embed, onStatus }) {
             const found = new Map([...texts.keys()].filter(key => cached?.vectors.has(key)).map(key => [key, cached.vectors.get(key)]));
             let pending = [...texts.keys()].filter(key => !found.has(key)), confirmed = false;
             while (pending.length) {
-                const batch = pending.splice(0, EMBED_BATCH_SIZE);
+                const batch = nextBatch(pending, texts);
                 const result = checkedEmbedding(await embed({ texts: batch.map(key => texts.get(key)), purpose: 'index', signal }), batch.length);
                 if (!identity || !sameEmbedding(identity, result)) {
                     // Reused vectors from another model, version or dimension count are discarded; an index never mixes them.

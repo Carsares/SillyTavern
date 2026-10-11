@@ -10,6 +10,12 @@ Index and query model/version/dimensions must match. Concurrent builds use a
 monotonic generation to prevent an older build overwriting a newer one. Indexes
 are in memory and reconstructible; no filesystem paths or old data are read.
 
+`index` embeds in batches of at most `EMBED_BATCH_SIZE` (96) inputs and
+`EMBED_BATCH_BYTES` (256 KiB of UTF-8) each; a single larger input is sent
+alone. Vectors are reused by content fingerprint while model, version and
+dimensions stay the same, so a reindex embeds only new or edited entries;
+`rebuild` and a query embedding mismatch discard them.
+
 Keyword search uses current selected history, valid summaries and memories,
 including folded history. Semantic results are intersected with the requested
 snapshot and then a fresh store snapshot after query embedding finishes. Content,
