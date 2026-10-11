@@ -6,6 +6,7 @@ import { createChatAgentComponents } from '../../../../public/modern/components/
 import { createChatGenerationActions } from '../../../../public/modern/actions/chat-generation.js';
 import { createChatGenerationRouteContext } from '../../../../public/modern/shell/route-context-chat.js';
 import { createChatMessageEvents } from '../../../../public/modern/routes/chat-message-events.js';
+import { describeAgentError } from '../../../../public/modern/core/chat-agent-errors.js';
 
 function harness(overrides = {}) {
     const state = { selected: { character: 'hero.png', chat: 'ordinary', persona: 'editor-only', worldbook: 'editor-only' },
@@ -131,6 +132,17 @@ test('known rejection exposes unsupported fields and retains both drafts without
     await h.actions.sendChatAgentMessage();
     assert.match(h.session().error, /preset.prompts/);
     assert.equal(h.session().draft, 'Agent draft'); assert.equal(h.state.engine.generating, false);
+});
+
+test('unsupported settings are explained in Chinese and keep the field name', () => {
+    const unsupported = fields => describeAgentError({ code: 'workspace-unsupported', message: 'Selected workspace settings cannot be represented by this Agent adapter', details: { fields } });
+    assert.equal(unsupported(['main_api']), 'Agent 暂不支持当前设置：当前 API 类型不是对话补全（Chat Completion）。Agent 只支持对话补全类连接，请在 API 页面切换后重试（main_api）');
+    assert.match(unsupported(['worldbook.entry.sticky']), /世界书条目启用了 Agent 暂不支持的功能.*（worldbook\.entry\.sticky）$/);
+    assert.match(unsupported(['preset.prompt.position', 'character.description.macros']), /提示词条目.*；文本里有 Agent 不支持的宏/);
+    assert.match(unsupported(['made.up.field']), /该设置无法转换（made\.up\.field）$/);
+    assert.equal(describeAgentError({ code: 'workspace-resource-unavailable', message: 'Selected workspace resource is missing' }), '所选角色、人设、预设或世界书文件缺失、无法读取或格式无效');
+    // Codes outside the workspace projection keep the server text.
+    assert.equal(describeAgentError({ code: 'conflict', message: 'Revision changed' }), 'Revision changed');
 });
 
 test('stop during resource projection prevents any model turn submission', async () => {

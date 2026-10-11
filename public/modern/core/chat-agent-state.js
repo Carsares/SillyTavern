@@ -1,3 +1,5 @@
+import { describeAgentError } from './chat-agent-errors.js';
+
 // Page-local presentation only. Conversations and turns remain owned by the Agent backend.
 const views = new WeakMap();
 
@@ -12,8 +14,8 @@ export function getChatAgentSession(state, contextKey) {
 
 export function agentErrorMessage(error) {
     try {
-        const body = JSON.parse(error.body);
-        if (body.error?.message) return body.error.message + (Array.isArray(body.error.details?.fields) ? `（${body.error.details.fields.join('、')}）` : '');
+        const message = describeAgentError(JSON.parse(error.body).error);
+        if (message) return message;
     } catch { /* Ordinary client errors have no JSON body. */ }
     return error.message || 'Agent 请求失败';
 }

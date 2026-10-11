@@ -246,9 +246,10 @@ export async function projectWorkspace(directories, body) {
         ...(person ? [{ kind: 'persona', name: person.name, data: person.data }] : []), ...books,
     ];
     check(body.title === undefined || typeof body.title === 'string' && body.title.length > 0 && body.title.length <= 256, 'title');
+    // Shown as-is by the Modern chat page.
     return { resources, title: body.title ?? `Agent · ${character.name}`, notices: [
-        'Created a new Agent conversation with empty history. No original chat, greeting or settings were modified or imported.',
-        'Selected resource text and examples use Agent context blocks, token budget and literal worldbook matching; original prompt layout and plugins are not executed.',
-        ...(body.executor && body.executor !== 'pi' ? ['The selected SDK uses its native protocol and default sampling; no executor fallback is used.'] : []),
+        '已新建一个历史为空的 Agent 会话，没有修改或导入任何原聊天、开场白和设置。',
+        '所选资源的文本和示例按 Agent 的上下文块、令牌预算和普通关键词世界书匹配使用，不执行原提示词排版和插件。',
+        ...(body.executor && body.executor !== 'pi' ? ['所选执行器使用自身的原生协议和默认采样参数，失败时不会自动换用其他执行器。'] : []),
     ] };
 }
