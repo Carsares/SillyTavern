@@ -1,8 +1,29 @@
 # Conversation v1 implementation and evidence
 
-All work remains on master in the original workspace. Initial clean baseline: `6555a215a`. No branches, worktrees, pushes or deployments were created. New functionality does not migrate or read legacy user data.
+All work remains on master in the original workspace. Initial clean baseline: `6555a215a`. No branches, worktrees, pushes or deployments were created. Agent storage is separate from original chats; the full application retains its normal configuration and data processing.
 
-## Current stage
+## Current correction: complete Modern app plus additive Agent
+
+The default deployment is the full original application, not the standalone
+Conversation server. `server.js` uses the original configuration parser and server;
+Modern's normal pages remain available and `agent` is an additional navigation
+route. `/api/conversation/v1` inherits original authentication/CSRF and selects
+storage from the authenticated user's directory. `conversation-server.js` remains
+an optional isolated entry.
+
+Packaging follows the code's requirements without forking upstream deployment:
+`Dockerfile`, `docker/docker-entrypoint.sh`, `docker/docker-compose.yml`,
+`start.sh` and `Start.bat` are the upstream versions; `COPY . ./` already ships
+the Agent. `.dockerignore` only adds exclusions for gitignored local files.
+`package.json` restores the original scripts and `bin` (`src/server-global.js`).
+CI (`.github/workflows/conversation.yml`) also triggers on the original files that
+host or mount Agent, and `test:conversation:unit` includes the Modern Agent route test.
+
+Validation of this correction is recorded in VALIDATION.md, including a passing
+container validation. Windows execution is not yet established. The historical standalone results
+below do not establish acceptance of the corrected deployment.
+
+## Historical standalone integration stage
 
 Feature implementation and module contract review reached the final integration stage after focused unit checks. Local HTTP/database and browser validation passed the inspected scenarios; installed SDK integration and three bounded real connection checks passed. Container builds failed during the base-image fetch. Real-model quality/cost/latency evaluation has not run. See VALIDATION.md for check-specific evidence. A module commit is not acceptance of the complete product. The user's testing order is authoritative: focused unit tests during development, full integration after all feature changes are ready.
 
@@ -24,7 +45,7 @@ Feature implementation and module contract review reached the final integration 
 | Measured usage aggregation | 7fa61e9d9 | 3 usage tests passed; 15 related runtime/resources tests passed before final focused rerun |
 | Scheduling preflight, manual compaction revisions and bounded backup | d17f187ce | Focused runtime/resources checks passed |
 | Unified SDK gateway and Claude/Codex adapters | 0cce08840 | 37 SDK unit tests passed; installed SDK execution still pending |
-| Standalone application composition and default server entry | 46bdb5e9e | 19 composition unit tests passed |
+| Standalone composition and then-default entry (now optional) | 46bdb5e9e | 19 composition unit tests passed |
 | New installation and container entry | 93bfbe821 | Script syntax checked; container build unrun |
 | UI contract, usage and tool/candidate controls | 160e2113b | 46 client unit tests passed |
 | Versioned source history and persisted output attachments | 57dee8ea2 | 109 focused runtime/store/client unit tests passed |
@@ -43,7 +64,7 @@ Numbers overlap between reruns and must not be added into a claimed distinct-tes
 
 ## Remaining acceptance work
 
-- Local scope corrections and phase commits are complete. See VALIDATION.md for
+- Historical standalone scope corrections and phase commits were recorded; the restored full-app integration is pending. See VALIDATION.md for
   664 passing unit tests, 58 passing integration tests, inspected browser scenarios
   and three real connection checks. The last presentation-only change passed
   all 68 client tests and affected lint checks.

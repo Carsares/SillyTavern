@@ -2,9 +2,29 @@
 
 ## Data and startup
 
-Use Node.js >=22.19 and install the locked dependencies with `npm ci`. `npm start` starts the new server on loopback port 8000. `--dataRoot /absolute/path` selects a root containing `default-user/conversation-v1`. Do not point it at an old database or attempt manual schema conversion. Two processes must not open the same new workspace.
+Use Node.js >=22.19 and install locked dependencies with `npm ci`. `npm start`, `start.sh`, and `Start.bat` start the complete Modern application through `server.js`; `/` defaults to `/modern/`. Existing pages, resources, extensions, generation paths and data remain in service. Open the additional Agent navigation item for the new conversations.
 
-Connection keys belong in the resource editor. Public resource reads, snapshots and traces omit credentials. The data directory and backups with credentials are sensitive. For remote access, set `CONVERSATION_PASSWORD`, choose `--host`, specify `--allowed-host` for the browser hostname and terminate HTTPS at a trusted reverse proxy. Forward the original Host header. The server does not trust forwarded authentication headers.
+The original `CommandLineParser` owns `config.yaml`, `--configPath`, `--dataRoot`, port/listen options and security configuration. Agent APIs inherit existing session authentication and CSRF protection. Configure remote access through the original authentication/Host-whitelist settings and a trusted HTTPS proxy. The main application does not use `CONVERSATION_PASSWORD` as a substitute for its authentication. Scripts do not reset mounted configuration or inject credentials.
+
+Agent storage is `<authenticated user's data directory>/conversation-v1/`. Credentials and backups remain sensitive. Agent does not import or rewrite original chats; the full application retains its own normal configuration/data initialization. Do not allow multiple processes to open the same Agent directory. Agent backup/restore covers Agent data only, not the entire application's existing chats, settings or extensions.
+
+### Optional standalone service
+
+`npm run start:agent -- --port 8001 --dataRoot /absolute/isolated-data` runs `conversation-server.js` separately. Its default UI is `/modern/conversation/`, and its storage is `default-user/conversation-v1` below the selected root. Only this mode uses `CONVERSATION_PASSWORD`, `--host` and `--allowed-host`; remote listening requires explicit password/allowed hosts. Keep its port and data separate from the full application. `npm run init:agent` initializes only the standalone Agent workspace; `npm run init` retains the original application's initialization script.
+
+### Docker deployment
+
+Docker uses the upstream SillyTavern packaging unchanged: `Dockerfile`, `docker/docker-entrypoint.sh` and `docker/docker-compose.yml`. `COPY . ./` ships the full application, so Agent code is included; Agent data is stored under the mounted data directory at `<user>/conversation-v1/`. Mounts, `PUID`/`PGID`, `--listen`, `npm run init` and the heartbeat healthcheck behave as upstream. `.dockerignore` additionally excludes gitignored local files (`/config.yaml`, `/output`, `/test-results`, `.playwright-cli`, `.claude`, `.codex`) so local credentials and tool output never enter image layers.
+
+The Linux container runs the native PI executor only. Claude/Codex SDK isolation is macOS-only, so those executors return `unsupported-isolation-platform` there. Data from a previous standalone `/data` volume is not imported automatically. Container validation passed with `python3 -I docker/validate-conversation.py`; see VALIDATION.md.
+
+Where Docker Hub is unreachable, do not edit the Dockerfile. Pull the base image from a mirror, compare its digest with a second mirror, and tag it under the upstream name before building:
+
+```bash
+docker pull docker.m.daocloud.io/library/node:lts-alpine3.23
+docker buildx imagetools inspect docker.1ms.run/library/node:lts-alpine3.23
+docker tag docker.m.daocloud.io/library/node:lts-alpine3.23 node:lts-alpine3.23
+```
 
 ## Backup and restore
 

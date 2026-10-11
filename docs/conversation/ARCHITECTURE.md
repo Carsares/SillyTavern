@@ -1,10 +1,12 @@
-# Conversation v1 architecture
+# Additive Agent architecture in the Modern application
 
-The server owns conversation state and generation. The browser submits versioned commands and reads committed snapshots/events. One composition root connects pure compilation, transactional persistence and external adapters.
+The original Modern application remains the default product. Its normal pages, APIs, configuration and data flows remain available; Agent is an additional shell route. The Agent server modules own Agent conversation state and generation. The browser submits versioned commands and reads committed snapshots/events. One composition root connects pure compilation, transactional persistence and external adapters.
 
 ```mermaid
 flowchart TB
-  UI[Modern conversation UI] --> API[Versioned API and committed event stream]
+  SHELL[Existing Modern application and normal pages] --> UI[Additional Agent route]
+  UI --> AUTH[Existing session authentication and CSRF]
+  AUTH --> API[Per-user versioned API and committed event stream]
   API --> RT[Turn lifecycle: dedupe, stop, groups, deadlines]
   API --> RES[Resources, attachments and maintenance]
   RT --> CTX[Pure context compiler: five layers, macros, regex, worldbook, budget]
@@ -43,7 +45,7 @@ flowchart TB
 
 `public/shared/conversation` is pure, deterministic context compilation. It returns effects as proposals; it cannot write variables, worldbook state or memory. Input budgets reserve output and safety capacity. Required history exceeding the budget triggers bounded foreground compression rather than silent truncation.
 
-`src/conversation/store` is the sole business writer. SQLite commits resource/message revisions, selected candidates, active-turn ownership and events atomically. Streaming changes one turn and appends an event, without serializing the complete retained conversation. File attachments use opaque identifiers and hashes; backup captures the database export and attachment bytes together while generation is idle.
+`src/conversation/store` is the sole Agent business writer. SQLite commits resource/message revisions, selected candidates, active-turn ownership and events atomically. Streaming changes one turn and appends an event, without serializing the complete retained conversation. File attachments use opaque identifiers and hashes; backup captures the database export and attachment bytes together while generation is idle.
 
 `runtime` owns business turns. The SDK owns its model/tool loop. Every model step passes a budget/stop check. The runtime persists deltas before exposing events, binds tools to the frozen turn/member context, and commits terminal results exactly once. Group member replies commit separately; their variable/worldbook effects remain temporary until the parent succeeds. All members share one frozen successful-turn counter. Stopping preserves completed messages and current partial output without committing temporary effects.
 
@@ -57,7 +59,11 @@ SDK session files are disposable execution caches. They never become business hi
 
 ## Public boundary
 
-The standalone server exposes only `/modern/conversation/`, `/shared/conversation/`, `/api/conversation/v1`, `/csrf-token` and `/health`. It does not boot the legacy server or its data migrations. The current deployment model is one isolated workspace per server process. Remote listening requires a password and explicit allowed hosts.
+Default startup is `server.js` → `src/workspace-bootstrap.js` → `src/server-main.js`, with the original `CommandLineParser`, configuration, authentication, CSRF and normal endpoints. `/` enters `/modern/`; its `agent` route adds the new interface without replacing normal chat or resource pages. `src/conversation/host.js` mounts `/api/conversation/v1` after existing authentication/CSRF and derives each workspace from `req.user.directories.root/conversation-v1`. Client-supplied user IDs cannot select another workspace.
+
+Agent does not import old chats or use them as its database. This isolation does not disable the original application's normal config initialization, data maintenance or generation paths. `src/conversation/store` is the writer for Agent business state, not for the entire application.
+
+The optional `conversation-server.js` standalone entry has its own limited static routes, password/Host/Origin controls and health endpoint. Those standalone rules do not replace the main application's security policy. Keep standalone and full-app processes on separate ports and Agent data directories.
 
 The browser has no model credentials, database writer or SDK session ownership. It reconnects with persisted event sequence numbers, deduplicates deltas and reloads authoritative state when continuity cannot be established. Manual changes use the relevant content or memory revision rather than overwriting an entire stale snapshot.
 

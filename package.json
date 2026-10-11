@@ -136,7 +136,7 @@
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
         "typecheck:modern": "tsc -p public/modern/tsconfig.json --noEmit",
-        "test:conversation:unit": "node --test --test-concurrency=6 tests/conversation/modules/*/*.test.mjs tests/conversation/evaluation/*.test.mjs",
+        "test:conversation:unit": "node --test --test-concurrency=6 tests/conversation/modules/*/*.test.mjs tests/conversation/evaluation/*.test.mjs tests/modern-agent-workspace.test.mjs",
         "test:conversation:integration": "node --test --test-concurrency=6 tests/conversation/integration/*.test.mjs",
         "lint:conversation": "eslint \"src/conversation/**/*.js\" \"public/shared/conversation/**/*.js\" \"public/modern/conversation/**/*.js\" server.js"
     },
