@@ -1,8 +1,0 @@
-{
-    "verbose": true,
-    "transform": {},
-    "testEnvironment": "node",
-    "testPathIgnorePatterns": [
-        "chub-cdp\\.test\\.js$"
-    ]
-}

@@ -1,5 +1,0 @@
-# Throwaway data root for the managed Playwright mock server (playwright.config.js)
-.e2e-data/
-# Per-port data roots and artifact dirs of isolated runs (PLAYWRIGHT_MOCK_PORT=<port>)
-.e2e-data-*/
-test-results-*/

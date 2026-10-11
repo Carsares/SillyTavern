@@ -5,7 +5,6 @@ COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY --chown=node:node server.js ./
 COPY --chown=node:node src/conversation ./src/conversation
-COPY --chown=node:node src/tokenizers/nerdstash.model src/tokenizers/nerdstash_v2.model src/tokenizers/llama3.json ./src/tokenizers/
 COPY --chown=node:node public/shared/conversation ./public/shared/conversation
 COPY --chown=node:node public/modern/conversation ./public/modern/conversation
 COPY --chown=node:node docker/docker-entrypoint.sh ./docker-entrypoint.sh

@@ -15,7 +15,7 @@ module.exports = {
     overrides: [
         {
             // Server-side files (plus this configuration file)
-            files: ['src/**/*.js', './*.js', 'plugins/**/*.js'],
+            files: ['src/**/*.js', './*.js'],
             env: {
                 node: true,
             },
@@ -24,7 +24,6 @@ module.exports = {
             },
             globals: {
                 globalThis: 'readonly',
-                Deno: 'readonly',
             },
         },
         {
@@ -50,7 +49,6 @@ module.exports = {
             files: ['public/**/*.js'],
             env: {
                 browser: true,
-                jquery: true,
             },
             parserOptions: {
                 sourceType: 'module',
@@ -58,10 +56,6 @@ module.exports = {
             // These scripts are loaded in HTML; tell ESLint not to complain about them being undefined
             globals: {
                 globalThis: 'readonly',
-                ePub: 'readonly',
-                pdfjsLib: 'readonly',
-                toastr: 'readonly',
-                SillyTavern: 'readonly',
             },
         },
     ],
@@ -69,16 +63,11 @@ module.exports = {
         '**/node_modules/**',
         '**/dist/**',
         '**/.git/**',
-        'public/lib/**',
         'backups/**',
         'data/**',
         'cache/**',
-        'src/tokenizers/**',
         'docker/**',
-        'plugins/**',
         '**/*.min.js',
-        'public/scripts/extensions/quick-reply/lib/**',
-        'public/scripts/extensions/tts/lib/**',
     ],
     rules: {
         'jsdoc/no-undefined-types': ['warn', { disableReporting: true, markVariablesAsUsed: true }],
