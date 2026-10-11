@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Build and validate an isolated local deployment; never invoke providers."""
+"""Validate a full-app container with additive Agent, using only owned temporary data.
+Build/network access is explicit when this script is invoked; no model calls.
+"""
 import base64
+import http.cookiejar
 import json
 import os
 from pathlib import Path
 import secrets
 import subprocess
 import time
+import tempfile
 import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER = ['docker', '--context', 'desktop-linux']
-TAG = 'conversation-v1-validation:local'
+TAG = 'sillytavern-agent-validation:local'
 
 
 def docker(*args, env=None):
@@ -29,11 +33,11 @@ def main():
     if build.returncode:
         return build.returncode
     password = secrets.token_urlsafe(48)
-    environment = dict(os.environ, CONVERSATION_PASSWORD=password)
+    environment = dict(os.environ)
     authorization = 'Basic ' + base64.b64encode(('validation:' + password).encode()).decode()
     owned_containers, owned_volumes = [], []
     suffix = secrets.token_hex(10)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
     def request(port, path, body=None, token=None, authenticated=True):
         headers = {'Authorization': authorization} if authenticated else {}
@@ -57,9 +61,21 @@ def main():
         owned_volumes.append(volume)
         # Reserve an unpredictable name; cleanup targets only this invocation.
         docker('create', '--name', name, '--label', 'conversation.validation=' + suffix,
-               '--mount', 'type=volume,src=' + volume + ',dst=/data',
-               '-p', '127.0.0.1::8000', '-e', 'CONVERSATION_PASSWORD', TAG, env=environment)
+               '--mount', 'type=volume,src=' + volume + ',dst=/home/node/app/data',
+               '-p', '127.0.0.1::8000', TAG, env=environment)
         owned_containers.append(name)
+        # JSON is valid YAML. These credentials belong only to this new test container.
+        # No existing user config is read or rewritten.
+        with tempfile.TemporaryDirectory(prefix='agent-container-config-') as directory:
+            config = Path(directory) / 'config.yaml'
+            config.write_text(json.dumps({
+                'listen': True, 'port': 8000, 'dataRoot': './data',
+                'browserLaunch': {'enabled': False}, 'whitelistMode': False,
+                'basicAuthMode': True, 'basicAuthUser': {'username': 'validation', 'password': password},
+                'enableUserAccounts': False,
+            }))
+            config.chmod(0o600)
+            docker('cp', str(config), name + ':/home/node/app/config/config.yaml')
         docker('start', name)
         state = json.loads(docker('inspect', '--format', '{{json .NetworkSettings.Ports}}', name))
         binding = state['8000/tcp'][0]
@@ -67,19 +83,20 @@ def main():
         port = int(binding['HostPort'])
         for _ in range(45):
             try:
-                status, body = request(port, '/health')
-                if status == 200 and json.loads(body) == {'status': 'ok', 'schemaVersion': 1}:
+                status, body = request(port, '/modern/')
+                if status == 200 and b'<html' in body.lower():
                     break
             except (OSError, ValueError):
                 pass
             time.sleep(1)
         else:
             raise RuntimeError('Container health deadline exceeded')
-        assert request(port, '/health', authenticated=False)[0] == 401
-        assert request(port, '/')[0] == 200  # follows new-entry redirect
-        status, html = request(port, '/modern/conversation/')
+        assert request(port, '/api/conversation/v1/conversations', authenticated=False)[0] == 401
+        assert request(port, '/')[0] == 200  # follows the original Modern entry redirect
+        status, html = request(port, '/modern/')
         assert status == 200 and b'<html' in html.lower()
-        docker('exec', name, 'node', 'src/conversation/healthcheck.js')
+        docker('exec', name, 'node', 'src/healthcheck.js')
+        assert request(port, '/api/conversation/v1/conversations', {'schemaVersion': 1})[0] == 403
         token = json.loads(request(port, '/csrf-token')[1])['token']
         print('PASS entry/auth/health: container', number, '127.0.0.1:' + str(port), flush=True)
         return name, port, token

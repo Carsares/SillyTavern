@@ -1,34 +1,69 @@
-# Only production inputs enter the build context. User data, credentials,
-# local validation output and unrelated repository files stay on the host.
-**
-!package.json
-!package-lock.json
-!server.js
-!src/
-!src/conversation/
-!src/conversation/**
-!src/tokenizers/
-!src/tokenizers/nerdstash.model
-!src/tokenizers/nerdstash_v2.model
-!src/tokenizers/llama3.json
-!public/
-!public/shared/
-!public/shared/conversation/
-!public/shared/conversation/**
-!public/modern/
-!public/modern/conversation/
-!public/modern/conversation/**
-!docker/
-!docker/docker-entrypoint.sh
+# --- Git & CI ---
+.git
+.github
+.gitignore
+
+# --- Docker ---
+/Dockerfile
+/.dockerignore
+/docker/docker-compose.yml
+/docker/config
+/docker/extensions
+/docker/data
+/docker/plugins
+/docker/dist
+/public/scripts/extensions/third-party
+
+# --- Plugins (keep only package files) ---
+/plugins/*
+!/plugins/package.json
+!/plugins/package-lock.json
+
+# --- The Folders ---
+/backups
+/cache
+/colab
+/data
+/dist
+/node_modules
+/tests
+
+# --- Sensitive Info ---
 **/.env*
 **/*.pem
 **/certs
-**/*.log
+
+# --- Documentation ---
+readme*
+*.md
+
+# --- OS & System Junk ---
+**/.DS_Store
+*.bat
+*.cmd
+*.exe
+start.sh
+
+# --- Dev Config ---
+.editorconfig
+.eslintrc.cjs
+.eslintrc*
+.vscode
+**/jsconfig.json
+.npmignore
+.gemini
+replit.nix
+.replit
+.nomedia
+
+# -- Logs & Temp ---
+*.log
 **/tmp
 
-# Explicit local artifact exclusions, including nested tool state.
-**/test-results
-**/.playwright-cli
+# --- Local config and tool output (gitignored; may hold credentials) ---
+/config.yaml
 /output
-**/.codex
+/test-results
+**/.playwright-cli
 **/.claude
+**/.codex
