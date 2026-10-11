@@ -7,6 +7,10 @@
 !src/
 !src/conversation/
 !src/conversation/**
+!src/tokenizers/
+!src/tokenizers/nerdstash.model
+!src/tokenizers/nerdstash_v2.model
+!src/tokenizers/llama3.json
 !public/
 !public/shared/
 !public/shared/conversation/

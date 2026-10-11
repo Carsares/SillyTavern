@@ -58,7 +58,7 @@ test('backup restores resources history and attachments into a different empty w
     const backup = await app.api('/maintenance/backup', {});
     assert.equal(backup.status, 200);
     assert.equal(JSON.stringify(backup.value).includes('local-protocol-test-key'), false);
-    const restored = await target.api('/maintenance/restore', { data: backup.value });
+    const restored = await target.api('/maintenance/restore', { backup: backup.value });
     assert.equal(restored.status, 200, JSON.stringify(restored.value));
     const snapshot = (await target.api(`/conversations/${app.conversation.id}`)).value;
     assert.equal(snapshot.messages.at(-1).content, 'Local answer');
@@ -303,7 +303,7 @@ test('HTTP restore accepts a valid backup above 20 MiB while ordinary JSON route
     await completed(source, 'Large backup history');
     const exported = await source.api('/maintenance/backup', {});
     assert.equal(exported.status, 200);
-    const body = { data: exported.value };
+    const body = { backup: exported.value };
     assert.ok(Buffer.byteLength(JSON.stringify({ schemaVersion: 1, ...body })) > 20 * 1024 * 1024);
     const rejected = await target.api('/resources', body);
     assert.equal(rejected.status, 413);

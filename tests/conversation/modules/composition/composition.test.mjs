@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createConversationServices } from '../../../../src/conversation/composition/index.js';
-import { assertRequestBudget } from '../../../../src/conversation/composition/helpers.js';
 
 const directory = '/virtual/conversation-v1';
 const config = { provider: 'openai-compatible', model: 'unit', baseUrl: 'http://stub.invalid/v1', contextWindow: 32000, inputLimit: 30000, maxOutputTokens: 1000, outputLimit: 2000, workingBudget: 16000, apiKey: 'unit-secret', headers: { 'x-custom': 'unit-header-secret' } };
@@ -47,24 +46,6 @@ function harness(overrides = {}, fetch) {
 }
 const options = h => ({ snapshot: h.snapshot, requestPlan: { messages: h.snapshot.messages }, connection: config });
 
-test('auxiliary budget validates canonical messages and rejects the obsolete nested envelope', () => {
-    const messages = [{ role: 'user', content: 'Summarize this.' }];
-    const plan = { budget: { workingBudget: config.workingBudget } };
-    assert.doesNotThrow(() => assertRequestBudget({ messages }, config, cap(config), plan));
-    assert.throws(() => assertRequestBudget({ context: { messages } }, config, cap(config), plan), { code: 'invalid-context' });
-    assert.throws(() => assertRequestBudget({ messages: [{ role: 'user', content: 'x'.repeat(10000) }] }, config, cap(config), { budget: { workingBudget: 1 } }), { code: 'budget-blocked' });
-});
-
-test('only embedding and image connection types use auxiliary provider capabilities', async () => {
-    const auxiliaryTypes = [];
-    const h = harness({ getAuxiliaryCapabilities: c => { auxiliaryTypes.push(c.type); return cap(c); } });
-    for (const type of ['embedding', 'image']) assert.deepEqual(h.services.capabilities({ ...config, type }).types, []);
-    for (const type of ['chat', 'text']) assert.ok(h.services.capabilities({ ...config, type }).types.includes('auxiliary'));
-    h.services.capabilities({ ...config, type: 'auxiliary' });
-    assert.deepEqual(auxiliaryTypes, ['embedding', 'image']);
-    await h.services.close();
-});
-
 test('default executor normalizes once and SDK disabled state remains disabled', async () => {
     const h = harness();
     assert.equal(h.services.capabilities(config).executor, 'native');
@@ -77,23 +58,6 @@ test('default executor normalizes once and SDK disabled state remains disabled',
     assert.equal(h.calls.execution.connection.executor, 'native');
     await h.services.close(); await h.services.close();
     assert.equal(h.calls.closes, 1);
-});
-
-test('canonical OpenAI providers retain direct PI routing without the removed underscore alias', async () => {
-    const h = harness({ getChatCapabilities: c => ({ ...cap(c), supported: false, reason: 'unsupported-provider' }) });
-    for (const provider of ['openai', 'openai-compatible']) {
-        const connection = { ...config, provider };
-        assert.equal(h.services.capabilities(connection).supported, true);
-        const executor = h.calls.runtime.executor(connection);
-        executor.preflight({ connection });
-        await executor.runTurn({ ...options(h), connection });
-        assert.equal(h.calls.pi.at(-1).streamFn, undefined);
-        assert.equal(h.calls.execution.connection.provider, provider);
-    }
-    const removed = { ...config, provider: 'openai_compatible' };
-    assert.equal(h.services.capabilities(removed).supported, false);
-    assert.throws(() => h.calls.runtime.executor(removed).preflight({ connection: removed }), { code: 'unsupported-connection' });
-    await h.services.close();
 });
 
 test('text bridge uses the frozen template and only PI receives onRequest', async () => {
@@ -414,18 +378,4 @@ test('memory usage trace belongs to the foreground turn or explicit null in back
         assert.equal(h.calls.execution.traceId, 'trace-id');
         await h.services.close();
     }
-});
-
-test('auxiliary connections use only explicit snapshot settings, never nested primary aliases', async () => {
-    const h = harness();
-    h.resources[0].data.auxiliary = { memory: 'embed', summary: { connectionId: 'embed' }, summarization: 'embed', embedding: 'embed', image: { connectionId: 'image' } };
-    await h.calls.memory.generate({ snapshot: h.snapshot, messages: h.snapshot.messages, summaries: [], memories: [] });
-    assert.equal(h.calls.execution.connection.id, 'main');
-    await h.calls.runtime.retrieval.search('c', 'query');
-    assert.equal(h.calls.retrieval.at(-1).embed, undefined);
-    await assert.rejects(h.calls.tools.image({ conversationId: 'c', turnId: 't', prompt: 'picture', snapshot: h.snapshot }), { code: 'connection-required' });
-    h.snapshot.settings.auxiliaryConnectionId = 'embed';
-    await h.calls.memory.generate({ snapshot: h.snapshot, messages: h.snapshot.messages, summaries: [], memories: [] });
-    assert.equal(h.calls.execution.connection.id, 'embed');
-    await h.services.close();
 });

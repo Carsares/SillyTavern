@@ -1,0 +1,420 @@
+.settings-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.settings-tabs {
+    margin: 0 0 14px;
+}
+
+/* 「聊天工具」标签（components/settings-chat-tools.js）：各功能的设置分区自上而下排列，每个分区自己是一个 .form-section */
+.settings-tool-sections {
+    display: grid;
+    gap: 12px;
+}
+
+/* Startup config shown for reference: a dashed frame and a lock badge set it apart from the editable form */
+.settings-readonly-section {
+    border-style: dashed;
+}
+
+.settings-readonly-section .form-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-readonly-section .form-section-title .badge {
+    gap: 5px;
+    min-height: 22px;
+    padding: 1px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Read-only values read as displayed config rather than greyed-out form fields */
+.settings-readonly-section .text-input:disabled {
+    border-style: dashed;
+    background: transparent;
+    color: var(--text);
+    cursor: default;
+    opacity: 1;
+}
+
+/* 「数据维护」标签（components/settings-maintenance*.js，B4） */
+.maintenance-sections {
+    display: grid;
+    gap: 0;
+}
+
+.maintenance-sections > .section-panel:first-child {
+    margin-top: 0;
+}
+
+/* .danger / .success 在 overlays.css 里是 nowrap；说明性的长句要能换行 */
+.maintenance-wrap,
+.danger.maintenance-wrap,
+.success.maintenance-wrap {
+    margin: 8px 0;
+    white-space: normal;
+}
+
+.maintenance-subtitle {
+    margin: 14px 0 6px;
+}
+
+.maintenance-note {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.maintenance-note.warning {
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+.maintenance-note.danger-note {
+    border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+    color: var(--danger);
+}
+
+.warning-text {
+    color: var(--warning);
+}
+
+.maintenance-table-wrap {
+    overflow-x: auto;
+}
+
+.maintenance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.maintenance-table th,
+.maintenance-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.maintenance-table th {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.maintenance-table .numeric {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.maintenance-bar-cell {
+    width: 28%;
+    min-width: 90px;
+}
+
+.maintenance-bar {
+    display: block;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--surface-strong);
+}
+
+.maintenance-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+}
+
+.maintenance-categories {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.maintenance-category {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.maintenance-category.danger-category {
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.maintenance-category.managed-elsewhere {
+    background: var(--surface-muted);
+}
+
+.maintenance-category-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.maintenance-rows {
+    display: grid;
+    gap: 4px;
+    max-height: 340px;
+    margin-top: 8px;
+    overflow: auto;
+}
+
+.maintenance-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+}
+
+.maintenance-row.selected {
+    border-color: var(--border-strong);
+    background: var(--surface-muted);
+}
+
+.maintenance-row.skipped {
+    opacity: 0.7;
+}
+
+.maintenance-row .row-subtitle.maintenance-preview-line,
+.maintenance-row .warning-text {
+    white-space: normal;
+}
+
+.maintenance-action-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.maintenance-confirm,
+.maintenance-result,
+.maintenance-preview {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
+.maintenance-confirm.danger-confirm {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.maintenance-confirm ul,
+.maintenance-result ul {
+    max-height: 220px;
+    margin: 6px 0;
+    padding-left: 20px;
+    overflow: auto;
+    font-size: 13px;
+}
+
+.maintenance-confirm p,
+.maintenance-result p {
+    margin: 6px 0;
+}
+
+.maintenance-preview-image {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: var(--radius);
+}
+
+.maintenance-preview-text {
+    max-height: 280px;
+    margin: 0;
+    padding: 10px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.maintenance-rules {
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.maintenance-rules summary {
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.maintenance-prune {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.maintenance-inline-field {
+    min-width: 160px;
+}
+
+.maintenance-snapshot-list {
+    max-height: 340px;
+}
+
+.maintenance-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+/* 聊天摘要设置（A6）：设置页「聊天工具」标签里的摘要分区（components/settings-tool-summary.js）；横幅、提示和按钮行复用 routes/chat.css 里的 .chat-summary-* */
+.chat-summary-settings {
+    gap: 12px;
+}
+
+.chat-summary-subtitle {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 680;
+}
+
+.chat-summary-inline-actions {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.chat-summary-settings textarea {
+    min-height: 0;
+}
+
+/* ===== 翻译（B3）：设置页「聊天工具」标签里的翻译分区（components/settings-tool-translate.js） ===== */
+.translate-privacy {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+    font-size: 13px;
+}
+
+.translate-privacy > i {
+    margin-top: 3px;
+    color: var(--warning);
+}
+
+.translate-privacy p {
+    margin: 4px 0 0;
+}
+
+.translate-default-hint {
+    margin: 0;
+    color: var(--warning);
+}
+
+.translate-secret-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+}
+
+.translate-secret-row {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+}
+
+.translate-secret-row[hidden] {
+    display: none;
+}
+
+.translate-secret-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.translate-secret-state.is-saved {
+    color: var(--success);
+}
+
+.translate-readonly {
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.translate-readonly .panel-subtitle {
+    margin: 2px 0 0;
+}
+
+.translate-auto-mode {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.translate-auto-mode .panel-subtitle {
+    margin: 4px 0 0;
+}
+
+.translate-auto-mode.is-active {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+
+.translate-auto-mode.is-active strong {
+    color: var(--warning);
+}
+
+.translate-auto-mode > div {
+    flex: 1 1 320px;
+    min-width: 0;
+}
+
+.translate-test-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.translate-test-result.is-ok {
+    color: var(--success);
+}
+
+.translate-test-result.is-error {
+    color: var(--danger);
+}

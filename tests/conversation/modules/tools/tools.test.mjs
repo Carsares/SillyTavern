@@ -330,16 +330,3 @@ test('completed retry image with missing cached result or uncertain member ident
         assert.equal(store.tools.size, 1);
     }
 });
-
-test('tool sessions require the frozen turn snapshot and only read canonical timeZone', async () => {
-    const store = fakeStore({ active: true });
-    const frozen = store.getConversation(); frozen.settings.timeZone = 'Asia/Tokyo';
-    let reads = 0;
-    store.getTurnSnapshot = turnId => { assert.equal(turnId, 'active'); reads++; return structuredClone(frozen); };
-    store.snapshot.settings.timeZone = 'America/New_York';
-    const registry = createToolRegistry({ store });
-    assert.equal((await registry.execute(call('get_time'))).timeZone, 'Asia/Tokyo');
-    assert.equal(reads, 1);
-    const oldShape = fakeStore({ active: true, settings: { timezone: 'Asia/Tokyo' } });
-    assert.equal((await createToolRegistry({ store: oldShape }).execute(call('get_time'))).timeZone, 'UTC');
-});

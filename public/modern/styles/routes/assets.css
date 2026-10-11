@@ -1,0 +1,98 @@
+.asset-tabs {
+    margin-bottom: 14px;
+}
+
+.background-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.background-card {
+    align-content: start;
+}
+
+.background-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.asset-row.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+}
+
+.background-thumb {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.selection-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 760;
+}
+
+/* 背景卡片的缩略图和标题区域可点击：平时设为当前查看的背景，批量选择模式下切换勾选。 */
+.background-card-main {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.background-card-main:hover .background-thumb {
+    filter: brightness(0.96);
+}
+
+.background-card-main .card-title {
+    display: block;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.background-card-main .card-meta {
+    display: block;
+}
+
+/* 聊天背景（B5）：背景卡片上的「全局背景 / 聊天锁定」标记，以及删除、重命名前的引用提示 */
+.background-usage-tags {
+    margin: 0;
+}
+
+.background-reference-note {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.background-reference-note.in-use {
+    border-left-color: var(--warning);
+    color: var(--text);
+}
+
+.background-reference-note p {
+    margin: 0;
+}
+
+.background-reference-note p + p {
+    margin-top: 4px;
+}

@@ -1,10 +1,25 @@
 {
     "compilerOptions": {
-        "module": "NodeNext",
+        "module": "ESNext",
         "target": "ES2023",
-        "moduleResolution": "NodeNext",
-        "checkJs": false
+        "moduleResolution": "Bundler",
+        "strictNullChecks": true,
+        "strictFunctionTypes": true,
+        "checkJs": true,
+        "allowUmdGlobalAccess": true,
+        "allowSyntheticDefaultImports": true,
+        "resolveJsonModule": true,
+        "strictBindCallApply": true
     },
-    "include": ["server.js", "src/conversation/**/*.js", "public/shared/conversation/**/*.js", "public/modern/conversation/**/*.js"],
-    "exclude": ["**/node_modules/**", "data/**", "backups/**", "test-results/**"]
+    "exclude": [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/.git/**",
+        "public/**",
+        "backups/**",
+        "data/**",
+        "cache/**",
+        "src/tokenizers/**",
+        "docker/**"
+    ]
 }

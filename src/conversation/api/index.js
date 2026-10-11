@@ -112,10 +112,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
         router.get('/maintenance/status', wrap((req, res) => res.json(maintenance.status())));
         router.get('/maintenance/export', wrap((req, res) => res.json(maintenance.export())));
         router.post('/maintenance/backup', wrap((req, res) => res.json(maintenance.backup(req.body))));
-        router.post('/maintenance/restore', wrap(async (req, res) => {
-            requireObject(req.body.data, 'data');
-            res.json(await maintenance.restore(req.body.data));
-        }));
+        router.post('/maintenance/restore', wrap(async (req, res) => res.json(await maintenance.restore(req.body.backup ?? req.body.data))));
         router.post('/maintenance/reindex', wrap(async (req, res) => res.json(await maintenance.reindex(req.body.conversationId))));
         router.post('/maintenance/cleanup-preview', wrap((req, res) => res.json(maintenance.previewCleanup(req.body))));
         router.post('/maintenance/cleanup', wrap((req, res) => res.json(maintenance.cleanup(req.body))));

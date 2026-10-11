@@ -8,7 +8,7 @@ const compatible = {
     togetherai: ['https://api.together.xyz', 'v1/completions'], infermaticai: ['https://api.totalgpt.ai', 'v1/completions'],
     dreamgen: ['https://dreamgen.com', 'api/openai/v1/completions'],
     openrouter: ['https://openrouter.ai/api', 'v1/completions'],
-    featherless: ['https://api.featherless.ai', 'v1/completions'], 'openai-compatible': [null, 'v1/completions'],
+    featherless: ['https://api.featherless.ai', 'v1/completions'], generic: [null, 'v1/completions'],
 };
 const profiles = Object.fromEntries(Object.entries(compatible).map(([id, [baseUrl, path]]) => [id, { api: 'openai-text', baseUrl, path, parameters: sampling }]));
 Object.assign(profiles, {
@@ -29,9 +29,10 @@ profiles.koboldcpp.media = ['text', 'image', 'audio'];
 profiles.ollama.media = ['text', 'image'];
 export const TEXT_PROVIDERS = deepFreeze(profiles);
 export function getTextCapabilities(connection, dependencies = {}) {
-    const c = connection ?? {};
+    const c = connection?.data ?? connection ?? {};
     const result = describeCapability(c, TEXT_PROVIDERS, 'text');
     if (c.provider !== 'novelai') return result;
     const stopTokenization = novelStopCapability(c, dependencies);
     return { ...result, stopTokenization, ...(stopTokenization.reason ? { supported: false, reason: stopTokenization.reason, types: [], tools: false } : {}) };
 }
+export const getCapabilities = getTextCapabilities;

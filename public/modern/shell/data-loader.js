@@ -1,0 +1,117 @@
+export function createDataLoader({
+    state,
+    apiFetch,
+    render,
+    showToast,
+    ensureAvailableChatMode,
+    prepareChatForSelectedContext,
+    loadWorldDetail,
+}) {
+    let loadEpoch = 0;
+
+    async function loadData({ silent = false, notify = !silent } = {}) {
+        const epoch = ++loadEpoch;
+        const isCurrent = () => epoch === loadEpoch;
+        state.loading = true;
+        state.errors = [];
+        if (!silent) {
+            render();
+        }
+
+        try {
+            const requests = {
+                me: apiFetch('/api/users/me', { method: 'GET' }),
+                settingsBundle: apiFetch('/api/settings/get'),
+                characters: apiFetch('/api/characters/all'),
+                groups: apiFetch('/api/groups/all'),
+                worldbooks: apiFetch('/api/worldinfo/list'),
+                backgrounds: apiFetch('/api/backgrounds/all'),
+                backgroundFolders: apiFetch('/api/backgrounds/folders'),
+                assets: apiFetch('/api/assets/get'),
+                extensions: apiFetch('/api/extensions/discover', { method: 'GET' }),
+                secrets: apiFetch('/api/secrets/settings'),
+                secretState: apiFetch('/api/secrets/read'),
+                stats: apiFetch('/api/stats/get'),
+            };
+            // Only the navigation badge needs the import records up front, so a failure leaves that count
+            // unknown instead of reporting the workspace data as partially failed
+            const remoteRecordsRequest = apiFetch('/api/remote-resources/records', { method: 'GET' })
+                .catch(() => null);
+
+            const [entries, remoteRecords] = await Promise.all([
+                Promise.all(Object.entries(requests).map(async ([key, promise]) => {
+                    try {
+                        return [key, await promise, null];
+                    } catch (error) {
+                        return [key, null, error];
+                    }
+                })),
+                remoteRecordsRequest,
+            ]);
+            if (epoch !== loadEpoch) {
+                return;
+            }
+
+            const errors = [];
+            for (const [key, value, error] of entries) {
+                if (error) {
+                    errors.push({ key, message: error.message });
+                    continue;
+                }
+
+                state[key] = value;
+            }
+            state.errors = errors;
+            if (Array.isArray(remoteRecords)) {
+                state.remoteResources.records = remoteRecords;
+                state.remoteResources.recordsLoaded = true;
+            }
+
+            try {
+                state.settings = state.settingsBundle?.settings ? JSON.parse(state.settingsBundle.settings) : {};
+            } catch (error) {
+                state.settings = {};
+                state.errors.push({ key: 'settings', message: `设置解析失败：${error.message}` });
+            }
+
+            if (!state.selected.character && state.characters[0]) {
+                state.selected.character = state.characters[0].avatar;
+            }
+            if (!state.selected.group && state.groups[0]) {
+                state.selected.group = state.groups[0].id;
+            }
+            if (!state.selected.worldbook && state.worldbooks[0]) {
+                state.selected.worldbook = state.worldbooks[0].file_id;
+            }
+            ensureAvailableChatMode();
+            if (state.route === 'chat') {
+                await prepareChatForSelectedContext({ isCurrent });
+            }
+            if (epoch !== loadEpoch) {
+                return;
+            }
+            if (state.route === 'worldbooks') {
+                await loadWorldDetail(state.selected.worldbook, { isCurrent });
+            }
+            if (epoch !== loadEpoch) {
+                return;
+            }
+
+            state.loaded = true;
+            state.loading = false;
+            render();
+
+            if (notify) {
+                const summary = state.errors.length ? '部分数据读取失败，详情见页面顶部和右侧检查器。' : '已同步当前用户数据。';
+                showToast('刷新完成', summary);
+            }
+        } finally {
+            if (epoch === loadEpoch && state.loading) {
+                state.loading = false;
+                render();
+            }
+        }
+    }
+
+    return { loadData };
+}

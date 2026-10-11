@@ -1,0 +1,265 @@
+@media (max-width: 1180px) {
+    .modern-app {
+        grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    }
+
+    .dashboard-grid,
+    .split-grid,
+    .preset-workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .chat-layout {
+        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 860px) {
+    .modern-app {
+        grid-template-columns: 1fr;
+    }
+
+    .workspace {
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .sidebar {
+        position: fixed;
+        z-index: 12;
+        transform: translateX(-100%);
+        transition: transform 160ms ease;
+        box-shadow: var(--shadow);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .mobile-menu {
+        display: inline-flex;
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .topbar {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .command-input {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+    }
+
+    .topbar-actions {
+        grid-column: 2;
+        grid-row: 1;
+        justify-content: flex-end;
+        min-width: 0;
+    }
+
+    .status-pill {
+        max-width: min(36vw, 150px);
+    }
+
+    .status-pill span:last-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .content {
+        padding: 16px 12px;
+    }
+
+    .page-head {
+        display: grid;
+    }
+
+    .page-actions {
+        justify-content: flex-start;
+    }
+
+    .metrics-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .command-input kbd {
+        display: none;
+    }
+
+    .chat-layout,
+    .backup-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }
+
+    .chat-layout {
+        height: auto;
+        min-height: 0;
+    }
+
+    .chat-thread {
+        gap: 10px;
+    }
+
+    .detail-hero {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .detail-actions {
+        grid-column: 1 / -1;
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .detail-actions .secondary-button {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .message-list {
+        min-height: 0;
+        overflow: visible;
+    }
+
+    .composer {
+        position: static;
+    }
+
+    .settings-tabs,
+    .extension-tabs {
+        grid-auto-flow: row;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .chat-sidebar-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 18;
+        display: block;
+        border: 0;
+        background: rgba(0, 0, 0, 0.28);
+        cursor: pointer;
+    }
+
+    .chat-browser {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 19;
+        width: min(380px, calc(100vw - 44px));
+        height: 100vh;
+        overflow: auto;
+        padding: 12px;
+        background: color-mix(in srgb, var(--surface) 96%, var(--surface-muted));
+        border-right: 1px solid var(--border);
+        box-shadow: var(--shadow);
+    }
+
+    .engine-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .engine-panel-actions {
+        justify-content: space-between;
+    }
+
+    .chat-tools-drawer {
+        width: min(560px, calc(100vw - 24px));
+        overflow: auto;
+        padding: 12px;
+    }
+
+    /* 窄屏下备份抽屉整体滚动：列表和预览上下排列，列表自身限高 */
+    .chat-tool-panel,
+    .backup-layout {
+        flex: none;
+    }
+
+    .chat-tool-header {
+        flex-wrap: wrap;
+    }
+
+    .backup-list {
+        max-height: 50vh;
+    }
+
+    .backup-preview textarea {
+        min-height: 240px;
+        resize: vertical;
+    }
+
+    .checkbox-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .chat-context-strip {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .chat-context-strip .secondary-button {
+        grid-column: 1 / -1;
+        justify-content: center;
+    }
+
+    .list-toolbar,
+    .settings-edit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .character-meta-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .route-error-banner {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .route-error-banner .secondary-button {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+}
+
+@media (max-width: 560px) {
+    .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .api-current {
+        grid-template-columns: 1fr;
+    }
+
+    .topbar-actions {
+        gap: 4px;
+    }
+
+    .status-pill {
+        max-width: 112px;
+        padding-inline: 7px;
+    }
+
+    .message {
+        max-width: 92%;
+    }
+
+    .composer {
+        grid-template-columns: 1fr;
+    }
+
+    .composer textarea,
+    .composer-status,
+    .composer button {
+        grid-column: 1;
+        grid-row: auto;
+    }
+
+    .checkbox-grid {
+        grid-template-columns: 1fr;
+    }
+}

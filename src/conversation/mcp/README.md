@@ -1,8 +1,9 @@
 # Restricted MCP gateway API
 
 `createMcpServer({registry, store, now=Date.now, ttlMs=120000})` is exported from
-`index.js`. The factory opens no port, starts no process, reads no host
-files, and enables no SDK host tools.
+`index.js`. `createMcpHandler` is an alias returning the same object (not just the
+handler function). Neither factory opens a port, starts a process, reads host
+files, or enables SDK host tools.
 
 Returned API:
 

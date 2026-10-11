@@ -13,34 +13,43 @@ function setup(auxiliary) {
     return store;
 }
 
-test('auxiliary settings select a frozen resource; legacy nested aliases have no effect', () => {
-    for (const auxiliary of [{ memory: 'memory' }, { summary: { connectionId: 'summary' } }, { summarization: 'summarization' }]) {
+test('frozen auxiliary selection uses explicit then memory/summary/summarization then primary', () => {
+    const cases = [
+        [{ memory: 'memory', summary: 'summary', summarization: 'summarization' }, 'memory'],
+        [{ memory: { connectionId: 'memory' }, summary: 'summary' }, 'memory'],
+        [{ memory: '', summary: { connectionId: 'summary' }, summarization: 'summarization' }, 'summary'],
+        [{ summary: null, summarization: { connectionId: 'summarization' } }, 'summarization'],
+        [{ memory: {}, summary: '', summarization: null }, 'connection'],
+    ];
+    for (const [auxiliary, expected] of cases) {
         const store = setup(auxiliary);
-        assert.equal(auxiliaryBudget(store.getConversation()).connectionId, 'connection');
+        assert.equal(auxiliaryBudget(store.getConversation()).connectionId, expected);
         store.snapshot.settings.auxiliaryConnectionId = 'explicit';
         assert.equal(auxiliaryBudget(store.getConversation()).connectionId, 'explicit');
     }
 });
 
-test('missing explicit selection fails and legacy conversation.settings is not consulted', () => {
-    const store = setup(); store.snapshot.settings.auxiliaryConnectionId = 'missing';
+test('missing nested connection and missing primary setting do not silently select another budget', () => {
+    const store = setup({ memory: 'missing', summary: 'summary' });
     assert.throws(() => auxiliaryBudget(store.getConversation()), { code: 'budget-blocked' });
-    store.snapshot.conversation.settings = { connectionId: 'connection' };
-    delete store.snapshot.settings;
+    store.snapshot.settings.auxiliaryConnectionId = 'missing-explicit';
     assert.throws(() => auxiliaryBudget(store.getConversation()), { code: 'budget-blocked' });
+    const single = fakeStore(); delete single.snapshot.settings.connectionId;
+    assert.throws(() => auxiliaryBudget(single.getConversation()), { code: 'budget-blocked' });
 });
 
-test('explicit auxiliary selection and budget remain frozen after current resources change', () => {
-    const store = setup(); store.snapshot.settings.auxiliaryConnectionId = 'summary';
-    const frozen = store.getConversation();
-    store.snapshot.settings.auxiliaryConnectionId = 'memory';
+test('selection and budget use frozen resource values, including conversation.settings fallback', () => {
+    const store = setup({ summary: 'summary' }), frozen = store.getConversation();
+    store.snapshot.resources[0].data.auxiliary = { memory: 'memory' };
     store.snapshot.resources.find(r => r.id === 'summary').data.workingBudget = 10000;
+    frozen.conversation.settings = frozen.settings; delete frozen.settings;
     const budget = auxiliaryBudget(frozen);
     assert.equal(budget.connectionId, 'summary'); assert.equal(budget.workingBudget, 5000);
 });
 
-test('explicit auxiliary compression uses selected limits and retains its resource revision', async () => {
-    const store = setup(); store.snapshot.settings.auxiliaryConnectionId = 'summary'; let request;
+test('nested auxiliary compression batches use selected limits and retain its resource revision', async () => {
+    const store = setup({ summary: { connectionId: 'summary' } });
+    let request;
     await createMemoryService({ store, generate: async input => { request = input; return { chapter: 'Bounded summary' }; } }).compact(store.getConversation());
     assert.equal(request.inputBudget.connectionId, 'summary'); assert.equal(request.inputBudget.workingBudget, 5000);
     assert.ok(request.estimatedInputTokens <= 5000); assert.ok(request.messages.length > 0 && request.messages.length < 99);

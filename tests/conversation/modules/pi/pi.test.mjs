@@ -189,7 +189,7 @@ test('verified image costs enable inline image conversion and model vision', asy
 });
 
 test('reasoning is forwarded only for verified explicitly supported effort levels', async () => {
-    const c = { ...connection, reasoningEnabled: true, reasoning: 'low', capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: ['low', 'high'] } };
+    const c = { ...connection, reasoningEnabled: true, effort: 'low', capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: ['low', 'high'] } };
     assert.equal(getCapabilities(c).supported, true);
     assert.equal(getCapabilities({ ...c, effort: 'max' }).supported, false);
     assert.equal(getCapabilities({ ...c, capabilities: { ...c.capabilities, verified: false } }).supported, false);

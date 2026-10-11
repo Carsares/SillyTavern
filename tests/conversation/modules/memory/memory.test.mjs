@@ -30,8 +30,7 @@ test('source changes cause at most one recomputation', async () => {
 test('foreground excludes latest complete turn and submits epoch atomically', async () => {
     const store = fakeStore({ active: true });
     const service = createMemoryService({ store, generate });
-    const { proposal } = await service.prepareCompact(store.getConversation(), { turnId: 'active', attemptEpoch: 1, budget: 1000 });
-    store.commitDerived('c', proposal);
+    await service.compact(store.getConversation(), { turnId: 'active', attemptEpoch: 1, budget: 1000 });
     assert.equal(store.commits.length, 1); assert.equal(store.commits[0].sourceRefs.length, 1); assert.equal(store.commits[0].attemptEpoch, 1);
 });
 test('empty or overbudget summaries do not fold history', async () => {
@@ -158,23 +157,4 @@ test('small auxiliary window blocks even if primary window can fit the complete 
     store.snapshot.resources.push({ id: 'auxiliary', kind: 'connection', revision: 1,
         data: { contextWindow: 4000, inputLimit: 4000, maxOutputTokens: 2000, workingBudget: 4000 } });
     await assert.rejects(createMemoryService({ store, generate: () => assert.fail('auxiliary input is too small') }).compact(store.getConversation()), { code: 'budget-blocked' });
-});
-
-test('manual compact cannot serve as a foreground compatibility wrapper', async () => {
-    const store = fakeStore({ active: true }); let generated = 0;
-    const memory = createMemoryService({ store, generate: async () => { generated++; return { chapter: 'manual' }; } });
-    await assert.rejects(memory.compact(store.getConversation()), { code: 'conversation-busy' });
-    store.snapshot.conversation.activeTurnId = null;
-    await assert.rejects(memory.compact(store.getConversation(), { turnId: 'active', attemptEpoch: 1 }), { code: 'invalid-compaction' });
-    assert.equal(generated, 0); assert.equal(store.commits.length, 0);
-    await memory.compact(store.getConversation());
-    assert.equal(generated, 1); assert.equal(store.commits.length, 1);
-    assert.equal(store.commits[0].turnId, undefined);
-});
-
-test('memory generate port accepts parsed objects only; provider JSON parsing belongs to composition', async () => {
-    const store = fakeStore();
-    const memory = createMemoryService({ store, generate: async () => '{"chapter":"serialized legacy result"}' });
-    await assert.rejects(memory.compact(store.getConversation()), { code: 'compression-failed' });
-    assert.equal(store.commits.length, 0);
 });

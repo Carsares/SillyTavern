@@ -6,7 +6,7 @@ import { blocked, createBudgetTransport, pipelineQuote } from './transport-budge
 import { seedBackup } from './seed.mjs';
 
 const RUN_ROOT = fileURLToPath(new URL('./.runs/', import.meta.url));
-const NATIVE = new Set(['openai', 'openai-compatible', 'deepseek']);
+const NATIVE = new Set(['openai', 'openai-compatible', 'openai_compatible', 'deepseek']);
 const primaryModelPresent = connections => connections.every(c => typeof c.model === 'string' && c.model.length > 0);
 const finitePositive = n => Number.isSafeInteger(n) && n > 0;
 

@@ -41,19 +41,22 @@ https://developers.openai.com/api/reference/resources/images/methods/generate ;
 https://image.novelai.net/docs/index.html .
 
 V4 feature reference: https://docs.novelai.net/en/image/multiplecharacters/ .
-Provider codecs are implemented in this module and validated against explicit protocol tests.
+The local legacy request field listing at `src/endpoints/novelai.js` was read as
+protocol evidence only; no legacy state or handler is reused.
 
 
 ## Expanded source implementation and integration ports
 
 `createAuxiliaryAdapter(connection,{fetch,onRequest,onJob?,jobId?,pipelineFactory?,localWorkerFactory?})`
-returns `capabilities`, `embed`,
+(and its `createProviderAdapter` alias) returns `capabilities`, `embed`,
 `generateImage`, and `cancelJob`. Existing NovelAI classic/V4/V4.5 codec and ZIP
 bounds were preserved. No dependency, shared schema, original providers.test,
 SDK, store or composition edit belongs to this auxiliary follow-up.
 
-Provider identifiers are canonical entries in `AUXILIARY_PROVIDERS`. Old aliases
-are rejected; no migration or alias resolution is performed.
+All 19 original embedding identifiers other than explicitly excluded webllm and
+all 24 original image identifiers now resolve to concrete codecs. Aliases are
+explicit: palm/makersuite→google, auto→automatic1111, novel→novelai,
+workersai→workers_ai, comfyui→comfy, fal→falai, mistralai→mistral.
 This is implementation and injected-test coverage, not remote/model verification.
 
 Embedding additions: named compatible endpoints (including the current KoboldCpp
@@ -161,8 +164,10 @@ model-dependent; known BFL ultra/1.1 restrictions fail before dispatch.
 
 ### Protocol evidence and verification
 
-No old handler, configuration reader, credential lookup or saved-data path is imported.
-Primary protocol sources:
+Read-only protocol evidence: src/vectors/*-vectors.js, src/endpoints/stable-diffusion.js,
+src/endpoints/google.js and original source enumerations. No legacy handler,
+configuration, credential lookup, saved data or startup path is imported.
+Additional primary sources:
 
 - https://github.com/LostRuins/lite.koboldai.net/blob/main/koboldcpp_api.json (/v1/embeddings)
 - https://github.com/nomic-ai/nomic/blob/main/nomic/embed.py (task_type/dimensionality)

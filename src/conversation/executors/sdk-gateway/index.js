@@ -29,10 +29,7 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
     const maxFrameBytes = positiveLimit(limits.frameBytes, 1024 * 1024, 'frameBytes');
     let server, baseUrl, active = false, fatal, requestIndex = 0, content = '', reasoning = '', closed = false;
     const requests = [];
-    function check() {
-        if (fatal) throw fatal;
-        if (effective.aborted) throw fail('aborted', 'SDK turn stopped; external result may be unknown', 499, { outcome: 'unknown' });
-    }
+    function check() { if (fatal) throw fatal; effective.throwIfAborted(); }
     function stop(error = fail('aborted', 'SDK turn stopped')) { fatal ??= error; controller.abort(); }
     async function emit(event) {
         check();
@@ -129,10 +126,7 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
                         yield new TextEncoder().encode(`${frame}\n\n`);
                     }
                     await completed();
-                } catch (error) {
-                    stop(callSignal.aborted ? fail('aborted', 'Model stream stopped; external result may be unknown', 499, { outcome: 'unknown' })
-                        : error?.name === 'ProtocolError' ? error : fail('model-result-unknown', 'Model stream interrupted', 502)); throw fatal;
-                } finally { active = false; }
+                } catch (error) { stop(error?.code ? error : fail('model-result-unknown', 'Model stream interrupted', 502)); throw fatal; } finally { active = false; }
             })();
             return new Response(new ReadableStream({
                 async pull(output) {

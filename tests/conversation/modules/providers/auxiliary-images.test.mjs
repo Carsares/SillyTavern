@@ -12,7 +12,7 @@ const cases = [
     ['google','/models/test-model:generateContent',{ candidates: [{ content: { parts: [{ inlineData: { data: 'aW1hZ2U=', mimeType: 'image/png' } }] } }] }],
     ['vertexai','/models/test-model:predict',{ predictions: [{ bytesBase64Encoded: 'aW1hZ2U=', mimeType: 'image/png' }] }],
     ['openrouter','/chat/completions',{ choices: [{ message: { images: [{ image_url: { url: 'data:image/png;base64,aW1hZ2U=' } }] } }] }],
-    ['workers_ai','/accounts/account/ai/run/test-model',{ success: true, result: { image: 'aW1hZ2U=' } }],
+    ['workersai','/accounts/account/ai/run/test-model',{ success: true, result: { image: 'aW1hZ2U=' } }],
 ];
 for (const [provider, path, response] of cases) test(`native/named image ${provider}`, async () => {
     const calls = [];
@@ -23,7 +23,7 @@ for (const [provider, path, response] of cases) test(`native/named image ${provi
     if (provider === 'nanogpt') assert.equal(calls[0].init.headers.get('x-api-key'), 'test-secret');
 });
 test('all original 24 image identifiers have concrete profiles', () => {
-    for (const id of ['extras','horde','automatic1111','sdcpp','novelai','vlad','openai','aimlapi','comfy','togetherai','drawthings','pollinations','stability','huggingface','chutes','electronhub','nanogpt','bfl','falai','xai','google','zai','openrouter','workers_ai']) assert.ok(AUXILIARY_PROVIDERS[id].operations.includes('generateImage'));
+    for (const id of ['extras','horde','auto','sdcpp','novel','vlad','openai','aimlapi','comfy','togetherai','drawthings','pollinations','stability','huggingface','chutes','electronhub','nanogpt','bfl','falai','xai','google','zai','openrouter','workersai']) assert.ok(AUXILIARY_PROVIDERS[id].operations.includes('generateImage'));
 });
 test('Google Imagen uses prediction instead of Gemini content and retains sample count', async () => {
     let body;
@@ -33,7 +33,7 @@ test('Google Imagen uses prediction instead of Gemini content and retains sample
     await assert.rejects(adapter.generateImage({ prompt: 'scene', imageSize: '2K' }), { code: 'unsupported-parameters' });
 });
 test('Workers raw binary and flux-2 multipart are separate supported responses', async () => {
-    const adapter = createAuxiliaryAdapter({ ...connection('workers_ai'), model: '@cf/black-forest-labs/flux-2-dev' }, { fetch: async request => { const body = await request.formData(); assert.equal(body.get('prompt'), 'scene'); return binary(); } });
+    const adapter = createAuxiliaryAdapter({ ...connection('workersai'), model: '@cf/black-forest-labs/flux-2-dev' }, { fetch: async request => { const body = await request.formData(); assert.equal(body.get('prompt'), 'scene'); return binary(); } });
     assert.equal((await adapter.generateImage({ prompt: 'scene', width: 512 })).images[0].mimeType, 'image/png');
 });
 test('all image codecs reject unlisted params and media before fetching', async () => {

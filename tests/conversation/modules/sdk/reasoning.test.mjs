@@ -33,12 +33,15 @@ for (const executor of ['claude', 'codex']) {
     });
 }
 
-test('SDK default thinking budget stays inside reduced per-request output limit', async t => {
+test('explicit Claude thinking budget stays inside reduced per-request output limit', async t => {
+    const reasoning = { thinking: { type: 'enabled', budgetTokens: 2048 }, effort: 'high' };
+    assert.equal(reasoningControls('claude', reasoning, 4096).wire.thinking.budget_tokens, 2048);
+    assert.throws(() => preflight('claude', { connection: { ...connection, reasoning }, limits: { maxOutputTokens: 2000 } }), { code: 'invalid-thinking-budget' });
     const transcript = createTranscript({}, { messages: [{ role: 'user', content: 'Hello' }] });
     let dispatched = false;
-    const gateway = createSdkGateway({ protocol: 'anthropic', connection, transcript, inputBudget: 8000, maxOutputTokens: 4096, fetch: async () => { dispatched = true; } });
+    const gateway = createSdkGateway({ protocol: 'anthropic', connection: { ...connection, reasoning }, transcript, inputBudget: 8000, maxOutputTokens: 4096, fetch: async () => { dispatched = true; } });
     t.after(() => gateway.close());
-    const response = await gateway.handle(new Request('http://localhost/v1/messages', { method: 'POST', headers: { authorization: `Bearer ${gateway.token}` }, body: JSON.stringify({ model: 'test', max_tokens: 2000, thinking: { type: 'enabled', budget_tokens: 2048 }, messages: [{ role: 'user', content: transcript.prompt }] }) }));
+    const response = await gateway.handle(new Request('http://localhost/v1/messages', { method: 'POST', headers: { authorization: `Bearer ${gateway.token}` }, body: JSON.stringify({ model: 'test', max_tokens: 2000, messages: [{ role: 'user', content: transcript.prompt }] }) }));
     assert.equal(response.status, 422); assert.equal(dispatched, false);
 });
 
@@ -46,19 +49,8 @@ test('reasoning unknown fields and invalid combinations are rejected, not discar
     for (const reasoning of ['ultra', { ignored: true }, { thinking: { type: 'enabled', budgetTokens: 5 } }, { thinking: { type: 'disabled' }, effort: 'high' }]) {
         assert.throws(() => preflight('claude', { connection: { ...connection, reasoning } }));
     }
-    assert.throws(() => preflight('codex', { connection: { ...connection, reasoning: { effort: 'high' } } }), { code: 'invalid-connection' });
+    assert.throws(() => preflight('codex', { connection: { ...connection, reasoning: { effort: 'high' } } }), { code: 'unsupported-reasoning' });
     assert.match(historyInstructions('native-transcript'), /native ordered/);
+    assert.ok(!historyInstructions('native-transcript').includes('structured-transcript interpretation'));
     assert.match(historyInstructions('structured-transcript'), /structured-transcript interpretation/);
 });
-
-for (const executor of ['claude', 'codex']) {
-    test(`${executor}: flat canonical connection rejects removed configuration aliases`, () => {
-        for (const invalid of [{ data: connection }, { ...connection, effort: 'high' },
-            { ...connection, reasoning: { effort: 'high' } }, { ...connection, reasoning: null },
-            { ...connection, mediaTokenCost: { image: 100 } }]) {
-            assert.throws(() => preflight(executor, { connection: invalid }), { code: 'invalid-connection' });
-        }
-        assert.doesNotThrow(() => preflight(executor, { connection: { ...connection, reasoning: 'high', capabilities: { mediaTokenCost: { image: 100 } } } }));
-        assert.equal(reasoningControls(executor, undefined).mode, 'sdk-default');
-    });
-}

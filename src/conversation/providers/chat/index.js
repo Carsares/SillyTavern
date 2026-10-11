@@ -9,7 +9,7 @@ import { decodeChatStream } from './stream.js';
 import { applyReasoning } from './reasoning.js';
 
 export function createChatAdapter(connection, options = {}) {
-    const c = structuredClone(connection);
+    const c = structuredClone(connection.data ?? connection);
     const capability = getChatCapabilities(c);
     requireCapability(capability);
     const send = createTransport(c, capability, options);
@@ -18,7 +18,7 @@ export function createChatAdapter(connection, options = {}) {
         async generate({ messages, tools = [], signal, maxOutputTokens, onEvent, stream = c.stream !== false } = {}) {
             for (const message of messages ?? []) for (const part of Array.isArray(message.content) ? message.content : []) {
                 if (part.type !== 'text') {
-                    const cost = (c.capabilities?.mediaTokenCost)?.[part.type];
+                    const cost = (c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[part.type];
                     if (!Number.isSafeInteger(cost) || cost < 1) throw fail('media-budget-unknown', 'Explicit positive mediaTokenCost is required');
                 }
             }
@@ -44,9 +44,9 @@ export function createChatAdapter(connection, options = {}) {
     };
 }
 export function createProviderAdapter(connection, options = {}) {
-    const c = connection;
+    const c = connection.data ?? connection;
     if (c.type === 'text') return createTextAdapter(c, options);
-    if (['embedding', 'image'].includes(c.type)) return createAuxiliaryAdapter(c, options);
+    if (['embedding', 'image', 'auxiliary'].includes(c.type)) return createAuxiliaryAdapter(c, options);
     if (c.type && c.type !== 'chat') throw fail('unsupported-provider', 'Unknown connection type');
     return createChatAdapter(c, options);
 }

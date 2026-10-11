@@ -8,7 +8,7 @@ import { textMedia } from './media.js';
 import { decodeTextStream } from './stream.js';
 
 export function createTextAdapter(connection, options = {}) {
-    const c = structuredClone(connection);
+    const c = structuredClone(connection.data ?? connection);
     const capability = getTextCapabilities(c, options);
     requireCapability(capability);
     const send = createTransport(c, capability, options);
@@ -66,3 +66,4 @@ export function createTextAdapter(connection, options = {}) {
         },
     };
 }
+export const createProviderAdapter = createTextAdapter;

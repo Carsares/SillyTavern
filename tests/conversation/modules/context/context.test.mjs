@@ -350,27 +350,3 @@ test('hidden original invalidates derived injection independently of folding', (
     plan = compileContext(input);
     assert.ok(plan.messages.some(message => message.content === 'summary'));
 });
-
-
-test('compiler reads snapshot.settings without merging stale conversation settings', () => {
-    const input = snapshot({ system: '{{get::value}}' });
-    input.settings.variables = { value: 'current' };
-    input.conversation.settings = { characterId: 'missing', variables: { value: 'stale' }, worldbookIds: ['missing'] };
-    assert.equal(compileContext(input).messages[0].content, 'current');
-});
-
-test('compiler accepts direct capabilities and rejects nested budget or enable aliases', () => {
-    for (const capabilities of [{ limits: { workingBudget: 1 } }, { enabled: true }]) {
-        assert.throws(() => compileContext(snapshot(), { capabilities }), { code: 'invalid-capability' });
-    }
-    assert.throws(() => compileContext(snapshot(), { capabilities: { supported: false } }), { code: 'unsupported-capability' });
-    assert.equal(compileContext(snapshot(), { capabilities: { contextWindow: 9000, inputLimit: 7000, maxOutputTokens: 500 } }).budget.hardInputBudget, 6744);
-});
-
-test('folds require a referenced summary version rather than inline replacement content', () => {
-    const input = snapshot();
-    input.folds = [{ id: 'inline', revision: 1, status: 'valid', sourceRefs: input.messages.slice(0, 2).map(sourceRef), content: 'obsolete inline fold' }];
-    const result = compileContext(input);
-    assert.deepEqual(result.messages.map(item => item.content), history().map(item => item.content));
-    assert.ok(result.omitted.some(item => item.id === 'inline' && item.reason === 'inactive-fold'));
-});

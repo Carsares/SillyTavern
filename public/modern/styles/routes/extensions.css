@@ -1,0 +1,36 @@
+.extension-tabs {
+    margin: 0 0 14px;
+}
+
+.extension-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+}
+
+.extension-card {
+    align-content: start;
+}
+
+.extension-card.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface));
+}
+
+.extension-card-title {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.extension-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.extension-detail-panel {
+    margin-top: 0;
+}

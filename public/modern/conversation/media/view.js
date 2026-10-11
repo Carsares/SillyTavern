@@ -1,7 +1,7 @@
 import { el } from '../core/dom.js';
 export function mediaView(api, part, metadata = {}) {
     if (!part.attachmentId) {
-        const external = part.external === true ? part.url : undefined;
+        const external = part.externalURL || part.externalUrl || part.url;
         if (typeof external === 'string') {
             let url;
             try { url = new URL(external); } catch { /* Display invalid URLs as text. */ }
@@ -12,7 +12,7 @@ export function mediaView(api, part, metadata = {}) {
         return el('p', {}, '媒体未返回持久化附件引用');
     }
     const src = api.attachmentUrl(part.attachmentId);
-    const mime = part.mimeType || metadata.mime || '';
+    const mime = part.mimeType || part.mime || metadata.mime || '';
     const name = part.name || metadata.name;
     const preview = /^image\/(png|jpeg|gif|webp|avif)$/.test(mime) ? el('img', { src, alt: name || '附件图片', loading: 'lazy', class: 'attachment-preview' })
         : /^audio\//.test(mime) ? el('audio', { src, controls: true, preload: 'none' })
@@ -27,7 +27,7 @@ export function toolMediaView(api, value, attachments = {}) {
         if (!item || typeof item !== 'object') return;
         if (typeof item.attachmentId === 'string') parts.set(`attachment:${item.attachmentId}`, item);
         else {
-            const external = item.external === true ? item.url : undefined;
+            const external = item.externalURL || item.externalUrl || (item.external === true ? item.url : undefined);
             if (typeof external === 'string') parts.set(`external:${external}`, item);
         }
         if (item.type === 'text' && typeof item.text === 'string') {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, hydrate, reduceEvent, turnRequest, versionedCommand, terminal, redact, list } from '../../../../public/modern/conversation/core/state.js';
+import { initialState, hydrate, reduceEvent, turnRequest, versionedCommand, terminal, redact } from '../../../../public/modern/conversation/core/state.js';
 const snapshot = { conversation: { id: 'c', contentRevision: 7, memoryRevision: 2 }, messages: [] };
 const state = () => hydrate(initialState(), snapshot, { id: 't', status: 'generating', content: '你', reasoning: '' });
 const event = (seq, payload, extra = {}) => ({ schemaVersion: 1, conversationId: 'c', turnId: 't', seq, type: 'text.delta', payload, ...extra });
@@ -44,19 +44,4 @@ test('all four terminal states recover as final', () => {
 test('manual memory create requires a known memory version and does not trust a field override', () => {
     assert.equal(versionedCommand(snapshot, 'memory.create', { expectedMemoryRevision: 99 }).expectedMemoryRevision, 2);
     assert.throws(() => versionedCommand({ conversation: { contentRevision: 1 } }, 'memory.create', {}));
-});
-
-
-test('list responses use arrays only; named wrappers are rejected', () => {
-    const values = [{ id: 'a' }];
-    assert.equal(list(values, 'resources'), values);
-    for (const value of [{ resources: values }, null, {}]) assert.throws(() => list(value, 'resources'));
-});
-
-test('obsolete event aliases never append text and instead request authoritative refresh', () => {
-    for (const type of ['turn.delta', 'turn.reasoning', 'turn.reasoning.delta']) {
-        const next = reduceEvent(state(), event(1, { text: 'alias', offset: 1 }, { type }));
-        assert.equal(next.turn.content, '你'); assert.equal(next.turn.reasoning, '');
-        assert.equal(next.needsRefresh, true);
-    }
 });

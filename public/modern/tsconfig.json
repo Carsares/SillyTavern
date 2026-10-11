@@ -1,0 +1,22 @@
+{
+    "//": "checkJs.1 — 为 Modern Workspace 的 core/ 与 shell/ 开启 checkJs 类型检查。根 jsconfig.json 排除了 public/**，此 scoped 配置覆盖该子树。仅注释级类型检查，不产出编译产物（noEmit）。checkJs.2 负责补 JSDoc typedef 使其全绿，checkJs.3 负责接入 CI。",
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "allowJs": true,
+        "checkJs": true,
+        "noEmit": true,
+        "strict": false,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "lib": ["ES2023", "DOM", "DOM.Iterable"]
+    },
+    "include": [
+        "core/**/*.js",
+        "shell/**/*.js"
+    ],
+    "exclude": [
+        "**/node_modules/**"
+    ]
+}

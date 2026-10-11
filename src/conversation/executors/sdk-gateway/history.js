@@ -1,14 +1,15 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { fail, serializeTranscript, HISTORY_MODE, HISTORY_INSTRUCTIONS } from './contracts.js';
+import { fail, serializeTranscript, HISTORY_INSTRUCTIONS } from './contracts.js';
 
-export function createTranscript(snapshot, plan, mode = HISTORY_MODE) {
-    if (![HISTORY_MODE, 'structured-transcript'].includes(mode)) throw fail('unsupported-history-mode', 'Unknown SDK history mode', 422);
+export function createTranscript(snapshot, plan, mode = 'native-transcript') {
     const serialized = JSON.stringify({ ...JSON.parse(serializeTranscript(snapshot, plan)), historyMode: mode });
     const marker = `CONVERSATION_TRANSCRIPT_${randomBytes(24).toString('hex')}`;
     // The gateway owns the frozen full history. A bounded reference prevents
     // SDK-local prompt limits/compaction from rejecting it before our budget check.
-    const payload = mode === HISTORY_MODE ? JSON.stringify({ schemaVersion: 1, historyMode: mode,
-        transcriptSha256: createHash('sha256').update(serialized).digest('hex') }) : serialized;
+    // Structured fallback is deliberately still the full model-interpreted text.
+    const payload = mode === 'native-transcript'
+        ? JSON.stringify({ schemaVersion: 1, historyMode: mode, transcriptSha256: createHash('sha256').update(serialized).digest('hex') })
+        : serialized;
     const prompt = `${marker}\n${payload}\nEND_${marker}`;
     return { marker, prompt, messages: structuredClone(plan.messages), sourceRefs: structuredClone(plan.sourceRefs ?? []), mode };
 }
@@ -124,7 +125,6 @@ export function expandTranscript(body, protocol, transcript) {
         if (protocol === 'anthropic') request.system = HISTORY_INSTRUCTIONS;
         else request.instructions = HISTORY_INSTRUCTIONS;
     } else {
-        if (transcript.mode !== HISTORY_MODE) throw fail('unsupported-history-mode', 'Unknown SDK history mode', 422);
         const encoded = encodeHistory(transcript.messages, protocol);
         request[field] = [...encoded.messages, ...structuredClone(after)];
         if (protocol === 'anthropic') request.system = encoded.system;

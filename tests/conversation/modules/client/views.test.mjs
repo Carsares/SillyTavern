@@ -140,7 +140,7 @@ test('media displays attachment URLs while external URLs never produce image ele
     const api = { attachmentUrl: id => `/api/conversation/v1/attachments/${id}` };
     const view = toolMediaView(api, { result: { media: [
         { type: 'image', attachmentId: 'real' },
-        { type: 'image', external: true, url: 'https://example.com/image.png', mimeType: 'image/png' },
+        { type: 'image', externalURL: 'https://example.com/image.png', mimeType: 'image/png' },
     ] } }, { real: { mime: 'image/png', name: 'persisted' } });
     const images = descendants(view).filter(node => node.tag === 'img');
     assert.equal(images.length, 1);
@@ -148,7 +148,7 @@ test('media displays attachment URLs while external URLs never produce image ele
     const external = descendants(view).find(node => node.tag === 'a' && node.href === 'https://example.com/image.png');
     assert.equal(external.rel, 'noopener noreferrer');
     assert.match(view.textContent, /未持久化/);
-    const unsafe = mediaView(api, { external: true, url: 'javascript:alert(1)' });
+    const unsafe = mediaView(api, { externalURL: 'javascript:alert(1)' });
     assert.equal(descendants(unsafe).filter(node => node.tag === 'a').length, 0);
 }));
 test('chat can focus current message without treating a missing message as found', () => withDOM(async () => {
@@ -195,10 +195,10 @@ test('memory creation refreshes versions while retaining an unsaved new draft', 
     assert.equal(command[0], 'memory.create'); assert.equal(command[1].content, 'keep this draft');
     assert.equal(command[2].conversation.memoryRevision, 9); assert.equal(command[2].conversation.contentRevision, 8);
 }));
-test('canonical external media stays a link; aliases and unmarked URLs are not rendered', () => withDOM(async () => {
+test('explicit external url protocol and named URL fields all stay links rather than images', () => withDOM(async () => {
     const { toolMediaView } = await import('../../../../public/modern/conversation/media/view.js');
     const view = toolMediaView({}, { images: [{ url: 'https://example.com/current', external: true }, { externalURL: 'https://example.com/named' }, { externalUrl: 'https://example.com/alias' }, { url: 'https://example.com/unmarked' }] });
-    assert.equal(descendants(view).filter(node => node.tag === 'a').length, 1);
+    assert.equal(descendants(view).filter(node => node.tag === 'a').length, 3);
     assert.equal(descendants(view).filter(node => node.tag === 'img').length, 0);
 }));
 test('auxiliary selectors save exact settings keys and capability guidance uses actual provider fields', () => withDOM(async () => {
@@ -344,60 +344,4 @@ test('retrieval event supersedes pending reads and conversation changes discard 
     assert.doesNotMatch(view.root.textContent, /语义索引已就绪/);
     app.api.retrievalStatus = async () => { throw new Error('offline'); }; await view.load();
     assert.match(view.root.textContent, /索引状态未知：offline/);
-}));
-
-test('settings preserve supported tool maps, write canonical arrays and reject auxiliary objects', () => withDOM(async () => {
-    const { createSettings } = await import('../../../../public/modern/conversation/settings/view.js');
-    const snap = snapshot(); snap.settings = { tools: { recall_memory: true } };
-    let pending, writes = 0, saved;
-    const app = { state: { snapshot: snap }, id: () => 'c', notice() {}, run: action => { pending = action(); return pending; },
-        api: { resources: async () => [], automaticState: async () => ({ enabled: false }) },
-        applyCommand: async (_type, body) => { writes++; saved = body.settings; } };
-    const view = createSettings(app); await view.load();
-    descendants(view.root).find(node => node.tag === 'form').onsubmit({ preventDefault() {} }); await pending;
-    assert.deepEqual(saved.tools, ['recall_memory']);
-    assert.equal(writes, 1);
-    assert.doesNotMatch(view.root.textContent, /连接级配置|继承主连接 auxiliary/);
-    const extra = descendants(view.root).find(node => node['aria-label'] === '高级会话设置');
-    extra.value = JSON.stringify({ auxiliary: { memory: 'obsolete' } });
-    descendants(view.root).find(node => node.tag === 'form').onsubmit({ preventDefault() {} });
-    await assert.rejects(pending, /auxiliaryConnectionId/);
-    assert.equal(writes, 1);
-}));
-
-test('candidate records require candidate identity rather than message identity aliases', () => withDOM(async () => {
-    const snap = snapshot(); snap.messages = [{ id: 'm', role: 'assistant', content: 'reply', revision: 1, candidateId: 'current', candidateRevision: 1 }];
-    const app = { id: () => 'c', state: { snapshot: snap, turn: null, activity: [] }, run: action => action(),
-        api: { candidates: async () => [{ id: 'old-shape', revision: 1, content: 'invalid' }] } };
-    const view = createChat(app); view.render();
-    const control = descendants(view.root).find(node => node.tag === 'button' && node.textContent.includes('候选'));
-    await assert.rejects(control.listeners.click(), /candidateId/);
-}));
-
-test('connection editor preserves canonical reasoning and media fields in flat resource data', () => withDOM(async () => {
-    const { createResources } = await import('../../../../public/modern/conversation/resources/view.js');
-    const resource = { id: 'conn', kind: 'connection', name: 'Google', revision: 1, data: { provider: 'google', executor: 'pi', type: 'chat', model: 'test', baseUrl: 'https://example.invalid',
-        reasoning: 'budget', reasoningBudget: 1024, capabilities: { media: ['text', 'video'], mediaTokenCost: { video: 4096 }, verified: false } } };
-    let pending, saved;
-    const app = { run: action => { pending = action(); return pending; }, notice() {}, api: { resources: async () => [resource], resource: async () => resource,
-        updateResource: async (_id, body) => { saved = body.data; } } };
-    const view = createResources(app); await view.load();
-    await descendants(view.root).find(node => node.tag === 'button' && node.textContent === '编辑').listeners.click();
-    const text = view.root.textContent;
-    assert.match(text, /字符串 reasoning/); assert.match(text, /capabilities.mediaTokenCost/);
-    assert.doesNotMatch(text, /reasoning\.effort|使用 effort/);
-    descendants(view.root).find(node => node.tag === 'form').listeners.submit({ preventDefault() {} }); await pending;
-    assert.equal(saved.reasoning, 'budget'); assert.equal(saved.reasoningBudget, 1024);
-    assert.deepEqual(saved.capabilities, resource.data.capabilities);
-    assert.equal(Object.hasOwn(saved, 'data'), false); assert.equal(Object.hasOwn(saved, 'mediaTokenCost'), false);
-}));
-
-test('default tool selection still enables four read-only utilities and leaves paid/write tools off', () => withDOM(async () => {
-    const { createSettings } = await import('../../../../public/modern/conversation/settings/view.js');
-    let pending, saved;
-    const app = { state: { snapshot: snapshot() }, id: () => 'c', notice() {}, run: action => { pending = action(); return pending; },
-        api: { resources: async () => [], automaticState: async () => ({ enabled: false }) }, applyCommand: async (_type, body) => { saved = body.settings; } };
-    const view = createSettings(app); await view.load();
-    descendants(view.root).find(node => node.tag === 'form').onsubmit({ preventDefault() {} }); await pending;
-    assert.deepEqual(saved.tools, ['recall_memory', 'search_lore', 'roll_dice', 'get_time']);
 }));

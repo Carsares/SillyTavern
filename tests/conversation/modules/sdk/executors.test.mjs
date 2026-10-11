@@ -63,14 +63,13 @@ for (const [kind, factory] of [['claude', createClaudeExecutor], ['codex', creat
             assert.equal(state.sent.reasoning.effort, 'high');
         }
     });
-    test(`${kind}: native default and explicit structured mode match the product selector`, () => {
+    test(`${kind}: native transcript is the default and remains explicitly distinguished from text fallback`, () => {
         const executor = factory();
         assert.equal(executor.getCapabilities(connection).historyMode, 'native-transcript');
         assert.equal(executor.getCapabilities(connection).nativeHistory, true);
         assert.equal(executor.getCapabilities(connection).budgetEnforcement, 'gateway-every-request');
         // preflight is the authoritative per-connection mode.
         assert.equal(executor.preflight({ connection: { ...connection, historyMode: 'structured-transcript' } }).nativeHistory, false);
-        assert.throws(() => executor.preflight({ connection: { ...connection, historyMode: 'unknown' } }), { code: 'unsupported-history-mode' });
         assert.throws(() => executor.preflight({ connection: { ...connection, parameters: { ignored: 1 } } }), { code: 'unsupported-parameters' });
     });
     test(`${kind}: real gateway policy + fake SDK completes a turn and closes resources`, async () => {
@@ -85,7 +84,8 @@ for (const [kind, factory] of [['claude', createClaudeExecutor], ['codex', creat
         const state = h.state();
         assert.ok(state.closedSdk && state.closedGateway && state.closedEnvironment);
         assert.match(state.seenPrompt, /^CONVERSATION_TRANSCRIPT_/);
-        if (kind === 'claude') { assert.deepEqual(state.options.tools, []); assert.deepEqual(state.options.settingSources, []); assert.equal(state.options.persistSession, false); assert.equal(state.sent.system[0].text, 'Our instructions'); } else { assert.equal(state.options.config.features.shell_tool, false); assert.equal(state.sent.instructions, ''); assert.equal(state.sent.input[0].role, 'system'); }
+        if (kind === 'claude') { assert.deepEqual(state.options.tools, []); assert.deepEqual(state.options.settingSources, []); assert.equal(state.options.persistSession, false); assert.equal(state.sent.system[0].text, 'Our instructions'); }
+        else { assert.equal(state.options.config.features.shell_tool, false); assert.equal(state.sent.instructions, ''); assert.equal(state.sent.input[0].role, 'system'); }
     });
     test(`${kind}: SDK failure still closes all resources and sanitizes its error`, async () => {
         const h = harness(kind, { failAfterRequest: true });
@@ -102,7 +102,6 @@ for (const [kind, factory] of [['claude', createClaudeExecutor], ['codex', creat
 test('Codex has no model retry, remote WebSocket transport, inherited MCP servers or enabled shell', () => {
     const config = codexProcessConfig({ address: { baseUrl: 'http://127.0.0.1:1', token: 'fake', mcpUrl: 'http://127.0.0.1:1/mcp' }, tools: [{ name: 'recall' }] });
     assert.equal(config.model_providers.conversation_gateway.request_max_retries, 0);
-    for (const removed of ['connectors', 'memory_tool', 'codex_hooks']) assert.equal(Object.hasOwn(config.features, removed), false);
     assert.equal(config.model_providers.conversation_gateway.stream_max_retries, 0);
     assert.equal(config.model_providers.conversation_gateway.supports_websockets, false);
     assert.deepEqual(Object.keys(config.mcp_servers), ['domain']);

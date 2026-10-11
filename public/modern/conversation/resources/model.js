@@ -26,12 +26,3 @@ export function historyModeDescription(capability) {
         ? '输入模式：结构化转录。历史角色、工具及来源信息编码成转录内容交给 SDK，不是无损原生 roles 输入。'
         : capability?.historyMode ? `输入模式：${capability.historyMode}` : '输入模式尚未由服务端声明。';
 }
-
-/** Shape checks mirror the connection contract; protocol capabilities remain server-owned. */
-export function validateConnectionFields(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.hasOwn(value, 'data')) throw new Error('连接资源 JSON 必须是平面对象');
-    if (Object.hasOwn(value, 'effort') || value.reasoning !== undefined && typeof value.reasoning !== 'string') throw new Error('推理模式请使用字符串 reasoning');
-    if (Object.hasOwn(value, 'mediaTokenCost')) throw new Error('媒体预算请使用 capabilities.mediaTokenCost');
-    if (Object.hasOwn(value, 'auxiliary')) throw new Error('辅助连接请在会话设置中使用 auxiliaryConnectionId、embeddingConnectionId、imageConnectionId');
-    return value;
-}

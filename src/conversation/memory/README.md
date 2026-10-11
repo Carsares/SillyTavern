@@ -5,9 +5,8 @@
 `previewCompact`. No SDK or network client is imported.
 
 The injected `generate(request)` receives `{type:'memory',snapshot,messages,
-summaries,memories,sourceRefs,resourceRefs,budget,inputBudget,estimatedInputTokens,compressionPolicy?,signal,outputSchema}`. Return a parsed object
-`{chapter,rolling?,memories?}`. Composition parses provider JSON at its boundary;
-the memory service does not accept serialized response strings. Chapter and optional rolling summary
+summaries,memories,sourceRefs,resourceRefs,budget,inputBudget,estimatedInputTokens,compressionPolicy?,signal,outputSchema}`. Return an object or
+JSON string `{chapter,rolling?,memories?}`. Chapter and optional rolling summary
 are nonempty strings capped at 16,000 characters each. At most 32 memory changes
 are accepted, each content at most 8,000 characters. Each memory input uses
 `{id?,expectedBlockRevision?,op?,kind?,content}`. Supported kinds are character,
@@ -34,17 +33,14 @@ before calling `store.commitDerived(conversationId,mergedProposal)` exactly once
 This extra compilation is required even if the second temporary snapshot fitted.
 Runtime owns the maximum of two foreground generation attempts.
 
-`compact(snapshot,{signal,budget})` is the manual, idle-conversation operation:
-it generates and atomically commits one proposal. Active conversations and turn
-scope arguments are rejected before generation. It is not a foreground shortcut;
-foreground runtime uses the deferred interfaces above.
+`compact(snapshot,options)` remains a compatibility wrapper that prepares and
+immediately commits. Foreground runtime uses the deferred interfaces above.
 A numeric `budget` (or `budget.summaryTokens`) bounds generated derived text using
 UTF-8 bytes as a conservative token estimate, not the complete model request.
 
 Before generation, the service reads the frozen connection selected by
-`snapshot.settings.auxiliaryConnectionId`, defaulting to
-`snapshot.settings.connectionId` only when the auxiliary field is absent.
-Nested connection.data.auxiliary aliases and conversation.settings are not read.
+`settings.auxiliaryConnectionId`, then primary.data.auxiliary.memory/summary/
+summarization (in that order, string or {connectionId}), then settings.connectionId.
 Selection uses only frozen resources; absent or unconfigured selections block.
 Shared `computeBudget` reserves output and safety tokens;
 2,048 conservative input tokens are additionally reserved for the summary prompt.
@@ -125,26 +121,3 @@ Focused evidence: memory/tools units and
 `tests/conversation/integration/memory-hidden.test.mjs` pass with a local fake
 HTTP provider. The latter checks actual auxiliary request bodies after hiding a
 message that already had derived summaries and memory. No paid provider is used.
-
-## Auxiliary batch accounting regression
-
-Batch selection measures the actual composition payload (`messages`, `summaries`,
-`memories`, `compressionPolicy`) serialized inside a chat request, including JSON
-quote/backslash escaping and the prompt reserve. Top-level proposal provenance
-(`sourceRefs`, `resourceRefs`) is not sent separately by composition and must not
-be counted again. References embedded in messages or derived blocks are counted.
-All protected memories remain in the input. Whole-turn prefix search is bounded
-and never truncates an individual turn.
-
-A blocked smallest batch reports `stage:auxiliary-batch`, a reason distinguishing
-fixed context from the earliest complete turn, `fixedEstimatedTokens`,
-`minimumBatchEstimatedTokens`, the selected connection budget and prompt reserve.
-A primary 32k condition does not imply that its auxiliary request can hold 160
-protected memories; use an explicit independently budgeted auxiliary connection.
-
-Offline full-dataset regression (3040 messages, 160 locked memories) uses injected
-short summaries, not a model-quality result. Two corrected 950k batches cover
-3019 messages; actual auxiliary compiler estimates were 948769 and 765771. The
-resulting main context was 39385: 64k/128k fitted, while 32k correctly remained
-budget-blocked under the retained recent-history preference. No protected memory
-or dataset record was removed to make this test pass.

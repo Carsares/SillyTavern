@@ -13,7 +13,7 @@ import { imageList } from './common.js';
 const positive = (value, name, max) => { if (!Number.isSafeInteger(value) || value < 1 || value > max) throw fail('invalid-image-options', `Invalid ${name}`); return value; };
 
 export function createAuxiliaryAdapter(connection, options = {}) {
-    const c = structuredClone(connection);
+    const c = structuredClone(connection.data ?? connection);
     const capability = getAuxiliaryCapabilities(c);
     requireCapability(capability);
     const imageCapability = { ...capability, api: capability.imageApi,
@@ -114,3 +114,4 @@ export function createAuxiliaryAdapter(connection, options = {}) {
         }
     } };
 }
+export const createProviderAdapter = createAuxiliaryAdapter;

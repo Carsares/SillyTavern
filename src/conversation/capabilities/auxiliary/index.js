@@ -67,9 +67,10 @@ for (const profile of Object.values(profiles)) {
     ];
     if (profile.imageApi) profile.operationParameters.generateImage = imageFields[profile.imageApi];
 }
+for (const [alias, canonical] of Object.entries({ auto: 'automatic1111', novel: 'novelai', palm: 'google', makersuite: 'google', workersai: 'workers_ai', comfyui: 'comfy', fal: 'falai', mistralai: 'mistral', openai_compatible: 'openai-compatible' })) profiles[alias] = profiles[canonical];
 export const AUXILIARY_PROVIDERS = deepFreeze(profiles);
 export function getAuxiliaryCapabilities(connection) {
-    const c = connection ?? {};
+    const c = connection?.data ?? connection ?? {};
     const profile = profiles[c.provider];
     // Local inference needs no HTTP origin; no connection to this placeholder is ever made.
     const local = profile?.embedApi === 'transformers-embed';
@@ -91,3 +92,4 @@ export function getAuxiliaryCapabilities(connection) {
     if (profile?.embedApi === 'workers-embed' && (typeof c.accountId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(c.accountId))) Object.assign(result, { supported: false, reason: 'Workers accountId required' });
     return result;
 }
+export const getCapabilities = getAuxiliaryCapabilities;

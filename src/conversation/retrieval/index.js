@@ -17,6 +17,9 @@ function cosine(a, b) {
     for (let i = 0; i < a.length; i++) { const x = a[i] / scaleA, y = b[i] / scaleB; dot += x * y; aa += x * x; bb += y * y; }
     return dot / Math.sqrt(aa * bb);
 }
+// Hidden originals and all derived entries depending on them are ineligible, even
+// when a caller supplies an older snapshot whose derived status is still valid.
+const visibleEntries = snapshot => searchableEntries({ ...snapshot, messages: snapshot.messages.filter(message => !message.userHidden) });
 const fingerprint = entry => canonicalJson([entry.key, entry.revision, entry.content, entry.sourceRefs]);
 
 /** Derived index stays in memory; never opens old data paths or writes files. */
@@ -28,7 +31,7 @@ export function createRetrieval({ store, embed, onStatus }) {
     function status(conversationId) {
         const state = states.get(conversationId) ?? { status: embed ? 'not-ready' : 'keyword-only', semanticReady: false, count: 0 };
         const cached = indexes.get(conversationId);
-        if (state.status === 'ready' && cached && cached.signature !== signature(searchableEntries(store.getConversation(conversationId)))) {
+        if (state.status === 'ready' && cached && cached.signature !== signature(visibleEntries(store.getConversation(conversationId)))) {
             return { ...state, status: 'stale', semanticReady: false };
         }
         return structuredClone(state);
@@ -49,7 +52,7 @@ export function createRetrieval({ store, embed, onStatus }) {
         const epoch = (epochs.get(conversationId) ?? 0) + 1;
         epochs.set(conversationId, epoch);
         signal?.throwIfAborted();
-        const entries = searchableEntries(store.getConversation(conversationId));
+        const entries = visibleEntries(store.getConversation(conversationId));
         if (!embed) {
             indexes.delete(conversationId);
             return publish(conversationId, { status: 'keyword-only', count: entries.length });
@@ -59,7 +62,7 @@ export function createRetrieval({ store, embed, onStatus }) {
             const result = entries.length ? checkedEmbedding(await embed({ texts: entries.map(e => e.content), purpose: 'index', signal }), entries.length) : null;
             signal?.throwIfAborted();
             if (epochs.get(conversationId) !== epoch) return { status: 'superseded', semanticReady: false, count: 0 };
-            if (signature(entries) !== signature(searchableEntries(store.getConversation(conversationId)))) return invalidate(conversationId);
+            if (signature(entries) !== signature(visibleEntries(store.getConversation(conversationId)))) return invalidate(conversationId);
             indexes.set(conversationId, { ...result, signature: signature(entries), entries: structuredClone(entries) });
             return publish(conversationId, { status: 'ready', count: entries.length,
                 ...(result ? { model: result.model, version: result.version, dimensions: result.dimensions } : {}) });
@@ -77,8 +80,8 @@ export function createRetrieval({ store, embed, onStatus }) {
         invariant(typeof query === 'string' && query.trim() && query.length <= 4096, 'invalid-query', 'Search query is empty or too long');
         invariant(Number.isSafeInteger(limit) && limit > 0 && limit <= 100, 'invalid-query', 'Search limit must be 1 to 100');
         snapshot ??= store.getConversation(conversationId);
-        invariant(snapshot.conversationId === conversationId, 'invalid-snapshot', 'Snapshot belongs to another conversation');
-        const entries = searchableEntries(snapshot);
+        invariant((snapshot.conversationId ?? snapshot.conversation.id) === conversationId, 'invalid-snapshot', 'Snapshot belongs to another conversation');
+        const entries = visibleEntries(snapshot);
         const allowed = new Set(entries.map(fingerprint));
         const terms = [...new Set(query.toLocaleLowerCase().trim().split(/\s+/u))];
         const candidates = new Map();
@@ -95,7 +98,7 @@ export function createRetrieval({ store, embed, onStatus }) {
                 const result = checkedEmbedding(await embed({ texts: [query], purpose: 'query', signal }), 1);
                 signal?.throwIfAborted();
                 if (result.model === cached.model && result.version === cached.version && result.dimensions === cached.dimensions) {
-                    if (cached.signature === signature(searchableEntries(store.getConversation(conversationId)))) publish(conversationId, { status: 'ready', count: cached.entries.length, model: cached.model, version: cached.version, dimensions: cached.dimensions });
+                    if (cached.signature === signature(visibleEntries(store.getConversation(conversationId)))) publish(conversationId, { status: 'ready', count: cached.entries.length, model: cached.model, version: cached.version, dimensions: cached.dimensions });
                     cached.entries.forEach((entry, i) => {
                         const key = fingerprint(entry);
                         if (!allowed.has(key)) return;
@@ -114,7 +117,7 @@ export function createRetrieval({ store, embed, onStatus }) {
         // Re-read AFTER asynchronous embedding: edits, deletes, candidate switches and manual
         // memory revisions must not leak even if an old snapshot/index is still in memory.
         signal?.throwIfAborted();
-        const currentEntries = searchableEntries(store.getConversation(conversationId));
+        const currentEntries = visibleEntries(store.getConversation(conversationId));
         const current = new Set(currentEntries.map(fingerprint));
         if (cached && cached.signature !== signature(currentEntries)) publish(conversationId, { status: 'stale', count: cached.entries.length });
         const seen = new Set();

@@ -1,0 +1,198 @@
+import { getSettingsOptionalTabs } from '../components/settings-optional-tabs.js';
+import { bindSettingsChatToolsEvents } from './settings-chat-tools-events.js';
+import { bindSettingsMaintenanceEvents } from './settings-maintenance-events.js';
+
+export function createSettingsEvents(ctx) {
+    const {
+        state,
+        render,
+        showToast,
+        loadSettingsSnapshots,
+        createSettingsSnapshot,
+        saveModernPreferencesFromForm,
+        previewSettingsSnapshot,
+        beginSettingsSnapshotRestore,
+        cancelSettingsSnapshotRestore,
+        confirmSettingsSnapshotRestore,
+        openRawSettingsEditor,
+        updateRawSettingsEditorValue,
+        closeRawSettingsEditor,
+        saveRawSettingsFromEditor,
+    } = ctx;
+    const optionalTabs = getSettingsOptionalTabs(ctx);
+    // 「聊天工具」「数据维护」两个标签里的控件事件，各自的约定见对应文件顶部注释
+    const slotHandlers = [
+        bindSettingsChatToolsEvents(ctx),
+        bindSettingsMaintenanceEvents(ctx),
+    ].map(handlers => handlers || {});
+
+    async function setSettingsSection(section, { loadSnapshots = true } = {}) {
+        const sectionIds = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics', ...optionalTabs.filter(tab => tab.isAvailable()).map(tab => tab.id)];
+        state.settingsSection = sectionIds.includes(section) ? section : 'preferences';
+        localStorage.setItem('st-modern-settings-section', state.settingsSection);
+        if (loadSnapshots && state.settingsSection === 'snapshots' && !state.settingsSnapshots.loaded && !state.settingsSnapshots.loading) {
+            await loadSettingsSnapshots();
+        }
+    }
+
+    async function handleSettingsClick(event) {
+        const settingsSectionButton = event.target.closest('[data-settings-section]');
+        if (settingsSectionButton) {
+            try {
+                await setSettingsSection(settingsSectionButton.dataset.settingsSection);
+                render();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshots', message: error.message });
+                showToast('设置快照读取失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-load-settings-snapshots]')) {
+            try {
+                await setSettingsSection('snapshots', { loadSnapshots: false });
+                await loadSettingsSnapshots({ force: true });
+                render();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshots', message: error.message });
+                showToast('设置快照读取失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-create-settings-snapshot]')) {
+            try {
+                await setSettingsSection('snapshots', { loadSnapshots: false });
+                await createSettingsSnapshot();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshot-create', message: error.message });
+                showToast('设置快照创建失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-save-modern-preferences]')) {
+            saveModernPreferencesFromForm();
+            return true;
+        }
+
+        const previewSettingsSnapshotButton = event.target.closest('[data-preview-settings-snapshot]');
+        if (previewSettingsSnapshotButton) {
+            try {
+                await previewSettingsSnapshot(previewSettingsSnapshotButton.dataset.previewSettingsSnapshot);
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshot-preview', message: error.message });
+                showToast('设置快照预览失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        const restoreSettingsSnapshotButton = event.target.closest('[data-restore-settings-snapshot]');
+        if (restoreSettingsSnapshotButton) {
+            beginSettingsSnapshotRestore(restoreSettingsSnapshotButton.dataset.restoreSettingsSnapshot);
+            return true;
+        }
+
+        if (event.target.closest('[data-cancel-settings-restore]')) {
+            cancelSettingsSnapshotRestore();
+            return true;
+        }
+
+        if (event.target.closest('[data-confirm-settings-restore]')) {
+            try {
+                await confirmSettingsSnapshotRestore();
+            } catch (error) {
+                state.errors.push({ key: 'settings-snapshot-restore', message: error.message });
+                showToast('设置快照恢复失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-open-raw-settings]')) {
+            try {
+                await openRawSettingsEditor();
+            } catch (error) {
+                state.errors.push({ key: 'raw-settings-open', message: error.message });
+                showToast('原始设置加载失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-save-raw-settings]')) {
+            try {
+                await saveRawSettingsFromEditor();
+            } catch (error) {
+                state.errors.push({ key: 'raw-settings-save', message: error.message });
+                showToast('原始设置保存失败', error.message);
+                render();
+            }
+            return true;
+        }
+
+        if (event.target.closest('[data-cancel-raw-settings]')) {
+            closeRawSettingsEditor();
+            return true;
+        }
+
+        for (const handlers of slotHandlers) {
+            if (handlers.handleClick && await handlers.handleClick(event)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    async function handleSettingsChange(event) {
+        for (const handlers of slotHandlers) {
+            if (handlers.handleChange && await handlers.handleChange(event)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 必须在没处理时返回 false：shell/events.js 对 keydown 的返回值不是 false 就不再走全局快捷键
+    function handleSettingsKeydown(event) {
+        return slotHandlers.some(handlers => handlers.handleKeydown?.(event));
+    }
+
+    function handleSettingsInput(event) {
+        if (slotHandlers.some(handlers => handlers.handleInput?.(event))) {
+            return true;
+        }
+
+        // 原始设置编辑器：仅同步 value，不触发重渲染以保留光标位置。
+        if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-raw-settings-input]')) {
+            updateRawSettingsEditorValue(event.target.value);
+            return true;
+        }
+
+        if (!(event.target instanceof HTMLInputElement) || !event.target.matches('[data-settings-snapshot-search]')) {
+            return false;
+        }
+
+        const cursor = event.target.selectionStart ?? event.target.value.length;
+        state.settingsSnapshots.query = event.target.value;
+        render();
+        const input = document.querySelector('[data-settings-snapshot-search]');
+        if (input instanceof HTMLInputElement) {
+            input.focus();
+            input.setSelectionRange(cursor, cursor);
+        }
+        return true;
+    }
+
+    return {
+        handleSettingsChange,
+        handleSettingsClick,
+        handleSettingsInput,
+        handleSettingsKeydown,
+    };
+}

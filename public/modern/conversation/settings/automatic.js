@@ -1,6 +1,6 @@
 export function automaticRequest(snapshot, enabled, { intervalMs, content } = {}) {
     if (!enabled) return { enabled: false };
-    const settings = snapshot?.settings ?? {};
+    const settings = snapshot?.settings || snapshot?.conversation.settings || {};
     if (!settings.groupId || !settings.connectionId) throw new Error('请先保存群组与连接选择');
     if (!Number.isSafeInteger(snapshot?.conversation.contentRevision)) throw new Error('请重新读取会话版本');
     if (!Number.isSafeInteger(intervalMs) || intervalMs < 1000 || intervalMs > 3600000) throw new Error('自动群聊间隔必须为 1000–3600000 毫秒的整数');

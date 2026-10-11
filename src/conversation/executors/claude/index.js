@@ -17,6 +17,9 @@ export function createClaudeExecutor(dependencies = {}) {
             promptSuggestions: false, agentProgressSummaries: false,
             maxTurns: positiveLimit(limits.rounds, 5, 'rounds') + 1,
             mcpServers: tools.length ? { domain: { type: 'http', url: address.mcpUrl, headers: { Authorization: `Bearer ${address.token}` } } } : {},
+            canUseTool: async (name, input) => tools.some(t => name === `mcp__domain__${t.name}`)
+                ? { behavior: 'allow', updatedInput: input }
+                : { behavior: 'deny', message: 'Only domain tools are available' },
         } });
         setCleanup(async () => { query.close(); await query.return?.(); });
         let succeeded = false;

@@ -71,7 +71,7 @@ export function createMemoryService({ store, generate, now = Date.now }) {
             summaries: copy(parents), memories: copy(validMemories), sourceRefs: copy(allRefs), resourceRefs: copy(resources), budget, inputBudget: batch.budget, estimatedInputTokens: batch.estimatedInputTokens, compressionPolicy: copy(policy), signal,
             outputSchema: { chapter: 'nonempty string', rolling: 'optional nonempty string', memories: 'array of memory proposals' } });
         signal?.throwIfAborted();
-        const output = response;
+        const output = typeof response === 'string' ? JSON.parse(response) : response;
         invariant(output && typeof output.chapter === 'string' && output.chapter.trim() && output.chapter.length <= 16000,
             'compression-failed', 'Generator must return a bounded nonempty chapter');
         invariant(output.rolling === undefined || (typeof output.rolling === 'string' && output.rolling.trim() && output.rolling.length <= 16000), 'compression-failed', 'Invalid rolling summary');
@@ -99,11 +99,9 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         return { proposal, snapshot: compactSnapshot(snapshot, proposal) };
     }
     async function compact(snapshot, options = {}) {
-        invariant(!snapshot.conversation.activeTurnId, 'conversation-busy', 'Manual compression requires an idle conversation', 409);
-        invariant(options.turnId === undefined && options.attemptEpoch === undefined, 'invalid-compaction', 'Use prepareCompact for foreground turn proposals');
-        const proposal = await propose(snapshot, { signal: options.signal, budget: options.budget, foreground: true });
+        const { proposal } = await prepareCompact(snapshot, options);
         options.signal?.throwIfAborted();
-        const result = store.commitDerived(snapshot.conversationId, proposal);
+        const result = store.commitDerived(snapshot.conversationId ?? snapshot.conversation.id, proposal);
         invariant(result !== false && result?.conflict !== true && result?.accepted !== false, 'revision-conflict', 'Derived commit conflicted', 409);
         return result;
     }

@@ -53,13 +53,12 @@ export function compileContext(snapshot, options = {}) {
         if (position < 0) throw new ProtocolError('invalid-target', 'Generation requires a current assistant target');
         snapshot = { ...snapshot, messages: snapshot.messages.slice(0, position + (type === 'continue' ? 1 : 0)) };
     }
-    if (Object.hasOwn(capabilities, 'limits') || Object.hasOwn(capabilities, 'enabled')) throw new ProtocolError('invalid-capability', 'Use supported and direct capability budget fields');
-    if (capabilities.supported === false) throw new ProtocolError('unsupported-capability', 'Connection is disabled');
+    if (capabilities.supported === false || capabilities.enabled === false) throw new ProtocolError('unsupported-capability', 'Connection is disabled');
     if (capabilities.types && !capabilities.types.includes(type)) throw new ProtocolError('unsupported-capability', 'Generation type is unsupported');
     if (tools.length && capabilities.tools === false) throw new ProtocolError('unsupported-capability', 'Tools are unsupported');
-    const settings = snapshot.settings ?? {};
+    const settings = { ...snapshot.conversation?.settings, ...snapshot.settings };
     const connection = getResource(snapshot, settings, 'connectionId', 'connection')?.data ?? {};
-    const limits = { ...connection };
+    const limits = { ...connection, ...capabilities.limits };
     for (const key of ['contextWindow', 'inputLimit', 'maxOutputTokens', 'outputLimit']) if (capabilities[key] !== undefined) limits[key] = capabilities[key];
     const budget = computeBudget({ ...limits, workingBudget: options.workingBudget ?? limits.workingBudget });
     if (limits.outputLimit !== undefined && (!Number.isSafeInteger(limits.outputLimit) || limits.maxOutputTokens > limits.outputLimit)) {
@@ -111,7 +110,7 @@ export function compileContext(snapshot, options = {}) {
     const covered = new Set();
     const selectedSummaries = new Set();
     const folds = (snapshot.folds ?? []).map(fold => {
-        const summary = (snapshot.summaries ?? []).find(item => item.id === fold.summaryRef?.id && item.revision === fold.summaryRef?.revision);
+        const summary = fold.summaryRef ? (snapshot.summaries ?? []).find(item => item.id === fold.summaryRef.id && item.revision === fold.summaryRef.revision) : fold;
         const refs = resolveSources(fold, snapshot);
         const summaryRefs = summary && resolveSources(summary, snapshot);
         return { fold, summary, refs, summaryRefs };

@@ -1,19 +1,24 @@
 # Modern conversation client
 
-The server root redirects to `/modern/conversation/`. This client uses native ES
-modules without a build step and shares protocol and compiler modules under
-`public/shared/conversation/`.
+Standalone development entry: `/modern/conversation/index.html`. Native ES modules,
+no build step. The primary integrator owns the eventual default entry switch.
+Only this directory and `tests/conversation/modules/client/` are owned by this
+client task. No legacy Modern entry, global configuration, Git branch/worktree or
+commit was changed by this task.
 
 ## Source contracts
 
 - `docs/conversation/CONTRACTS.md` and shared `schemas/index.js` are canonical.
+- The implementation plan is `test-results/ui-self-check/AGENT-PLAN.md` (not a root
+  file; it is excluded from ordinary repository file searches).
 - Resource editors use the actual defaults in shared `assembly/defaults.js` and
   `world-info/index.js`, documented by shared `assembly/README.md`.
-- HTTP route implementations are in `src/conversation/api/index.js`.
+- Additional HTTP routes below were confirmed by the integrator and statically
+  checked in `src/conversation/api/index.js`. This is not an integration test.
 
-## Modules
+## Files and ownership
 
-- `index.html`, `app.js`, `style.css`: client entry, state/controller and layout.
+- `index.html`, `app.js`, `style.css`: independent entry, state/controller and layout.
 - `core/client.js`: JSON commands, session authentication, SSE parser/reconnect.
 - `core/state.js`: snapshots, turn requests, optimistic version checks, event reducer.
 - `core/operations.js`: authoritative snapshot acceptance and confirmed-write readback handling.
@@ -25,12 +30,14 @@ modules without a build step and shares protocol and compiler modules under
 - `diagnostics/context.js`, `diagnostics/view.js`, `diagnostics/usage.js`, `diagnostics/tools.js`: context layers, traces, server usage tables and stored tool result expansion.
 - `media/model.js`, `media/view.js`: attachment references, capability gates and previews.
 - `maintenance/model.js`, `maintenance/view.js`: status, export/backup, restore, reindex and cleanup preview.
-- Tests: `automatic.test.mjs`, `client.test.mjs`, `state.test.mjs`, `resources-media.test.mjs`, `audit.test.mjs`, `views.test.mjs` in the client test directory.
+- Tests: `automatic.test.mjs`, `client.test.mjs`, `state.test.mjs`, `resources-media.test.mjs`, `audit.test.mjs`, `views.test.mjs` in the owned test directory.
 
 ## HTTP requests
 
 All business paths are relative to `/api/conversation/v1`. All non-GET JSON bodies
-include `schemaVersion: 1`. Cookies use `credentials: same-origin`; GET `/csrf-token` supplies the token sent as `X-CSRF-Token` on writes.
+include `schemaVersion: 1`. Cookies use `credentials: same-origin`; the only
+non-versioned request is the existing authentication infrastructure GET
+`/csrf-token`, whose token is sent as `X-CSRF-Token`. It is not a legacy chat API.
 HTTP error `{error:{code,message,details}}` is displayed; a 409 preserves editing
 input and requires a fresh read/review. Writes are never automatically retried.
 JSON requests have a 30-second client timeout; an uncertain turn acceptance keeps
@@ -38,7 +45,7 @@ its original request ID and body for explicit idempotent retry.
 
 | Operation | Request / response consumed |
 | --- | --- |
-| List/create conversations | GET/POST `/conversations`; create `{title,settings}` -> Conversation |
+| List/create conversations | GET/POST `/conversations`; create `{title,settings}` -> Conversation or Snapshot |
 | Read/delete conversation | GET/DELETE `/conversations/:id`; DELETE `{expectedContentRevision}` |
 | List/create resources | GET `/resources?kind=...`, POST `/resources` `{kind,name,data}` |
 | Read/update/delete resource | GET/PATCH/DELETE `/resources/:id`; PATCH `{expectedRevision,name,data}`, DELETE `{expectedRevision}` |
@@ -64,10 +71,8 @@ its original request ID and body for explicit idempotent retry.
 | Index rebuild | POST `/maintenance/reindex` `{conversationId}` |
 | Cleanup preview/execute | POST `/maintenance/cleanup-preview` `{}` -> `{token,entries,bytes,expiresInMs}`; POST `/maintenance/cleanup` `{token}` |
 
-List responses are arrays. Named envelopes are rejected. Candidate records use
-`candidateId` and `candidateRevision`; snapshot settings are read from
-`snapshot.settings`. Only `text.delta` and `reasoning.delta` append stream text.
-Missing lists are errors, not an empty success.
+List responses may be arrays or named envelopes (`resources`, `conversations`,
+`candidates`, `traces`, `jobs`). Missing lists are errors, not an empty success.
 Cleanup tokens stay in memory, are hidden from the generic JSON display, and are
 submitted only after the user types the explicit confirmation phrase. Downloads
 preserve the backup graph exactly; only a server response explicitly declaring
@@ -97,17 +102,18 @@ uses `expectedMemoryRevision` from the latest displayed snapshot while preservin
 ### Resource data and capabilities
 
 Character/persona fields are `description,personality,scenario`. Presets use
-`mode,system,blocks,regex,textTemplate`. Worldbooks use
+`mode,system,blocks,regex,textTemplate` (not `systemPrompt`). Worldbooks use
 `scanDepth,maxRecursion,entries` and canonical entry defaults. Groups use ordered
 `members` of character IDs and `mode: sequential|natural|round-robin`; a group turn
 may also explicitly choose `members`. Connection fields include
 `provider,executor,type,baseUrl,model,contextWindow,inputLimit,outputLimit,
-maxOutputTokens,workingBudget`, with advanced `reasoning,reasoningBudget,parameters,capabilities,proxy`.
+maxOutputTokens,workingBudget`, with advanced `reasoning,parameters,auxiliary`.
 Model limits have no guessed default values.
 
 Executor choices: `pi` (native), `claude` (Claude Agent SDK), `codex` (Codex SDK).
 New connections default to `historyMode: native-transcript`: the local gateway
-expands history into native role messages at actual egress. Explicit supported modes are preserved. All executors are selectable; server capabilities decide whether
+expands history into native role messages at actual egress. Existing explicit modes
+are preserved. All executors are selectable; server capabilities decide whether
 the configured combination is supported. Input-mode descriptions come from
 `cap.historyMode`; `structured-transcript` is explicitly distinguished from native
 role input only when reported by the server. The UI does not require SDKs to use
@@ -174,37 +180,52 @@ sources with cycle protection. Reads show loading/errors and remain retryable.
 
 Persisted media on messages, tool events and complete tool results is rendered
 through the attachment endpoint, using snapshot MIME metadata when necessary.
-Explicit `{url,external:true}` media remains a link marked not persisted; it
+Explicit externalURL/externalUrl or `{url,external:true}` media remains a link marked not persisted; it
 never becomes an automatic remote image request. Unsafe URL schemes are not linked.
 
-## Connection selection and media
+## Remaining integration boundaries
 
-Conversation settings select `connectionId`, `auxiliaryConnectionId`,
-`embeddingConnectionId` and `imageConnectionId`. Memory/summary generation uses
-`auxiliaryConnectionId` or the main connection if absent. Embedding and image
-connections are selected separately. Connection-level `auxiliary` objects are
-not accepted or migrated. The UI saves `settings.tools` as an array of tool names;
-it also reads the name/boolean object currently accepted by the tool registry.
-The supported `native` executor value is displayed and saved as `pi`, selecting
-the same executor. Removing either input form requires coordinating its backend
-contract first.
+1. Headless browser checks now cover isolated local HTTP fixtures; live paid SDK/provider
+   validation and final root composition remain owned by the primary.
+2. Typed media request shape is `{type,attachmentId,mimeType,name,size}`. The UI
+   uploads and previews files and submits only attachment references. The runtime
+   must resolve references and the capabilities endpoint must declare media support
+   before such media may be sent; the client refuses unsupported media. Upload
+   success is never presented as successful model ingestion.
+3. Media estimates submit `{draft,media}` with the same typed references as send.
+   Backend compiler/runtime integration must account for these parts and load image
+   bytes from the attachment service; the browser never reads filesystem paths.
+   HTTP errors remain visible; there is no text-only fallback for a failed media estimate.
+4. Private headers preservation and compression revision checks are backend
+   responsibilities. Automatic state is read from the server on settings load,
+   after toggle writes and on `automatic.changed`. Restart defaults to disabled;
+   the UI never automatically enables scheduling or resends paid work. Request versions are sent;
+   their enforcement/persistence has not been verified by this client task.
+5. Advanced auxiliary-model, reasoning and memory-frequency settings can be saved
+   in JSON, but UI save success does not certify that a backend consumes every
+   advanced setting. Only capability responses and traces are evidence of effect.
 
-Typed attachments use `{type,attachmentId,mimeType,name,size}`. The runtime
-resolves attachment bytes; the client never reads server filesystem paths.
-Send and estimate use the same media references and capability checks. Upload
-success does not imply model media support. The media view can use persisted
-attachment metadata (`mime`, `name`) when a reference omits these details.
+## Focused checks
 
-Connection guidance documents `type`, string `reasoning`, `reasoningBudget`,
+`node --test tests/conversation/modules/client/*.test.mjs`: 68 tests passed at
+client handoff. Includes request versions, structured failures, fragmented UTF-8
+SSE, reconnect/deduplication/cursor reset, recovered content offsets, terminal
+safety, redaction, canonical resource defaults, SDK mode labels and media gates. Additional regression tests cover snapshot/command readback, member delta isolation, memory kinds, server usage tables, candidate panel state, complete tool result reads, UTF-8 backup envelope sizing and the full static module graph. DOM checks use an in-memory test double, not a browser.
+
+`./node_modules/.bin/eslint public/modern/conversation/**/*.js public/modern/conversation/app.js`:
+passed after correcting reported brace formatting.
+Browser checks used only temporary local protocol fixtures; no paid provider calls or real user-data writes were performed.
+
+
+Auxiliary connection selectors save `auxiliaryConnectionId`, `embeddingConnectionId`
+and `imageConnectionId`, and each selected connection has a capability-read action.
+Connection resource guidance documents `type`, `effort`, `reasoningBudget`,
 `capabilities.reasoningEnabled/reasoningEfforts/media/mediaTokenCost/verified`.
-Connections are flat objects; `reasoning` is a string and media token budgets
-live only in `capabilities.mediaTokenCost`. Provider identifiers are canonical
-(e.g. `openai-compatible`, `anthropic`, `google`, `vertexai`); unknown providers
-are rejected by the server, not translated by the client. Examples are
-explanatory and never automatically marked verified.
-`memoryFrequency` is a positive-integer conversation setting.
+Examples are explanatory and never automatically applied or marked verified.
+`memoryFrequency` guidance documents the positive-integer conversation setting.
 
-## Additional feature contracts
+
+## Final scope additions and verified contracts
 
 - `memory/view.js`: `summary.edit {summaryId,expectedBlockRevision,content}`;
   edits retain their original block revision on conflict.
@@ -228,47 +249,24 @@ explanatory and never automatically marked verified.
   conversation-v1-export effective history; backup validates conversation-v1-backup
   and credentialsIncluded=false. Restore still requires a full backup.
 
-## Focused verification
+### Browser evidence, 2026-10-11
 
-Run `node --test --test-concurrency=6 tests/conversation/modules/client/*.test.mjs
-tests/conversation/modules/context/*.test.mjs` for client and compiler checks.
-DOM tests use an in-memory document implementation. Manual browser helpers in the
-test directory are not part of this command. Unit checks do not establish live
-provider support; integration evidence belongs in the project validation record.
+Only headless CLI session conversation-ui-more was used. The primary session and
+port 60320 were not managed. Local services used temporary directories, not user data.
+New scope checks passed against actual HTTP/store behavior: summary revision and
+readback; user hiding across reload and exclusion from effective export; proxy
+write/blank/clear with no echo; trace cleanup (3 details pruned, 3 calls/75 tokens
+still displayed); distinct effective export and full backup; full backup restored
+into an empty store with edited summary and hidden state retained; retrieval
+ready/error/ready transitions after edits; image cancel-requested to completed,
+real attachment image load, completed controls disabled. The image peer recorded
+exactly one original submission and one cancellation, with no resubmission.
+At 390px, document width was 390px. Screenshots are in output/playwright/child-scope-*.png.
+Earlier browser phase covered six resource CRUD flows, bindings, manual memory,
+stop/reload partial replies, message attachments, candidates/regenerate/continue,
+auxiliary and impersonation drafts, and group sending.
 
-## Normalization evidence and retained behavior
-
-This cleanup changes redundant input shapes, not product operations. Source paths
-below are repository-relative. Protocol differences remain in provider adapters;
-this browser does not translate provider identifiers or wire reasoning fields.
-
-| Removed browser/compiler alternative | Active producer or replacement evidence |
-| --- | --- |
-| Named list envelopes | `src/conversation/api/index.js` returns arrays for resource/conversation/candidate/trace/job list routes. Object envelopes for message history and usage remain unchanged. |
-| Conversation-or-Snapshot creation response | POST `/conversations` returns `store.createConversation`; the client reads its `id`. Reads and command results still use Snapshot. |
-| Candidate `id/revision` substitutes | `store.getCandidates` returns message versions with explicit `candidateId/candidateRevision`; using message identity here would select the wrong entity. |
-| `turn.delta` / `turn.reasoning*` event aliases | `store.appendDelta` emits only `text.delta` and `reasoning.delta`. Other events still trigger authoritative refresh. |
-| Merging `conversation.settings` into compiler/UI settings | Store snapshot creation explicitly projects current settings to `snapshot.settings`. Composition builds auxiliary snapshots by replacing that field, so merging another settings copy could reintroduce unrelated selectors. |
-| Nested `capabilities.limits` and `capabilities.enabled` | Current capability modules emit direct budget fields and `supported`. Actual composition passes these capabilities to the compiler. Compiler rejects obsolete fields instead of silently ignoring a supplied limit. |
-| Inline fold text as an alternative summary | `src/conversation/memory/index.js` creates folds with `summaryRef`; compilation resolves that exact summary revision and validates its sources. Inline fold text may remain stored as metadata but cannot bypass summary validity. |
-| Connection-level auxiliary selection | `composition.connectionId` reads the three conversation setting IDs; only auxiliary generation defaults to `settings.connectionId`. UI selectors save those exact IDs. |
-| `externalURL`, `externalUrl`, media-ref `mime` aliases | `composition.registerMedia` produces persisted `{attachmentId,mimeType,...}` refs. UI retains explicit external `{url,external:true}` links and attachment metadata fallback `metadata.mime`. Provider URLs are downloaded/registered by the server, not displayed as arbitrary remote images. |
-| `effort`, object reasoning, top-level media budget, wrapped connection input | `capabilities/core.connectionShapeError` requires a flat connection, string `reasoning`, and `capabilities.mediaTokenCost`. The resource editor checks these same fields before save; its tests compare with the actual server helper. |
-| Development-entry and phase-handoff descriptions | `server.createApplication` redirects `/` to `/modern/conversation/`; documentation now describes that current entry and stable interfaces. |
-
-Retained behavior includes chat and text templates; all six generation types;
-PI/Claude/Codex choices and native/structured SDK input modes; provider-specific
-reasoning modes and budgets; image/audio/video/document references and previews;
-attachment metadata fallback; SDK tool results encoded as JSON text; memory,
-summary editing, folds, retrieval and worldbook recursion/probability/cooldown;
-macros with effect proposals, regex stages, source invalidation and full-history
-budget rejection; group/manual/automatic scheduling; image-job resume/cancel;
-proxy write-only input; backup/export/restore; usage, traces and unknown costs.
-
-Effective defaults are retained: absent reasoning stays absent for server/model
-handling; presets and worldbooks clone shared defaults; absent auxiliary selection
-uses the primary connection; tool defaults enable recall_memory, search_lore,
-roll_dice and get_time while leaving update_memory and generate_image disabled.
-The backend still accepts `native` as the PI executor and name/boolean tool maps,
-so the UI continues reading these while writing canonical `pi` and name arrays.
-These inputs are not declared unused and must not be removed independently.
+`tests/conversation/modules/client/browser-jobs-fixture.mjs` is a manual local-only
+browser fixture, not an automatically executed unit test. It starts a seeded image
+job and a separate empty store for restore checks, and checks submission count on
+SIGTERM/SIGINT shutdown. It never discovers credentials or forwards requests.
