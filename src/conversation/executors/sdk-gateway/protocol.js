@@ -37,6 +37,9 @@ export function filterRequest(body, protocol, domain, model, maxOutputTokens) {
 }
 
 /** Validate tool envelopes before they reach the SDK, including streaming starts. */
+/** A Responses reply cut off by max_output_tokens is a finished (length-truncated) reply, like Anthropic max_tokens. */
+export const lengthTruncated = response => response?.status === 'incomplete' && response.incomplete_details?.reason === 'max_output_tokens';
+
 export function responseInspector({ protocol, domain, requestIndex, emit, usage }) {
     const pending = new Map();
     let complete = false;
@@ -54,7 +57,7 @@ export function responseInspector({ protocol, domain, requestIndex, emit, usage 
         } else if (item.type === 'tool_use') domain.permit(item.id, item.name, item.input, requestIndex);
     }
     async function inspect(data, streaming = true) {
-        if (data.error || data.type === 'error' || ['response.failed', 'response.incomplete'].includes(data.type)) throw fail('upstream-model-error', 'Model response failed or was incomplete', 502);
+        if (data.error || data.type === 'error' || data.type === 'response.failed' || data.type === 'response.incomplete' && !lengthTruncated(data.response)) throw fail('upstream-model-error', 'Model response failed or was incomplete', 502);
         if (!streaming) {
             const items = protocol === 'anthropic' ? data.content : data.output;
             if (!Array.isArray(items)) throw fail('invalid-model-response', 'Missing model output', 502);
@@ -65,7 +68,7 @@ export function responseInspector({ protocol, domain, requestIndex, emit, usage 
                 if (item.type === 'message') for (const part of item.content ?? []) if (part.type === 'output_text') await emit({ type: 'text.delta', text: part.text });
             }
             usage(data.usage ?? null);
-            complete = protocol === 'anthropic' ? Boolean(data.stop_reason) : data.status === 'completed';
+            complete = protocol === 'anthropic' ? Boolean(data.stop_reason) : data.status === 'completed' || lengthTruncated(data);
             return;
         }
         if (protocol === 'anthropic') {
@@ -102,10 +105,10 @@ export function responseInspector({ protocol, domain, requestIndex, emit, usage 
             if (data.type === 'response.output_item.done') issue(data.item);
             if (data.type === 'response.output_text.delta') await emit({ type: 'text.delta', text: data.delta });
             if (['response.reasoning_text.delta', 'response.reasoning_summary_text.delta'].includes(data.type)) await emit({ type: 'reasoning.delta', text: data.delta });
-            if (data.type === 'response.completed') {
+            if (['response.completed', 'response.incomplete'].includes(data.type)) {
                 for (const item of data.response?.output ?? []) issue(item);
                 usage(data.response?.usage ?? null);
-                complete = data.response?.status === 'completed';
+                complete = data.response?.status === 'completed' || lengthTruncated(data.response);
             }
         }
     }

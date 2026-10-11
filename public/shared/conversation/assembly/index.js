@@ -56,6 +56,8 @@ export function compileContext(snapshot, options = {}) {
     if (capabilities.supported === false || capabilities.enabled === false) throw new ProtocolError('unsupported-capability', 'Connection is disabled');
     if (capabilities.types && !capabilities.types.includes(type)) throw new ProtocolError('unsupported-capability', 'Generation type is unsupported');
     if (tools.length && capabilities.tools === false) throw new ProtocolError('unsupported-capability', 'Tools are unsupported');
+    // Native Anthropic/Google codecs and the Claude SDK history encoder accept system text only before the first non-system message.
+    const prefixSystemOnly = capabilities.systemPlacement === 'prefix' || capabilities.deepSystem === false;
     const settings = { ...snapshot.conversation?.settings, ...snapshot.settings };
     const connection = getResource(snapshot, settings, 'connectionId', 'connection')?.data ?? {};
     const limits = { ...connection, ...capabilities.limits };
@@ -219,6 +221,15 @@ export function compileContext(snapshot, options = {}) {
             }
             return { ...block, content: message.content, message };
         });
+        if (prefixSystemOnly) {
+            // Keep position and text; later system blocks (depth, tail, generation instructions) become user turns.
+            // A trailing user instruction also avoids assistant prefill, so continue/impersonate keep their meaning.
+            let started = false;
+            for (const block of renderedBlocks) {
+                if (block.message.role !== 'system') started = true;
+                else if (started) block.message.role = 'user';
+            }
+        }
         const request = { mode: preset.mode, messages: renderedBlocks.map(block => block.message), tools: structuredClone(tools) };
         if (preset.mode === 'text') {
             const template = { ...PRESET_DEFAULTS.textTemplate, ...preset.textTemplate };

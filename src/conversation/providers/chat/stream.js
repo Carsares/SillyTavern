@@ -111,6 +111,8 @@ export async function decodeChatStream(api, response, { signal, onEvent, provide
     }
     if (!terminal || !sawResponse) throw fail('provider-stream-truncated', 'Stream ended before a complete response');
     for (const [index, json] of jsonBuffers) {
+        // A parameterless tool may stream only empty fragments; keep content_block_start input (normally {}), as the SDK does.
+        if (json === '') { state.content[index].input ??= {}; continue; }
         try { state.content[index].input = JSON.parse(json); } catch { throw fail('provider-response-invalid', 'Incomplete tool argument JSON'); }
     }
     const result = decodeChat(api, state, { provider });

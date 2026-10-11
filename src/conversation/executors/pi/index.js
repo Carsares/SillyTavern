@@ -1,6 +1,6 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
-import { TOOL_LIMITS } from '../../../../public/shared/conversation/schemas/index.js';
+import { ProtocolError, TOOL_LIMITS } from '../../../../public/shared/conversation/schemas/index.js';
 import { getCapabilities, validateCapabilities, reasoningEffort } from '../../capabilities/core/index.js';
 import { createCapturedFetch, createRedactor, estimateContext, estimatePiContext, fail } from '../../providers/core/index.js';
 import { createPrimaryModel, createPrimaryStream, samplingParameters } from '../../providers/primary/index.js';
@@ -10,6 +10,12 @@ import { normalizePiUsage, updatePiUsage, usageSemantics } from './usage.js';
 
 export { getCapabilities };
 export { createPiStreamBridge } from './bridge.js';
+
+/** Adapter failures keep their local code; upstream HTTP rejections add only the numeric status, named as in the SDK gateway. */
+function providerFailure(message) {
+    if (Number.isSafeInteger(message.upstreamStatus)) return new ProtocolError(message.errorCode ?? 'provider-http-error', 'Model provider rejected request', 502, { upstreamStatus: message.upstreamStatus });
+    return fail(typeof message.errorCode === 'string' ? message.errorCode : 'provider-error', 'Model request failed');
+}
 
 /** Uses pi 1.0.2's Agent loop; stream/model injection changes transport, never scheduling. */
 export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fetch: fetchImpl, capabilityResolver = getCapabilities, modelFactory = createPrimaryModel } = {}) {
@@ -45,7 +51,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
             checkTextContext(c.parameters?.negative_prompt);
             if (c.type === 'text') checkTextContext(requestPlan.prompt);
             if (!capabilities.tools && messages.some(m => m.role === 'toolResult' || Array.isArray(m.content) && m.content.some(p => p.type === 'toolCall'))) throw fail('unsupported-tools', 'Tool history is unsupported');
-            const parameters = streamFn ? undefined : samplingParameters(c.parameters);
+            const parameters = streamFn ? undefined : samplingParameters(c.parameters, c.provider);
             const redact = createRedactor(c);
             const controller = new AbortController();
             const effectiveSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -178,7 +184,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                     } else if (event.type === 'message_end' && event.message.role === 'assistant' && requests > 0) {
                         const message = event.message;
                         finishReason = message.stopReason;
-                        if (finishReason === 'error') stop(fail('provider-error', 'Model request failed'));
+                        if (finishReason === 'error') stop(providerFailure(message));
                         else if (finishReason === 'aborted') stop(fail('aborted', 'Model request aborted'));
                         else if (!['stop', 'length', 'toolUse'].includes(finishReason)) stop(fail('unsupported-finish', 'Unsupported provider completion state'));
                         if (fatal) return;

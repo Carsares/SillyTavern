@@ -447,3 +447,61 @@ test('explicit SDK estimated pricing reaches final usage without claiming an act
     assert.ok(Math.abs(result.usage.costUsd - 0.000017) < 1e-12);
     assert.equal(result.usage.costSource, 'sdk-estimated'); assert.equal(result.usage.costEstimated, true);
 });
+
+test('primary sampling follows the provider chat profile and unsupported keys never reach the wire', async () => {
+    const { samplingParameters } = await import('../../../../src/conversation/providers/primary/index.js');
+    let body;
+    const openai = { ...connection, provider: 'openai', parameters: { temperature: 0.5, top_p: 0.9, seed: 7, stop: ['END'] } };
+    await run(createPiExecutor({ fetch: async request => { body = await request.json(); return response({ content: 'ok' }); } }), { connection: openai });
+    assert.deepEqual([body.temperature, body.top_p, body.seed, body.stop], [0.5, 0.9, 7, ['END']]);
+    for (const [key, value] of [['top_k', 0], ['min_p', 0], ['repetition_penalty', 1]]) {
+        let sent = 0;
+        await assert.rejects(run(createPiExecutor({ fetch: async () => { sent++; return response({ content: 'x' }); } }), { connection: { ...openai, parameters: { [key]: value } } }), { code: 'unsupported-parameters' });
+        assert.equal(sent, 0);
+    }
+    assert.deepEqual(samplingParameters({ top_k: 40 }, 'anthropic'), { top_k: 40 });
+    assert.throws(() => samplingParameters({ temperature: 1 }, 'unknown'), { code: 'unsupported-parameters' });
+});
+
+test('compiled regenerate/continue/impersonate/auxiliary plans reach native Anthropic through Pi', async () => {
+    const { compileContext } = await import('../../../../public/shared/conversation/assembly/index.js');
+    const { getChatCapabilities } = await import('../../../../src/conversation/capabilities/chat/index.js');
+    const { validateCapabilities } = await import('../../../../src/conversation/capabilities/core/index.js');
+    const { createProviderStream, createProviderModel } = await import('../../../../src/conversation/providers/chat/bridge.js');
+    const c = { ...connection, executor: 'native', provider: 'anthropic', stream: false };
+    const capability = validateCapabilities(c, getChatCapabilities(c));
+    const message = (id, role, turnId) => ({ id, role, content: id, turnId, revision: 1, status: 'completed' });
+    const snapshot = { conversation: { settings: {} }, settings: { presetId: 'p' }, summaries: [], memories: [], folds: [],
+        resources: [{ id: 'p', kind: 'preset', revision: 1, data: { system: 'Rules', blocks: [{ id: 'note', placement: { type: 'depth', depth: 1 }, content: 'Depth note' }] } }],
+        messages: [message('u1', 'user', 't1'), message('a1', 'assistant', 't1'), message('u2', 'user', 't2'), message('a2', 'assistant', 't2')] };
+    for (const type of ['regenerate', 'continue', 'impersonate', 'auxiliary']) {
+        const plan = compileContext(snapshot, { type, targetMessageId: 'a2', capabilities: capability });
+        let body;
+        const result = await run(createPiExecutor({ capabilityResolver: getChatCapabilities, model: createProviderModel(c), streamFn: createProviderStream(c),
+            fetch: async request => { body = await request.json(); return Response.json({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn', usage: { input_tokens: 4, output_tokens: 1 } }); } }),
+        { connection: c, requestPlan: { ...plan, type } });
+        assert.equal(result.content, 'done');
+        assert.deepEqual(body.system, [{ type: 'text', text: 'Rules' }]);
+        assert.deepEqual(body.messages.map(item => item.content[0].text), [...['u1', 'a1', 'Depth note', 'u2', 'a2'].slice(0, type === 'regenerate' ? 4 : 5), plan.messages.at(-1).content]);
+        assert.equal(body.messages.at(-1).role, 'user');
+    }
+});
+
+test('native adapter failures keep local codes and numeric upstream HTTP status without provider text', async () => {
+    const { getChatCapabilities } = await import('../../../../src/conversation/capabilities/chat/index.js');
+    const { createProviderStream, createProviderModel } = await import('../../../../src/conversation/providers/chat/bridge.js');
+    const native = (c, fetch) => createPiExecutor({ capabilityResolver: getChatCapabilities, model: createProviderModel(c), streamFn: createProviderStream(c), fetch });
+    const anthropic = { ...connection, executor: 'native', provider: 'anthropic', stream: false };
+    await assert.rejects(run(native(anthropic, async () => new Response(JSON.stringify({ error: { message: `invalid key ${connection.apiKey}` } }), { status: 401, headers: { 'content-type': 'application/json' } })), { connection: anthropic, requestPlan: { messages: [{ role: 'user', content: 'hello' }] } }), error => {
+        assert.equal(error.code, 'provider-http-error'); assert.equal(error.status, 502);
+        assert.deepEqual(error.details, { upstreamStatus: 401 });
+        assert.ok(!JSON.stringify([error.message, error.details]).includes(connection.apiKey));
+        return true;
+    });
+    let sent = 0;
+    const deepseek = { ...connection, executor: 'native', provider: 'deepseek', stream: false, parameters: { top_p: 0.9 } };
+    await assert.rejects(run(native(deepseek, async () => { sent++; return Response.json({}); }), { connection: deepseek }), error => error.code === 'unsupported-parameters' && error.details?.upstreamStatus === undefined);
+    // The shared plan has a mid-history system message, which the native Anthropic codec rejects locally.
+    await assert.rejects(run(native(anthropic, async () => { sent++; return Response.json({}); }), { connection: anthropic }), { code: 'unsupported-system-placement' });
+    assert.equal(sent, 0);
+});

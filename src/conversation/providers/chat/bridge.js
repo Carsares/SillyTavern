@@ -165,6 +165,11 @@ export function createProviderStream(connection, deps = {}) {
             } catch (error) {
                 partial.stopReason = options.signal?.aborted ? 'aborted' : 'error';
                 partial.errorMessage = error?.code ? `${error.code}: Provider request failed` : 'Provider request failed';
+                // Only the local code and numeric upstream HTTP status reach the executor; never provider text or headers.
+                if (error?.name === 'ProtocolError' && typeof error.code === 'string') {
+                    partial.errorCode = error.code;
+                    if (Number.isSafeInteger(error.details?.status)) partial.upstreamStatus = error.details.status;
+                }
                 stream.push({ type: 'error', reason: partial.stopReason, error: partial });
             }
         })();

@@ -80,7 +80,12 @@ fails the turn; there is no silent fallback or automatic retry.
 The gateway clamps actual `max_tokens` / `max_output_tokens` to the configured
 per-turn cap (and preserves a smaller SDK cap). Claude fixed thinking budget
 must be >=1024 and strictly below that actual cap; otherwise nothing is sent.
-Thinking and visible output share that total output allowance. Input accounting
+Thinking and visible output share that total output allowance. Reaching that cap
+is a completed, length-truncated reply for both protocols: Anthropic
+`stop_reason: max_tokens`, and a Responses `response.incomplete` whose reason is
+`max_output_tokens`, which the gateway relays to the SDK as `response.completed`
+because the SDK would otherwise treat it as a retryable stream error. Other
+incomplete reasons (such as `content_filter`) still fail the turn. Input accounting
 uses JSON UTF-8 byte length + 1024 as a conservative estimate, **not exact provider
 tokenization**. Inject `countTokens(request)` into the factory when a verified
 provider-aware counter is available. Real raw usage is retained per request;

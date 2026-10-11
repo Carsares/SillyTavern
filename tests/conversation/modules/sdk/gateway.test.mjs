@@ -225,3 +225,25 @@ test('native marker remains bounded while expanded history is complete and fully
     }
     assert.equal(dispatched, 1);
 });
+
+test('a max_output_tokens truncation completes and reaches the SDK as response.completed', async t => {
+    const response = { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [{ type: 'message', status: 'incomplete', content: [{ type: 'output_text', text: '截断' }] }], usage: { input_tokens: 3, output_tokens: 200 } };
+    const h = setup({ fetch: async () => sse([{ type: 'response.output_text.delta', delta: '截断' }, { type: 'response.incomplete', response }]) });
+    t.after(() => h.gateway.close());
+    const text = await (await h.request()).text();
+    assert.match(text, /event: response\.completed\ndata: \{"type":"response\.completed"/);
+    assert.doesNotMatch(text, /response\.incomplete"/);
+    assert.equal(h.gateway.result().content, '截断'); assert.equal(h.gateway.result().usage.complete, true);
+    const json = setup({ fetch: async () => Response.json({ ...response, output: [{ type: 'message', content: [{ type: 'output_text', text: '截断' }] }] }) });
+    t.after(() => json.gateway.close());
+    assert.equal((await (await json.request()).json()).status, 'incomplete');
+    assert.equal(json.gateway.result().content, '截断');
+});
+
+test('content-filter and other incomplete responses still fail', async t => {
+    for (const reason of ['content_filter', undefined]) {
+        const h = setup({ fetch: async () => sse([{ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: reason ? { reason } : null, output: [] } }]) });
+        t.after(() => h.gateway.close());
+        await assert.rejects((await h.request()).text(), { code: 'upstream-model-error' });
+    }
+});

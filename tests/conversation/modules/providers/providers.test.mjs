@@ -214,3 +214,19 @@ test('malformed vectors and image errors do not return fabricated success', asyn
     await assert.rejects(createProviderAdapter(base('openai', 'embedding'), mock).embed(['one', 'two']), { code: 'provider-response-invalid' });
     await assert.rejects(createProviderAdapter(base('novelai', 'image'), { fetch: async () => new Response('bad zip') }).generateImage({ prompt: 'test' }), { code: 'provider-response-invalid' });
 });
+
+test('anthropic stream: parameterless tool with empty input_json_delta yields {} while partial JSON still fails', async () => {
+    const frames = partial => [
+        { type: 'message_start', message: { content: [], usage: { input_tokens: 3 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'call-empty', name: 'ping', input: {} } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: partial } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 2 } }, { type: 'message_stop' },
+    ];
+    const c = base('anthropic', 'chat', { stream: true });
+    const events = [];
+    const result = await createProviderAdapter(c, { fetch: async () => sse(frames('')) }).generate({ messages, onEvent: event => events.push(event) });
+    assert.deepEqual(result.toolCalls, [{ id: 'call-empty', name: 'ping', args: {} }]);
+    assert.deepEqual(events.find(event => event.type === 'tool.call').args, {});
+    await assert.rejects(createProviderAdapter(c, { fetch: async () => sse(frames('{"q":')) }).generate({ messages }), { code: 'provider-response-invalid' });
+});

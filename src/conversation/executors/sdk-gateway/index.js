@@ -117,13 +117,15 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
                         responseBytes += Buffer.byteLength(frame);
                         if (responseBytes > maxResponseBytes) throw fail('response-size-limit', 'Model response exceeds size limit');
                         check();
+                        let parsed;
                         if (data && data !== '[DONE]') {
-                            let parsed; try { parsed = JSON.parse(data); } catch { throw fail('invalid-model-response', 'Invalid SSE data', 502); }
+                            try { parsed = JSON.parse(data); } catch { throw fail('invalid-model-response', 'Invalid SSE data', 502); }
                             await inspector.inspect(parsed);
                             if (inspector.isComplete()) await completed();
                         }
                         // A frame containing forbidden tools is never delivered to the SDK.
-                        yield new TextEncoder().encode(`${frame}\n\n`);
+                        // The SDK treats response.incomplete as a retryable stream error, so a length truncation that passed inspection is delivered as completed.
+                        yield new TextEncoder().encode(`${parsed?.type === 'response.incomplete' ? `event: response.completed\ndata: ${JSON.stringify({ ...parsed, type: 'response.completed' })}` : frame}\n\n`);
                     }
                     await completed();
                 } catch (error) { stop(error?.code ? error : fail('model-result-unknown', 'Model stream interrupted', 502)); throw fatal; } finally { active = false; }

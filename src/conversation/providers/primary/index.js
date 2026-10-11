@@ -1,6 +1,7 @@
 import { createModels, createProvider } from '@earendil-works/pi-ai';
 import * as completions from '@earendil-works/pi-ai/api/openai-completions';
 import { fail } from '../core/index.js';
+import { CHAT_PROVIDERS } from '../../capabilities/chat/index.js';
 
 export function createPrimaryModel(connection, capabilities = {}) {
     return {
@@ -23,9 +24,9 @@ export function createPrimaryStream(connection, model) {
     return (model, context, options) => models.streamSimple(model, context, options);
 }
 
-/** Sampling values cannot overwrite compiled history, tools, auth or budget. */
-export function samplingParameters(parameters = {}) {
-    const allowed = new Set(['temperature', 'top_p', 'top_k', 'min_p', 'frequency_penalty', 'presence_penalty', 'repetition_penalty', 'seed', 'stop']);
+/** Sampling values cannot overwrite compiled history, tools, auth or budget; keys follow the provider's chat profile. */
+export function samplingParameters(parameters = {}, provider) {
+    const allowed = new Set(Object.hasOwn(CHAT_PROVIDERS, String(provider)) ? CHAT_PROVIDERS[provider].parameters : []);
     if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) throw fail('unsupported-parameters', 'Parameters must be an object');
     for (const [key, value] of Object.entries(parameters)) {
         if (!allowed.has(key)) throw fail('unsupported-parameters', `Unsupported sampling parameter: ${key}`);

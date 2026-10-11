@@ -24,6 +24,7 @@ const plan = compileContext(snapshot, {
         contextWindow: 131072, maxOutputTokens: 4096, inputLimit: 131072,
         outputLimit: 16384,
         tools: true,
+        systemPlacement: 'any', // 'prefix' (or deepSystem:false) relays later system blocks as user
         types: ['send', 'regenerate', 'continue', 'impersonate', 'auxiliary', 'group'],
         mediaTokenCost: { image: 2048 }, // verified upper estimate, not a default
     },
@@ -138,6 +139,15 @@ stateless previews but not durable cooldown accounting after history edits.
   splits a tool group. Prefix layers sort L1→L5, then priority descending and
   stable ID ascending. Same depth/tail sorts by priority and ID. History order is
   unchanged. With absent turn IDs, a user message starts a new turn.
+- System layout: `capabilities.systemPlacement:'prefix'` (native Anthropic/Google)
+  or `capabilities.deepSystem:false` (Claude SDK) means system text is accepted
+  only before the first non-system message. The leading system run stays system;
+  every later system message (depth/tail blocks, generation-type instructions,
+  system history) is rendered as `user` at the same position with unchanged text,
+  as SillyTavern's Claude/Gemini converters do. A trailing user instruction also
+  avoids assistant prefill, so `continue` still returns only appended text.
+  `block.role` keeps the authored role; `block.message.role` is the sent role.
+  Other capabilities keep the original layout.
 - Tool groups use assistant `toolCalls:[{id,name,args}]` and tool messages with
   `toolCallId`. Orphan/duplicate results, duplicate calls and noncontiguous turns
   fail. Open groups are retained and never compression candidates. A fold can
