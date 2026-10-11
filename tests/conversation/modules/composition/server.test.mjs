@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { createApplication, createSecurityMiddleware, startServer, parseArguments } from '../../../../src/conversation/server.js';
-import { main } from '../../../../server.js';
+import { main } from '../../../../conversation-server.js';
 
 function request(middleware, overrides = {}) {
     const headers = { host: 'localhost:8000', ...overrides.headers };
@@ -100,6 +100,6 @@ test('root version check precedes loading application and signals close only onc
     assert.equal(closed, 1);
     assert.equal(host.listenerCount('SIGINT'), 0);
     assert.equal(host.listenerCount('SIGTERM'), 0);
-    const entry = readFileSync(new URL('../../../../server.js', import.meta.url), 'utf8');
+    const entry = readFileSync(new URL('../../../../conversation-server.js', import.meta.url), 'utf8');
     assert.ok(!/server-main|CommandLineParser|migration|DATA_ROOT/.test(entry));
 });

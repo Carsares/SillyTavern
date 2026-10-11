@@ -1,6 +1,7 @@
 /**
  * Creates the process shutdown handler.
  * @param {object} options Shutdown dependencies
+ * @param {() => Promise<void>} [options.closeConversations] Stops Agent turns and closes their databases
  * @param {() => Promise<void>} options.saveStats Persists pending statistics
  * @param {undefined | (() => Promise<void>)} options.cleanupPlugins Cleans up loaded plugins
  * @param {() => void} options.disposeCache Disposes the disk cache
@@ -8,7 +9,7 @@
  * @param {(exitCode: number) => void} options.exit Terminates the process
  * @returns {(exitCode?: number) => Promise<void>}
  */
-export function createExitHandler({ saveStats, cleanupPlugins, disposeCache, restoreWindowTitle, exit }) {
+export function createExitHandler({ closeConversations, saveStats, cleanupPlugins, disposeCache, restoreWindowTitle, exit }) {
     let isExiting = false;
     let requestedExitCode = 0;
 
@@ -20,6 +21,7 @@ export function createExitHandler({ saveStats, cleanupPlugins, disposeCache, res
         isExiting = true;
 
         const cleanupTasks = [
+            ['Agent conversations', closeConversations],
             ['statistics', saveStats],
             ['plugins', cleanupPlugins],
             ['disk cache', disposeCache],

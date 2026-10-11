@@ -66,6 +66,7 @@ import {
 } from './util.js';
 import { UPLOADS_DIRECTORY } from './constants.js';
 import { createExitHandler } from './server-exit.js';
+import { createConversationHost } from './conversation/host.js';
 
 // Routers
 import { router as usersPublicRouter } from './endpoints/users-public.js';
@@ -269,6 +270,11 @@ app.use('/api/users', usersPublicRouter);
 // Everything below this line requires authentication
 app.use(requireLoginMiddleware);
 
+// Agent APIs share the existing account and CSRF boundary, but keep their own body limits and store.
+const conversationHost = createConversationHost();
+app.use('/api/conversation/v1', conversationHost.middleware);
+app.get('/health', (_request, response) => response.json({ status: 'ok', schemaVersion: 1 }));
+
 // Authenticated endpoints retain the existing payload budget used by imports and other large requests.
 app.use(bodyParser.json({ limit: '500mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '500mb' }));
@@ -348,6 +354,7 @@ async function preSetupTasks() {
     const consoleTitle = process.title;
 
     const exitProcess = createExitHandler({
+        closeConversations: () => conversationHost.close(),
         saveStats: statsOnExit,
         cleanupPlugins,
         disposeCache: () => diskCache.dispose(),
