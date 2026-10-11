@@ -1,4 +1,5 @@
-import { el, button, empty, field, input } from '../core/dom.js';
+import { MEMORY_KINDS, memoryInput } from './model.js';
+import { el, button, empty, field, input, select } from '../core/dom.js';
 import { terminal, redact, list } from '../core/state.js';
 export function createMemory(app) {
     const drafts = new Map();
@@ -6,16 +7,15 @@ export function createMemory(app) {
     const rows = el('div');
     const jobs = el('div');
     let creationSnapshot = null;
-    const kind = input('fact', { required: true, 'aria-label': '新记忆类型' });
-    const content = el('textarea', { rows: 4, required: true, placeholder: '输入需要保留的人工记忆', 'aria-label': '新记忆内容' });
+    const kind = select(MEMORY_KINDS, 'user-fact', { 'aria-label': '新记忆类型' });
+    const content = el('textarea', { rows: 4, required: true, maxLength: 8000, placeholder: '输入需要保留的人工记忆', 'aria-label': '新记忆内容' });
     const locked = input('', { type: 'checkbox' });
     const creationControls = el('fieldset', {}, field('记忆类型', kind), field('内容', content), field('锁定此记忆', locked), el('button', { type: 'submit' }, '新建记忆'));
     const createForm = el('form', {}, el('h3', {}, '手工新建记忆'), creationControls);
     createForm.addEventListener('submit', event => {
         event.preventDefault();
         app.run(async () => {
-            if (!kind.value.trim() || !content.value.trim()) throw new Error('请填写记忆类型与内容');
-            await app.applyCommand('memory.create', { kind: kind.value.trim(), content: content.value, locked: locked.checked }, creationSnapshot);
+            await app.applyCommand('memory.create', memoryInput(kind.value, content.value, locked.checked), creationSnapshot);
             content.value = ''; locked.checked = false; creationSnapshot = app.state.snapshot;
             render(); app.notice('人工记忆已保存');
         });
@@ -54,7 +54,7 @@ export function createMemory(app) {
                         await app.applyCommand('memory.edit', { ...version, expectedBlockRevision: drafts.get(draftKey)?.revision ?? block.revision, content: content.value });
                         drafts.delete(draftKey); render();
                     }), disabled),
-                    button('丢弃本地编辑', () => { drafts.delete(draftKey); render(); }, disabled || !draft),
+                    button('丢弃本地编辑', () => { drafts.delete(draftKey); render(); }, disabled),
                     button(block.locked ? '解锁' : '锁定', () => app.command('memory.lock', { ...version, locked: !block.locked }), disabled),
                     button('确认记忆', () => app.command('memory.confirm', version), disabled || block.status !== 'pending-confirm'),
                 ] : []),

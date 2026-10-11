@@ -1,5 +1,6 @@
+import { acceptedTurn, applySnapshotCommand, refreshAfterWrite, requireSnapshot } from './core/operations.js';
 import { createClient, subscribe } from './core/client.js';
-import { initialState, hydrate, reduceEvent, turnRequest, versionedCommand, terminal, list } from './core/state.js';
+import { initialState, hydrate, reduceEvent, turnRequest, terminal, list } from './core/state.js';
 import { el, button, input, empty } from './core/dom.js';
 import { createChat } from './chat/view.js';
 import { createResources } from './resources/view.js';
@@ -30,7 +31,7 @@ const app = {
         this.state = { ...initialState(), busy: this.state.busy };
         chat.clearDraft(); render();
         const epoch = this.epoch;
-        const snapshot = await this.api.snapshot(id);
+        const snapshot = requireSnapshot(await this.api.snapshot(id), id);
         if (epoch !== this.epoch) return;
         let persisted = null;
         try { persisted = JSON.parse(read(`conversation.pending.${id}`) || 'null'); } catch { /* Ignore corrupt browser state. */ }
@@ -85,7 +86,7 @@ const app = {
         const epoch = this.epoch;
         const serial = this.refreshSerial = (this.refreshSerial || 0) + 1;
         const id = this.id();
-        const snapshot = await this.api.snapshot(id);
+        const snapshot = requireSnapshot(await this.api.snapshot(id), id);
         const turnId = snapshot.conversation.activeTurnId || hintTurnId || this.state.turn?.id;
         const turn = turnId ? await this.api.turn(turnId) : null;
         if (epoch !== this.epoch || serial !== this.refreshSerial) return;
@@ -118,16 +119,22 @@ const app = {
             }
             chat.render(); throw error;
         }
-        if (!accepted?.turnId) throw new Error('服务器未返回轮次编号，发送结果待确认');
+        const turn = acceptedTurn(accepted, request, id, this.state.turn);
+        this.state.turn = turn;
+        this.state.snapshot = { ...this.state.snapshot, conversation: { ...this.state.snapshot.conversation, activeTurnId: terminal(turn) ? null : turn.id } };
         write(`conversation.turn.${id}`, accepted.turnId);
         this.state.pending = null; write(`conversation.pending.${id}`, null);
-        await this.refresh(accepted.turnId);
+        await refreshAfterWrite(() => this.refresh(accepted.turnId), warning => { this.state.error = warning; });
         chat.render();
     },
     async applyCommand(type, fields, snapshot = this.state.snapshot) {
         if (!terminal(this.state.turn) || this.state.snapshot?.conversation.activeTurnId) throw new Error('生成期间不能修改会话内容');
-        await this.api.command(this.id(), versionedCommand(snapshot, type, fields));
-        await this.refresh();
+        await applySnapshotCommand({
+            api: this.api, conversationId: this.id(), snapshot, type, fields,
+            onCommitted: result => { this.refreshSerial = (this.refreshSerial || 0) + 1; this.state.snapshot = result; this.state.needsRefresh = false; },
+            refresh: () => this.refresh(), onWarning: warning => { this.state.error = warning; },
+        });
+        chat.render(); renderStatus();
         if (this.currentTab === 'memory') memory.render();
     },
     command(type, fields) { return this.run(() => this.applyCommand(type, fields)); },

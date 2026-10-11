@@ -4,7 +4,7 @@ import { resourceDefaults, newWorldEntry, newPromptBlock, historyModeDescription
 import { PRESET_DEFAULTS } from '../../../../public/shared/conversation/assembly/defaults.js';
 import { WORLD_INFO_DEFAULTS } from '../../../../public/shared/conversation/world-info/index.js';
 import { attachmentPart, assertMediaCapability, encodeBase64 } from '../../../../public/modern/conversation/media/model.js';
-import { turnRequest } from '../../../../public/modern/conversation/core/state.js';
+import { turnRequest, estimateRequest } from '../../../../public/modern/conversation/core/state.js';
 
 test('editable defaults clone the compiler schema; no unused legacy prompt fields', () => {
     const preset = resourceDefaults('preset');
@@ -39,4 +39,27 @@ test('uploaded media stays an opaque attachment reference and is capability gate
 test('base64 encoding roundtrips binary attachments across chunk boundary', () => {
     const bytes = Uint8Array.from({ length: 40000 }, (_, i) => i % 256);
     assert.deepEqual(new Uint8Array(Buffer.from(encodeBase64(bytes), 'base64')), bytes);
+});
+
+test('PDF and plain text use document references for send and estimate with capability checks', () => {
+    for (const mime of ['application/pdf', 'text/plain']) {
+        const part = attachmentPart({ id: 'doc', name: 'document', mime, size: 8 });
+        assert.equal(part.type, 'document');
+        assert.equal(part.mimeType, mime);
+        assert.doesNotThrow(() => assertMediaCapability({ supported: true, media: ['document'] }, [part]));
+        assert.throws(() => assertMediaCapability({ supported: true, media: ['image'] }, [part]), /不支持 document/);
+        const request = turnRequest({ conversation: { contentRevision: 1 } }, 'send', 'read', undefined, 'r', { media: [part] });
+        assert.deepEqual(request.media, [part]);
+        assert.deepEqual(estimateRequest('read', [part]).media, request.media);
+        assert.equal(part.data, undefined);
+    }
+});
+
+test('other attachments stay files regardless of document-like names or MIME families', () => {
+    for (const mime of ['text/html', 'text/markdown', 'application/json', 'application/octet-stream', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain; charset=utf-8', 'application/pdf-malformed']) {
+        const part = attachmentPart({ id: 'file', name: 'pretend.pdf', mime, size: 8 });
+        assert.equal(part.type, 'file');
+        assert.equal(part.mimeType, mime);
+        assert.throws(() => assertMediaCapability({ supported: true, media: ['document'] }, [part]), /不支持 file/);
+    }
 });

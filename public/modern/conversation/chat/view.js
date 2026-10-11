@@ -7,6 +7,7 @@ import { list, redact, terminal, estimateRequest } from '../core/state.js';
 
 export function createChat(app) {
     const edits = new Map();
+    let messageRenderKey;
     let attachments = [];
     const attachmentRows = el('div');
     const attachmentFile = input('', { type: 'file', 'aria-label': '附件文件' });
@@ -59,10 +60,11 @@ export function createChat(app) {
     }
     async function candidates(message, destination) {
         await app.run(async () => {
+            const snapshot = app.state.snapshot;
             const entries = list(await app.api.candidates(app.id(), message.id), 'candidates');
             destination.replaceChildren(entries.length ? el('div', {}, entries.map(candidate => el('article', { class: 'card' },
-                el('p', {}, `候选 ${candidate.candidateId ?? candidate.id} · 版本 ${candidate.candidateRevision ?? candidate.revision}`), el('pre', {}, candidate.content),
-                button('选用候选', () => app.command('candidate.select', { messageId: message.id, candidateId: candidate.candidateId ?? candidate.id, candidateRevision: candidate.candidateRevision ?? candidate.revision }), candidate.selected === true || (candidate.candidateId ?? candidate.id) === message.candidateId && (candidate.candidateRevision ?? candidate.revision) === message.candidateRevision),
+                el('p', {}, `候选 ${candidate.candidateId ?? candidate.id} · 版本 ${candidate.candidateRevision ?? candidate.revision} · ${candidate.status === 'partial' ? '部分回复' : candidate.status || '状态未知'}${candidate.selected ? ' · 当前选中' : ''}`), el('pre', {}, candidate.content),
+                button('选用候选', () => app.run(() => app.applyCommand('candidate.select', { messageId: message.id, candidateId: candidate.candidateId ?? candidate.id, candidateRevision: candidate.candidateRevision ?? candidate.revision }, snapshot)), candidate.selected === true || (candidate.candidateId ?? candidate.id) === message.candidateId && (candidate.candidateRevision ?? candidate.revision) === message.candidateRevision),
             ))) : empty('没有候选记录'));
         });
     }
@@ -71,44 +73,48 @@ export function createChat(app) {
         const editor = el('textarea', { rows: 5, value: edit.content, 'aria-label': '编辑消息', oninput: event => { edit.content = event.target.value; } });
         destination.replaceChildren(editor, button('保存修改', () => app.run(async () => {
             await app.applyCommand('message.edit', { messageId: message.id, content: edit.content }, edit.snapshot);
-            edits.delete(message.id); render();
+            edits.delete(message.id); messageRenderKey = null; render();
         })), button('取消编辑', () => { edits.delete(message.id); destination.replaceChildren(); }));
     }
     function updateControls() {
         const { snapshot, turn, busy, pending } = app.state;
         const active = !terminal(turn) || !!snapshot?.conversation.activeTurnId;
         submit.disabled = busy || active || !snapshot || !!pending;
-        stop.disabled = busy || !turn || terminal(turn);
+        stop.disabled = busy || !turn || terminal(turn) || turn.cancelRequested === true;
     }
     function render() {
         const { snapshot, turn, busy, pending, recoveredDraft } = app.state;
         const active = !terminal(turn) || !!snapshot?.conversation.activeTurnId;
         submit.disabled = busy || active || !snapshot || !!pending;
-        stop.disabled = busy || !turn || terminal(turn);
+        stop.disabled = busy || !turn || terminal(turn) || turn.cancelRequested === true;
         const rows = snapshot?.messages || [];
-        messages.replaceChildren(...(rows.length ? rows.filter(m => !m.deletedAt).map(message => {
-            const details = el('div');
-            const actions = el('div', { class: 'actions' },
-                button('编辑', () => {
-                    edits.set(message.id, { content: message.content, snapshot: app.state.snapshot });
-                    editMessage(message, details);
-                }, active),
-                button('删除', () => { if (confirm('删除这条消息？相关记忆和摘要可能失效。')) app.command('message.delete', { messageId: message.id }); }, active),
-                ...(message.role === 'assistant' ? [
-                    button('候选', () => candidates(message, details), active),
-                    button('重生成', () => app.run(() => app.start('regenerate', '', message.id)), active || !!pending),
-                    button('续写', () => app.run(() => app.start('continue', '', message.id)), active || !!pending),
-                ] : []),
-            );
-            if (edits.has(message.id)) editMessage(message, details);
-            return el('article', { class: `message role-${message.role}` },
-                el('header', {}, `${message.role} · ${message.status || 'saved'} · 版本 ${message.revision}`),
-                el('pre', {}, message.content || '（空内容）'),
-                ...(message.media?.length ? [el('details', {}, el('summary', {}, `${message.media.length} 项媒体`), ...message.media.map(part => mediaView(app.api, part)))] : []),
-                actions, details,
-            );
-        }) : [empty(snapshot ? '还没有消息。选择连接和角色后开始对话。' : '选择或创建一个会话。')]));
-        live.replaceChildren(...(turn ? [el('h3', {}, `轮次 ${turn.status}`),
+        const renderKey = JSON.stringify([snapshot?.conversation.id, snapshot?.conversation.contentRevision, active, Boolean(pending)]);
+        if (renderKey !== messageRenderKey) {
+            messageRenderKey = renderKey;
+            messages.replaceChildren(...(rows.length ? rows.filter(m => !m.deletedAt).map(message => {
+                const details = el('div');
+                const actions = el('div', { class: 'actions' },
+                    button('编辑', () => {
+                        edits.set(message.id, { content: message.content, snapshot: app.state.snapshot });
+                        editMessage(message, details);
+                    }, active),
+                    button('删除', () => { if (confirm('删除这条消息？相关记忆和摘要可能失效。')) app.command('message.delete', { messageId: message.id }); }, active),
+                    ...(message.role === 'assistant' ? [
+                        button('候选', () => candidates(message, details), active),
+                        button('重生成', () => app.run(() => app.start('regenerate', '', message.id)), active || !!pending),
+                        button('续写', () => app.run(() => app.start('continue', '', message.id)), active || !!pending),
+                    ] : []),
+                );
+                if (edits.has(message.id)) editMessage(message, details);
+                return el('article', { class: `message role-${message.role}` },
+                    el('header', {}, `${message.role} · ${message.status || 'saved'} · 版本 ${message.revision}`),
+                    el('pre', {}, message.content || '（空内容）'),
+                    ...(message.media?.length ? [el('details', {}, el('summary', {}, `${message.media.length} 项媒体`), ...message.media.map(part => mediaView(app.api, part, snapshot.attachments?.[part.attachmentId])))] : []),
+                    actions, details,
+                );
+            }) : [empty(snapshot ? '还没有消息。选择连接和角色后开始对话。' : '选择或创建一个会话。')]));
+        }
+        live.replaceChildren(...(turn ? [el('h3', {}, `轮次 ${turn.cancelRequested && !terminal(turn) ? '正在停止' : turn.status}`),
             el('small', {}, `ID ${turn.id} · ${turn.type || turn.request?.type || ''}`),
             el('pre', {}, turn.content || '尚未收到正文'),
             ...(turn.reasoning ? [el('details', {}, el('summary', {}, '推理记录'), el('pre', {}, turn.reasoning))] : []),
@@ -122,5 +128,5 @@ export function createChat(app) {
             button('重试原请求', () => app.run(() => app.retry())),
         ] : []), ...(recoveredDraft ? [button('恢复生成的草稿', () => { draft.value = recoveredDraft; draft.focus(); app.state.recoveredDraft = null; render(); })] : []));
     }
-    return { root, render, updateControls, clearDraft() { edits.clear(); attachments = []; attachmentFile.value = ''; memberIds.value = ''; capabilityInfo.textContent = ''; renderAttachments(); draft.value = ''; estimate.replaceChildren(); } };
+    return { root, render, updateControls, clearDraft() { messageRenderKey = null; edits.clear(); attachments = []; attachmentFile.value = ''; memberIds.value = ''; capabilityInfo.textContent = ''; renderAttachments(); draft.value = ''; estimate.replaceChildren(); } };
 }

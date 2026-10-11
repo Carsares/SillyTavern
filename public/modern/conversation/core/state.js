@@ -14,6 +14,7 @@ export function reduceEvent(state, event) {
     // Snapshot + GET turn is authoritative. Unknown events trigger refresh in the controller.
     const isDelta = event.type === 'text.delta' || event.type === 'reasoning.delta' || event.type === 'turn.delta' || event.type === 'turn.reasoning' || event.type === 'turn.reasoning.delta';
     if (isDelta && state.turn?.id === event.turnId && !terminal(state.turn)) {
+        if (['messageId', 'candidateId'].some(key => payload[key] != null && state.turn[key] !== payload[key])) return { ...next, needsRefresh: true };
         const key = event.type.includes('reasoning') ? 'reasoning' : 'content';
         const content = state.turn[key] || '';
         const offset = payload.offset;

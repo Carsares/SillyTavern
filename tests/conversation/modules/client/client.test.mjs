@@ -115,8 +115,8 @@ test('manual memory creation carries the captured memory version and preserves s
         sent = JSON.parse(options.body);
         return response({ error: { code: 'revision-conflict', message: 'memory changed' } }, 409);
     } });
-    const command = versionedCommand({ conversation: { contentRevision: 3, memoryRevision: 7 } }, 'memory.create', { kind: 'fact', content: '人工事实', locked: true });
+    const command = versionedCommand({ conversation: { contentRevision: 3, memoryRevision: 7 } }, 'memory.create', { kind: 'user-fact', content: '人工事实', locked: true });
     await assert.rejects(client.command('c', command), error => error.code === 'revision-conflict');
-    assert.deepEqual(sent, { schemaVersion: 1, type: 'memory.create', expectedContentRevision: 3, expectedMemoryRevision: 7, kind: 'fact', content: '人工事实', locked: true });
+    assert.deepEqual(sent, { schemaVersion: 1, type: 'memory.create', expectedContentRevision: 3, expectedMemoryRevision: 7, kind: 'user-fact', content: '人工事实', locked: true });
     assert.equal(command.content, '人工事实');
 });

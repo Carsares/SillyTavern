@@ -21,15 +21,16 @@ commit was changed by this task.
 - `index.html`, `app.js`, `style.css`: independent entry, state/controller and layout.
 - `core/client.js`: JSON commands, session authentication, SSE parser/reconnect.
 - `core/state.js`: snapshots, turn requests, optimistic version checks, event reducer.
+- `core/operations.js`: authoritative snapshot acceptance and confirmed-write readback handling.
 - `core/dom.js`: safe DOM construction, forms, JSON display and downloads.
 - `chat/view.js`: messages, drafts, turns, candidates, edits, tool/group event cards.
 - `resources/model.js`, `resources/view.js`: six resource kinds and compiler defaults.
 - `settings/automatic.js`, `settings/view.js`: resource selection, tools/limits, capabilities and automatic groups.
-- `memory/view.js`: memory editing/locking/confirmation, folds, compression and jobs.
-- `diagnostics/context.js`, `diagnostics/view.js`: five context layers, traces and usage.
+- `memory/model.js`, `memory/view.js`: memory editing/locking/confirmation, folds, compression and jobs.
+- `diagnostics/context.js`, `diagnostics/view.js`, `diagnostics/usage.js`, `diagnostics/tools.js`: context layers, traces, server usage tables and stored tool result expansion.
 - `media/model.js`, `media/view.js`: attachment references, capability gates and previews.
-- `maintenance/view.js`: status, export/backup, restore, reindex and cleanup preview.
-- Tests: `automatic.test.mjs`, `client.test.mjs`, `state.test.mjs`, `resources-media.test.mjs` in the owned test directory.
+- `maintenance/model.js`, `maintenance/view.js`: status, export/backup, restore, reindex and cleanup preview.
+- Tests: `automatic.test.mjs`, `client.test.mjs`, `state.test.mjs`, `resources-media.test.mjs`, `audit.test.mjs`, `views.test.mjs` in the owned test directory.
 
 ## HTTP requests
 
@@ -58,6 +59,8 @@ its original request ID and body for explicit idempotent retry.
 | Automatic group | POST `/conversations/:id/automatic` `{enabled:true,intervalMs,content,expectedContentRevision}` or `{enabled:false}`; disable does not require a content revision |
 | Background jobs | GET `/conversations/:id/jobs` |
 | Capabilities | GET `/capabilities?connectionId=...` |
+| Usage | GET `/conversations/:id/usage` -> `{totals,categories:{generation,memory,embedding,image},turns}` |
+| Complete tool result | GET `/tools/:id` -> persisted tool record; IDs come from nested `resultRef`, including JSON text content blocks |
 | Traces | GET `/conversations/:id/traces`, GET `/traces/:id` |
 | Events | GET `/conversations/:id/events?after=seq`, SSE `id:seq`, `data:Event` |
 | Attachment upload | POST `/attachments` `{name,mime,base64}` -> `{id,name,mime,size,...}` |
@@ -74,7 +77,7 @@ submitted only after the user types the explicit confirmation phrase. Downloads
 preserve the backup graph exactly; only a server response explicitly declaring
 `credentialsIncluded:false` is downloaded. The UI does not redact or otherwise
 rewrite backup contents because that could break canonical request hashes.
-Restore files are bounded to 19 MiB to stay below the router's 20 MB JSON limit.
+Backup/restore JSON uses the shared 256 MiB limit, including the restore envelope and UTF-8 bytes. Ordinary requests retain the 20 MiB limit. Over-limit export errors remain visible without downloading a partial backup. The maintenance panel explains the offline alternative: stop the server cleanly, preserve the entire conversation-v1 directory including SQLite companion files and attachments, and restore into an unused directory of the same schema version. Never copy only a live database file.
 
 ### Commands
 
@@ -88,7 +91,7 @@ uses `expectedMemoryRevision` from the snapshot captured when the creation form 
   editing began. Failed/conflicting edits retain their input.
 - `message.delete`: `{messageId}`.
 - `candidate.select`: `{messageId,candidateId,candidateRevision}`.
-- `memory.create`: `{kind,content,locked,expectedMemoryRevision}`; failed or
+- `memory.create`: `{kind,content,locked,expectedMemoryRevision}`; kind is one of `character,relationship,world-state,timeline,user-fact`, content is 1–8000 characters; failed or
   conflicting creation retains the form content.
 - `memory.edit`: `{blockId,expectedBlockRevision,content}`.
 - `memory.lock`: `{blockId,expectedBlockRevision,locked}`.
@@ -141,6 +144,32 @@ and jobs are fetched separately. Terminal/partial content and impersonation draf
 are shown without inventing persisted messages. Estimates are labeled separately
 from provider usage; missing usage is not filled with zero.
 
+## Static audit and usage semantics
+
+Snapshots and command results are direct Snapshot objects: `snapshot.id` identifies
+that snapshot, while `snapshot.conversation.id` identifies the conversation.
+Confirmed commands apply their returned snapshot before follow-up reads; a failed
+read displays a warning without presenting the write as failed or inviting a
+second memory creation. Late turn acceptance cannot overwrite already received
+streamed/terminal state. Group member IDs prevent deltas joining another member's
+content. Candidate controls use candidate identity/revision and preserve their
+panel across unrelated renders; partial and selected status are explicit.
+
+Usage tables show overall totals, all four categories and individual turns. Each
+server aggregate contains `calls,inputTokens,outputTokens,cacheReadTokens,
+cacheWriteTokens,reasoningTokens,totalTokens,costUsd,complete`. Null or absent
+values display unknown; known zero remains zero. Cache/reasoning subcounts are
+not added into totalTokens. Call counts come from the server and include issued
+partial/failed requests, excluding prepare-only work. The client does not invent
+costs. Usage failures and trace failures are displayed independently. Tool result
+references can explicitly fetch the persisted complete record; rendering uses
+text nodes and redacts credentials, with visible loading/failure and retry.
+
+Cleanup preview has a separate persistent display so unrelated maintenance reads
+cannot hide the preview whose token will be executed. Attachment display can use
+snapshot metadata without requiring MIME/name duplication on each media ref.
+CSRF must return a nonempty token before any business write is attempted.
+
 ## Remaining integration boundaries
 
 1. Browser, live HTTP, backend persistence, SDK/provider and end-to-end tests were
@@ -165,11 +194,11 @@ from provider usage; missing usage is not filled with zero.
 
 ## Focused checks
 
-`node --test tests/conversation/modules/client/*.test.mjs`: 28 tests passed at
+`node --test tests/conversation/modules/client/*.test.mjs`: 44 tests passed at
 client handoff. Includes request versions, structured failures, fragmented UTF-8
 SSE, reconnect/deduplication/cursor reset, recovered content offsets, terminal
-safety, redaction, canonical resource defaults, SDK mode labels and media gates.
+safety, redaction, canonical resource defaults, SDK mode labels and media gates. Additional regression tests cover snapshot/command readback, member delta isolation, memory kinds, server usage tables, candidate panel state, complete tool result reads, UTF-8 backup envelope sizing and the full static module graph. DOM checks use an in-memory test double, not a browser.
 
 `./node_modules/.bin/eslint public/modern/conversation/**/*.js public/modern/conversation/app.js`:
-passed after correcting the initially reported catch-parameter reassignment.
+passed after correcting reported brace formatting.
 No browser/integration/provider tests or real user-data writes were performed.

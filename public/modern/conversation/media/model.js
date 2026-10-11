@@ -2,6 +2,7 @@ export function mediaType(mime = '') {
     if (mime.startsWith('image/')) return 'image';
     if (mime.startsWith('audio/')) return 'audio';
     if (mime.startsWith('video/')) return 'video';
+    if (mime === 'application/pdf' || mime === 'text/plain') return 'document';
     return 'file';
 }
 export function attachmentPart(record) {

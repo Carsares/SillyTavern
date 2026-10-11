@@ -1,12 +1,15 @@
 import { el, button, field, input, json, download } from '../core/dom.js';
+import { BACKUP_MAX_BYTES, BACKUP_COPY_GUIDANCE, restoreBody } from './model.js';
 import { redact } from '../core/state.js';
 export function createMaintenance(app) {
     const output = el('div');
+    const previewOutput = el('div');
     const file = input('', { type: 'file', accept: '.json,application/json' });
     const scope = input('', { placeholder: '预览后输入“清理”' });
     let preview = null;
     const root = el('section', {}, el('h2', {}, '备份、恢复与清理'),
-        el('p', {}, '恢复仅允许空的新存储。清理必须先读取服务器预览，再明确确认。备份不包含连接凭据。'),
+        el('p', {}, '恢复仅允许空的新存储。清理必须先读取服务器预览，再明确确认。备份不包含连接凭据。JSON 备份/恢复包体上限 256 MiB（含封装），普通请求上限 20 MiB。'),
+        el('p', {}, BACKUP_COPY_GUIDANCE),
         button('查看存储用量', () => app.run(async () => { output.replaceChildren(json(redact(await app.api.maintenance('status')))); })),
         button('重建当前会话索引', () => app.run(async () => {
             const result = await app.api.maintenance('reindex', { conversationId: app.id() });
@@ -26,21 +29,23 @@ export function createMaintenance(app) {
         button('恢复到空存储', () => app.run(async () => {
             const selected = file.files[0];
             if (!selected) throw new Error('请选择备份文件');
-            if (selected.size > 19 * 1024 * 1024) throw new Error('恢复文件超过 19 MiB');
+            if (selected.size > BACKUP_MAX_BYTES) throw new Error(`恢复文件超过 256 MiB。${BACKUP_COPY_GUIDANCE}`);
             const data = JSON.parse(await selected.text());
+            const body = restoreBody(data);
             if (!confirm('确认将备份恢复到新存储？非空存储应由服务器拒绝。')) return;
-            const result = await app.api.maintenance('restore', { data });
+            const result = await app.api.maintenance('restore', body);
             output.replaceChildren(json(redact(result))); file.value = ''; await app.reloadConversations();
         })),
         button('查看清理预览', () => app.run(async () => {
-            preview = await app.api.maintenance('cleanup-preview', {}); scope.value = '';
-            output.replaceChildren(json(redact(preview)));
-        })), field('输入“清理”确认预览内容', scope),
+            preview = null; scope.value = ''; previewOutput.replaceChildren();
+            preview = await app.api.maintenance('cleanup-preview', {});
+            previewOutput.replaceChildren(el('h3', {}, '本次清理预览'), json(redact(preview)));
+        })), previewOutput, field('输入“清理”确认预览内容', scope),
         button('执行已预览的清理', () => app.run(async () => {
             if (!preview?.token || scope.value !== '清理') throw new Error('请先获取清理预览并输入“清理”');
             if (!confirm('确认执行服务器预览中的清理操作？')) return;
             const result = await app.api.maintenance('cleanup', { token: preview.token });
-            preview = null; scope.value = ''; output.replaceChildren(json(redact(result))); await app.reloadConversations();
+            preview = null; scope.value = ''; previewOutput.replaceChildren(); output.replaceChildren(json(redact(result))); await app.reloadConversations();
         })), output,
     );
     return { root };

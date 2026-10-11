@@ -37,11 +37,12 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
     let tokenPromise;
     async function token() {
         if (!csrf) return '';
-        tokenPromise ??= fetcher('/csrf-token', { credentials: 'same-origin', cache: 'no-store' })
+        tokenPromise ??= fetcher('/csrf-token', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(30000) })
             .then(async response => {
                 if (!response.ok) throw new ApiError(response.status, { message: '无法获取请求安全令牌' });
                 const value = await response.json();
-                return value.token || '';
+                if (typeof value?.token !== 'string' || !value.token) throw new ApiError(response.status, { code: 'invalid-csrf', message: '服务器未返回请求安全令牌' });
+                return value.token;
             }).catch(error => { tokenPromise = undefined; throw error; });
         return tokenPromise;
     }
@@ -86,9 +87,11 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
         estimate: (id, body) => request(`/conversations/${segment(id)}/estimate`, { method: 'POST', body }),
         capabilities: id => request(`/capabilities${id ? `?connectionId=${segment(id)}` : ''}`),
         jobs: id => request(`/conversations/${segment(id)}/jobs`),
+        usage: id => request(`/conversations/${segment(id)}/usage`),
         traces: id => request(`/conversations/${segment(id)}/traces`),
         trace: id => request(`/traces/${segment(id)}`),
-        // These routes are isolated pending final HTTP contract confirmation.
+        tool: id => request(`/tools/${segment(id)}`),
+        // Additional v1 routes confirmed by the API integrator.
         candidates: (id, messageId) => request(`/conversations/${segment(id)}/messages/${segment(messageId)}/candidates`),
         automaticState: id => request(`/conversations/${segment(id)}/automatic`),
         automatic: (id, body) => request(`/conversations/${segment(id)}/automatic`, { method: 'POST', body }),
