@@ -1,12 +1,22 @@
-import { AGENT_API, agentErrorMessage, agentTurnTerminal, currentAgentSelection, getChatAgentState } from '../core/chat-agent-state.js';
+import { AGENT_API, agentErrorMessage, agentTurnTerminal, agentTurnWaitMs, currentAgentSelection, getChatAgentState } from '../core/chat-agent-state.js';
 
+// What a poll can change in the Agent panel (components/chat-agent.js) besides the running turn's streamed
+// text: committed messages (every message write moves contentRevision) and the turn's identity and status.
+// Whether the turn has text decides whether its bubble exists at all.
+const panelLayout = session => JSON.stringify([session.snapshot?.conversation?.contentRevision, session.snapshot?.messages?.length,
+    session.turn?.id, session.turn?.status, Boolean(session.turn?.content)]);
+
+// watchMs overrides how long a send waits for its turn; by default the conversation's own turn deadline
+// decides (agentTurnWaitMs).
 export function createChatAgentActions({ state, apiFetch, render, getSelectedChatEntity, getChatContextKey, getChatCacheKey, isGroupChatMode,
     waitForEngineSync = async () => ({ settled: true }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = Date.now,
-    requestId = () => crypto.randomUUID(), pollMs = 750, watchMs = 120000 }) {
+    requestId = () => crypto.randomUUID(), pollMs = 750, watchMs = null }) {
     const view = getChatAgentState(state);
     const current = () => view.sessions.get(getChatContextKey());
     const path = id => `${AGENT_API}/conversations/${encodeURIComponent(id)}`;
     const request = (url, options = {}) => apiFetch(url, options, false);
+    // Polls redraw only the chat page that shows this session; any other page reads the session when it renders.
+    const shown = session => state.route === 'chat' && session.enabled && current() === session;
 
     function setChatAgentMode(enabled) {
         if (view.busy || state.engine.generating) throw new Error('请等待当前生成结束后切换模式。');
@@ -36,6 +46,8 @@ export function createChatAgentActions({ state, apiFetch, render, getSelectedCha
         state.engine.generating = false;
     }
 
+    // Callers render after a read: a user action always redraws once it ends, and watch() redraws only
+    // what changed. Reaching a terminal turn here releases the generation lock.
     async function read(session) {
         session.snapshot = await request(path(session.conversationId), { method: 'GET' });
         const turnId = session.snapshot.conversation.activeTurnId || session.turn?.id;
@@ -47,15 +59,39 @@ export function createChatAgentActions({ state, apiFetch, render, getSelectedCha
             release(session);
             session.error = session.turn.error?.message || '';
         }
-        render();
+    }
+
+    // Streamed text of the running turn replaces its bubble's text in place, as chat-generation.js does for
+    // the ordinary streaming bubble: render() rebuilds #content, moving scroll positions and dropping focus.
+    function updateTurnText(session) {
+        if (typeof document === 'undefined') return false;
+        const bubble = document.querySelector('[data-chat-agent-turn]');
+        const body = bubble?.getAttribute('data-chat-agent-turn') === session.turn.id ? bubble.querySelector('.message-body') : null;
+        if (!body) return false;
+        body.textContent = session.turn.content;
+        return true;
     }
 
     async function watch(session) {
-        const deadline = now() + watchMs;
+        const startedAt = now();
+        let layout = null;
+        let text = null;
         while (true) {
             await read(session);
+            // The caller's final render draws the terminal state and the released generation lock.
             if (!session.turn || agentTurnTerminal(session.turn.status)) return;
-            if (now() >= deadline) throw new Error('等待结果超时；服务端轮次可能仍在运行。请检查状态或停止，勿重复发送。');
+            const nextLayout = panelLayout(session);
+            if (nextLayout !== layout || session.turn.content !== text) {
+                if (shown(session) && (nextLayout !== layout || !updateTurnText(session))) render();
+                layout = nextLayout;
+                text = session.turn.content;
+            }
+            if (now() - startedAt >= (watchMs ?? agentTurnWaitMs(session.snapshot))) {
+                // The server deadline has passed without an end in sight: stop blocking ordinary chat. The turn
+                // and its exact request stay, so 检查状态 / 停止 still resolve it and a new send stays refused.
+                release(session);
+                throw new Error('等待结果超时，已解除本页的生成锁定；服务端轮次可能仍在运行。请用「检查状态」或「停止 Agent」确认本轮结果，勿重复发送。');
+            }
             await sleep(pollMs);
         }
     }
@@ -127,9 +163,10 @@ export function createChatAgentActions({ state, apiFetch, render, getSelectedCha
         try {
             // Recover an accepted turn after a lost POST response without submitting again.
             if (!session.turn?.id) await read(session);
-            if (!session.turn?.id || agentTurnTerminal(session.turn.status)) return;
-            await request(`${AGENT_API}/turns/${encodeURIComponent(session.turn.id)}/stop`, { body: { schemaVersion: 1 } });
-            await read(session);
+            if (session.turn?.id && !agentTurnTerminal(session.turn.status)) {
+                await request(`${AGENT_API}/turns/${encodeURIComponent(session.turn.id)}/stop`, { body: { schemaVersion: 1 } });
+                await read(session);
+            }
         } catch (error) { session.error = agentErrorMessage(error); }
         render();
     }

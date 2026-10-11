@@ -1,3 +1,4 @@
+import { TOOL_LIMITS } from '../../shared/conversation/schemas/index.js';
 import { describeAgentError } from './chat-agent-errors.js';
 
 // Page-local presentation only. Conversations and turns remain owned by the Agent backend.
@@ -22,6 +23,18 @@ export function agentErrorMessage(error) {
 
 export const AGENT_API = '/api/conversation/v1';
 export const agentTurnTerminal = status => ['completed', 'failed', 'stopped', 'interrupted'].includes(status);
+
+// The server fails a turn once the conversation's turnTimeoutMs has passed (clamped to 1 s – 1 h by
+// src/conversation/runtime/index.js, default TOOL_LIMITS.turnTimeoutMs). The page waits that long plus a
+// margin for the server to persist the end, so it does not give up on a turn the server still runs.
+const turnEndMarginMs = 30000;
+
+/** @param {{ settings?: { turnTimeoutMs?: number } } | null | undefined} snapshot */
+export function agentTurnWaitMs(snapshot) {
+    const configured = snapshot?.settings?.turnTimeoutMs;
+    const turnTimeoutMs = Number.isFinite(configured) ? Math.min(Math.max(configured, 1000), 3600000) : TOOL_LIMITS.turnTimeoutMs;
+    return turnTimeoutMs + turnEndMarginMs;
+}
 
 // Editor selections are not applied settings. Only the actual chat entity and its
 // explicit persona/book overrides are sent; the server resolves saved configuration.

@@ -1,7 +1,8 @@
+/* global globalThis */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChatAgentActions } from '../../../../public/modern/actions/chat-agent.js';
-import { getChatAgentState, getChatAgentSession, currentAgentSelection } from '../../../../public/modern/core/chat-agent-state.js';
+import { getChatAgentState, getChatAgentSession, currentAgentSelection, agentTurnWaitMs } from '../../../../public/modern/core/chat-agent-state.js';
 import { createChatAgentComponents } from '../../../../public/modern/components/chat-agent.js';
 import { createChatGenerationActions } from '../../../../public/modern/actions/chat-generation.js';
 import { createChatGenerationRouteContext } from '../../../../public/modern/shell/route-context-chat.js';
@@ -97,11 +98,81 @@ test('bounded polling keeps the server turn recoverable and stop uses only its s
         return { conversation: { contentRevision: 1, activeTurnId: null }, messages: [] };
     } });
     h.actions.setChatAgentMode(true); h.actions.setChatAgentDraft('hello'); await h.actions.sendChatAgentMessage();
-    assert.match(h.session().error, /超时/); assert.equal(h.state.engine.generating, true);
+    // Giving up waiting releases ordinary chat but keeps the unfinished turn and its exact request.
+    assert.match(h.session().error, /超时/); assert.equal(h.state.engine.generating, false);
+    assert.equal(h.actions.isChatAgentActive(), false); assert.ok(h.session().pending);
+    const html = createChatAgentComponents({ ...h.deps, escapeHtml: String }).renderChatAgent();
+    assert.match(html, /data-chat-agent-action="stop"/);
+    assert.match(html, /data-chat-agent-action="refresh" >/);
+    assert.doesNotMatch(html, /data-chat-agent-action="retry"/);
+    assert.match(html, /data-chat-agent-action="send" disabled/);
+    await assert.rejects(h.actions.sendChatAgentMessage(), /状态尚未确认/);
     await h.actions.stopChatAgent();
-    assert.equal(h.session().turn.status, 'stopped'); assert.equal(h.state.engine.generating, false);
+    assert.equal(h.session().turn.status, 'stopped'); assert.equal(h.state.engine.generating, false); assert.equal(h.session().pending, null);
     assert.equal(h.requests.filter(r => r.url.endsWith('/turns')).length, 1);
     assert.equal(h.requests.filter(r => r.url.endsWith('/turns/t/stop')).length, 1);
+});
+
+test('the wait covers the conversation turn deadline plus a margin before releasing the page', async () => {
+    assert.equal(agentTurnWaitMs(null), 210000);
+    assert.equal(agentTurnWaitMs({ settings: { turnTimeoutMs: 600000 } }), 630000);
+    assert.equal(agentTurnWaitMs({ settings: { turnTimeoutMs: 1 } }), 31000);
+    assert.equal(agentTurnWaitMs({ settings: { turnTimeoutMs: 99999999 } }), 3630000);
+    assert.equal(agentTurnWaitMs({ settings: { turnTimeoutMs: 'soon' } }), 210000);
+    const run = async ({ endsAt, settings }) => {
+        let time = 0, accepted = false;
+        const h = harness({ now: () => time, sleep: async ms => { time += ms; }, apiFetch: async url => {
+            if (url.endsWith('/workspace/start')) return { conversationId: 'c' };
+            if (url.endsWith('/turns')) { accepted = true; return { turnId: 't', status: 'running' }; }
+            if (url.endsWith('/turns/t')) return { id: 't', status: time >= endsAt ? 'completed' : 'running', content: '' };
+            return { conversation: { contentRevision: 1, activeTurnId: accepted && time < endsAt ? 't' : null }, messages: [], settings };
+        } });
+        h.actions.setChatAgentMode(true); h.actions.setChatAgentDraft('slow'); await h.actions.sendChatAgentMessage();
+        return { h, time };
+    };
+    // 150 s exceeds the old 120 s page limit but not the server's default 180 s deadline.
+    const finished = await run({ endsAt: 150000, settings: {} });
+    assert.equal(finished.h.session().error, ''); assert.equal(finished.h.session().turn.status, 'completed');
+    assert.equal(finished.h.state.engine.generating, false);
+    const longer = await run({ endsAt: 400000, settings: { turnTimeoutMs: 600000 } });
+    assert.equal(longer.h.session().error, ''); assert.equal(longer.h.session().turn.status, 'completed');
+    const stuck = await run({ endsAt: Infinity, settings: {} });
+    assert.match(stuck.h.session().error, /超时/); assert.ok(stuck.time >= 210000 && stuck.time < 211000);
+    assert.equal(stuck.h.state.engine.generating, false); assert.equal(stuck.h.session().turn.status, 'running');
+});
+
+test('polling redraws only visible Agent panel changes and the terminal state', async () => {
+    const polls = [['running', ''], ['running', ''], ['running', ''], ['running', 'Hel'], ['running', 'Hel'], ['running', 'Hello'], ['completed', 'Hello']];
+    const play = async ({ route, bubble }) => {
+        let poll = -1, renders = 0, accepted = false;
+        const h = harness({ render: () => { renders++; }, apiFetch: async url => {
+            if (url.endsWith('/workspace/start')) return { conversationId: 'c' };
+            if (url.endsWith('/turns')) { accepted = true; return { turnId: 't', status: 'queued' }; }
+            if (url.endsWith('/turns/t')) { poll++; const [status, content] = polls[poll]; return { id: 't', status, content }; }
+            if (!accepted) return { conversation: { contentRevision: 0, activeTurnId: null }, messages: [] };
+            const done = poll >= polls.length - 1;
+            return { conversation: { contentRevision: done ? 2 : 1, activeTurnId: done ? null : 't' }, messages: done ? [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'Hello' }] : [{ role: 'user', content: 'hi' }] };
+        } });
+        h.state.route = route;
+        h.actions.setChatAgentMode(true); h.actions.setChatAgentDraft('hi');
+        const before = renders;
+        const previous = globalThis.document;
+        globalThis.document = { querySelector: selector => selector === '[data-chat-agent-turn]' ? bubble : null };
+        try { await h.actions.sendChatAgentMessage(); } finally { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; }
+        return { renders: renders - before, h };
+    };
+    // Shown: send start, first poll, text appearing, terminal. Unchanged polls and the "Hel" -> "Hello"
+    // growth (written into the existing bubble) do not rebuild the page.
+    const body = { textContent: 'Hel' };
+    const bubble = { getAttribute: () => 't', querySelector: selector => selector === '.message-body' ? body : null };
+    const shown = await play({ route: 'chat', bubble });
+    assert.equal(shown.renders, 4); assert.equal(body.textContent, 'Hello');
+    assert.equal(shown.h.state.engine.generating, false);
+    // Without the bubble on screen the same text growth falls back to one render.
+    assert.equal((await play({ route: 'chat', bubble: null })).renders, 5);
+    // On another page only the send start and the terminal state (generation lock released) redraw.
+    const hidden = await play({ route: 'dashboard', bubble });
+    assert.equal(hidden.renders, 2); assert.equal(hidden.h.state.engine.generating, false);
 });
 
 test('ambiguous POST never auto-retries; explicit recovery reuses the exact request ID and revision', async () => {

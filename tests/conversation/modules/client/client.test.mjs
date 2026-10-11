@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createClient, EventParser, subscribe, ApiError } from '../../../../public/modern/conversation/core/client.js';
+import { createClient, EventParser, subscribe, ApiError, LONG_WRITE_TIMEOUT_MS, TRANSFER_TIMEOUT_MS } from '../../../../public/modern/conversation/core/client.js';
 
 const response = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 test('writes include schema, authentication and expected revisions; GET does not fetch CSRF', async () => {
@@ -119,4 +119,41 @@ test('manual memory creation carries the captured memory version and preserves s
     await assert.rejects(client.command('c', command), error => error.code === 'revision-conflict');
     assert.deepEqual(sent, { schemaVersion: 1, type: 'memory.create', expectedContentRevision: 3, expectedMemoryRevision: 7, kind: 'user-fact', content: '人工事实', locked: true });
     assert.equal(command.content, '人工事实');
+});
+test('long server-side writes wait far longer than the 30-second default for ordinary requests', async () => {
+    const original = AbortSignal.timeout;
+    const waits = [];
+    AbortSignal.timeout = ms => { waits.push(ms); return original.call(AbortSignal, ms); };
+    try {
+        const client = createClient({ csrf: false, fetcher: async () => response({}) });
+        const wait = async call => { waits.length = 0; await call(); return waits[0]; };
+        for (const call of [() => client.snapshot('c'), () => client.command('c', {}), () => client.maintenance('status'), () => client.maintenance('cleanup', { token: 't' })]) {
+            assert.equal(await wait(call), 30000);
+        }
+        for (const call of [() => client.compact('c', {}), () => client.maintenance('reindex', { conversationId: 'c' }), () => client.resumeJob('c', 'j'), () => client.cancelJob('c', 'j')]) {
+            assert.equal(await wait(call), LONG_WRITE_TIMEOUT_MS);
+        }
+        for (const call of [() => client.maintenance('backup', {}), () => client.maintenance('restore', { data: {} })]) {
+            assert.equal(await wait(call), TRANSFER_TIMEOUT_MS);
+        }
+        assert.ok(LONG_WRITE_TIMEOUT_MS >= 10 * 60 * 1000 && TRANSFER_TIMEOUT_MS > LONG_WRITE_TIMEOUT_MS);
+    } finally { AbortSignal.timeout = original; }
+});
+test('an unanswered long write reports an unknown result after re-reading, while a rejection stays a rejection', async () => {
+    const { runUncertainWrite } = await import('../../../../public/modern/conversation/core/operations.js');
+    let refreshes = 0;
+    const refresh = async () => { refreshes++; };
+    await assert.rejects(runUncertainWrite(async () => { throw new DOMException('signal timed out', 'TimeoutError'); }, refresh),
+        error => error.resultUnknown === true && /结果未知（等待服务器响应超时）.*已重新读取状态.*不要重复提交/.test(error.message) && !/signal timed out/.test(error.message));
+    assert.equal(refreshes, 1);
+    for (const failure of [new TypeError('Failed to fetch'), new ApiError(502, { code: 'invalid-response', message: 'bad gateway' }), new ApiError(408, {})]) {
+        await assert.rejects(runUncertainWrite(async () => { throw failure; }, refresh), error => error.resultUnknown === true);
+    }
+    assert.equal(refreshes, 4);
+    const conflict = new ApiError(409, { code: 'revision-conflict', message: 'stale' });
+    await assert.rejects(runUncertainWrite(async () => { throw conflict; }, refresh), error => error === conflict);
+    assert.equal(refreshes, 4);
+    await assert.rejects(runUncertainWrite(async () => { throw new TypeError('offline'); }, async () => { throw new Error('still offline'); }),
+        /结果未知（offline）.*重新读取状态失败（still offline）.*不要重复提交/);
+    assert.deepEqual(await runUncertainWrite(async () => ({ ok: true }), refresh), { ok: true });
 });

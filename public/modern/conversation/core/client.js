@@ -33,11 +33,19 @@ export class EventParser {
 }
 
 const segment = value => encodeURIComponent(value);
+// Ordinary reads and versioned writes answer quickly; a request without an answer after 30 s is reported.
+const REQUEST_TIMEOUT_MS = 30000;
+// Writes that wait for model calls or re-indexing (compression, index rebuild, image job query/cancel) and
+// the 256 MiB backup/restore transfers. The server keeps working when the browser stops waiting, so these
+// wait far longer and their callers treat a timeout as an unknown result (core/operations.js).
+export const LONG_WRITE_TIMEOUT_MS = 10 * 60 * 1000;
+export const TRANSFER_TIMEOUT_MS = 30 * 60 * 1000;
+const maintenanceTimeouts = { reindex: LONG_WRITE_TIMEOUT_MS, backup: TRANSFER_TIMEOUT_MS, restore: TRANSFER_TIMEOUT_MS };
 export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(globalThis), csrf = true } = {}) {
     let tokenPromise;
     async function token() {
         if (!csrf) return '';
-        tokenPromise ??= fetcher('/csrf-token', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(30000) })
+        tokenPromise ??= fetcher('/csrf-token', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
             .then(async response => {
                 if (!response.ok) throw new ApiError(response.status, { message: '无法获取请求安全令牌' });
                 const value = await response.json();
@@ -46,14 +54,14 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
             }).catch(error => { tokenPromise = undefined; throw error; });
         return tokenPromise;
     }
-    async function request(path, { method = 'GET', body, signal } = {}) {
+    async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
         const headers = { Accept: 'application/json' };
         if (method !== 'GET') {
             headers['Content-Type'] = 'application/json';
             headers['X-CSRF-Token'] = await token();
         }
         const response = await fetcher(`${base}${path}`, {
-            method, headers, credentials: 'same-origin', cache: 'no-store', signal: signal || AbortSignal.timeout(30000),
+            method, headers, credentials: 'same-origin', cache: 'no-store', signal: signal || AbortSignal.timeout(timeoutMs),
             ...(method !== 'GET' ? { body: JSON.stringify({ ...body, schemaVersion: SCHEMA_VERSION }) } : {}),
         });
         const text = await response.text();
@@ -88,8 +96,8 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
         capabilities: id => request(`/capabilities${id ? `?connectionId=${segment(id)}` : ''}`),
         retrievalStatus: id => request(`/conversations/${segment(id)}/retrieval`),
         jobs: id => request(`/conversations/${segment(id)}/jobs`),
-        resumeJob: (id, jobId) => request(`/conversations/${segment(id)}/jobs/${segment(jobId)}/resume`, { method: 'POST', body: {} }),
-        cancelJob: (id, jobId) => request(`/conversations/${segment(id)}/jobs/${segment(jobId)}/cancel`, { method: 'POST', body: {} }),
+        resumeJob: (id, jobId) => request(`/conversations/${segment(id)}/jobs/${segment(jobId)}/resume`, { method: 'POST', body: {}, timeoutMs: LONG_WRITE_TIMEOUT_MS }),
+        cancelJob: (id, jobId) => request(`/conversations/${segment(id)}/jobs/${segment(jobId)}/cancel`, { method: 'POST', body: {}, timeoutMs: LONG_WRITE_TIMEOUT_MS }),
         usage: id => request(`/conversations/${segment(id)}/usage`),
         traces: id => request(`/conversations/${segment(id)}/traces`),
         trace: id => request(`/traces/${segment(id)}`),
@@ -99,8 +107,8 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
         candidates: (id, messageId) => request(`/conversations/${segment(id)}/messages/${segment(messageId)}/candidates`),
         automaticState: id => request(`/conversations/${segment(id)}/automatic`),
         automatic: (id, body) => request(`/conversations/${segment(id)}/automatic`, { method: 'POST', body }),
-        compact: (id, body) => request(`/conversations/${segment(id)}/compact`, { method: 'POST', body }),
-        maintenance: (action, body) => request(`/maintenance/${action}`, body === undefined ? {} : { method: 'POST', body }),
+        compact: (id, body) => request(`/conversations/${segment(id)}/compact`, { method: 'POST', body, timeoutMs: LONG_WRITE_TIMEOUT_MS }),
+        maintenance: (action, body) => request(`/maintenance/${action}`, body === undefined ? {} : { method: 'POST', body, timeoutMs: maintenanceTimeouts[action] }),
         async stream(id, after, { signal, onEvent, onOpen = () => {} }) {
             const response = await fetcher(`${base}/conversations/${segment(id)}/events?after=${after}`, {
                 credentials: 'same-origin', cache: 'no-store', signal, headers: { Accept: 'text/event-stream' },

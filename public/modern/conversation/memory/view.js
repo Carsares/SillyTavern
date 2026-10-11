@@ -3,6 +3,7 @@ import { sourcesView } from './sources.js';
 import { MEMORY_KINDS, memoryInput } from './model.js';
 import { el, button, empty, field, input, select } from '../core/dom.js';
 import { terminal, redact, list } from '../core/state.js';
+import { refreshAfterWrite, runUncertainWrite } from '../core/operations.js';
 export function createMemory(app) {
     const drafts = new Map();
     let savedJobs = [];
@@ -24,8 +25,13 @@ export function createMemory(app) {
     });
     const root = el('section', {}, el('h2', {}, '记忆与压缩'), el('p', {}, '失效与待确认内容保持可见；锁定记忆由版本化命令保护。'),
         button('请求压缩历史', () => app.run(async () => {
-            await app.api.compact(app.id(), { expectedContentRevision: app.state.snapshot.conversation.contentRevision, expectedMemoryRevision: app.state.snapshot.conversation.memoryRevision });
-            await app.refresh(); app.notice('压缩请求已提交，请查看服务器返回的摘要和折叠记录');
+            const id = app.id();
+            const { contentRevision, memoryRevision } = app.state.snapshot.conversation;
+            // Compression waits for a billed model summary and is not cancelled by a disconnect.
+            await runUncertainWrite(() => app.api.compact(id, { expectedContentRevision: contentRevision, expectedMemoryRevision: memoryRevision }),
+                async () => { await app.refresh(); await load(); });
+            await refreshAfterWrite(() => app.refresh(), warning => { app.state.error = warning; });
+            app.notice('压缩请求已提交，请查看服务器返回的摘要和折叠记录');
         })), button('刷新后台任务', () => app.run(load)), createForm, rows, jobs);
     async function load() {
         savedJobs = list(await app.api.jobs(app.id()), 'jobs'); creationSnapshot = app.state.snapshot; render();

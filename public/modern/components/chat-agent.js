@@ -28,9 +28,9 @@ export function createChatAgentComponents({ state, escapeHtml, getChatContextKey
             <p class="row-subtitle">这是独立的新 Agent 会话，不含原聊天历史。刷新后可在 <a href="/modern/?view=agent" target="_blank" rel="noopener noreferrer">Agent 工作区会话列表</a> 找回；本页草稿仅保存在当前页面。</p>
             ${(session.notices || []).map(notice => `<p class="row-subtitle">${escapeHtml(typeof notice === 'string' ? notice : JSON.stringify(notice))}</p>`).join('')}
             ${session.error ? `<p role="alert" class="danger">${escapeHtml(session.error)}</p>` : ''}
-            <div class="message-list-frame"><div class="message-list" aria-live="polite">
+            <div class="message-list-frame"><div class="message-list" aria-live="polite" data-chat-agent-messages="${escapeHtml(`${getChatContextKey()}#${session.conversationId}`)}">
                 ${messages.map(message => `<article class="message"><strong>${escapeHtml(message.role === 'user' ? '你' : message.role === 'assistant' ? 'Agent' : message.role)}</strong><div class="message-body" style="white-space:pre-wrap">${escapeHtml(typeof message.content === 'string' ? message.content : JSON.stringify(message.content))}</div>${media(message.media)}</article>`).join('')}
-                ${session.turn?.status !== 'completed' && session.turn?.content && !messages.some(message => message.role === 'assistant' && message.turnId === session.turn.id && message.content === session.turn.content) ? `<article class="message"><strong>Agent · ${escapeHtml(session.turn.status)}</strong><div class="message-body" style="white-space:pre-wrap">${escapeHtml(session.turn.content)}</div></article>` : ''}
+                ${session.turn?.status !== 'completed' && session.turn?.content && !messages.some(message => message.role === 'assistant' && message.turnId === session.turn.id && message.content === session.turn.content) ? `<article class="message" data-chat-agent-turn="${escapeHtml(session.turn.id)}"><strong>Agent · ${escapeHtml(session.turn.status)}</strong><div class="message-body" style="white-space:pre-wrap">${escapeHtml(session.turn.content)}</div></article>` : ''}
             </div></div>
             <div class="composer">
                 <textarea data-chat-agent-input rows="2" ${busy || session.pending ? 'disabled' : ''} placeholder="发送给 Agent（Ctrl/⌘ + Enter）">${escapeHtml(session.draft)}</textarea>

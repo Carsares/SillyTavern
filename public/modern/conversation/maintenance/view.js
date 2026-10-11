@@ -1,6 +1,7 @@
 import { el, button, field, input, json, download } from '../core/dom.js';
 import { BACKUP_MAX_BYTES, BACKUP_COPY_GUIDANCE, restoreBody, cleanupRequest, effectiveExport } from './model.js';
 import { redact } from '../core/state.js';
+import { runUncertainWrite } from '../core/operations.js';
 export function storageStatusView(status) {
     const value = key => Number.isFinite(status?.[key]) && status[key] >= 0 ? String(status[key]) : '未知';
     return el('section', { 'aria-label': '存储用量' }, el('h3', {}, '轨迹存储'),
@@ -20,7 +21,11 @@ export function createMaintenance(app) {
         el('p', {}, BACKUP_COPY_GUIDANCE),
         button('查看存储用量', () => app.run(async () => { output.replaceChildren(storageStatusView(await app.api.maintenance('status'))); })),
         button('重建当前会话索引', () => app.run(async () => {
-            const result = await app.api.maintenance('reindex', { conversationId: app.id() });
+            const conversationId = app.id();
+            // Rebuilding calls the embedding provider again; an unknown outcome shows the index state instead.
+            const result = await runUncertainWrite(() => app.api.maintenance('reindex', { conversationId }), async () => {
+                output.replaceChildren(el('h3', {}, '重新读取的索引状态'), json(redact(await app.api.retrievalStatus(conversationId))));
+            });
             output.replaceChildren(json(redact(result)));
         })),
         button('导出有效历史', () => app.run(async () => {
@@ -41,7 +46,7 @@ export function createMaintenance(app) {
             const data = JSON.parse(await selected.text());
             const body = restoreBody(data);
             if (!confirm('确认将备份恢复到新存储？非空存储应由服务器拒绝。')) return;
-            const result = await app.api.maintenance('restore', body);
+            const result = await runUncertainWrite(() => app.api.maintenance('restore', body), () => app.reloadConversations());
             output.replaceChildren(json(redact(result))); file.value = ''; await app.reloadConversations();
         })),
         el('p', {}, '有效历史导出仅含当前有效内容；完整恢复请下载备份。轨迹清理删除旧请求明细，保留用量账目；附件仅清理服务器确认无引用且满足保留期的文件。'),

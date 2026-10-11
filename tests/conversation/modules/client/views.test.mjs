@@ -1,3 +1,4 @@
+/* global globalThis */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -344,4 +345,65 @@ test('retrieval event supersedes pending reads and conversation changes discard 
     assert.doesNotMatch(view.root.textContent, /语义索引已就绪/);
     app.api.retrievalStatus = async () => { throw new Error('offline'); }; await view.load();
     assert.match(view.root.textContent, /索引状态未知：offline/);
+}));
+test('compression, re-indexing, restore and image job actions without an answer re-read state instead of resubmitting', () => withDOM(async () => {
+    const { createMemory } = await import('../../../../public/modern/conversation/memory/view.js');
+    const { createMaintenance } = await import('../../../../public/modern/conversation/maintenance/view.js');
+    const { jobView } = await import('../../../../public/modern/conversation/jobs/view.js');
+    const click = (root, label) => descendants(root).find(node => node.tag === 'button' && node.textContent.startsWith(label)).listeners.click();
+    const timedOut = async () => { throw new DOMException('signal timed out', 'TimeoutError'); };
+    const reads = [], writes = [];
+    const app = { id: () => 'c', state: { snapshot: snapshot(), turn: null, activity: [], error: '' }, notice() {},
+        // Same contract as conversation/app.js run(): the thrown error becomes the workspace error banner.
+        run: async action => { app.state.error = ''; try { return await action(); } catch (error) { app.state.error = `${error.code ? `${error.code}: ` : ''}${error.message}`; } },
+        refresh: async () => { reads.push('snapshot'); },
+        reloadConversations: async () => { reads.push('conversations'); },
+        api: {
+            compact: async () => { writes.push('compact'); return timedOut(); },
+            jobs: async () => { reads.push('jobs'); return []; },
+            maintenance: async action => { writes.push(action); return timedOut(); },
+            retrievalStatus: async () => { reads.push('retrieval'); return { status: 'indexing' }; },
+            resumeJob: async () => { writes.push('resumeJob'); throw new TypeError('Failed to fetch'); },
+        } };
+    const unknown = /^操作结果未知（.+）：服务器可能仍在处理或已经完成。已重新读取状态，请核对结果，不要重复提交。$/;
+
+    const memory = createMemory(app); memory.render();
+    await click(memory.root, '请求压缩历史');
+    assert.deepEqual(writes, ['compact']); assert.deepEqual(reads, ['snapshot', 'jobs']);
+    assert.match(app.state.error, unknown); assert.match(app.state.error, /等待服务器响应超时/);
+    assert.doesNotMatch(app.state.error, /^23:|signal timed out/);
+
+    const maintenance = createMaintenance(app);
+    writes.length = 0; reads.length = 0;
+    await click(maintenance.root, '重建当前会话索引');
+    assert.deepEqual(writes, ['reindex']); assert.deepEqual(reads, ['retrieval']);
+    assert.match(app.state.error, unknown); assert.match(maintenance.root.textContent, /重新读取的索引状态[\s\S]*indexing/);
+
+    const file = descendants(maintenance.root).find(node => node.tag === 'input' && node.type === 'file');
+    file.files = [{ size: 10, text: async () => JSON.stringify({ format: 'conversation-v1-backup', schemaVersion: 1, repository: {}, files: [] }) }];
+    const previousConfirm = globalThis.confirm; globalThis.confirm = () => true;
+    try {
+        writes.length = 0; reads.length = 0;
+        await click(maintenance.root, '恢复到空存储');
+        assert.deepEqual(writes, ['restore']); assert.deepEqual(reads, ['conversations']); assert.match(app.state.error, unknown);
+    } finally { if (previousConfirm === undefined) delete globalThis.confirm; else globalThis.confirm = previousConfirm; }
+
+    const job = { id: 'job', conversationId: 'c', kind: 'provider-request', dependencies: { kind: 'image' }, payload: { state: 'running', jobId: 'handle' } };
+    let reloads = 0;
+    const card = jobView(app, job, async () => { reloads++; });
+    writes.length = 0;
+    await click(card, '查询');
+    assert.deepEqual(writes, ['resumeJob']); assert.equal(reloads, 1);
+    assert.match(app.state.error, unknown); assert.match(app.state.error, /Failed to fetch/);
+}));
+test('a rejected compression keeps the server error and is not reported as unknown', () => withDOM(async () => {
+    const { createMemory } = await import('../../../../public/modern/conversation/memory/view.js');
+    const { ApiError } = await import('../../../../public/modern/conversation/core/client.js');
+    let refreshed = 0;
+    const app = { id: () => 'c', state: { snapshot: snapshot(), turn: null, activity: [] }, notice() {}, refresh: async () => { refreshed++; },
+        run: async action => { try { return await action(); } catch (error) { app.state.error = error; } },
+        api: { compact: async () => { throw new ApiError(409, { code: 'revision-conflict', message: 'Conversation changed before compression' }); } } };
+    const memory = createMemory(app); memory.render();
+    await descendants(memory.root).find(node => node.tag === 'button' && node.textContent === '请求压缩历史').listeners.click();
+    assert.equal(app.state.error.status, 409); assert.equal(app.state.error.resultUnknown, undefined); assert.equal(refreshed, 0);
 }));

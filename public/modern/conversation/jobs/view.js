@@ -1,5 +1,6 @@
 import { el, button, json } from '../core/dom.js';
 import { terminal, redact } from '../core/state.js';
+import { runUncertainWrite } from '../core/operations.js';
 import { toolMediaView } from '../media/view.js';
 
 export function imageJobState(job, state) {
@@ -16,11 +17,15 @@ export function jobView(app, job, reload) {
         if (app.id() !== job.conversationId || !imageJobState(job, app.state).actionable) throw new Error('仅可在原会话空闲时操作有服务端句柄的未完成图片任务');
         feedback.replaceChildren(el('p', {}, '正在查询或更新现有任务…'));
         try {
-            const result = await app.api[method](job.conversationId, job.id);
+            const result = await runUncertainWrite(() => app.api[method](job.conversationId, job.id), reload);
             feedback.replaceChildren(json(redact(result)));
             app.notice(method === 'cancelJob' ? '取消请求已返回；不代表远端已取消，不支持取消时任务仍可能运行。请读取任务状态。' : '已查询现有图片任务；不会提交新任务，也不会改写旧回复。');
             await reload();
-        } catch (error) { feedback.replaceChildren(el('p', { role: 'alert', class: 'banner error' }, `任务操作失败：${error.message}。不要重新提交图片生成。`)); }
+        } catch (error) {
+            // reload() replaced this card; the unknown outcome goes to the workspace error banner instead.
+            if (error.resultUnknown) throw error;
+            feedback.replaceChildren(el('p', { role: 'alert', class: 'banner error' }, `任务操作失败：${error.message}。不要重新提交图片生成。`));
+        }
     });
     return el('article', { class: 'card' }, el('h3', {}, `${state.image ? '图片任务' : '后台任务'} · ${job.payload?.state ?? job.status ?? '状态未知'}`),
         el('details', {}, el('summary', {}, '任务诊断详情'), json(redact(job))),

@@ -4,6 +4,11 @@
 // list pinned to the newest message or restores where the reader was.
 const nearBottomPx = 80;
 const messageListSelector = '[data-message-list]';
+// The Agent panel's message list (components/chat-agent.js) grows with its messages instead of scrolling;
+// at desktop width the surrounding .chat-thread scrolls (styles/routes/chat.css), so that element is kept
+// at the newest message or at the reader's position.
+const agentMessageListSelector = '[data-chat-agent-messages]';
+const agentScrollContainerSelector = '.chat-thread';
 const jumpButtonSelector = '[data-scroll-to-latest]';
 // Other chat-route scroll containers rebuilt by render whose position should survive it.
 const preservedScrollSelectors = ['[data-chat-backup-list]', '.backup-preview textarea', '[data-chat-tools-body]'];
@@ -179,6 +184,29 @@ export function createChatScrollController({ root = document, afterRender = () =
         }
     }
 
+    /**
+     * The message list on screen and the element that scrolls it. data-chat-key / data-first-index
+     * (components/chat-message.js) tell a chat switch or a "load earlier" prepend apart from an update.
+     * @returns {{ scroller: HTMLElement, list: HTMLElement, chatKey: string, firstIndex: number } | null}
+     */
+    function findMessageList() {
+        const list = root.querySelector(messageListSelector);
+        if (list instanceof HTMLElement) {
+            return { scroller: list, list, chatKey: list.dataset.chatKey || '', firstIndex: Number(list.dataset.firstIndex) || 0 };
+        }
+        const agentList = root.querySelector(agentMessageListSelector);
+        if (!(agentList instanceof HTMLElement)) {
+            return null;
+        }
+        const container = agentList.closest(agentScrollContainerSelector);
+        return {
+            scroller: container instanceof HTMLElement ? container : agentList,
+            list: agentList,
+            chatKey: `agent:${agentList.dataset.chatAgentMessages || ''}`,
+            firstIndex: 0,
+        };
+    }
+
     function captureSnapshot() {
         const preserved = new Map();
         for (const selector of preservedScrollSelectors) {
@@ -197,20 +225,21 @@ export function createChatScrollController({ root = document, afterRender = () =
         const openDeleteStep = root.querySelector(`${messageDeleteStepSelector}[open]`);
         const openDeleteStepKey = openDeleteStep instanceof HTMLElement ? openDeleteStep.dataset.messageDeleteStep || '' : '';
 
-        const list = root.querySelector(messageListSelector);
-        if (!(list instanceof HTMLElement)) {
+        const found = findMessageList();
+        if (!found) {
             return { preserved, openDeleteStepKey, list: null };
         }
 
+        const { scroller } = found;
         return {
             preserved,
             openDeleteStepKey,
             list: {
-                chatKey: list.dataset.chatKey || '',
-                firstIndex: Number(list.dataset.firstIndex) || 0,
-                scrollTop: list.scrollTop,
-                distanceFromBottom: getDistanceFromBottom(list),
-                nearBottom: isNearBottom(list),
+                chatKey: found.chatKey,
+                firstIndex: found.firstIndex,
+                scrollTop: scroller.scrollTop,
+                distanceFromBottom: getDistanceFromBottom(scroller),
+                nearBottom: isNearBottom(scroller),
             },
         };
     }
@@ -237,20 +266,22 @@ export function createChatScrollController({ root = document, afterRender = () =
         updateJumpButton(list);
     }
 
-    function track(list) {
-        if (list === trackedList) {
+    /** @param {{ scroller: HTMLElement, list: HTMLElement } | null} found */
+    function track(found) {
+        const scroller = found?.scroller ?? null;
+        if (scroller === trackedList) {
             return;
         }
 
         trackedObserver?.disconnect();
         trackedObserver = null;
         listResizeObserver?.disconnect();
-        trackedList = list instanceof HTMLElement ? list : null;
-        if (!trackedList) {
+        trackedList = scroller;
+        if (!found) {
             return;
         }
 
-        const current = trackedList;
+        const current = found.scroller;
         current.addEventListener('scroll', () => {
             if (current !== trackedList) {
                 return;
@@ -265,8 +296,9 @@ export function createChatScrollController({ root = document, afterRender = () =
         }, { passive: true });
         // Media inside messages loads after the scroll position was set; load does not bubble, so capture it.
         current.addEventListener('load', () => followIfPinned(current), true);
+        // Message text changed without a render (the streaming bubble) follows the newest message too.
         trackedObserver = new MutationObserver(() => followIfPinned(current));
-        trackedObserver.observe(current, { childList: true, subtree: true, characterData: true });
+        trackedObserver.observe(found.list, { childList: true, subtree: true, characterData: true });
         listResizeObserver?.observe(current);
     }
 
@@ -291,18 +323,18 @@ export function createChatScrollController({ root = document, afterRender = () =
         restoreSidebarLists();
         restoreDeleteStep(snapshot.openDeleteStepKey);
 
-        const list = root.querySelector(messageListSelector);
-        track(list instanceof HTMLElement ? list : null);
-        if (!(list instanceof HTMLElement)) {
+        const found = findMessageList();
+        track(found);
+        if (!found) {
             return;
         }
 
+        const list = found.scroller;
         const previous = snapshot.list;
-        const firstIndex = Number(list.dataset.firstIndex) || 0;
-        if (!previous || previous.chatKey !== (list.dataset.chatKey || '')) {
+        if (!previous || previous.chatKey !== found.chatKey) {
             // Opened or switched to a chat: start at the newest message.
             followToBottom(list);
-        } else if (firstIndex < previous.firstIndex) {
+        } else if (found.firstIndex < previous.firstIndex) {
             // "加载更早消息" inserted messages above: keep the messages the reader was looking at in place.
             list.scrollTop = list.scrollHeight - list.clientHeight - previous.distanceFromBottom;
         } else if (previous.nearBottom) {
@@ -332,8 +364,8 @@ export function createChatScrollController({ root = document, afterRender = () =
     }
 
     function scrollToLatest() {
-        const list = root.querySelector(messageListSelector);
-        if (!(list instanceof HTMLElement)) {
+        const list = findMessageList()?.scroller;
+        if (!list) {
             return false;
         }
 

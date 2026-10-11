@@ -42,7 +42,13 @@ non-versioned request is the existing authentication infrastructure GET
 HTTP error `{error:{code,message,details}}` is displayed; a 409 preserves editing
 input and requires a fresh read/review. Writes are never automatically retried.
 JSON requests have a 30-second client timeout; an uncertain turn acceptance keeps
-its original request ID and body for explicit idempotent retry.
+its original request ID and body for explicit idempotent retry. Writes the server
+keeps working on after the browser stops waiting wait longer: compression, index
+rebuild and image job query/cancel 10 minutes, backup/restore transfers 30 minutes
+(`core/client.js`). When such a write times out, loses its connection or gets a 5xx,
+the view re-reads the affected state and reports the result as unknown instead of
+inviting a duplicate submission (`runUncertainWrite` in `core/operations.js`); a
+structured 4xx stays a rejection.
 
 | Operation | Request / response consumed |
 | --- | --- |
