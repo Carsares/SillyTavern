@@ -309,7 +309,8 @@ export function describeSummaryOutcome(result, { mode = 'force' } = {}) {
         case 'nothing':
             return { kind: 'info', text: '没有尚未摘要的消息可用：当前的提示词构造方式只摘要上次摘要之后的消息。要从头重新摘要，请先清除当前摘要。' };
         case 'empty-summary':
-            return { kind: 'warning', text: '模型没有返回摘要内容，聊天没有变化。' };
+            // 常见原因：推理模型把回复长度上限全用在思考上，正文为空（finish_reason 为 length）
+            return { kind: 'warning', text: '模型没有返回摘要内容，聊天没有变化。推理模型可能把回复长度都用在了思考上，可以到「设置 → 聊天工具」调大「摘要回复长度」后重试。' };
         case 'save-failed':
             return { kind: 'warning', text: '摘要已生成，但聊天文件没有接受写入（可能在别处被修改过），聊天没有变化。请稍后重新摘要。' };
         case 'empty':
