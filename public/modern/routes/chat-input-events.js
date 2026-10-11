@@ -37,6 +37,11 @@ export function createChatInputEvents(ctx) {
     } = ctx;
 
     function handleChatInput(event) {
+        if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-agent-input]')) {
+            ctx.setChatAgentDraft(event.target.value);
+            fitComposerInput(event.target);
+            return true;
+        }
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-chat-input]')) {
             setCurrentDraft(event.target.value);
             updateComposerSendState(event.target);
@@ -77,6 +82,10 @@ export function createChatInputEvents(ctx) {
     }
 
     async function handleChatInputChange(event) {
+        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-chat-agent-executor]')) {
+            try { ctx.setChatAgentExecutor(event.target.value); } catch (error) { showToast('执行器切换失败', error.message); render(); }
+            return true;
+        }
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-import-file]')) {
             try {
                 await importModernChatFiles(event.target.files);
@@ -94,6 +103,11 @@ export function createChatInputEvents(ctx) {
     }
 
     function handleChatInputKeydown(event) {
+        if (event.target instanceof HTMLElement && event.target.matches('[data-chat-agent-input]') && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault();
+            ctx.sendChatAgentMessage().catch(error => { showToast('Agent 发送失败', error.message); render(); });
+            return true;
+        }
         if (event.key === 'Escape') {
             const currentDraftKey = getCurrentDraftKey();
             if (state.chatEditing.key === currentDraftKey && state.chatEditing.index >= 0) {

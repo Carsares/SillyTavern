@@ -275,10 +275,14 @@ router.post('/reset-step2', async (request, response) => {
         }
 
         console.info('Resetting account data:', request.user.profile.handle);
-        await fsPromises.rm(request.user.directories.root, { recursive: true, force: true });
-
-        await ensurePublicDirectoriesExist();
-        await checkForNewContent([request.user.directories]);
+        const resetData = async () => {
+            await fsPromises.rm(request.user.directories.root, { recursive: true, force: true });
+            await ensurePublicDirectoriesExist();
+            await checkForNewContent([request.user.directories]);
+        };
+        const conversations = request.app.locals.conversationHost;
+        if (conversations) await conversations.withUserDataChange(request.user.directories.root, resetData);
+        else await resetData();
 
         RESET_CACHE.remove(request.user.profile.handle);
         return response.sendStatus(204);

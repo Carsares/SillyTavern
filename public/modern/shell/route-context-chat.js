@@ -118,6 +118,13 @@ export function createChatGenerationRouteContext(chatGeneration) {
     } = chatGeneration;
 
     return {
+        setChatAgentMode: chatGeneration.setChatAgentMode,
+        setChatAgentDraft: chatGeneration.setChatAgentDraft,
+        setChatAgentExecutor: chatGeneration.setChatAgentExecutor,
+        sendChatAgentMessage: chatGeneration.sendChatAgentMessage,
+        refreshChatAgent: chatGeneration.refreshChatAgent,
+        stopChatAgent: chatGeneration.stopChatAgent,
+        newChatAgentConversation: chatGeneration.newChatAgentConversation,
         checkLegacyGenerationEngine,
         sendModernMessage,
         stopModernGeneration,

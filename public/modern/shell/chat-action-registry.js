@@ -114,6 +114,7 @@ export function createChatActionRegistry({
 
     const chatGenerationActions = createChatGenerationActions({
         state,
+        apiFetch,
         render,
         showToast,
         callLegacyBridge,

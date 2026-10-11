@@ -3,9 +3,11 @@ import { describeReloadFailure } from '../core/bridge-reload.js';
 import { describeSummaryOutcome, getAutoSummaryGate, getManualSummaryGate, getSummaryProgress, readSummarySettings } from '../core/chat-summary.js';
 import { stripJsonlExtension } from '../core/utils.js';
 import { canSwitchGreetingLocally, planAlternateGreetingLoad, switchGreetingMessage } from './chat-greetings.js';
+import { createChatAgentActions } from './chat-agent.js';
 
 export function createChatGenerationActions({
     state,
+    apiFetch,
     render,
     showToast,
     callLegacyBridge,
@@ -29,6 +31,7 @@ export function createChatGenerationActions({
     // 未注入时开场白切换退回引擎的 SWIPE，「载入备用开场白」不可用。
     updateModernChatAndSync = null,
 }) {
+    const agent = createChatAgentActions({ state, apiFetch, render, getSelectedChatEntity, getChatContextKey, getChatCacheKey, isGroupChatMode, waitForEngineSync });
     let generationSequence = 0;
     let activeGenerationToken = 0;
     const stoppedGenerationTokens = new Set();
@@ -765,6 +768,7 @@ export function createChatGenerationActions({
     }
 
     async function stopModernGeneration() {
+        if (agent.isChatAgentActive()) return agent.stopChatAgent();
         if (!state.engine.generating) {
             return;
         }
@@ -791,6 +795,7 @@ export function createChatGenerationActions({
     }
 
     return {
+        ...agent,
         checkLegacyGenerationEngine,
         sendModernMessage,
         stopModernGeneration,

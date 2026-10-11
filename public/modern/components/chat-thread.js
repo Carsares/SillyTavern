@@ -4,6 +4,8 @@ import { createChatBackdropComponent } from './chat-backdrop.js';
 import { createChatComposerComponents } from './chat-composer.js';
 import { createChatMessageComponents } from './chat-message.js';
 import { createChatToolsComponents } from './chat-tools.js';
+import { createChatAgentComponents } from './chat-agent.js';
+import { getChatAgentSession } from '../core/chat-agent-state.js';
 
 export function createChatThreadComponents(ctx) {
     const {
@@ -25,6 +27,7 @@ export function createChatThreadComponents(ctx) {
         getChatCacheKey,
     } = ctx;
     const { renderChatComposer } = createChatComposerComponents(ctx);
+    const { renderChatAgent, renderChatAgentToggle } = createChatAgentComponents(ctx);
     const { renderMessageList } = createChatMessageComponents(ctx);
     const { renderChatToolsButton } = createChatToolsComponents(ctx);
     const { renderChatBackdrop } = createChatBackdropComponent(ctx);
@@ -47,6 +50,8 @@ export function createChatThreadComponents(ctx) {
         const selectedChat = visibleChats.find(chat => getChatId(chat) === state.selected.chat)
         || chats.find(chat => getChatId(chat) === state.selected.chat);
         const messages = getSelectedChatMessages();
+        const agentSession = getChatAgentSession(state, contextKey);
+        const agentMode = agentSession?.enabled;
         const isRenaming = state.chatRenaming.key === getChatCacheKey(contextKey, state.selected.chat);
         const isDeleting = state.chatDeleteConfirm.key === getChatCacheKey(contextKey, state.selected.chat);
         const memberCount = isGroupChatMode() && Array.isArray(entity?.members) ? entity.members.length : 0;
@@ -72,15 +77,17 @@ export function createChatThreadComponents(ctx) {
             ${avatar ? `<img class="avatar large" src="${escapeHtml(avatar)}" alt="">` : `<span class="avatar-fallback large"><i class="fa-solid ${getChatEntityFallbackIcon()}"></i></span>`}
             <div>
                 <h2 class="detail-title">${escapeHtml(name)}</h2>
-                <p class="panel-subtitle">${escapeHtml(selectedChat?.file_name || subtitle)}</p>
+                <p class="panel-subtitle">${escapeHtml(agentMode ? `Agent · ${agentSession.executor}` : selectedChat?.file_name || subtitle)}</p>
                 <div class="tag-row detail-tags">
-                    <span class="tag">${formatNumber(messages.length)} 条消息</span>
+                    <span class="tag">${formatNumber(agentMode ? agentSession.snapshot?.messages?.length || 0 : messages.length)} 条消息</span>
+                    ${!agentMode ? `
                     <span class="tag">${escapeHtml(selectedChat?.file_size || '0 B')}</span>
                     <span class="tag">${escapeHtml(formatDate(selectedChat?.last_mes))}</span>
+                    ` : ''}
                     ${isGroupChatMode() ? `<span class="tag">${formatNumber(memberCount)} 个成员</span>` : ''}
                 </div>
             </div>
-            ${selectedChat ? `
+            ${selectedChat && !agentMode ? `
                 <div class="page-actions detail-actions">
                     ${renderChatToolsButton()}
                     <button class="secondary-button" type="button" data-delete-chat ${isDeleting ? 'disabled' : ''}>
@@ -90,11 +97,14 @@ export function createChatThreadComponents(ctx) {
                 </div>
             ` : ''}
         </div>
+        ${renderChatAgentToggle()}
+        ${agentMode ? renderChatAgent() : `
         ${renderGenerationEnginePanel(entity, selectedChat)}
         ${isRenaming ? renderChatRenamePanel() : ''}
         ${isDeleting ? renderChatManagePanel() : ''}
         ${messages.length ? withChatBackdrop(renderMessageList(messages)) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         ${renderChatComposer(messages)}
+        `}
     `;
     }
 

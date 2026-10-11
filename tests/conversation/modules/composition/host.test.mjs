@@ -48,3 +48,50 @@ test('default entry validates Node before starting the existing workspace', asyn
     await main({ process: host, loadBootstrap });
     assert.equal(calls, 1);
 });
+
+test('account reset blocks Agent requests, waits for close and opens a fresh service afterward', async () => {
+    let finish, opened = 0, changed = false;
+    const host = createConversationHost({
+        createServices: () => ({ version: ++opened, close: () => opened === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve() }),
+        routerFor: service => (_req, res) => res.json(service.version),
+    });
+    const req = { user: { directories: { root: '/workspace/alice' } } };
+    host.middleware(req, response());
+    const change = host.withUserDataChange('/workspace/alice', async () => { changed = true; });
+    const blocked = response(); host.middleware(req, blocked);
+    assert.equal(blocked.statusCode, 503); assert.equal(changed, false);
+    await assert.rejects(host.withUserDataChange('/workspace/alice', async () => {}));
+    finish(); await change;
+    assert.equal(changed, true);
+    const fresh = response(); host.middleware(req, fresh);
+    assert.equal(fresh.body, 2);
+    await host.close();
+});
+
+test('failed Agent shutdown prevents account deletion and keeps its gate closed', async () => {
+    let changed = false;
+    const host = createConversationHost({
+        createServices: () => ({ close: async () => { throw new Error('close failed'); } }),
+        routerFor: () => (_req, res) => res.json({}),
+    });
+    const req = { user: { directories: { root: '/workspace/alice' } } };
+    host.middleware(req, response());
+    await assert.rejects(host.withUserDataChange('/workspace/alice', async () => { changed = true; }));
+    assert.equal(changed, false);
+    const blocked = response(); host.middleware(req, blocked);
+    assert.equal(blocked.statusCode, 503);
+});
+
+test('server shutdown waits for an account reset to finish rebuilding its directories', async () => {
+    const host = createConversationHost();
+    let finish, entered;
+    const ready = new Promise(resolve => { entered = resolve; });
+    const resetting = host.withUserDataChange('/workspace/alice', () => new Promise(resolve => { finish = resolve; entered(); }));
+    await ready;
+    let closed = false;
+    const closing = host.close().then(() => { closed = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closed, false);
+    finish(); await resetting; await closing;
+    assert.equal(closed, true);
+});

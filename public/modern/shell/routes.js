@@ -11,11 +11,13 @@ import { createApiRoute } from '../routes/api.js';
 import { createExtensionsRoute } from '../routes/extensions.js';
 import { createActivityRoute } from '../routes/activity.js';
 import { createSettingsRoute } from '../routes/settings.js';
+import { createAgentRoute } from '../routes/agent.js';
 
 export function createRouteModules(routeContext) {
     return {
         dashboard: createDashboardRoute(routeContext),
         chat: createChatRoute(routeContext),
+        agent: createAgentRoute(),
         characters: createCharactersRoute(routeContext),
         groups: createGroupsRoute(routeContext),
         worldbooks: createWorldbooksRoute(routeContext),

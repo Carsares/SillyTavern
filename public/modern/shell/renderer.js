@@ -1,3 +1,5 @@
+import { createAgentWorkspaceHost } from '../components/agent-workspace.js';
+
 export function createRenderer({
     state,
     elements,
@@ -24,6 +26,7 @@ export function createRenderer({
         settings: ['settingsBundle', 'extensions'],
     };
     const globalLoadErrorKeys = ['me', 'settings'];
+    let agentWorkspace;
 
     function getRouteLoadErrors() {
         const routeKeys = new Set([...globalLoadErrorKeys, ...(routeLoadErrorKeys[state.route] || [])]);
@@ -31,6 +34,12 @@ export function createRenderer({
     }
 
     function renderContent() {
+        if (state.route === 'agent' && routeRenderers.agent) {
+            agentWorkspace ??= createAgentWorkspaceHost(elements.content);
+            agentWorkspace.show(routeRenderers.agent());
+            return;
+        }
+        agentWorkspace?.hide();
         if (state.loading && !state.loaded) {
             elements.content.innerHTML = renderLoading();
             return;

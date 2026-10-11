@@ -255,17 +255,21 @@ router.post('/delete', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Sorry, but the default user cannot be deleted. It is required as a fallback.' });
         }
 
-        const directories = request.body.purge ? getUserDirectories(user.handle) : null;
-        if (directories) {
+        const directories = getUserDirectories(user.handle);
+        if (request.body.purge) {
             await validateUserDataRoot(directories.root);
         }
 
-        await storage.removeItem(toKey(requestedHandle));
-
-        if (directories) {
-            console.info('Deleting data directories for', user.handle);
-            await fsPromises.rm(directories.root, { recursive: true, force: true });
-        }
+        const deleteUser = async () => {
+            await storage.removeItem(toKey(requestedHandle));
+            if (request.body.purge) {
+                console.info('Deleting data directories for', user.handle);
+                await fsPromises.rm(directories.root, { recursive: true, force: true });
+            }
+        };
+        const conversations = request.app.locals.conversationHost;
+        if (conversations) await conversations.withUserDataChange(directories.root, deleteUser);
+        else await deleteUser();
 
         return response.sendStatus(204);
     } catch (error) {

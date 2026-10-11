@@ -1,3 +1,4 @@
+import { initialAgentConversation } from '../core/agent-navigation.js';
 import { createRetrievalStatus } from './retrieval/view.js';
 import { acceptedTurn, applySnapshotCommand, refreshAfterWrite, requireSnapshot } from './core/operations.js';
 import { createClient, subscribe } from './core/client.js';
@@ -214,6 +215,6 @@ function render() { renderStatus(); chat.render(); memory.render(); renderList()
 window.addEventListener('pagehide', () => { disconnect?.(); clearTimeout(refreshTimer); });
 void app.run(async () => {
     await activate('chat'); await app.reloadConversations();
-    const selected = read('conversation.selected');
-    if (selected && app.conversations.some(item => item.id === selected)) await app.choose(selected);
+    const selected = initialAgentConversation(app.conversations, new URLSearchParams(window.location.search).get('cid'), read('conversation.selected'));
+    if (selected) await app.choose(selected);
 });

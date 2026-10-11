@@ -272,6 +272,7 @@ app.use(requireLoginMiddleware);
 
 // Agent APIs share the existing account and CSRF boundary, but keep their own body limits and store.
 const conversationHost = createConversationHost();
+app.locals.conversationHost = conversationHost;
 app.use('/api/conversation/v1', conversationHost.middleware);
 app.get('/health', (_request, response) => response.json({ status: 'ok', schemaVersion: 1 }));
 

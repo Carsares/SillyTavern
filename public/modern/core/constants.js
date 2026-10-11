@@ -1,6 +1,7 @@
 export const routes = [
     { id: 'dashboard', label: '总览', icon: 'fa-gauge-high' },
     { id: 'chat', label: '聊天', icon: 'fa-comments' },
+    { id: 'agent', label: 'Agent 会话', icon: 'fa-robot' },
     { id: 'characters', label: '角色', icon: 'fa-address-card' },
     { id: 'groups', label: '群组', icon: 'fa-users' },
     { id: 'worldbooks', label: '世界书', icon: 'fa-book-open' },

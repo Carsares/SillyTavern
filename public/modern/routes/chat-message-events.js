@@ -37,6 +37,16 @@ export function createChatMessageEvents(ctx) {
     }
 
     async function handleChatMessageClick(event) {
+        const agentButton = event.target.closest('[data-chat-agent-action]');
+        if (agentButton) {
+            const actions = {
+                agent: () => ctx.setChatAgentMode(true), ordinary: () => ctx.setChatAgentMode(false),
+                send: () => ctx.sendChatAgentMessage(), retry: () => ctx.sendChatAgentMessage({ retry: true }),
+                refresh: () => ctx.refreshChatAgent(), stop: () => ctx.stopChatAgent(), new: () => ctx.newChatAgentConversation(),
+            };
+            try { await actions[agentButton.dataset.chatAgentAction]?.(); } catch (error) { showToast('Agent 操作失败', error.message); render(); }
+            return true;
+        }
         if (event.target.closest('[data-send-message]')) {
             try {
                 await sendModernMessage();
