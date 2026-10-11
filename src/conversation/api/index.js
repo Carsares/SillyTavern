@@ -45,6 +45,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
     router.post('/conversations/:id/estimate', wrap((req, res) => res.json(runtime.estimate(req.params.id, req.body))));
     router.post('/conversations/:id/compact', wrap(async (req, res) => res.json(await runtime.compact(req.params.id, req.body))));
     router.post('/conversations/:id/automatic', wrap((req, res) => res.json(runtime.setAutomatic(req.params.id, req.body))));
+    router.get('/conversations/:id/automatic', wrap((req, res) => res.json(runtime.automaticStatus(req.params.id))));
     router.get('/conversations/:id/messages/:messageId/candidates', wrap((req, res) => res.json(store.getCandidates(req.params.id, req.params.messageId))));
     router.get('/conversations/:id/jobs', wrap((req, res) => res.json(store.listJobs(req.params.id))));
     router.get('/conversations/:id/traces', wrap((req, res) => { store.getConversation(req.params.id); res.json(store.listTraces(req.params.id)); }));

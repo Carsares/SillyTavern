@@ -65,7 +65,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 lastCompression = fingerprint;
                 phase(turn, 'preparing');
                 await memory.compact(preparedSnapshot, { signal, budget: error.details?.budget ?? connection.workingBudget, turnId: turn.id, attemptEpoch: turn.attemptEpoch });
-                preparedSnapshot = store.getConversation(turn.conversationId);
+                preparedSnapshot = { ...store.getConversation(turn.conversationId), resources: snapshot.resources, settings: snapshot.settings };
             }
         }
         signal.throwIfAborted();
@@ -106,8 +106,8 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 if (messages) {
                     const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
                     const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
-                    const estimated = Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
-                        ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8');
+                    const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
+                        ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
                     invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
                 }
                 trace?.record?.(traceId, { type: 'model.prepare', callNumber });
@@ -141,20 +141,18 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 const members = groups.select(snapshot, request);
                 store.appendEvent(turn.conversationId, 'group.started', { members }, turn.id);
                 const usages = [];
-                let effects;
                 const proposals = [];
                 for (const member of members) {
                     controller.signal.throwIfAborted();
                     store.startMember?.(turn.id, { memberRunId: member.id, characterId: member.characterId }, turn.attemptEpoch);
-                    const memberSnapshot = groups.snapshot(store.getConversation(turn.conversationId), member);
+                    const memberSnapshot = groups.snapshot({ ...store.getConversation(turn.conversationId), resources: snapshot.resources }, member);
                     store.appendEvent(turn.conversationId, 'group.member', { member }, turn.id);
                     result = await runMember(turn, memberSnapshot, { ...request, type: 'send' }, controller.signal, member);
                     store.commitMember(turn.id, { memberRunId: member.id, characterId: member.characterId, ...result }, turn.attemptEpoch);
                     usages.push(result.usage);
-                    effects = result.effects;
                     proposals.push(...result.memoryProposals);
                 }
-                result = { content: '', reasoning: '', usage: { members: usages }, effects, memoryProposals: proposals };
+                result = { content: '', reasoning: '', usage: { members: usages }, memoryProposals: proposals };
             } else result = await runMember(turn, snapshot, request, controller.signal);
             if (tools?.memoryProposals) result.memoryProposals = tools.memoryProposals(turn.id);
             phase(turn, 'finalizing');
@@ -173,6 +171,12 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 task.finally(() => background.delete(task)).catch(() => {});
             }
         } catch (error) {
+            const automaticTimer = automatic.get(turn.conversationId);
+            if (automaticTimer) {
+                clearTimeout(automaticTimer);
+                automatic.delete(turn.conversationId);
+                store.appendEvent(turn.conversationId, 'automatic.changed', { enabled: false, reason: 'turn-failed-or-stopped' });
+            }
             const stopped = controller.signal.aborted && controller.signal.reason?.code !== 'turn-timeout';
             const current = store.getTurn(turn.id);
             if (!TERMINAL_STATES.includes(current.status)) {
@@ -207,6 +211,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             const timer = automatic.get(turn.conversationId);
             if (timer) clearTimeout(timer);
             automatic.delete(turn.conversationId);
+            if (timer) store.appendEvent(turn.conversationId, 'automatic.changed', { enabled: false, reason: 'user-stopped' });
             const result = store.requestStop(turnId);
             active.get(turnId)?.controller.abort(new ProtocolError('stopped', 'Stopped by user'));
             return result;
@@ -227,14 +232,27 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             invariant(options.expectedContentRevision === snapshot.conversation.contentRevision, 'revision-conflict', 'Conversation changed before compression', 409);
             return memory.compact(snapshot, { ...options, signal: options.signal ?? new AbortController().signal });
         },
-        setAutomatic(conversationId, { enabled, intervalMs = 30000, content = 'Continue the group conversation.' }) {
+        automaticStatus(conversationId) { store.getConversation(conversationId); return { enabled: automatic.has(conversationId) }; },
+        setAutomatic(conversationId, { enabled, intervalMs = 30000, content = 'Continue the group conversation.', expectedContentRevision }) {
+            invariant(typeof enabled === 'boolean', 'invalid-automatic', 'Enabled must be boolean');
+            const snapshot = store.getConversation(conversationId);
+            if (enabled) {
+                invariant(snapshot.conversation.contentRevision === expectedContentRevision, 'revision-conflict', 'Conversation changed before scheduling', 409);
+                invariant(typeof content === 'string' && content.trim() && content.length <= 100000, 'invalid-automatic', 'Automatic prompt must be nonempty text');
+                invariant(Number.isSafeInteger(intervalMs) && intervalMs >= 1000 && intervalMs <= 3600000, 'invalid-interval', 'Automatic interval must be 1–3600 seconds');
+                invariant(groups, 'group-unavailable', 'Group scheduler is unavailable', 422);
+                groups.select(snapshot, { content });
+                preflight(snapshot, { type: 'group' });
+            }
             clearTimeout(automatic.get(conversationId));
             automatic.delete(conversationId);
+            store.appendEvent(conversationId, 'automatic.changed', { enabled, intervalMs });
             if (!enabled) return { enabled: false };
-            invariant(intervalMs >= 1000 && intervalMs <= 3600000, 'invalid-interval', 'Automatic interval must be 1–3600 seconds');
             const tick = () => {
                 if (closing || !automatic.has(conversationId)) return;
-                const snapshot = store.getConversation(conversationId);
+                let snapshot;
+                try { snapshot = store.getConversation(conversationId); }
+                catch { automatic.delete(conversationId); return; }
                 if (!snapshot.conversation.activeTurnId) {
                     try { runtime.start(conversationId, { schemaVersion: 1, clientRequestId: randomUUID(), expectedContentRevision: snapshot.conversation.contentRevision, type: 'group', content }); }
                     catch { automatic.delete(conversationId); return; }

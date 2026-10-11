@@ -11,7 +11,7 @@ const stripCredentials = value => {
 };
 
 export function createMaintenance({ store, directory, retrieval, now = Date.now }) {
-    const root = resolve(directory, 'attachments');
+    const root = resolve(realpathSync(directory), 'attachments');
     const previews = new Map();
     const files = () => existsSync(root) ? readdirSync(root).filter(name => /^[a-f0-9-]{36}(\.partial)?$/.test(name)) : [];
     function referenced() { return new Set((store.listAttachments?.() ?? []).map(record => record.id)); }
@@ -59,8 +59,16 @@ export function createMaintenance({ store, directory, retrieval, now = Date.now 
             invariant(realpathSync(root) === root, 'unsafe-path', 'Attachment directory cannot be a symlink');
             for (const { record, bytes } of decoded) {
                 const path = resolve(root, record.id);
-                invariant(!existsSync(path), 'restore-file-exists', 'Restore would overwrite an existing file', 409);
+                if (existsSync(path)) {
+                    invariant(!lstatSync(path).isSymbolicLink() && hash(readFileSync(path)) === record.sha256, 'restore-file-exists', 'Restore would overwrite a different existing file', 409);
+                    continue; // Resume an interrupted restore without rewriting verified bytes.
+                }
                 const temporary = `${path}.partial`;
+                if (existsSync(temporary)) {
+                    invariant(!lstatSync(temporary).isSymbolicLink() && hash(readFileSync(temporary)) === record.sha256, 'restore-file-exists', 'An incomplete restore file requires cleanup before retry', 409);
+                    renameSync(temporary, path);
+                    continue;
+                }
                 const fd = openSync(temporary, 'wx', 0o600);
                 try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
                 renameSync(temporary, path);

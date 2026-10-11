@@ -4,7 +4,7 @@ import { resolve, dirname, sep } from 'node:path';
 import { invariant, requireString } from '../../../public/shared/conversation/schemas/index.js';
 
 export function createAttachmentService({ directory, store, maxBytes = 8 * 1024 * 1024 }) {
-    const root = resolve(directory, 'attachments');
+    const root = resolve(realpathSync(directory), 'attachments');
     function pathFor(id) {
         invariant(/^[a-f0-9-]{36}$/.test(id), 'invalid-attachment', 'Invalid attachment ID');
         return resolve(root, id);

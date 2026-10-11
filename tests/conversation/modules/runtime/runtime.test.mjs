@@ -79,3 +79,24 @@ test('auxiliary memory failure leaves completed reply intact and emits separate 
     assert.ok(events.some(event => event.type === 'memory.updated' && event.payload.status === 'failed'));
     await runtime.close();
 });
+
+test('automatic groups reject stale settings before replacing a scheduler and stop after failure', async () => {
+    const { runtime } = setup(fakeExecutor({ failure: new ProtocolError('model-failed', 'failed') }), { groups: { select: () => [] } });
+    assert.throws(() => runtime.setAutomatic('c', { enabled: true, expectedContentRevision: 99 }), error => error.code === 'revision-conflict');
+    runtime.setAutomatic('c', { enabled: true, expectedContentRevision: 0 });
+    assert.deepEqual(runtime.automaticStatus('c'), { enabled: true });
+    runtime.start('c', request);
+    await runtime.wait('turn');
+    assert.deepEqual(runtime.automaticStatus('c'), { enabled: false });
+    await runtime.close();
+});
+
+test('actual tool-step budget includes tool schemas and preserves failed state', async () => {
+    const tools = { definitions: () => [{ name: 'huge', description: 'x'.repeat(5000), parameters: {} }], bindTurn() {}, release() {} };
+    const { runtime } = setup(fakeExecutor(), { tools });
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'failed');
+    assert.equal(turn.error.code, 'budget-blocked');
+    await runtime.close();
+});
