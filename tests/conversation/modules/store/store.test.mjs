@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStore } from '../../../../src/conversation/store/index.js';
+import { mediaType } from '../../../../src/conversation/store/media.js';
 import { sourceRef } from '../../../../public/shared/conversation/schemas/index.js';
 
 function fixture(t) {
@@ -16,6 +17,107 @@ function fixture(t) {
 function request(store, cid, extra = {}) { return { schemaVersion: 1, clientRequestId: crypto.randomUUID(), type: 'send', content: 'hello', expectedContentRevision: store.getConversation(cid).conversation.contentRevision, ...extra }; }
 function complete(store, cid) { const { turn } = store.beginTurn(cid, request(store, cid)); store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1); return store.getConversation(cid); }
 const code = expected => error => error.code === expected;
+
+function imagePart(store, id) {
+    store.saveAttachment({ id, name: `${id}.png`, mime: 'image/png', size: 10, sha256: 'a'.repeat(64), path: `opaque-${id}`, createdAt: 1 });
+    return { attachmentId: id, type: 'image', mimeType: 'image/png' };
+}
+
+test('assistant image-only results persist, continuation merges media and regeneration replaces it immutably', t => {
+    const { store, cid } = fixture(t);
+    const first = imagePart(store, 'first'), second = imagePart(store, 'second');
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    const before = store.exportData();
+    for (const part of [{ ...first, path: '/tmp/injected' }, { ...first, attachmentId: 'missing' }, { ...first, type: 'document' }]) {
+        assert.throws(() => store.finishTurn(turn.id, { status: 'completed', media: [part] }, 1), code('invalid-media'));
+        assert.deepEqual(store.exportData(), before);
+    }
+    store.finishTurn(turn.id, { status: 'completed', media: [first] }, 1);
+    const original = store.getConversation(cid).messages.at(-1);
+    assert.equal(original.role, 'assistant'); assert.equal(original.content, ''); assert.deepEqual(original.media, [first]);
+    const continued = store.beginTurn(cid, request(store, cid, { type: 'continue', targetMessageId: original.id })).turn;
+    store.finishTurn(continued.id, { status: 'completed', media: [second] }, 1);
+    assert.deepEqual(store.getConversation(cid).messages.at(-1).media, [first, second]);
+    const regenerated = store.beginTurn(cid, request(store, cid, { type: 'regenerate', targetMessageId: original.id })).turn;
+    store.finishTurn(regenerated.id, { status: 'completed', media: [second] }, 1);
+    assert.deepEqual(store.getConversation(cid).messages.at(-1).media, [second]);
+    const history = store.getMessageHistory(cid, original.id);
+    assert.equal(history.messageId, original.id); assert.equal(history.conversationId, cid); assert.equal(history.deletedAt, null);
+    assert.deepEqual(history.versions.map(v => v.media), [[first], [first, second], [second]]);
+    assert.throws(() => store.deleteAttachment(first.attachmentId), code('attachment-in-use'));
+    const other = store.createConversation({});
+    assert.throws(() => store.getMessageHistory(other.id, original.id), code('not-found'));
+    history.versions[0].media.length = 0;
+    assert.deepEqual(store.getMessageHistory(cid, original.id).versions[0].media, [first]);
+    store.command(cid, { type: 'message.delete', messageId: original.id, expectedContentRevision: store.getConversation(cid).conversation.contentRevision });
+    assert.ok(store.getMessageHistory(cid, original.id).deletedAt);
+});
+
+test('image-only group members keep stream IDs, replay once and preserve partial member media', t => {
+    const { store, cid } = fixture(t); const media = [imagePart(store, 'group-image')];
+    const { turn } = store.beginTurn(cid, request(store, cid, { type: 'group' }));
+    const started = store.startMember(turn.id, { memberRunId: 'one', characterId: 'alice' }, 1);
+    const input = { memberRunId: 'one', characterId: 'alice', media };
+    const before = store.exportData();
+    assert.throws(() => store.commitMember(turn.id, { ...input, media: [{ ...media[0], url: 'file:///tmp/x' }] }, 1), code('invalid-media'));
+    assert.deepEqual(store.exportData(), before);
+    store.commitMember(turn.id, input, 1); store.commitMember(turn.id, input, 1);
+    const completed = store.getConversation(cid).messages.at(-1);
+    assert.equal(completed.id, started.messageId); assert.equal(completed.candidateId, started.candidateId);
+    assert.equal(completed.content, ''); assert.deepEqual(completed.media, media);
+    const next = store.startMember(turn.id, { memberRunId: 'two', characterId: 'bob' }, 1);
+    store.finishTurn(turn.id, { status: 'failed', media }, 1);
+    const messages = store.getConversation(cid).messages;
+    assert.equal(messages.length, 3); assert.equal(messages.at(-1).id, next.messageId);
+    assert.equal(messages.at(-1).status, 'partial'); assert.deepEqual(messages.at(-1).media, media);
+    const restoredDirectory = mkdtempSync(join(tmpdir(), 'conversation-group-image-'));
+    const restored = createStore({ directory: restoredDirectory });
+    t.after(() => { restored.close(); rmSync(restoredDirectory, { recursive: true, force: true }); });
+    restored.restoreData(store.exportData());
+    assert.deepEqual(restored.getConversation(cid).messages, messages);
+    assert.deepEqual(restored.getTurn(turn.id).members[0].media, media);
+});
+
+test('document attachments accept explicit provider MIME types and survive backup restore', t => {
+    const { store, cid } = fixture(t);
+    const parts = ['application/pdf', 'text/plain'].map((mime, i) => {
+        const record = { id: `document-${i}`, name: `document-${i}`, mime, size: 10, sha256: 'a'.repeat(64), path: `opaque-document-${i}`, createdAt: 1 };
+        store.saveAttachment(record);
+        assert.equal(mediaType(mime), 'document');
+        return { attachmentId: record.id, type: 'document', mimeType: mime, name: record.name, size: record.size };
+    });
+    const before = store.exportData();
+    for (const part of [{ ...parts[0], type: 'file' }, { ...parts[1], type: 'image' }, { ...parts[0], mimeType: 'text/plain' }]) {
+        assert.throws(() => store.beginTurn(cid, request(store, cid, { media: [part] })), code('invalid-media'));
+        assert.deepEqual(store.exportData(), before);
+    }
+    const { turn } = store.beginTurn(cid, request(store, cid, { media: parts }));
+    store.finishTurn(turn.id, { status: 'completed', content: 'documents read' }, 1);
+    const restoredDirectory = mkdtempSync(join(tmpdir(), 'conversation-document-restore-'));
+    const restored = createStore({ directory: restoredDirectory });
+    t.after(() => { restored.close(); rmSync(restoredDirectory, { recursive: true, force: true }); });
+    restored.restoreData(store.exportData());
+    assert.deepEqual(restored.getConversation(cid).messages[0].media, parts);
+    assert.equal(restored.getConversation(cid).attachments['document-0'].mime, 'application/pdf');
+});
+
+test('unknown files may be registered but cannot be sent or disguised as documents', t => {
+    const { store, cid } = fixture(t);
+    for (const [i, mime] of ['application/octet-stream', 'application/msword', 'text/html'].entries()) {
+        assert.equal(mediaType(mime), 'file');
+        store.saveAttachment({ id: `file-${i}`, name: 'document.pdf', mime, size: 10, sha256: 'a'.repeat(64), path: `opaque-file-${i}`, createdAt: 1 });
+        const before = store.exportData();
+        for (const part of [
+            { attachmentId: `file-${i}`, type: 'file', mimeType: mime },
+            { attachmentId: `file-${i}`, type: 'document', mimeType: mime },
+            { attachmentId: `file-${i}`, type: 'document', mimeType: 'application/pdf' },
+        ]) {
+            assert.throws(() => store.beginTurn(cid, request(store, cid, { media: [part] })), code('invalid-media'));
+            assert.deepEqual(store.exportData(), before);
+        }
+    }
+    assert.equal(store.listAttachments().length, 3);
+});
 
 test('canonical dedupe precedes revision, activity, resources and preflight; rollback on preflight failure', t => {
     const { store, cid } = fixture(t); const r = request(store, cid); let calls = 0;
@@ -53,11 +155,11 @@ test('regenerate and continuation preserve immutable history and stopped candida
     const { turn } = store.beginTurn(cid, request(store, cid, { type: 'regenerate', targetMessageId: original.id }));
     store.finishTurn(turn.id, { status: 'stopped', content: 'partial' }, 1);
     assert.equal(store.getConversation(cid).messages.at(-1).content, 'answer');
-    assert.equal(store.getMessageHistory(original.id).length, 2);
+    assert.equal(store.getMessageHistory(cid, original.id).versions.length, 2);
     const next = store.beginTurn(cid, request(store, cid, { type: 'continue', targetMessageId: original.id }));
     store.finishTurn(next.turn.id, { status: 'completed', content: ' more' }, 1);
     assert.equal(store.getConversation(cid).messages.at(-1).content, 'answer more');
-    assert.equal(store.getMessageHistory(original.id)[0].content, 'answer');
+    assert.equal(store.getMessageHistory(cid, original.id).versions[0].content, 'answer');
 });
 
 test('derived commits are atomic and invalidate transitive summaries, folds and locked memories', t => {
@@ -449,4 +551,95 @@ test('explicit refs survive settings deselection until explicitly removed', t =>
     assert.equal(store.getConversation(c.id).resources[0].missing, true);
     const removed = store.command(c.id, { type: 'conversation.configure', resourceRefs: [], expectedContentRevision: 1 });
     assert.deepEqual(removed.resources, []);
+});
+
+test('empty terminal memory proposals do not invalidate unrelated background memory revision', t => {
+    const { store, cid } = fixture(t); const initial = complete(store, cid); const version = initial.conversation.memoryRevision;
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    store.finishTurn(turn.id, { status: 'completed', content: 'new answer', memoryProposals: [] }, 1);
+    assert.equal(store.getConversation(cid).conversation.memoryRevision, version);
+    store.commitDerived(cid, { expectedMemoryRevision: version, summaries: [{ content: 'older history', sourceRefs: [sourceRef(initial.messages[0])] }] });
+    assert.equal(store.getConversation(cid).conversation.memoryRevision, version + 1);
+});
+
+test('derived proposal-level resource dependencies are validated and retained on blocks', t => {
+    const { store, cid } = fixture(t); const r = store.createResource({ kind: 'character', name: 'person', data: {} });
+    store.commitDerived(cid, { resourceRefs: [{ id: r.id, revision: 1 }], memories: [{ content: 'resource-bound memory', sourceRefs: [] }] });
+    assert.deepEqual(store.getConversation(cid).memories[0].resourceRefs, [{ id: r.id, revision: 1 }]);
+    store.updateResource(r.id, { expectedRevision: 1, data: { changed: true } });
+    assert.equal(store.getConversation(cid).memories[0].status, 'stale');
+    const before = store.exportData();
+    assert.throws(() => store.commitDerived(cid, { resourceRefs: [{ id: r.id, revision: 1 }], summaries: [{ content: 'stale resource' }] }), code('source-conflict'));
+    assert.deepEqual(store.exportData(), before);
+});
+
+test('resource changes stale pending jobs without reviving completed jobs', t => {
+    const { store, cid } = fixture(t); const r = store.createResource({ kind: 'character', name: 'person', data: {} });
+    const input = { conversationId: cid, dependencies: { sourceRefs: [], resourceRefs: [{ id: r.id, revision: 1 }] }, payload: {} };
+    const pending = store.createJob({ ...input, kind: 'pending-memory' });
+    const done = store.createJob({ ...input, kind: 'done-memory' });
+    store.updateJob(done.id, { status: 'completed' });
+    store.updateResource(r.id, { expectedRevision: 1, data: { changed: true } });
+    assert.equal(store.listJobs(cid).find(j => j.id === pending.id).status, 'stale');
+    assert.equal(store.listJobs(cid).find(j => j.id === done.id).status, 'completed');
+    assert(store.events(cid).some(e => e.type === 'job.updated' && e.payload.id === pending.id && e.payload.status === 'stale'));
+});
+
+for (const status of ['completed', 'failed', 'stopped']) test(`foreground compaction uses frozen resource versions until ${status}, then invalidates transitively`, t => {
+    const { store, cid } = fixture(t);
+    const character = store.createResource({ kind: 'character', name: 'old', data: {} });
+    store.command(cid, { type: 'conversation.configure', settings: { characterId: character.id }, expectedContentRevision: 0 });
+    const ref = { id: character.id, revision: 1 };
+    store.commitDerived(cid, { summaries: [{ id: 'previous', content: 'previous', sourceRefs: [], resourceRefs: [ref] }] });
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    store.updateResource(character.id, { expectedRevision: 1, data: { newer: true } });
+    assert.equal(store.getConversation(cid).summaries[0].status, 'valid');
+    store.commitDerived(cid, { turnId: turn.id, attemptEpoch: 1, resourceRefs: [ref], summaries: [{ id: 'front', content: 'frozen summary', parentSummaryRefs: [{ id: 'previous', revision: 1 }] }], folds: [{ id: 'fold', summaryRef: { id: 'front', revision: 1 } }] });
+    const during = store.getConversation(cid);
+    assert(during.summaries.every(b => b.status === 'valid')); assert.equal(during.folds[0].status, 'valid');
+    if (status === 'stopped') store.requestStop(turn.id);
+    store.finishTurn(turn.id, { status }, 1);
+    const after = store.getConversation(cid);
+    assert(after.summaries.every(b => b.status === 'stale')); assert.equal(after.folds[0].status, 'stale');
+    assert.throws(() => store.commitDerived(cid, { turnId: turn.id, attemptEpoch: 1, summaries: [{ content: 'late' }] }), code('late-callback'));
+});
+
+test('frozen resource scope rejects background work, wrong epoch and resources outside acceptance', t => {
+    const { store, cid } = fixture(t);
+    const selected = store.createResource({ kind: 'character', name: 'selected', data: {} });
+    const other = store.createResource({ kind: 'character', name: 'unselected', data: {} });
+    store.command(cid, { type: 'conversation.configure', settings: { characterId: selected.id }, expectedContentRevision: 0 });
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    store.deleteResource(selected.id, 1);
+    const proposal = { resourceRefs: [{ id: selected.id, revision: 1 }], summaries: [{ content: 'old but frozen' }] };
+    assert.throws(() => store.commitDerived(cid, proposal), code('conversation-busy'));
+    assert.throws(() => store.commitDerived(cid, { ...proposal, turnId: turn.id, attemptEpoch: 2 }), code('late-callback'));
+    assert.throws(() => store.commitDerived(cid, { turnId: turn.id, attemptEpoch: 1, summaries: [{ content: 'outside', resourceRefs: [{ id: other.id, revision: 1 }] }] }), code('source-conflict'));
+    store.commitDerived(cid, { ...proposal, turnId: turn.id, attemptEpoch: 1 });
+    assert.equal(store.getConversation(cid).summaries[0].status, 'valid');
+    store.finishTurn(turn.id, { status: 'failed' }, 1);
+    assert.throws(() => store.commitDerived(cid, { ...proposal, summaries: [{ content: 'forged', scopeTurnId: turn.id, scopeAttemptEpoch: 1 }] }), code('source-conflict'));
+});
+
+test('group retry chains retain original member IDs/order and exclude all previously completed roles', t => {
+    const { store, cid } = fixture(t);
+    const chars = ['A', 'B', 'C'].map(name => store.createResource({ kind: 'character', name, data: {} }));
+    const group = store.createResource({ kind: 'group', name: 'group', data: { members: chars.map(c => c.id) } });
+    store.command(cid, { type: 'conversation.configure', settings: { groupId: group.id }, expectedContentRevision: 0 });
+    const plan = chars.map((c, i) => ({ id: `original-${i}`, characterId: c.id }));
+    const initial = store.beginTurn(cid, request(store, cid, { type: 'group' }), () => ({ members: plan }));
+    assert.deepEqual(initial.turn.plannedMembers, plan);
+    const commit = (tid, m) => { store.startMember(tid, { memberRunId: m.id, characterId: m.characterId }, 1); store.commitMember(tid, { memberRunId: m.id, characterId: m.characterId, content: 'done' }, 1); };
+    commit(initial.turn.id, plan[0]); store.finishTurn(initial.turn.id, { status: 'failed' }, 1);
+    const retryReq = request(store, cid, { type: 'group', retryTurnId: initial.turn.id });
+    const retry = store.beginTurn(cid, retryReq, () => ({ members: [...plan].reverse().map(m => ({ ...m, id: 'wrong-new-id' })) }));
+    assert.deepEqual(retry.turn.plannedMembers, plan.slice(1));
+    assert.deepEqual(store.beginTurn(cid, retryReq, () => { throw Error('no replay preflight'); }).turn.plannedMembers, plan.slice(1));
+    assert.throws(() => store.startMember(retry.turn.id, { memberRunId: plan[0].id, characterId: plan[0].characterId }, 1), code('invalid-member'));
+    commit(retry.turn.id, plan[1]); store.finishTurn(retry.turn.id, { status: 'stopped' }, 1);
+    const last = store.beginTurn(cid, request(store, cid, { type: 'group', retryTurnId: retry.turn.id }), () => ({ members: plan }));
+    assert.deepEqual(last.turn.plannedMembers, plan.slice(2));
+    commit(last.turn.id, plan[2]); store.finishTurn(last.turn.id, { status: 'completed' }, 1);
+    assert.equal(store.getConversation(cid).messages.filter(m => m.role === 'user').length, 1);
+    assert.equal(store.getConversation(cid).messages.filter(m => m.role === 'assistant').length, 3);
 });

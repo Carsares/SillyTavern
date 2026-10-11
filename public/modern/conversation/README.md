@@ -26,7 +26,7 @@ commit was changed by this task.
 - `chat/view.js`: messages, drafts, turns, candidates, edits, tool/group event cards.
 - `resources/model.js`, `resources/view.js`: six resource kinds and compiler defaults.
 - `settings/automatic.js`, `settings/view.js`: resource selection, tools/limits, capabilities and automatic groups.
-- `memory/model.js`, `memory/view.js`: memory editing/locking/confirmation, folds, compression and jobs.
+- `memory/model.js`, `memory/view.js`, `memory/sources.js`: memory editing/locking/confirmation, folds, compression and jobs.
 - `diagnostics/context.js`, `diagnostics/view.js`, `diagnostics/usage.js`, `diagnostics/tools.js`: context layers, traces, server usage tables and stored tool result expansion.
 - `media/model.js`, `media/view.js`: attachment references, capability gates and previews.
 - `maintenance/model.js`, `maintenance/view.js`: status, export/backup, restore, reindex and cleanup preview.
@@ -52,6 +52,7 @@ its original request ID and body for explicit idempotent retry.
 | Start turn | POST `/conversations/:id/turns` `{clientRequestId,type,expectedContentRevision,content?,targetMessageId?,media?,members?}` -> `{turnId,...}` |
 | Recover/stop turn | GET `/turns/:id`, POST `/turns/:id/stop` `{}` |
 | Versioned command | POST `/conversations/:id/commands`, shapes below |
+| Source message history | GET `/conversations/:id/messages/:messageId/history` -> `{conversationId,messageId,deletedAt,versions:[...]}`; deleted histories remain readable |
 | Candidate history | GET `/conversations/:id/messages/:messageId/candidates` -> Message versions with `candidateId,candidateRevision,content,selected` |
 | Estimate | POST `/conversations/:id/estimate` `{draft,media,type}` -> compiler result |
 | Compress | POST `/conversations/:id/compact` `{expectedContentRevision,expectedMemoryRevision}` |
@@ -170,6 +171,18 @@ cannot hide the preview whose token will be executed. Attachment display can use
 snapshot metadata without requiring MIME/name duplication on each media ref.
 CSRF must return a nonempty token before any business write is attempted.
 
+Source links on memories, summaries and folds can focus the current message or
+read its preserved history, including candidate versions. History responses must
+match both conversationId and messageId; only server deletedAt confirms deletion.
+Exact source revision/candidate matches are labeled; changed or absent versions
+are explicit and never silently substituted. Parent summaries expose their own
+sources with cycle protection. Reads show loading/errors and remain retryable.
+
+Persisted media on messages, tool events and complete tool results is rendered
+through the attachment endpoint, using snapshot MIME metadata when necessary.
+Explicit externalURL/externalUrl media remains a link marked not persisted; it
+never becomes an automatic remote image request. Unsafe URL schemes are not linked.
+
 ## Remaining integration boundaries
 
 1. Browser, live HTTP, backend persistence, SDK/provider and end-to-end tests were
@@ -194,7 +207,7 @@ CSRF must return a nonempty token before any business write is attempted.
 
 ## Focused checks
 
-`node --test tests/conversation/modules/client/*.test.mjs`: 44 tests passed at
+`node --test tests/conversation/modules/client/*.test.mjs`: 51 tests passed at
 client handoff. Includes request versions, structured failures, fragmented UTF-8
 SSE, reconnect/deduplication/cursor reset, recovered content offsets, terminal
 safety, redaction, canonical resource defaults, SDK mode labels and media gates. Additional regression tests cover snapshot/command readback, member delta isolation, memory kinds, server usage tables, candidate panel state, complete tool result reads, UTF-8 backup envelope sizing and the full static module graph. DOM checks use an in-memory test double, not a browser.

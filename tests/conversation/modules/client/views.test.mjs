@@ -100,3 +100,59 @@ test('nested tool resultRefs expand persisted results safely and failures allow 
     assert.doesNotMatch(view.textContent, /must-not-display/);
     assert.equal(descendants(view).filter(node => node.tag === 'script').length, 0);
 }));
+
+test('sources locate current messages and read exact deleted historical candidate versions', () => withDOM(async () => {
+    const { sourcesView } = await import('../../../../public/modern/conversation/memory/sources.js');
+    const snap = snapshot();
+    snap.messages = [{ id: 'm', revision: 3, candidateId: 'new', candidateRevision: 1 }];
+    const ref = { messageId: 'm', revision: 1, candidateId: 'old', candidateRevision: 2 };
+    let located;
+    const app = { state: { snapshot: snap }, run: action => action(), locateMessage: (...args) => { located = args; }, api: { messageHistory: async (cid, mid) => {
+        assert.deepEqual([cid, mid], ['c', 'm']);
+        return { conversationId: cid, messageId: mid, deletedAt: 'date', versions: [{ id: mid, revision: 1, candidateId: 'old', candidateRevision: 2, content: 'original source' }] };
+    } } };
+    const view = sourcesView(app, { sourceRefs: [ref] });
+    assert.match(view.textContent, /当前消息版本已变化/);
+    await descendants(view).find(node => node.tag === 'button' && node.textContent === '定位当前消息').listeners.click();
+    assert.deepEqual(located, ['c', 'm']);
+    await descendants(view).find(node => node.tag === 'button' && node.textContent.startsWith('读取来源')).listeners.click();
+    assert.match(view.textContent, /原消息已删除/);
+    assert.match(view.textContent, /引用版本/);
+    assert.match(view.textContent, /original source/);
+}));
+test('missing sources are not called deleted and failed history reads stay explicit and retryable', () => withDOM(async () => {
+    const { sourcesView } = await import('../../../../public/modern/conversation/memory/sources.js');
+    const view = sourcesView({ state: { snapshot: snapshot() }, api: { messageHistory: async () => { throw new Error('not found'); } } }, { sourceRefs: [{ messageId: 'missing', revision: 1 }] });
+    const buttons = descendants(view).filter(node => node.tag === 'button');
+    assert.equal(buttons[0].disabled, true);
+    assert.match(view.textContent, /是否已删除需读取历史确认/);
+    await buttons[1].listeners.click();
+    assert.match(view.textContent, /来源读取失败：not found/);
+    assert.equal(buttons[1].disabled, false);
+}));
+test('media displays attachment URLs while external URLs never produce image elements', () => withDOM(async () => {
+    const { toolMediaView, mediaView } = await import('../../../../public/modern/conversation/media/view.js');
+    const api = { attachmentUrl: id => `/api/conversation/v1/attachments/${id}` };
+    const view = toolMediaView(api, { result: { media: [
+        { type: 'image', attachmentId: 'real' },
+        { type: 'image', externalURL: 'https://example.com/image.png', mimeType: 'image/png' },
+    ] } }, { real: { mime: 'image/png', name: 'persisted' } });
+    const images = descendants(view).filter(node => node.tag === 'img');
+    assert.equal(images.length, 1);
+    assert.equal(images[0].src, '/api/conversation/v1/attachments/real');
+    const external = descendants(view).find(node => node.tag === 'a' && node.href === 'https://example.com/image.png');
+    assert.equal(external.rel, 'noopener noreferrer');
+    assert.match(view.textContent, /未持久化/);
+    const unsafe = mediaView(api, { externalURL: 'javascript:alert(1)' });
+    assert.equal(descendants(unsafe).filter(node => node.tag === 'a').length, 0);
+}));
+test('chat can focus current message without treating a missing message as found', () => withDOM(async () => {
+    const snap = snapshot(); snap.messages = [{ id: 'm', role: 'user', content: 'source', revision: 1 }];
+    const chat = createChat({ state: { snapshot: snap, turn: null, activity: [] } }); chat.render();
+    const message = descendants(chat.root).find(node => node.className === 'message role-user');
+    let focused = false; let scrolled = false;
+    message.focus = () => { focused = true; }; message.scrollIntoView = () => { scrolled = true; };
+    assert.equal(chat.focusMessage('m'), true);
+    assert.ok(focused && scrolled);
+    assert.equal(chat.focusMessage('missing'), false);
+}));

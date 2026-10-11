@@ -1,12 +1,13 @@
 import { el, button, field, empty, json, input } from '../core/dom.js';
 import { contextView } from '../diagnostics/context.js';
 import { attachmentPart, assertMediaCapability, encodeBase64 } from '../media/model.js';
-import { mediaView } from '../media/view.js';
+import { mediaView, toolMediaView } from '../media/view.js';
 import { historyModeDescription } from '../resources/model.js';
 import { list, redact, terminal, estimateRequest } from '../core/state.js';
 
 export function createChat(app) {
     const edits = new Map();
+    const messageNodes = new Map();
     let messageRenderKey;
     let attachments = [];
     const attachmentRows = el('div');
@@ -91,6 +92,7 @@ export function createChat(app) {
         const renderKey = JSON.stringify([snapshot?.conversation.id, snapshot?.conversation.contentRevision, active, Boolean(pending)]);
         if (renderKey !== messageRenderKey) {
             messageRenderKey = renderKey;
+            messageNodes.clear();
             messages.replaceChildren(...(rows.length ? rows.filter(m => !m.deletedAt).map(message => {
                 const details = el('div');
                 const actions = el('div', { class: 'actions' },
@@ -106,12 +108,14 @@ export function createChat(app) {
                     ] : []),
                 );
                 if (edits.has(message.id)) editMessage(message, details);
-                return el('article', { class: `message role-${message.role}` },
+                const node = el('article', { class: `message role-${message.role}`, tabIndex: -1 },
                     el('header', {}, `${message.role} · ${message.status || 'saved'} · 版本 ${message.revision}`),
                     el('pre', {}, message.content || '（空内容）'),
                     ...(message.media?.length ? [el('details', {}, el('summary', {}, `${message.media.length} 项媒体`), ...message.media.map(part => mediaView(app.api, part, snapshot.attachments?.[part.attachmentId])))] : []),
                     actions, details,
                 );
+                messageNodes.set(message.id, node);
+                return node;
             }) : [empty(snapshot ? '还没有消息。选择连接和角色后开始对话。' : '选择或创建一个会话。')]));
         }
         live.replaceChildren(...(turn ? [el('h3', {}, `轮次 ${turn.cancelRequested && !terminal(turn) ? '正在停止' : turn.status}`),
@@ -123,10 +127,14 @@ export function createChat(app) {
             ...(terminal(turn) && turn.content && (turn.type === 'impersonate' || turn.type === 'auxiliary' || turn.status !== 'completed') ? [button('复制轮次内容到草稿', () => { draft.value = turn.content; draft.focus(); })] : []),
         ] : []));
         const events = (app.state.activity || []).filter(event => event.turnId === turn?.id && /^(tool\.|group\.|usage\.)/.test(event.type));
-        activity.replaceChildren(...(events.length ? [el('details', { open: !terminal(turn) }, el('summary', {}, '工具调用、群聊进度与用量事件'), ...events.map(event => el('article', { class: 'card' }, el('strong', {}, event.type), json(redact(event.payload)))))] : []));
+        activity.replaceChildren(...(events.length ? [el('details', { open: !terminal(turn) }, el('summary', {}, '工具调用、群聊进度与用量事件'), ...events.map(event => el('article', { class: 'card' }, el('strong', {}, event.type), json(redact(event.payload)), toolMediaView(app.api, event.payload, snapshot?.attachments))))] : []));
         recovery.replaceChildren(...(pending ? [el('p', {}, '发送结果尚未确认。重试会沿用原请求编号，避免重复创建轮次。'),
             button('重试原请求', () => app.run(() => app.retry())),
         ] : []), ...(recoveredDraft ? [button('恢复生成的草稿', () => { draft.value = recoveredDraft; draft.focus(); app.state.recoveredDraft = null; render(); })] : []));
     }
-    return { root, render, updateControls, clearDraft() { messageRenderKey = null; edits.clear(); attachments = []; attachmentFile.value = ''; memberIds.value = ''; capabilityInfo.textContent = ''; renderAttachments(); draft.value = ''; estimate.replaceChildren(); } };
+    return { root, render, updateControls, focusMessage(id) {
+        const node = messageNodes.get(id);
+        if (!node) return false;
+        node.scrollIntoView({ block: 'center' }); node.focus(); return true;
+    }, clearDraft() { messageRenderKey = null; edits.clear(); attachments = []; attachmentFile.value = ''; memberIds.value = ''; capabilityInfo.textContent = ''; renderAttachments(); draft.value = ''; estimate.replaceChildren(); } };
 }

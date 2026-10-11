@@ -137,6 +137,11 @@ const app = {
         chat.render(); renderStatus();
         if (this.currentTab === 'memory') memory.render();
     },
+    async locateMessage(conversationId, messageId) {
+        if (this.id() !== conversationId) throw new Error('会话已切换，请重新打开来源');
+        await activate('chat');
+        if (!chat.focusMessage(messageId)) throw new Error('当前消息已删除或不在快照中，请读取历史');
+    },
     command(type, fields) { return this.run(() => this.applyCommand(type, fields)); },
 };
 let disconnect;

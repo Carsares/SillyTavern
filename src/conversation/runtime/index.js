@@ -130,7 +130,9 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         trace?.finish?.(traceId, result);
         const preset = preparedSnapshot.resources.find(resource => resource.id === preparedSnapshot.settings.presetId && resource.kind === 'preset');
         result.content = applyRegex(result.content ?? '', preset?.data?.regex ?? [], { stage: 'output', role: request.type === 'impersonate' ? 'user' : 'assistant' });
-        return { ...result, effects: requestPlan.effects, memoryProposals };
+        const media = [...new Map([...(result.media ?? []), ...(tools?.toolArtifacts?.(turn.id, member?.id) ?? [])]
+            .map(part => [part.attachmentId, part])).values()];
+        return { ...result, media, effects: requestPlan.effects, memoryProposals };
     }
 
     async function execute(turn, snapshot, request, controller) {

@@ -73,3 +73,16 @@ test('backup size follows shared limit and counts UTF-8 restore envelope bytes',
     assert.deepEqual(restoreBody(data, bytes), { data });
     assert.throws(() => restoreBody(data, bytes - 1), /包体超过/);
 });
+
+test('message history uses the agreed envelope and enforces conversation/message ownership', async () => {
+    const { validateHistory, matchesSource } = await import('../../../../public/modern/conversation/memory/sources.js');
+    const payload = { conversationId: 'c', messageId: 'm', deletedAt: 'date', versions: [] };
+    const api = createClient({ fetcher: async (url, options) => {
+        assert.equal(url, '/api/conversation/v1/conversations/c/messages/m/history'); assert.equal(options.method, 'GET');
+        return new Response(JSON.stringify(payload));
+    } });
+    assert.deepEqual(validateHistory(await api.messageHistory('c', 'm'), 'c', 'm'), payload);
+    assert.throws(() => validateHistory(payload, 'other', 'm'));
+    assert.throws(() => validateHistory(payload, 'c', 'other'));
+    assert.equal(matchesSource({ id: 'm', revision: 1, candidateId: 'wrong', candidateRevision: 1 }, { messageId: 'm', revision: 1, candidateId: 'original', candidateRevision: 1 }), false);
+});

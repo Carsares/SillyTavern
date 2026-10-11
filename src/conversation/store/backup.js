@@ -109,9 +109,16 @@ export function validateBackup(input) {
         if (t.request.retryTurnId) assert(owner('turns', t.request.retryTurnId, t.conversationId) && ['failed', 'stopped', 'interrupted'].includes(data.turns[t.request.retryTurnId].status), 'Invalid retry source');
         if (!TERMINAL_STATES.includes(t.status)) assert(data.conversations[t.conversationId].activeTurnId === t.id, 'Unfinished turn is not active');
         else assert(data.conversations[t.conversationId].activeTurnId !== t.id, 'Terminal turn is still active');
+        assert(optionalArray(t.plannedMembers), 'Invalid planned members');
+        if (t.plannedMembers !== undefined) {
+            assert(t.type === 'group' && t.plannedMembers.length <= 32 && t.plannedMembers.every(m => object(m) && identifier(m.id) && identifier(m.characterId) && data.snapshots[t.snapshotId].resources.some(r => r.kind === 'character' && r.id === m.characterId)), 'Invalid persisted group plan');
+            assert(new Set(t.plannedMembers.map(m => m.id)).size === t.plannedMembers.length && new Set(t.plannedMembers.map(m => m.characterId)).size === t.plannedMembers.length, 'Duplicate planned member');
+        }
+        const seenRetries = new Set([t.id]); let retry = t.request.retryTurnId;
+        while (retry) { assert(owner('turns', retry, t.conversationId) && !seenRetries.has(retry), 'Cyclic retry chain'); seenRetries.add(retry); retry = data.turns[retry].request.retryTurnId; }
         assert(optionalArray(t.members), 'Invalid members');
         const members = new Set();
-        for (const m of t.members ?? []) { assert(identifier(m.memberRunId) && !members.has(m.memberRunId) && text(m.content), 'Invalid or duplicate group member'); members.add(m.memberRunId); if (m.messageId) assert(owner('messages', m.messageId, t.conversationId), 'Missing group member message'); }
+        for (const m of t.members ?? []) { assert(identifier(m.memberRunId) && !members.has(m.memberRunId) && text(m.content), 'Invalid or duplicate group member'); members.add(m.memberRunId); if (m.media !== undefined) media(m.media); if (m.messageId) assert(owner('messages', m.messageId, t.conversationId), 'Missing group member message'); }
     }
     const block = (b, cid, historical = false) => {
         assert(object(b) && identifier(b.id) && integer(b.revision, 1) && blockStates.includes(b.status) && Array.isArray(b.sourceRefs), 'Invalid derived block');
@@ -123,7 +130,12 @@ export function validateBackup(input) {
             if (!historical && b.status === 'valid') assert(data.summaries[rid].revision === ref.revision && data.summaries[rid].status === 'valid', 'Stale parent summary');
         }
         for (const ref of b.memoryRefs ?? []) { const rid = ref?.id ?? ref?.memoryId; assert(owner('memories', rid, cid) && integer(ref.revision, 1) && ref.revision <= data.memories[rid].revision, 'Missing memory reference'); if (!historical && b.status === 'valid') assert(data.memories[rid].revision === ref.revision && data.memories[rid].status === 'valid', 'Stale memory reference'); }
-        for (const ref of b.resourceRefs ?? []) { resourceRef(ref); if (!historical && b.status === 'valid') assert(!data.resources[ref.id].deletedAt && data.resources[ref.id].revision === ref.revision, 'Stale resource dependency'); }
+        const tid = data.conversations[cid].activeTurnId;
+        const turn = tid && data.turns[tid];
+        const accepted = turn && data.snapshots[turn.snapshotId];
+        const scoped = turn && (b.scopeTurnId === tid && b.scopeAttemptEpoch === turn.attemptEpoch || ['summaries', 'memories', 'folds'].some(kind => accepted[kind].some(old => old.id === b.id && old.revision === b.revision && old.status === 'valid')));
+        if (b.scopeTurnId != null) assert(owner('turns', b.scopeTurnId, cid) && integer(b.scopeAttemptEpoch, 1), 'Invalid derived turn scope');
+        for (const ref of b.resourceRefs ?? []) { resourceRef(ref); if (!historical && b.status === 'valid') assert(scoped ? accepted.resources.some(r => r.id === ref.id && r.revision === ref.revision) : !data.resources[ref.id].deletedAt && data.resources[ref.id].revision === ref.revision, 'Stale resource dependency'); }
     };
     for (const table of ['summaries', 'memories', 'folds']) for (const b of Object.values(data[table])) block(b, b.conversationId);
     for (const snap of Object.values(data.snapshots)) {

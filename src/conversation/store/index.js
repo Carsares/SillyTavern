@@ -117,14 +117,28 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         s[UNIT].appendEvent(e); return e;
     };
     const validSource = (s, cid, ref) => { const m = s.messages[ref.messageId]; return m && m.conversationId === cid && !m.deletedAt && canonicalJson(sourceRef(current(m))) === canonicalJson({ messageId: ref.messageId, revision: ref.revision, candidateId: ref.candidateId ?? null, candidateRevision: ref.candidateRevision ?? null }); };
-    const validBlock = (s, cid, b) => (b.resourceRefs ?? []).every(r => s.resources[r.id] && !s.resources[r.id].deletedAt && s.resources[r.id].revision === r.revision) && (b.memoryRefs ?? []).every(r => { const m = s.memories[r.id ?? r.memoryId]; return m && m.conversationId === cid && m.revision === r.revision && m.status === 'valid'; }) && (b.sourceRefs ?? []).every(r => validSource(s, cid, r)) && [...(b.parentSummaryRefs ?? []), ...(b.summaryRef ? [b.summaryRef] : [])].every(r => { const p = s.summaries[r.id ?? r.summaryId]; return p && p.conversationId === cid && p.revision === r.revision && p.status === 'valid'; });
+    const validResources = (s, refs = []) => refs.every(r => s.resources[r.id] && !s.resources[r.id].deletedAt && s.resources[r.id].revision === r.revision);
+    const frozenResourceRefs = (s, turn) => s.snapshots[turn.snapshotId].conversation.resourceRefs;
+    const validFrozenResources = (s, turn, dependencies = []) => dependencies.every(ref => frozenResourceRefs(s, turn).some(r => r.id === ref.id && r.revision === ref.revision));
+    const blockResourceScope = (s, cid, block) => {
+        const tid = conv(s, cid).activeTurnId;
+        const turn = tid && s.turns[tid];
+        if (!turn || terminal(turn)) return null;
+        if (block.scopeTurnId === tid && block.scopeAttemptEpoch === turn.attemptEpoch) return turn;
+        const frozen = s.snapshots[turn.snapshotId];
+        return ['summaries', 'memories', 'folds'].some(kind => frozen[kind].some(b => b.id === block.id && b.revision === block.revision && b.status === 'valid')) ? turn : null;
+    };
+    const validBlock = (s, cid, b) => (blockResourceScope(s, cid, b) ? validFrozenResources(s, blockResourceScope(s, cid, b), b.resourceRefs) : validResources(s, b.resourceRefs)) && (b.memoryRefs ?? []).every(r => { const m = s.memories[r.id ?? r.memoryId]; return m && m.conversationId === cid && m.revision === r.revision && m.status === 'valid'; }) && (b.sourceRefs ?? []).every(r => validSource(s, cid, r)) && [...(b.parentSummaryRefs ?? []), ...(b.summaryRef ? [b.summaryRef] : [])].every(r => { const p = s.summaries[r.id ?? r.summaryId]; return p && p.conversationId === cid && p.revision === r.revision && p.status === 'valid'; });
     const invalidate = (s, cid) => {
         let changed; let any = false;
         do { changed = false; for (const kind of ['summaries', 'memories', 'folds']) for (const b of Object.values(s[kind])) {
             if (b.conversationId === cid && b.status === 'valid' && !validBlock(s, cid, b)) { b.status = b.locked || b.origin === 'manual' ? 'pending-confirm' : 'stale'; changed = any = true; }
         } } while (changed);
         if (any) conv(s, cid).memoryRevision++;
-        for (const j of Object.values(s.jobs)) if (j.conversationId === cid && !(j.dependencies?.sourceRefs ?? (Array.isArray(j.dependencies) ? j.dependencies : [])).every(r => validSource(s, cid, r))) j.status = 'stale';
+        for (const j of Object.values(s.jobs)) if (j.conversationId === cid && ['pending', 'running', 'ready'].includes(j.status)
+            && (!(j.dependencies?.sourceRefs ?? (Array.isArray(j.dependencies) ? j.dependencies : [])).every(r => validSource(s, cid, r)) || !validResources(s, j.dependencies?.resourceRefs))) {
+            j.status = 'stale'; event(s, cid, 'job.updated', { id: j.id, status: j.status });
+        }
     };
     const validateMedia = (s, media) => validateMediaReferences(s.attachments, media);
     const newMessage = (s, cid, tid, role, content, status = 'completed', media = [], identifiers = {}) => {
@@ -136,14 +150,17 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const live = (s, tid, epoch) => { const t = get(s.turns, tid); invariant(!terminal(t) && !t.cancelRequested && t.attemptEpoch === epoch && conv(s, t.conversationId).activeTurnId === tid, 'late-callback', 'Turn no longer accepts callbacks', 409); return t; };
     const derived = (s, cid, proposal) => {
         const c = conv(s, cid);
-        if (c.activeTurnId) { invariant(proposal.turnId === c.activeTurnId, 'conversation-busy', 'Background commit requires idle conversation', 409); live(s, proposal.turnId, proposal.attemptEpoch); }
+        let foreground;
+        if (c.activeTurnId) { invariant(proposal.turnId === c.activeTurnId, 'conversation-busy', 'Background commit requires idle conversation', 409); foreground = live(s, proposal.turnId, proposal.attemptEpoch); }
+        else invariant(proposal.turnId === undefined && proposal.attemptEpoch === undefined, 'late-callback', 'Foreground proposal requires its active turn', 409);
         if (proposal.expectedMemoryRevision !== undefined) check(c.memoryRevision, proposal.expectedMemoryRevision);
-        invariant((proposal.sourceRefs ?? []).every(r => validSource(s, cid, r)), 'source-conflict', 'Sources changed', 409);
+        invariant((proposal.sourceRefs ?? []).every(r => validSource(s, cid, r)) && (foreground ? validFrozenResources(s, foreground, proposal.resourceRefs) : validResources(s, proposal.resourceRefs)), 'source-conflict', 'Sources or resources changed', 409);
+        if (!['summaries', 'memories', 'folds'].some(kind => proposal[kind]?.length)) return { accepted: true, memoryRevision: c.memoryRevision };
         for (const kind of ['summaries', 'memories', 'folds']) for (const input of proposal[kind] ?? []) {
             invariant(!['__proto__', 'constructor', 'prototype'].includes(input.id), 'invalid-id', 'Invalid entity ID');
             const previous = input.id && s[kind][input.id];
             if (previous) { invariant(previous.conversationId === cid && !previous.locked && previous.origin !== 'manual', 'memory-protected', 'Manual or locked block cannot be replaced', 409); check(previous.revision, input.expectedBlockRevision ?? input.expectedRevision ?? input.revision); }
-            const b = { ...copy(input), id: previous?.id ?? input.id ?? id(), conversationId: cid, revision: (previous?.revision ?? 0) + 1, sourceRefs: copy(input.sourceRefs ?? proposal.sourceRefs ?? []), status: input.op === 'delete' ? 'stale' : 'valid', origin: 'automatic', locked: false };
+            const b = { ...copy(input), id: previous?.id ?? input.id ?? id(), conversationId: cid, revision: (previous?.revision ?? 0) + 1, sourceRefs: copy(input.sourceRefs ?? proposal.sourceRefs ?? []), resourceRefs: copy(input.resourceRefs ?? proposal.resourceRefs ?? []), scopeTurnId: foreground?.id ?? null, scopeAttemptEpoch: foreground?.attemptEpoch ?? null, status: input.op === 'delete' ? 'stale' : 'valid', origin: 'automatic', locked: false };
             invariant(validBlock(s, cid, b), 'source-conflict', 'Derived dependencies changed', 409);
             s[kind][b.id] = b;
         }
@@ -174,27 +191,32 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         const c = conv(s, t.conversationId);
         invariant(c.activeTurnId === tid, 'late-callback', 'Turn no longer active', 409);
         invariant(!t.cancelRequested || result.status !== 'completed', 'late-callback', 'Stopped turn cannot complete', 409);
+        const media = result.media ?? [];
+        validateMedia(s, media);
         if (result.memoryProposals && result.status === 'completed') derived(s, c.id, { ...(Array.isArray(result.memoryProposals) ? { memories: result.memoryProposals } : result.memoryProposals), turnId: tid, attemptEpoch: epoch });
         const content = t.type === 'group' && result.status !== 'completed' ? t.content || result.content || '' : result.content ?? t.content;
         const success = result.status === 'completed';
         invariant(!success || t.type !== 'group' || !t.activeMember, 'member-busy', 'Current group member must commit before successful finalization', 409);
         invariant(!success || !Object.values(s.tools).some(r => r.turnId === tid && ['intent', 'running', 'unknown'].includes(r.status)), 'tool-result-unknown', 'Unresolved tool side effects prevent successful completion', 409);
-        if (content && !['auxiliary', 'impersonate', 'group'].includes(t.type)) {
+        if ((content || media.length) && !['auxiliary', 'impersonate', 'group'].includes(t.type)) {
             if (t.targetMessageId) {
                 const m = get(s.messages, t.targetMessageId); const old = current(m);
                 const candidateId = t.type === 'continue' && success ? old.candidateId : t.candidateId;
-                const v = { ...copy(old), turnId: tid, revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateId, candidateRevision: Math.max(0, ...m.versions.filter(v => v.candidateId === candidateId).map(v => v.candidateRevision ?? 0)) + 1, content: t.type === 'continue' ? old.content + content : content, status: success ? 'completed' : 'partial' };
+                const v = { ...copy(old), turnId: tid, revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateId, candidateRevision: Math.max(0, ...m.versions.filter(v => v.candidateId === candidateId).map(v => v.candidateRevision ?? 0)) + 1, content: t.type === 'continue' ? old.content + content : content, media: copy(t.type === 'continue' ? [...old.media, ...media] : media), status: success ? 'completed' : 'partial' };
                 m.versions.push(v); if (success) { select(m, v); c.contentRevision++; invalidate(s, c.id); }
-            } else { const m = newMessage(s, c.id, tid, 'assistant', content, success ? 'completed' : 'partial', [], { id: t.messageId, candidateId: t.candidateId }); t.messageId = m.id; t.candidateId = m.candidateId; c.contentRevision++; }
+            } else { const m = newMessage(s, c.id, tid, 'assistant', content, success ? 'completed' : 'partial', media, { id: t.messageId, candidateId: t.candidateId }); t.messageId = m.id; t.candidateId = m.candidateId; c.contentRevision++; }
         }
-        if (t.type === 'group' && t.activeMember && content && !success) {
+        if (t.type === 'group' && t.activeMember && (content || media.length) && !success) {
             const member = t.activeMember;
-            newMessage(s, c.id, tid, 'assistant', content, 'partial', [], { id: member.messageId, candidateId: member.candidateId, characterId: member.characterId, memberRunId: member.memberRunId, reasoning: t.reasoning });
+            newMessage(s, c.id, tid, 'assistant', content, 'partial', media, { id: member.messageId, candidateId: member.candidateId, characterId: member.characterId, memberRunId: member.memberRunId, reasoning: t.reasoning });
             c.contentRevision++;
         }
         if (success && t.type !== 'group') applyEffects(c, result.effects);
         Object.assign(t, redact({ status: result.status, content, reasoning: result.reasoning ?? t.reasoning, usage: result.usage ?? t.usage, error: result.error, completedAt: now() }));
         c.activeTurnId = null;
+        const memoryBeforeRelease = c.memoryRevision;
+        invalidate(s, c.id);
+        if (c.memoryRevision !== memoryBeforeRelease) event(s, c.id, 'memory.updated', { reason: 'turn-resource-scope-ended' }, tid);
         for (const tool of Object.values(s.tools)) if (tool.turnId === tid && ['intent', 'running'].includes(tool.status)) tool.status = 'unknown';
         event(s, c.id, `turn.${t.status}`, { turnId: tid, status: t.status, recovery }, tid); return t;
     };
@@ -217,24 +239,44 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             if (request.media !== undefined) validateMedia(s, request.media);
             if (request.targetMessageId) { const target = get(s.messages, request.targetMessageId); invariant(target.conversationId === cid && !target.deletedAt && current(target).role === 'assistant', 'invalid-target', 'Expected current assistant message'); }
             const before = snapshot(s, cid, true);
-            if (preflight) { const value = preflight(copy(before), copy(request)); invariant(!value?.then, 'async-preflight', 'Preflight must be synchronous'); }
+            let plannedMembers;
+            if (preflight) { const value = preflight(copy(before), copy(request)); invariant(!value?.then, 'async-preflight', 'Preflight must be synchronous'); if (request.type === 'group' && !request.retryTurnId) plannedMembers = copy(value?.members); }
+            if (plannedMembers !== undefined) {
+                invariant(Array.isArray(plannedMembers) && plannedMembers.length > 0 && plannedMembers.length <= 32 && plannedMembers.every(m => m && typeof m.id === 'string' && m.id && typeof m.characterId === 'string' && before.resources.some(r => r.id === m.characterId && r.kind === 'character'))
+                    && new Set(plannedMembers.map(m => m.id)).size === plannedMembers.length && new Set(plannedMembers.map(m => m.characterId)).size === plannedMembers.length, 'invalid-group', 'Invalid frozen member selection');
+                plannedMembers = plannedMembers.map(({ id, characterId }) => ({ id, characterId }));
+            }
             const tid = id();
             let userMessageId;
             if (request.retryTurnId) {
                 const previous = get(s.turns, request.retryTurnId);
                 invariant(previous.conversationId === cid && ['failed', 'stopped', 'interrupted'].includes(previous.status) && previous.type === request.type, 'invalid-retry', 'Retry requires a failed turn of the same type and conversation', 409);
                 invariant(previous.request.content === request.content && canonicalJson(previous.request.media ?? []) === canonicalJson(request.media ?? []) && previous.targetMessageId === request.targetMessageId, 'invalid-retry', 'Retry must preserve the original input', 409);
+                if (request.type === 'group') {
+                    const visited = new Set(); const completed = new Set(); let ancestor = previous; let originalPlan;
+                    while (ancestor) {
+                        invariant(!visited.has(ancestor.id) && ancestor.conversationId === cid && ancestor.type === 'group', 'invalid-retry', 'Invalid group retry chain', 409);
+                        visited.add(ancestor.id);
+                        for (const member of ancestor.members ?? []) if (member.status === 'completed') completed.add(member.characterId);
+                        originalPlan = ancestor.plannedMembers;
+                        ancestor = ancestor.request.retryTurnId ? get(s.turns, ancestor.request.retryTurnId) : null;
+                    }
+                    invariant(Array.isArray(originalPlan), 'group-plan-required', 'Original group turn has no persisted member plan', 409);
+                    plannedMembers = copy(originalPlan.filter(member => !completed.has(member.characterId)));
+                    invariant(plannedMembers.every(member => before.resources.some(r => r.kind === 'character' && r.id === member.characterId && !r.missing)), 'missing-member', 'Original group member is no longer available', 409);
+                }
                 userMessageId = previous.userMessageId ?? s[UNIT].values('messages', cid).find(m => m.turnId === previous.id && current(m).role === 'user')?.id;
                 invariant(!['send', 'group'].includes(request.type) || userMessageId && !get(s.messages, userMessageId).deletedAt, 'invalid-retry', 'Original user message no longer available', 409);
             } else if (['send', 'group'].includes(request.type)) { userMessageId = newMessage(s, cid, tid, 'user', request.content, 'completed', request.media ?? []).id; c.contentRevision++; }
             c.activeTurnId = tid; c.resourceRefs = refs(s, c);
             const snap = snapshot(s, cid); s.snapshots[snap.id] = snap;
-            const t = { id: tid, conversationId: cid, clientRequestId: request.clientRequestId, payloadHash: hash, type: request.type, targetMessageId: request.targetMessageId, status: 'queued', attemptEpoch: 1, snapshotId: snap.id, userMessageId, content: '', reasoning: '', usage: null, request: copy(request), cancelRequested: false, messageId: request.targetMessageId ?? id(), candidateId: id() };
+            const t = { id: tid, conversationId: cid, clientRequestId: request.clientRequestId, payloadHash: hash, type: request.type, targetMessageId: request.targetMessageId, status: 'queued', attemptEpoch: 1, snapshotId: snap.id, userMessageId, ...(plannedMembers !== undefined ? { plannedMembers } : {}), content: '', reasoning: '', usage: null, request: copy(request), cancelRequested: false, messageId: request.targetMessageId ?? id(), candidateId: id() };
             s.turns[tid] = t; event(s, cid, 'turn.accepted', { turnId: tid }, tid); return { turn: t, snapshot: snap, replayed: false };
         }),
         startMember: (tid, input, epoch) => tx(s => {
             const t = live(s, tid, epoch);
             invariant(t.type === 'group' && typeof input.memberRunId === 'string' && input.memberRunId && typeof input.characterId === 'string', 'invalid-member', 'Group member identifiers required');
+            invariant(!t.plannedMembers || t.plannedMembers.some(m => m.id === input.memberRunId && m.characterId === input.characterId), 'invalid-member', 'Member is outside the persisted turn plan', 409);
             const completed = (t.members ?? []).find(m => m.memberRunId === input.memberRunId);
             if (completed) { invariant(completed.characterId === input.characterId, 'idempotency-conflict', 'Member identity changed', 409); return completed; }
             if (t.activeMember) { invariant(t.activeMember.memberRunId === input.memberRunId && t.activeMember.characterId === input.characterId, 'member-busy', 'Previous member has not committed', 409); return { ...t.activeMember, status: 'generating' }; }
@@ -246,16 +288,20 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         commitMember: (tid, input, epoch) => tx(s => {
             const t = live(s, tid, epoch);
             invariant(t.type === 'group', 'invalid-turn', 'Members require a group turn');
-            invariant(typeof input.memberRunId === 'string' && input.memberRunId && typeof input.content === 'string', 'invalid-member', 'Member run ID and content required');
+            invariant(typeof input.memberRunId === 'string' && input.memberRunId && (input.content === undefined || typeof input.content === 'string'), 'invalid-member', 'Member run ID and optional text content required');
+            invariant(!t.plannedMembers || t.plannedMembers.some(m => m.id === input.memberRunId && m.characterId === input.characterId), 'invalid-member', 'Member is outside the persisted turn plan', 409);
             const fingerprint = canonicalJson(input);
             const prior = (t.members ?? []).find(m => m.memberRunId === input.memberRunId);
             if (prior) { invariant(prior.fingerprint === fingerprint, 'idempotency-conflict', 'Member result changed', 409); return prior; }
+            const media = input.media ?? [];
+            validateMedia(s, media);
+            const content = input.content ?? '';
             invariant(!t.activeMember || t.activeMember.memberRunId === input.memberRunId && t.activeMember.characterId === input.characterId, 'invalid-member', 'Member does not match active stream', 409);
             applyEffects(conv(s, t.conversationId), input.effects);
             const streamIds = t.activeMember ? { id: t.activeMember.messageId, candidateId: t.activeMember.candidateId } : {};
-            const m = input.content ? newMessage(s, t.conversationId, tid, 'assistant', input.content, 'completed', [], { ...streamIds, characterId: input.characterId, memberRunId: input.memberRunId }) : null;
-            t.activeMember = null; t.content = input.content; t.reasoning = input.reasoning ?? t.reasoning;
-            const member = redact({ ...copy(input), fingerprint, messageId: m?.id, status: 'completed' });
+            const m = content || media.length ? newMessage(s, t.conversationId, tid, 'assistant', content, 'completed', media, { ...streamIds, characterId: input.characterId, memberRunId: input.memberRunId }) : null;
+            t.activeMember = null; t.content = content; t.reasoning = input.reasoning ?? t.reasoning;
+            const member = redact({ ...copy(input), content, fingerprint, messageId: m?.id, status: 'completed' });
             (t.members ??= []).push(member);
             if (m) conv(s, t.conversationId).contentRevision++;
             event(s, t.conversationId, 'group.member.completed', member, tid);
@@ -330,7 +376,11 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         }),
         getTrace: rid => get(read().traces, rid),
         listTraces: cid => Object.values(read().traces).filter(t => t.conversationId === cid),
-        getMessageHistory: mid => copy(get(read().messages, mid).versions),
+        getMessageHistory: (cid, mid) => {
+            const s = read(); conv(s, cid); const m = get(s.messages, mid);
+            invariant(m.conversationId === cid, 'not-found', 'Message not found', 404);
+            return { messageId: m.id, conversationId: m.conversationId, deletedAt: m.deletedAt ?? null, versions: copy(m.versions) };
+        },
         saveAttachment: input => tx(s => {
             const record = copy(validateAttachment(input));
             const previous = s.attachments[record.id];

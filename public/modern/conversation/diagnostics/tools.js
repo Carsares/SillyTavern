@@ -1,3 +1,4 @@
+import { toolMediaView } from '../media/view.js';
 import { el, button, json } from '../core/dom.js';
 import { redact } from '../core/state.js';
 
@@ -21,7 +22,7 @@ export function toolResultsView(app, value) {
         const load = button(`展开完整工具结果 ${id}`, async () => {
             load.disabled = true;
             output.replaceChildren(el('p', {}, '正在读取完整工具结果…'));
-            try { output.replaceChildren(json(redact(await app.api.tool(id)))); } catch (error) { output.replaceChildren(el('p', { class: 'banner error', role: 'alert' }, `工具结果读取失败：${error.message}`)); } finally { load.disabled = false; }
+            try { const record = await app.api.tool(id); output.replaceChildren(json(redact(record)), toolMediaView(app.api, record, app.state?.snapshot?.attachments)); } catch (error) { output.replaceChildren(el('p', { class: 'banner error', role: 'alert' }, `工具结果读取失败：${error.message}`)); } finally { load.disabled = false; }
         });
         return el('section', {}, load, output);
     }));

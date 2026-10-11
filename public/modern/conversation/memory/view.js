@@ -1,3 +1,4 @@
+import { sourcesView } from './sources.js';
 import { MEMORY_KINDS, memoryInput } from './model.js';
 import { el, button, empty, field, input, select } from '../core/dom.js';
 import { terminal, redact, list } from '../core/state.js';
@@ -48,7 +49,7 @@ export function createMemory(app) {
             return el('article', { class: `card status-${block.status}` },
                 el('h3', {}, `${block.blockType} · ${block.status} ${block.locked ? '· 已锁定' : ''}`),
                 el('small', {}, `${block.id} · 版本 ${block.revision}`), content,
-                el('details', {}, el('summary', {}, '来源与依赖'), el('pre', {}, JSON.stringify({ sourceRefs: block.sourceRefs, parentSummaryRefs: block.parentSummaryRefs }, null, 2))),
+                sourcesView(app, block),
                 ...(block.blockType === 'memory' ? [
                     button('保存记忆', () => app.run(async () => {
                         await app.applyCommand('memory.edit', { ...version, expectedBlockRevision: drafts.get(draftKey)?.revision ?? block.revision, content: content.value });

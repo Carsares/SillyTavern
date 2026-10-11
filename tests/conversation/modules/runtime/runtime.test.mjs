@@ -33,6 +33,19 @@ function setup(executor, options = {}) {
 }
 const request = { schemaVersion: 1, clientRequestId: 'request', expectedContentRevision: 0, type: 'send', content: 'Hello' };
 
+test('registered model and tool media both survive turn completion without duplicate attachments', async () => {
+    const image = { attachmentId: 'image', type: 'image' };
+    const audio = { attachmentId: 'audio', type: 'audio' };
+    const executor = { async runTurn() { return { content: '', finishReason: 'stop', media: [audio, image] }; } };
+    const tools = { definitions: () => [], bindTurn() {}, release() {}, toolArtifacts: () => [image] };
+    const { runtime } = setup(executor, { tools });
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'completed');
+    assert.deepEqual(turn.media, [audio, image]);
+    await runtime.close();
+});
+
 test('replayed acceptance does not repeat provider calls or user message writes', async () => {
     const executor = fakeExecutor(); const { runtime, writes } = setup(executor);
     runtime.start('c', request);

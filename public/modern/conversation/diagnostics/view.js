@@ -1,3 +1,4 @@
+import { toolMediaView } from '../media/view.js';
 import { el, button, empty, json } from '../core/dom.js';
 import { toolResultsView } from './tools.js';
 import { usageView } from './usage.js';
@@ -23,8 +24,8 @@ export function createDiagnostics(app) {
             const detail = el('div');
             return el('article', { class: 'card' }, el('strong', {}, trace.name || trace.type || trace.id),
                 el('small', {}, trace.turnId || '会话轨迹'),
-                button('读取完整轨迹', () => app.run(async () => { const full = await app.api.trace(trace.id); detail.replaceChildren(contextView(full.requestPlan), json(redact(full)), toolResultsView(app, full)); })),
-                json(redact(trace)), toolResultsView(app, trace), detail,
+                button('读取完整轨迹', () => app.run(async () => { const full = await app.api.trace(trace.id); detail.replaceChildren(contextView(full.requestPlan), json(redact(full)), toolResultsView(app, full), toolMediaView(app.api, full, app.state.snapshot?.attachments)); })),
+                json(redact(trace)), toolResultsView(app, trace), toolMediaView(app.api, trace, app.state.snapshot?.attachments), detail,
             );
         }) : [empty('服务器尚未记录执行轨迹')]));
     }

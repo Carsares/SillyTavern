@@ -92,6 +92,7 @@ export function createClient({ base = API_BASE, fetcher = globalThis.fetch.bind(
         trace: id => request(`/traces/${segment(id)}`),
         tool: id => request(`/tools/${segment(id)}`),
         // Additional v1 routes confirmed by the API integrator.
+        messageHistory: (id, messageId) => request(`/conversations/${segment(id)}/messages/${segment(messageId)}/history`),
         candidates: (id, messageId) => request(`/conversations/${segment(id)}/messages/${segment(messageId)}/candidates`),
         automaticState: id => request(`/conversations/${segment(id)}/automatic`),
         automatic: (id, body) => request(`/conversations/${segment(id)}/automatic`, { method: 'POST', body }),

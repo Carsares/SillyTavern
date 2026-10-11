@@ -143,3 +143,21 @@ test('backup retains frozen auxiliary revisions and rejects missing auxiliary gr
     assert.equal(dest.getConnection(aux.id, 1).data.apiKey, 'image-key');
     assert.equal(dest.getConversation(c.id).resources.find(r => r.id === aux.id).data.apiKey, undefined);
 });
+
+test('restore retains group plan and expires active foreground resource scope on interruption', t => {
+    const { store: source } = makeStore(t);
+    const character = source.createResource({ kind: 'character', name: 'A', data: {} });
+    const group = source.createResource({ kind: 'group', name: 'group', data: { members: [character.id] } });
+    const c = source.createConversation({ settings: { groupId: group.id } });
+    const members = [{ id: 'stable-run', characterId: character.id }];
+    const { turn } = source.beginTurn(c.id, request(0, { type: 'group' }), () => ({ members }));
+    source.updateResource(character.id, { expectedRevision: 1, data: { changed: true } });
+    source.commitDerived(c.id, { turnId: turn.id, attemptEpoch: 1, resourceRefs: [{ id: character.id, revision: 1 }], summaries: [{ content: 'frozen', sourceRefs: [] }] });
+    const backup = source.exportData();
+    const { store: dest } = makeStore(t); dest.validateBackup(backup); dest.restoreData(backup);
+    assert.equal(dest.getTurn(turn.id).status, 'interrupted');
+    assert.deepEqual(dest.getTurn(turn.id).plannedMembers, members);
+    assert.equal(dest.getConversation(c.id).summaries[0].status, 'stale');
+    const retried = dest.beginTurn(c.id, request(dest.getConversation(c.id).conversation.contentRevision, { type: 'group', retryTurnId: turn.id }), () => ({ members: [{ id: 'must-not-use', characterId: character.id }] }));
+    assert.deepEqual(retried.turn.plannedMembers, members);
+});
