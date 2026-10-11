@@ -12,6 +12,31 @@ class VerifiedProxyAgent extends ProxyAgent {
     }
 }
 
+/** Pull-based replacement for Readable.toWeb(). On Node 24 the adapter keeps
+ * enqueuing buffered 'data' after the web stream is closed or errored and throws
+ * an uncaught ERR_INVALID_STATE; reading only on pull never writes after close.
+ */
+function toWebStream(readable) {
+    const chunks = readable[Symbol.asyncIterator]();
+    let cancelled = false;
+    return new ReadableStream({
+        async pull(controller) {
+            try {
+                const { value, done } = await chunks.next();
+                if (cancelled) return;
+                if (done) controller.close();
+                else controller.enqueue(typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value));
+            } catch (error) {
+                if (!cancelled) controller.error(error);
+            }
+        },
+        async cancel(reason) {
+            cancelled = true;
+            readable.destroy(reason instanceof Error ? reason : undefined);
+        },
+    }, { highWaterMark: 0 });
+}
+
 /** Returns a normalized secret URL, or null for absent/explicitly cleared proxy.
  * Validation errors never contain the URL or its credentials.
  */
@@ -74,7 +99,7 @@ export function createConnectionFetch(connection, { fetch: injectedFetch } = {})
                 if (response instanceof Response) return response;
                 const noBody = request.method === 'HEAD' || [204, 205, 304].includes(response.status);
                 if (noBody) response.body?.destroy();
-                const body = !noBody && response.body ? Readable.toWeb(response.body) : null;
+                const body = !noBody && response.body ? toWebStream(response.body) : null;
                 const result = new Response(body, { status: response.status, statusText: response.statusText, headers: [...response.headers] });
                 Object.defineProperties(result, { url: { value: response.url }, redirected: { value: false } });
                 return result;

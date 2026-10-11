@@ -25,7 +25,7 @@ corrected deployment.
 
 | Check | Result | Boundary |
 | --- | --- | --- |
-| `npm run test:conversation:unit` | Passed, 733 passed, 0 failed | Now also runs `tests/modern-agent-workspace.test.mjs`. Includes the regression test that an embedded `character_book` stays inactive like the original engine. |
+| `npm run test:conversation:unit` | Passed, 736 passed, 0 failed | Now also runs `tests/modern-agent-workspace.test.mjs`. Includes the regression test that an embedded `character_book` stays inactive like the original engine. |
 | `npm run test:conversation:integration` | Passed, 58 passed, 0 failed, 1 skipped | Deterministic local peers only. |
 | Jest suite in `tests/` | Passed, 972 passed | Before the `request.app?.locals` fix in user deletion/reset: 971 passed, 1 failed. |
 | Playwright `--project=default` | Passed, 544 passed | Rerun after the fixes. An earlier run before the fixes had 543 of 544; its failed sidebar scroll test also passed 3 of 3 alone. |
@@ -34,6 +34,8 @@ corrected deployment.
 | Docker build context export (`FROM scratch`, `buildx --output type=local`) | Passed | Full `src/`, `public/`, `default/`, Agent code and `src/tokenizers/` included; local `config.yaml`, `data`, `tests`, `.claude`, `output` excluded. Uses no base image. |
 | `sh -n docker/docker-entrypoint.sh`; `src/server-init.js` in a temporary directory | Passed, exit 0 | Syntax and the entrypoint's `npm run init` step only. |
 | `python3 -I docker/validate-conversation.py` | Passed, exit 0 | Unmodified upstream Dockerfile built (including webpack). Two containers passed entry, Basic auth, CSRF and healthcheck; an Agent backup restored into a second independent volume; owned containers and volumes removed. No provider calls. Base image from a Docker Hub mirror, see below. |
+| Agent CI job on Linux (`node:lts-alpine3.23`, Node v24.21.0) | Passed after a fix | Same commands as `conversation.yml`: lint, 734 unit passed and 2 skipped, integration 39 passed and 20 skipped (macOS-only SDK checks) in each of 3 runs. Before the fix one HTTP retrieval test failed on Node 24 with `ERR_INVALID_STATE` from `Readable.toWeb()` in `providers/core/proxy.js`; macOS with Node 26 did not show it. |
+| Chinese Agent errors and notices, Agent page theme | Passed | Browser check: default AI Horde settings show the Chinese `main_api` explanation; a successful start shows Chinese notices; the embedded Agent page computes the same background, text, button and input styles as Modern and follows its light/dark toggle. Unit tests cover error descriptions and token parity. |
 | Windows batch execution | Unrun | Requires a Windows host. |
 
 ## Historical checks before full-app correction

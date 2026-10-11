@@ -1,3 +1,4 @@
+/* global globalThis */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -92,7 +93,7 @@ test('workspace exposes embedding failures without replacing Modern navigation',
 });
 
 test('deep links forward only an encoded cid into both Agent entry points', () => {
-    const id = '\"<&/中文?x=1#fragment';
+    const id = '"<&/中文?x=1#fragment';
     const search = `?view=agent&unrelated=secret&${new URLSearchParams({ cid: id })}`;
     const url = agentWorkspaceUrl(search);
     assert.equal(new URL(url, 'http://local.test').searchParams.get('cid'), id);

@@ -57,7 +57,7 @@ readers, `.json()`, `.arrayBuffer()`, multipart uploads, HEAD and empty statuses
 `close()` is synchronous and idempotent, aborts active network work and streaming
 bodies, and destroys both cached proxy agents and direct agents. Subsequent
 fetch rejects with `transport-closed`. Request failures use a fixed
-`provider-network-error`; aborted requests use `aborted`.
+`provider-network-error`; aborted requests use `aborted`. The Web stream is pull-based rather than `Readable.toWeb()`: on Node 24 that adapter throws an uncaught `ERR_INVALID_STATE` when buffered data arrives after an early close.
 
 `createConnectionFetch(connection, {fetch: injectedFetch})` is an explicit testing
 or transport extension point. The function receives a **global Request** and
