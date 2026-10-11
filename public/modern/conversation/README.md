@@ -19,6 +19,7 @@ commit was changed by this task.
 ## Files and ownership
 
 - `index.html`, `app.js`, `style.css`: independent entry, state/controller and layout.
+- `core/theme.js`: follows the Modern theme setting (`st-modern-theme`) and hides the duplicate title and back link when embedded in the Modern Agent route. `style.css` mirrors the Modern theme tokens because the standalone entry may only load files below `modern/conversation` and `shared/conversation`; `tests/conversation/modules/client/theme.test.mjs` keeps them equal.
 - `core/client.js`: JSON commands, session authentication, SSE parser/reconnect.
 - `core/state.js`: snapshots, turn requests, optimistic version checks, event reducer.
 - `core/operations.js`: authoritative snapshot acceptance and confirmed-write readback handling.

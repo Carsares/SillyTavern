@@ -10,6 +10,9 @@ import { createMemory } from './memory/view.js';
 import { createSettings } from './settings/view.js';
 import { createDiagnostics } from './diagnostics/view.js';
 import { createMaintenance } from './maintenance/view.js';
+import { followModernTheme } from './core/theme.js';
+
+followModernTheme();
 
 const read = key => { try { return sessionStorage.getItem(key); } catch { return null; } };
 const write = (key, value) => { try { value == null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch { /* Server remains authoritative when storage is unavailable. */ } };
@@ -175,7 +178,7 @@ const sidebar = el('aside', { class: 'sidebar' }, el('h2', {}, '会话'), title,
         title.value = ''; await app.reloadConversations(); await app.choose(id);
     })), button('刷新列表', () => app.run(() => app.reloadConversations())), rows,
 );
-const main = el('main', {}, el('header', { class: 'topbar' }, el('h1', {}, 'Modern · Conversation'), status,
+const main = el('main', {}, el('header', { class: 'topbar' }, el('h1', {}, 'Agent 会话'), status,
     button('重新读取会话', () => app.run(async () => { await app.refresh(); await indexStatus.load(); await activate(app.currentTab, false); }))), navigation, error, notice, indexStatus.root, panelRoot);
 document.querySelector('#conversation-app').replaceChildren(el('div', { class: 'shell' }, sidebar, main));
 for (const [id, label] of Object.entries(labels)) navigation.append(button(label, () => app.run(() => activate(id))));
