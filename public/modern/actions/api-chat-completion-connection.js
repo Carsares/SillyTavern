@@ -1,3 +1,4 @@
+import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 // 聊天补全数值参数的允许范围，与旧版界面一致：public/index.html 中 #temp_openai、#top_p_openai、
@@ -129,6 +130,7 @@ export function createApiChatCompletionConnectionActions({
     testNovelConnection,
     saveHordeConnectionFromForm,
     testHordeConnection,
+    reloadSettings = noEngineSync,
 }) {
     // 校验表单里全部数值字段并标出错误；有错误时聚焦第一个错误字段、提示并返回 false，调用方应中止操作。
     function validateChatCompletionNumberFields(toastTitle) {
@@ -248,9 +250,11 @@ export function createApiChatCompletionConnectionActions({
         }
 
         await saveSettingsSerialized(apiFetch, state.settings);
+        // 设置已落盘：先等生成引擎重载完，再更新界面状态和提示，保存后立刻发送也用新配置
+        const engineSync = await reloadSettings();
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('连接配置已保存', `${source} / ${model}`);
+        showToast('连接配置已保存', `${source} / ${model}${describeReloadFailure(engineSync)}`);
     }
 
     function responseContentToText(content) {

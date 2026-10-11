@@ -52,7 +52,7 @@ const apiClient = createApiClient({
 const apiFetch = apiClient.apiFetch;
 const apiFetchResponse = apiClient.apiFetchResponse;
 const { callLegacyBridge, subscribeProgress } = createLegacyBridge();
-const bridgeReload = createBridgeReload(callLegacyBridge);
+const bridgeReload = createBridgeReload(callLegacyBridge, { state });
 
 const elements = createShellElements();
 

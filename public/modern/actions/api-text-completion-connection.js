@@ -1,4 +1,5 @@
 import { secretKeyByTextCompletionType, textCompletionModelFields } from '../core/connection-labels.js';
+import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 const textCompletionSamplingDefaults = {
@@ -20,6 +21,7 @@ export function createApiTextCompletionConnectionActions({
     numberInput,
     getNumberSetting,
     recordApiTestResult,
+    reloadSettings = noEngineSync,
 }) {
     function getTextCompletionSettings() {
         return state.settings.textgenerationwebui_settings || {};
@@ -133,9 +135,11 @@ export function createApiTextCompletionConnectionActions({
         }
 
         await saveSettingsSerialized(apiFetch, state.settings);
+        // 设置已落盘：先等生成引擎重载完，再更新界面状态和提示，保存后立刻发送也用新配置
+        const engineSync = await reloadSettings();
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('文本补全连接已保存', `${settings.source} / ${settings.model || settings.endpoint}`);
+        showToast('文本补全连接已保存', `${settings.source} / ${settings.model || settings.endpoint}${describeReloadFailure(engineSync)}`);
     }
 
     async function testTextCompletionConnection() {

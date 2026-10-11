@@ -23,6 +23,7 @@ export function createChatActionRegistry({
         render,
         showToast,
         getCharacterAvatarUrl,
+        reloadChat: bridgeReload.reloadChat,
     });
     const {
         isGroupChatMode,
@@ -52,6 +53,7 @@ export function createChatActionRegistry({
         updateGroupMetadata,
         deleteGroupMetadata,
         updateModernChat,
+        updateModernChatMetadata,
         runModernChatFileOperation,
         renameModernChatFile,
         deleteModernChatFile,
@@ -129,6 +131,7 @@ export function createChatActionRegistry({
         refreshSelectedChatList,
         createModernChatFile,
         runModernChatFileOperation,
+        waitForEngineSync: bridgeReload.waitForPendingReloads,
     });
 
     const groupActions = createGroupActions({
@@ -177,6 +180,7 @@ export function createChatActionRegistry({
         selectLatestUnreadChatTarget,
         saveGroupMetadata,
         updateGroupMetadata,
+        updateModernChatMetadata,
         sortChats,
         toggleChatSidebar,
     };

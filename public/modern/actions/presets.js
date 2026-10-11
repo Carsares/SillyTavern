@@ -317,6 +317,7 @@ export function createPresetActions({
             return;
         }
         promptOrderSaving = true;
+        let saved = false;
         try {
             const preset = parsePreset(getPresetContent('openai', presetName));
             const orderEntry = getOpenAiPromptOrderEntry(preset);
@@ -337,11 +338,15 @@ export function createPresetActions({
             state.presetEditor = { apiId: '', name: '', json: '', error: '' };
             await loadData({ silent: true });
             showToast('Prompt 顺序已更新', savedName);
-            // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
-            await reloadSettings();
-            render();
+            saved = true;
         } finally {
             promptOrderSaving = false;
+        }
+        if (saved) {
+            // 预设已落盘，通知 iframe 生成引擎重载生成相关配置，使下次生成生效。
+            // 放在防并发标志释放之后：引擎同步要等引擎确认（冷启动时数秒），期间不应吞掉用户的连续点击。
+            await reloadSettings();
+            render();
         }
     }
 

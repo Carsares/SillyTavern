@@ -12,6 +12,7 @@ export function createWorldbookFileActions({
     ensureWorldbookFileWriteAllowed,
     restoreWorldbookFile,
     getGlobalWorldNames,
+    syncEngineWorldInfo = (/** @type {string[]} */ _names, /** @type {{ refreshList?: boolean }} */ _options = {}) => {},
 }) {
     async function getSanitizedFileName(fileName) {
         const result = await apiFetch('/api/files/sanitize-filename', { body: { fileName } });
@@ -46,6 +47,7 @@ export function createWorldbookFileActions({
         ensureWorldbookFileWriteAllowed(name);
         await apiFetch('/api/worldinfo/edit', { body: { name, data: detail, overwrite: false } });
         restoreWorldbookFile(name);
+        syncEngineWorldInfo([name]);
         delete state.worldDetails[name];
         state.worldbookCreating = { active: false, name: '' };
         state.selected.worldbook = name;
@@ -78,6 +80,7 @@ export function createWorldbookFileActions({
         const result = await apiFetch('/api/worldinfo/import', { body: formData, omitContentType: true });
         const importedName = result?.name || worldName;
         restoreWorldbookFile(importedName);
+        syncEngineWorldInfo([importedName]);
         state.selected.worldbook = importedName;
         delete state.worldDetails[importedName];
         await loadData({ silent: true });

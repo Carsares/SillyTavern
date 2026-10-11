@@ -2,6 +2,7 @@ import { createChatContextLoaderActions } from './chat-context-loaders.js';
 import { createChatContextSelectorHelpers } from './chat-context-selectors.js';
 import { chatReadStateStorageKey } from '../core/state.js';
 import { KeyedPromiseQueue } from '../core/keyed-queue.js';
+import { noEngineSync } from '../core/bridge-reload.js';
 import { readChatSelectionFromUrl, syncChatSelectionToUrl } from '../core/chat-url-selection.js';
 
 // 每个角色/群聊上次实际使用（点开、发送、生成、编辑、新建、导入）的聊天：重新进入该对象时优先打开它，
@@ -26,6 +27,8 @@ export function createChatContextActions({
     render,
     showToast,
     getCharacterAvatarUrl,
+    // 同步通道：保存聊天头元数据后通知引擎重开该聊天；未注入时视为引擎同步成功（独立测试只关心保存）。
+    reloadChat = noEngineSync,
 }) {
     const {
         createAssistantMessage,
@@ -541,9 +544,10 @@ export function createChatContextActions({
         }
     }
 
-    async function saveModernChatNow(entity, chatId, messages, { contextKey, groupMode }) {
+    // metadata 默认取已知的聊天头；元数据写入原语（updateModernChatMetadata）传入修改后的版本。
+    async function saveModernChatNow(entity, chatId, messages, { contextKey, groupMode, metadata: changedMetadata = null }) {
         const cacheKey = getChatCacheKey(contextKey, chatId);
-        const metadata = getSelectedChatMetadata(entity, chatId, groupMode);
+        const metadata = changedMetadata ?? getSelectedChatMetadata(entity, chatId, groupMode);
         const chat = [
             { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
             ...messages,
@@ -562,8 +566,11 @@ export function createChatContextActions({
         if (result?.error) {
             throw new Error(result.error === 'integrity' ? '聊天文件已被其他会话修改，请刷新后重试。' : String(result.error));
         }
+        // 服务端每次保存都会签发新的 integrity：必须记下，否则下一次保存（含引擎的生成保存）会因旧 integrity 冲突失败
         if (typeof result?.integrity === 'string' && result.integrity) {
             state.chatMetadata[cacheKey] = { ...metadata, integrity: result.integrity };
+        } else if (changedMetadata) {
+            state.chatMetadata[cacheKey] = changedMetadata;
         }
 
         state.chatMessages[cacheKey] = messages;
@@ -589,6 +596,62 @@ export function createChatContextActions({
             await saveModernChatNow(entity, normalizedChatId, messages, { contextKey, groupMode });
             return result;
         }, { groupMode });
+    }
+
+    // 同步通道：与消息编辑 / 删除用同一口径（当前选中实体）通知引擎重开该聊天
+    function buildReloadChatPayload(entity, groupMode, chatId) {
+        return groupMode ? { groupId: entity.id, chat: chatId } : { avatar: entity.avatar, chat: chatId };
+    }
+
+    /**
+     * 聊天头元数据（chat_metadata）的读改写原语：作者注释、背景锁定等聊天级设置都经此写入。
+     * 在聊天文件操作队列里克隆已知元数据，交给 mutate 就地修改，连同现有消息一起保存；保存成功后记下服务端新签发的
+     * integrity，再等待引擎重开该聊天（reloadChat），使下一次生成读到新元数据且不会因旧 integrity 冲突。
+     * 生成中拒绝（引擎正在使用这份聊天文件）。integrity 由服务端签发，mutate 对它的改动会被忽略。
+     * @param {object} entity 角色或群聊
+     * @param {string} chatId 聊天文件 ID
+     * @param {(metadata: object) => any} mutate 就地修改元数据副本，返回值原样放进 result
+     * @param {{ groupMode?: boolean }} [options] 群聊模式，默认取当前聊天模式
+     * @returns {Promise<{ result: any, metadata: object, reload: { ok: boolean, error?: string } }>} result 为 mutate 的返回值，
+     * metadata 为已保存的元数据（含新 integrity），reload 为引擎同步结果（ok:false 表示文件已保存但引擎尚未同步）
+     */
+    async function updateModernChatMetadata(entity, chatId, mutate, { groupMode = isGroupChatMode() } = {}) {
+        if (typeof mutate !== 'function') {
+            throw new Error('聊天元数据更新方法无效。');
+        }
+        if (state.engine.generating) {
+            throw new Error('生成中不能修改聊天设置。');
+        }
+
+        let engineSync = null;
+        const outcome = await runModernChatFileOperation(entity, chatId, async ({ contextKey, chatId: normalizedChatId }) => {
+            const cacheKey = getChatCacheKey(contextKey, normalizedChatId);
+            if (!state.chatMessages[cacheKey] || !state.chatMetadata[cacheKey]) {
+                // 没有读过这份聊天就不能保存：用空消息覆盖会清空聊天文件
+                await loadChatMessages(entity, normalizedChatId, { force: true, groupMode, isContextCurrent: () => false });
+                if (!state.chatMessages[cacheKey] || !state.chatMetadata[cacheKey]) {
+                    throw new Error('聊天记录读取失败，无法保存聊天设置。');
+                }
+            }
+
+            const knownMetadata = state.chatMetadata[cacheKey];
+            const nextMetadata = structuredClone(knownMetadata);
+            const result = await mutate(nextMetadata);
+            if (typeof knownMetadata.integrity === 'string' && knownMetadata.integrity) {
+                nextMetadata.integrity = knownMetadata.integrity;
+            } else {
+                delete nextMetadata.integrity;
+            }
+
+            const messages = structuredClone(state.chatMessages[cacheKey]);
+            await saveModernChatNow(entity, normalizedChatId, messages, { contextKey, groupMode, metadata: nextMetadata });
+            // 仍持有文件队列时就登记这次同步：排在后面的生成会在 waitForEngineSync 里看到它，引擎侧也按到达顺序先重载后生成
+            engineSync = reloadChat(buildReloadChatPayload(entity, groupMode, normalizedChatId));
+            return { result, metadata: structuredClone(state.chatMetadata[cacheKey]) };
+        }, { groupMode });
+
+        const reload = await engineSync;
+        return { ...outcome, reload: reload || { ok: true } };
     }
 
     function renameModernChatFile(contextKey, chatId, operation) {
@@ -741,6 +804,7 @@ export function createChatContextActions({
         deleteGroupMetadata,
         saveModernChat,
         updateModernChat,
+        updateModernChatMetadata,
         runModernChatFileOperation,
         renameModernChatFile,
         deleteModernChatFile,

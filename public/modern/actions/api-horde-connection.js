@@ -1,3 +1,4 @@
+import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 // AI Horde connection: an optional key (secret HORDE) + a multi-select of live models (settings.horde_settings.models)
@@ -9,6 +10,7 @@ export function createApiHordeConnectionActions({
     render,
     showToast,
     recordApiTestResult,
+    reloadSettings = noEngineSync,
 }) {
     function getHordeSettings() {
         return state.settings.horde_settings || {};
@@ -65,9 +67,10 @@ export function createApiHordeConnectionActions({
         }
 
         await saveSettingsSerialized(apiFetch, state.settings);
+        const engineSync = await reloadSettings();
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('AI Horde 连接已保存', models.length ? `${models.length} 个模型` : '未选择模型，无法生成，请至少选择一个');
+        showToast('AI Horde 连接已保存', `${models.length ? `${models.length} 个模型` : '未选择模型，无法生成，请至少选择一个'}${describeReloadFailure(engineSync)}`);
     }
 
     async function testHordeConnection() {

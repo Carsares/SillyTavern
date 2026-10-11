@@ -256,6 +256,9 @@ export function createModernState() {
             detail: '生成引擎会在首次发送时自动加载。',
             // 流式输出气泡状态：active 为真时在消息列表末尾追加流式气泡，text 保存到当前的累积文本用于重渲染兜底
             streaming: { active: false, text: '', chatId: '' },
+            // 在途的引擎同步（reloadChat/Character/Settings/WorldInfo）个数，由 core/bridge-reload.js 维护；
+            // 生成 / 候选切换发出前通过 bridgeReload.waitForPendingReloads() 等它归零。
+            settingsSyncPending: 0,
         },
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),

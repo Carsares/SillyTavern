@@ -19,6 +19,7 @@ export function createWorldbookActions({
     numberInput,
     setObjectPath,
     worldEntryDefaults,
+    reloadWorldInfo,
 }) {
     const {
         createWorldEntry,
@@ -53,9 +54,11 @@ export function createWorldbookActions({
         apiFetch,
         loadData,
         showToast,
+        reloadWorldInfo,
     });
     const {
         loadWorldDetail,
+        syncEngineWorldInfo,
         updateWorldbookDetail,
         deleteWorldbookFile,
         ensureWorldbookFileWriteAllowed,
@@ -77,6 +80,7 @@ export function createWorldbookActions({
         ensureWorldbookFileWriteAllowed,
         restoreWorldbookFile,
         getGlobalWorldNames,
+        syncEngineWorldInfo,
     });
     const entryBulkActions = createWorldbookEntryBulkActions({
         state,

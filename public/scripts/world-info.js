@@ -2115,6 +2115,29 @@ export async function updateWorldInfoList() {
     }
 }
 
+/**
+ * Drops cached world info so the next generation reads the files from the backend again.
+ * The modern UI edits world info files through the backend directly, so without this the engine would keep serving
+ * the first copy it loaded until the page is reloaded.
+ * @param {string[]|null} [names] World names to drop; every cached world when empty or omitted
+ * @param {object} [options] Options
+ * @param {boolean} [options.refreshList=true] Also reload the list of world names (needed after a world was created, deleted or imported)
+ * @returns {Promise<void>}
+ */
+export async function invalidateWorldInfoCache(names = null, { refreshList = true } = {}) {
+    if (Array.isArray(names) && names.length > 0) {
+        for (const name of names) {
+            worldInfoCache.delete(name);
+        }
+    } else {
+        worldInfoCache.clear();
+    }
+
+    if (refreshList) {
+        await updateWorldInfoList();
+    }
+}
+
 async function hideWorldEditor() {
     await displayWorldEntries(null, null);
 }

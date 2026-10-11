@@ -78,7 +78,7 @@ function delay(ms) {
 
 // Points the engine at a stubbed, non-streaming chat-completion backend so `generate` runs end to end
 // without a model: the managed server's settings are patched in flight, and every backend call is answered here.
-async function routeStubbedChatCompletion(page, reply) {
+async function routeStubbedChatCompletion(page, reply, { patchSettings = null } = {}) {
     const generateRequests = [];
     await page.route('**/api/settings/get', async route => {
         const response = await route.fetch();
@@ -86,6 +86,7 @@ async function routeStubbedChatCompletion(page, reply) {
         const settings = JSON.parse(body.settings || '{}');
         settings.main_api = 'openai';
         settings.oai_settings = { ...(settings.oai_settings || {}), chat_completion_source: 'openai', stream_openai: false };
+        patchSettings?.(settings);
         return route.fulfill({ response, json: { ...body, settings: JSON.stringify(settings) } });
     });
     await page.route('**/api/backends/**', route => {
@@ -157,6 +158,8 @@ function startBridgeCall(page, action, payload, id) {
             window.addEventListener('message', function onMessage(event) {
                 if (event.data && event.data.source === source && event.data.id === requestId && !('action' in event.data)) {
                     window.removeEventListener('message', onMessage);
+                    window.bridgeReplyTimes = window.bridgeReplyTimes || {};
+                    window.bridgeReplyTimes[requestId] = performance.now();
                     resolve({ error: event.data.error, result: event.data.result });
                 }
             });
@@ -167,6 +170,15 @@ function startBridgeCall(page, action, payload, id) {
 
 function awaitBridgeReply(page, id) {
     return page.evaluate(requestId => window.bridgeReplies[requestId], id);
+}
+
+// Whether the reply of a call started with startBridgeCall has arrived yet, without waiting for it.
+function hasBridgeReply(page, id) {
+    return page.evaluate(requestId => Object.hasOwn(window.bridgeReplyTimes || {}, requestId), id);
+}
+
+function getBridgeReplyTime(page, id) {
+    return page.evaluate(requestId => window.bridgeReplyTimes[requestId], id);
 }
 
 function callBridge(page, action, payload, id) {
@@ -755,5 +767,435 @@ test.describe('Modern legacy bridge headless entry', () => {
         expect(errors).toEqual([]);
         expect(warnings).toEqual([]);
         expect(missingAssets).toEqual([]);
+    });
+});
+
+
+// Rewrites the settings bundle the managed server answers with, once per request, so a test can change what the
+// engine reads between two reloads. `patch(settings, body)` mutates the parsed settings and the bundle around them.
+async function routePatchedSettings(page, patch) {
+    const fetches = { count: 0 };
+    await page.route('**/api/settings/get', async route => {
+        fetches.count++;
+        const response = await route.fetch();
+        const body = await response.json();
+        const settings = JSON.parse(body.settings || '{}');
+        patch(settings, body);
+        body.settings = JSON.stringify(settings);
+        return route.fulfill({ response, json: body });
+    });
+    return fetches;
+}
+
+// One character whose single chat file behaves like the server for integrity: every save is checked against the
+// revision the file holds and issues a new one, and a save that carries an older revision is rejected.
+async function routeIntegrityFixture(page) {
+    const character = createBridgeCharacter();
+    const chatId = 'Modern 2026-10-11T09-00-00-000Z';
+    const greeting = { name: character.name, is_user: false, is_system: false, send_date: '2026-10-11T09:00:00.000Z', mes: character.first_mes, extra: {} };
+    const reply = { name: character.name, is_user: false, is_system: false, send_date: '2026-10-11T09:00:01.000Z', mes: 'only candidate', swipe_id: 0, swipes: ['only candidate'], swipe_info: [{}], extra: {} };
+    const file = { integrity: 'int-1' };
+    const chatLoads = [];
+    const chatSaves = [];
+    let savedCardChat = '';
+
+    await page.route('**/api/characters/all', route => fulfillJson(route, [character]));
+    await page.route('**/api/characters/get', route => fulfillJson(route, savedCardChat ? { ...character, chat: savedCardChat } : character));
+    await page.route('**/api/characters/edit', route => {
+        savedCardChat = multipartFieldValue(route.request().postData() || '', 'chat');
+        return route.fulfill({ status: 200, contentType: 'text/plain', body: 'OK' });
+    });
+    await page.route('**/api/groups/all', route => fulfillJson(route, []));
+    await page.route('**/api/chats/get', route => {
+        const fileName = stripJsonlExtension(postJson(route)?.file_name);
+        if (fileName !== chatId) {
+            return fulfillJson(route, []);
+        }
+        chatLoads.push(file.integrity);
+        return fulfillJson(route, [{ chat_metadata: { integrity: file.integrity }, user_name: 'unused', character_name: 'unused' }, greeting, reply]);
+    });
+    await page.route('**/api/chats/save', route => {
+        const payload = postJson(route);
+        if (!payload || stripJsonlExtension(payload.file_name) !== chatId) {
+            return fulfillJson(route, { ok: true });
+        }
+        const sentIntegrity = payload.chat[0]?.chat_metadata?.integrity;
+        if (sentIntegrity !== file.integrity) {
+            chatSaves.push({ sentIntegrity, rejected: true });
+            return fulfillJson(route, { error: 'integrity' }, 400);
+        }
+        file.integrity = `int-saved-${chatSaves.length + 1}`;
+        chatSaves.push({ sentIntegrity, rejected: false, issued: file.integrity });
+        return fulfillJson(route, { ok: true, integrity: file.integrity });
+    });
+    return { character, chatId, file, chatLoads, chatSaves };
+}
+
+test.describe('Modern bridge engine sync', () => {
+    // The engine caches every world it loads, so a world book the modern UI edited stayed stale until a page reload.
+    test('reloadWorldInfo drops only the named worlds from the engine cache', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const worldLoads = {};
+        let worldNames = ['book-a', 'book-b'];
+        const settingsFetches = await routePatchedSettings(page, (settings, body) => {
+            body.world_names = worldNames;
+        });
+        await page.route('**/api/worldinfo/get', route => {
+            const name = postJson(route)?.name;
+            worldLoads[name] = (worldLoads[name] || 0) + 1;
+            return fulfillJson(route, { entries: {}, extensions: {}, marker: worldLoads[name] });
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        // A reload only answers once the engine has finished booting, so it doubles as a ready barrier
+        expect((await callBridge(page, 'reloadCharacter', {}, 'world-boot')).error).toBeFalsy();
+
+        const loadWorld = name => page.evaluate(world => window.SillyTavern.getContext().loadWorldInfo(world), name);
+        expect((await loadWorld('book-a')).marker).toBe(1);
+        expect((await loadWorld('book-a')).marker).toBe(1);
+        expect((await loadWorld('book-b')).marker).toBe(1);
+        const fetchesBefore = settingsFetches.count;
+
+        // Named worlds only, without refreshing the name list: a content edit changes no file name
+        const named = await callBridge(page, 'reloadWorldInfo', { names: ['book-a', 'book-a'], refreshList: false }, 'world-named');
+        expect(named.error).toBeFalsy();
+        expect(named.result).toEqual({ ok: true, all: false, names: ['book-a'], refreshedList: false });
+        expect(settingsFetches.count).toBe(fetchesBefore);
+        expect((await loadWorld('book-a')).marker).toBe(2);
+        expect((await loadWorld('book-b')).marker).toBe(1);
+
+        // No names: every cached world goes, and the list of world names is read again
+        worldNames = ['book-a', 'book-b', 'book-c'];
+        const everything = await callBridge(page, 'reloadWorldInfo', {}, 'world-all');
+        expect(everything.error).toBeFalsy();
+        expect(everything.result).toEqual({ ok: true, all: true, names: [], refreshedList: true });
+        expect(settingsFetches.count).toBe(fetchesBefore + 1);
+        expect(await page.evaluate(() => window.SillyTavern.getContext().getWorldInfoNames())).toEqual(worldNames);
+        expect((await loadWorld('book-a')).marker).toBe(3);
+        expect((await loadWorld('book-b')).marker).toBe(2);
+    });
+
+    test('answers a malformed reloadWorldInfo payload with a bridge error and keeps serving', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'world-error-boot')).error).toBeFalsy();
+
+        const malformedPayloads = [{ names: 'book-a' }, { names: ['book-a', 3] }, { names: [''] }, { names: { 0: 'book-a' } }];
+        for (const [index, payload] of malformedPayloads.entries()) {
+            const rejected = await callBridge(page, 'reloadWorldInfo', payload, `world-error-${index}`);
+            expect(rejected.result).toBeNull();
+            expect(rejected.error?.message).toContain('names');
+        }
+
+        const accepted = await callBridge(page, 'reloadWorldInfo', { names: ['book-a'], refreshList: false }, 'world-error-valid');
+        expect(accepted.error).toBeFalsy();
+        expect(accepted.result).toMatchObject({ ok: true, names: ['book-a'] });
+    });
+
+    // reloadSettings used to leave extension_settings alone, so memory, translate, connection profiles and the author's
+    // note defaults the modern UI saved only reached the engine after a page reload.
+    test('reloadSettings copies the whitelisted extension settings and leaves the rest alone', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const saved = {
+            memory: { depth: 7, position: 1, role: 2, template: '<<{{summary}}>>' },
+            translate: { provider: 'bing', target_language: 'ja' },
+            connectionManager: { selectedProfile: 'profile-1', profiles: [{ id: 'profile-1', name: 'Fast' }] },
+            note: { default: 'global note', defaultDepth: 9 },
+            caption: { refine_mode: true },
+        };
+        await routePatchedSettings(page, settings => {
+            settings.extension_settings = { ...(settings.extension_settings || {}), ...structuredClone(saved) };
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'extension-boot')).error).toBeFalsy();
+
+        // The boot already applied everything the server returned; put the engine back to its own values first, so the
+        // reload below has real work to do, and remember the objects other code may hold references to
+        await page.evaluate(() => {
+            const context = window.SillyTavern.getContext();
+            const settings = context.extensionSettings;
+            window.extensionReferences = { memory: settings.memory, note: settings.note };
+            Object.assign(settings.memory, { depth: 2, position: 0, role: 0, template: '[Summary: {{summary}}]' });
+            settings.translate.provider = 'google';
+            settings.connectionManager.profiles = [];
+            settings.connectionManager.selectedProfile = '';
+            settings.note.defaultDepth = 4;
+            settings.caption.refine_mode = false;
+            window.$('#memory_contents').val('story so far');
+        });
+
+        const reload = await callBridge(page, 'reloadSettings', {}, 'extension-reload');
+        expect(reload.error).toBeFalsy();
+        expect(reload.result).toMatchObject({ ok: true });
+
+        const engine = await page.evaluate(() => {
+            const context = window.SillyTavern.getContext();
+            const settings = context.extensionSettings;
+            return {
+                memory: { depth: settings.memory.depth, position: settings.memory.position, role: settings.memory.role, template: settings.memory.template },
+                translateProvider: settings.translate.provider,
+                translateLanguage: settings.translate.target_language,
+                connectionManager: settings.connectionManager,
+                noteDefault: settings.note.default,
+                noteDepth: settings.note.defaultDepth,
+                captionRefine: settings.caption.refine_mode,
+                sameMemoryObject: settings.memory === window.extensionReferences.memory,
+                sameNoteObject: settings.note === window.extensionReferences.note,
+                memoryPrompt: context.extensionPrompts['1_memory'],
+            };
+        });
+        expect(engine.memory).toEqual(saved.memory);
+        expect(engine.translateProvider).toBe('bing');
+        expect(engine.translateLanguage).toBe('ja');
+        expect(engine.connectionManager).toEqual(saved.connectionManager);
+        expect(engine.noteDefault).toBe('global note');
+        expect(engine.noteDepth).toBe(9);
+        // Not on the whitelist: the engine keeps its own value
+        expect(engine.captionRefine).toBe(false);
+        // Merged into the existing objects instead of replacing them
+        expect(engine.sameMemoryObject).toBe(true);
+        expect(engine.sameNoteObject).toBe(true);
+        // The memory prompt was inserted again with the new position, depth, role and template
+        expect(engine.memoryPrompt).toMatchObject({ value: '<<story so far>>', position: 1, depth: 7, role: 2 });
+    });
+
+    test('repeated reloadSettings calls do not pile up engine listeners', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        await routePatchedSettings(page, settings => {
+            settings.extension_settings = { ...(settings.extension_settings || {}), memory: { depth: 5 }, note: { default: 'note' } };
+        });
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'listener-boot')).error).toBeFalsy();
+
+        const countListeners = () => page.evaluate(() => {
+            const { events } = window.SillyTavern.getContext().eventSource;
+            return Object.values(events).reduce((total, listeners) => total + listeners.length, 0);
+        });
+
+        // The first reload may register what a cold engine still lacks; later ones must not add anything
+        expect((await callBridge(page, 'reloadSettings', {}, 'listener-reload-0')).error).toBeFalsy();
+        const afterFirst = await countListeners();
+        for (const index of [1, 2, 3]) {
+            const reload = await callBridge(page, 'reloadSettings', {}, `listener-reload-${index}`);
+            expect(reload.error).toBeFalsy();
+        }
+        expect(await countListeners()).toBe(afterFirst);
+    });
+
+    // A chat file the modern UI saved carries a new integrity revision; an engine still holding the older copy would have
+    // its next save rejected. The payload's integrity lets the engine notice and open the chat again first.
+    test('opens the chat again when the payload integrity differs from the engine copy', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const { character, chatId, file, chatLoads, chatSaves } = await routeIntegrityFixture(page);
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        const opened = await callBridge(page, 'status', { avatar: character.avatar, groupId: null, chat: chatId }, 'integrity-open');
+        expect(opened.error).toBeFalsy();
+        expect(chatLoads).toEqual(['int-1']);
+
+        // The engine already holds the revision the modern UI reports: the chat stays open and the save is accepted
+        const matching = await callBridge(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, integrity: 'int-1', messageIndex: 1, direction: 'left' }, 'integrity-match');
+        expect(matching.error).toBeFalsy();
+        expect(matching.result).toMatchObject({ saved: true });
+        expect(chatLoads).toEqual(['int-1']);
+        expect(chatSaves).toEqual([{ sentIntegrity: 'int-1', rejected: false, issued: 'int-saved-1' }]);
+
+        // The modern UI saved the chat in the meantime: the file moved to a revision the engine has not seen
+        file.integrity = 'int-modern';
+
+        // Without a known integrity the engine behaves as before and its stale save is rejected
+        const legacy = await callBridge(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, messageIndex: 1, direction: 'left' }, 'integrity-missing');
+        expect(legacy.error).toBeFalsy();
+        expect(legacy.result).toMatchObject({ saved: false });
+        expect(chatLoads).toEqual(['int-1']);
+
+        // With it, the engine notices it is behind, opens the chat from the file and saves against the new revision
+        const mismatching = await callBridge(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, integrity: 'int-modern', messageIndex: 1, direction: 'left' }, 'integrity-mismatch');
+        expect(mismatching.error).toBeFalsy();
+        expect(mismatching.result).toMatchObject({ saved: true });
+        expect(chatLoads).toEqual(['int-1', 'int-modern']);
+        expect(chatSaves.at(-1)).toMatchObject({ sentIntegrity: 'int-modern', rejected: false });
+
+        // The reopened copy follows the file: the next payload with the issued revision does not open it a third time
+        const followUp = await callBridge(page, 'swipe', { avatar: character.avatar, groupId: null, chat: chatId, integrity: file.integrity, messageIndex: 1, direction: 'left' }, 'integrity-follow-up');
+        expect(followUp.result).toMatchObject({ saved: true });
+        expect(chatLoads).toEqual(['int-1', 'int-modern']);
+        expect(errors).toEqual([]);
+    });
+
+    test('opens a group chat again when the payload integrity differs from the engine copy', async ({ page }) => {
+        test.setTimeout(90_000);
+
+        const member = createBridgeCharacter({ name: 'Integrity Member', avatar: 'integrity-member.png' });
+        const groupId = 'integrity-group';
+        const chatId = 'Modern 2026-10-11T09-30-00-000Z';
+        const group = {
+            id: groupId,
+            name: 'Integrity Group',
+            avatar_url: '',
+            members: [member.avatar],
+            disabled_members: [],
+            chats: [chatId],
+            chat_id: chatId,
+            allow_self_responses: false,
+            activation_strategy: 0,
+            generation_mode: 0,
+            fav: false,
+        };
+        const messages = [
+            { name: member.name, is_user: false, is_system: false, send_date: '2026-10-11T09:30:00.000Z', mes: 'group greeting', extra: {} },
+            { name: member.name, is_user: false, is_system: false, send_date: '2026-10-11T09:30:01.000Z', mes: 'only candidate', swipe_id: 0, swipes: ['only candidate'], swipe_info: [{}], extra: {} },
+        ];
+        const file = { integrity: 'int-1' };
+        const chatLoads = [];
+        const chatSaves = [];
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+
+        await page.route('**/api/characters/all', route => fulfillJson(route, [member]));
+        await page.route('**/api/characters/get', route => fulfillJson(route, member));
+        await page.route('**/api/groups/all', route => fulfillJson(route, [group]));
+        await page.route('**/api/groups/edit', route => {
+            Object.assign(group, postJson(route) || {});
+            return fulfillJson(route, { ok: true });
+        });
+        await page.route('**/api/chats/group/get', route => {
+            chatLoads.push(file.integrity);
+            return fulfillJson(route, [{ chat_metadata: { integrity: file.integrity }, user_name: 'unused', character_name: 'unused' }, ...messages]);
+        });
+        await page.route('**/api/chats/group/save', route => {
+            const sentIntegrity = postJson(route)?.chat?.[0]?.chat_metadata?.integrity;
+            if (sentIntegrity !== file.integrity) {
+                chatSaves.push({ sentIntegrity, rejected: true });
+                return fulfillJson(route, { error: 'integrity' }, 400);
+            }
+            file.integrity = `int-saved-${chatSaves.length + 1}`;
+            chatSaves.push({ sentIntegrity, rejected: false });
+            return fulfillJson(route, { ok: true, integrity: file.integrity });
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        const opened = await callBridge(page, 'status', { avatar: null, groupId, chat: chatId }, 'group-integrity-open');
+        expect(opened.error).toBeFalsy();
+        expect(chatLoads).toEqual(['int-1']);
+
+        const matching = await callBridge(page, 'swipe', { avatar: null, groupId, chat: chatId, integrity: 'int-1', messageIndex: 1, direction: 'left' }, 'group-integrity-match');
+        expect(matching.error).toBeFalsy();
+        expect(matching.result).toMatchObject({ groupId, saved: true });
+        expect(chatLoads).toEqual(['int-1']);
+
+        // The modern UI saved the group chat: the engine copy is one revision behind
+        file.integrity = 'int-modern';
+        const mismatching = await callBridge(page, 'swipe', { avatar: null, groupId, chat: chatId, integrity: 'int-modern', messageIndex: 1, direction: 'left' }, 'group-integrity-mismatch');
+        expect(mismatching.error).toBeFalsy();
+        expect(mismatching.result).toMatchObject({ groupId, saved: true });
+        expect(chatLoads).toEqual(['int-1', 'int-modern']);
+        expect(chatSaves.at(-1)).toMatchObject({ sentIntegrity: 'int-modern', rejected: false });
+        expect(chatSaves.filter(save => save.rejected)).toEqual([]);
+        expect(errors).toEqual([]);
+    });
+
+    // A reload posted before a generate must finish before it starts, so a preset or API save followed by an immediate
+    // send generates with the new settings.
+    test('a reloadSettings posted right before a generate finishes first and the generation uses its settings', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        let temperature = 0.2;
+        const { character, chatId, errors } = await routeStopFixture(page);
+        const modelRequests = await routeStubbedChatCompletion(page, 'serialized reply', {
+            patchSettings: settings => {
+                settings.oai_settings.temp_openai = temperature;
+            },
+        });
+
+        // A slow settings read: a generate that did not wait for the reload would start with the old temperature
+        let settingsDelayMs = 0;
+        await page.route('**/api/settings/get', async route => {
+            await delay(settingsDelayMs);
+            return route.fallback();
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'order-boot')).error).toBeFalsy();
+
+        temperature = 0.9;
+        settingsDelayMs = 1200;
+        await startBridgeCall(page, 'reloadSettings', {}, 'order-reload');
+        await startBridgeCall(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'send right after the save' }, 'order-generate');
+        const reload = await awaitBridgeReply(page, 'order-reload');
+        const generate = await awaitBridgeReply(page, 'order-generate');
+
+        expect(reload.error).toBeFalsy();
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ saved: true });
+        expect(await getBridgeReplyTime(page, 'order-reload')).toBeLessThan(await getBridgeReplyTime(page, 'order-generate'));
+        expect(modelRequests).toHaveLength(1);
+        expect(modelRequests[0].temperature).toBe(0.9);
+        expect(errors).toEqual([]);
+    });
+
+    // A reload must never interleave with a running generation, while stop has to reach it at once even though a
+    // generate is still holding the engine.
+    test('queues reloads behind a running generation and lets stop through', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        const { character, chatId, errors } = await routeStopFixture(page);
+        await routeOpenStreamingChatCompletion(page, [{ content: 'Partial answer' }]);
+        let settingsFetches = 0;
+        page.on('request', request => {
+            if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/settings/get') {
+                settingsFetches++;
+            }
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        await countStreamTokens(page);
+        await startBridgeCall(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'hold the engine' }, 'queue-generate');
+        await page.waitForFunction(() => window.bridgeStreamOpened === true && window.bridgeStreamTokens >= 1);
+
+        const fetchesDuringGeneration = settingsFetches;
+        await startBridgeCall(page, 'reloadSettings', {}, 'queue-settings-1');
+        await startBridgeCall(page, 'reloadSettings', {}, 'queue-settings-2');
+        await startBridgeCall(page, 'reloadCharacter', {}, 'queue-character');
+        // Intentional wait: the point is that nothing answers or runs while the reply is still streaming
+        // eslint-disable-next-line playwright/no-wait-for-timeout
+        await page.waitForTimeout(1500);
+        expect(await hasBridgeReply(page, 'queue-settings-1')).toBe(false);
+        expect(await hasBridgeReply(page, 'queue-settings-2')).toBe(false);
+        expect(await hasBridgeReply(page, 'queue-character')).toBe(false);
+        expect(settingsFetches).toBe(fetchesDuringGeneration);
+
+        // The stream never ends on its own: if stop waited behind the generate, this call would time out
+        const stop = await callBridge(page, 'stop', {}, 'queue-stop');
+        expect(stop.error).toBeFalsy();
+        expect(stop.result).toMatchObject({ stopped: true });
+
+        const generate = await awaitBridgeReply(page, 'queue-generate');
+        const settingsOne = await awaitBridgeReply(page, 'queue-settings-1');
+        const settingsTwo = await awaitBridgeReply(page, 'queue-settings-2');
+        const character_ = await awaitBridgeReply(page, 'queue-character');
+        expect(generate.error).toBeFalsy();
+        expect(generate.result).toMatchObject({ stopped: true, saved: true });
+        for (const reply of [settingsOne, settingsTwo, character_]) {
+            expect(reply.error).toBeFalsy();
+            expect(reply.result).toMatchObject({ ok: true });
+        }
+
+        // They ran after the generation, in arrival order, and the two identical reloadSettings shared one run
+        const generateTime = await getBridgeReplyTime(page, 'queue-generate');
+        const settingsTime = await getBridgeReplyTime(page, 'queue-settings-1');
+        expect(generateTime).toBeLessThan(settingsTime);
+        expect(Math.abs(await getBridgeReplyTime(page, 'queue-settings-2') - settingsTime)).toBeLessThan(100);
+        expect(await getBridgeReplyTime(page, 'queue-character')).toBeGreaterThanOrEqual(settingsTime);
+        expect(settingsFetches - fetchesDuringGeneration).toBe(1);
+        expect(errors).toEqual([]);
     });
 });

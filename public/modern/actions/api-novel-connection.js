@@ -1,3 +1,4 @@
+import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 // NovelAI subscription tiers returned by /user/subscription, surfaced as the connection status
@@ -12,6 +13,7 @@ export function createApiNovelConnectionActions({
     render,
     showToast,
     recordApiTestResult,
+    reloadSettings = noEngineSync,
 }) {
     function getNovelModelFromForm() {
         return elements.content.querySelector('[data-novel-model]')?.value || state.settings.model_novel || 'clio-v1';
@@ -30,9 +32,10 @@ export function createApiNovelConnectionActions({
         }
 
         await saveSettingsSerialized(apiFetch, state.settings);
+        const engineSync = await reloadSettings();
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('NovelAI 连接已保存', model);
+        showToast('NovelAI 连接已保存', `${model}${describeReloadFailure(engineSync)}`);
     }
 
     async function testNovelConnection() {

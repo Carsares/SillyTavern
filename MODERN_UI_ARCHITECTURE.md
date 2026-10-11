@@ -57,6 +57,32 @@ Keep behavior near its owning domain. Add a shared abstraction only when multipl
 - Secrets remain in existing secret storage and are exposed to the browser only as state needed by the UI.
 - Data migrations belong in backend startup or data-management code, not frontend fallbacks.
 
+## Hidden engine bridge
+
+Generation, candidate switching, and the prompt breakdown still run in the legacy page loaded in a hidden iframe (`/index.html?modernBridge=1`). The Modern UI owns every write to settings, characters, chat files, and world books; the engine only reads them. The protocol has one source of truth, `public/modern/core/bridge-protocol.js`, imported by both sides (`core/legacy-bridge.js` on the Modern side, the `handleModernBridge*` area of `public/script.js` on the engine side). Change both sides together and extend `tests/modern-bridge-headless.e2e.js`.
+
+| Action | Payload | Reply |
+| --- | --- | --- |
+| `generate` | `avatar` or `groupId`, `chat`, `integrity`, `type`, `message`, `forceAvatar` | `saved`, `chat`, `messageCount`, and `stopped`, `started`, `keptReplyChars`, `removedEmptyReply` after a stop |
+| `swipe` | `avatar` or `groupId`, `chat`, `integrity`, `messageIndex`, `direction` | `saved`, `swipeId`, `swipeCount`, plus the stop fields |
+| `stop` | none | `stopped` |
+| `status` | optional chat context | `avatar`, `groupId`, `chat`, `messageCount` |
+| `reloadChat` | `avatar` or `groupId`, `chat` | `{ ok: true }` after the chat file was opened again |
+| `reloadCharacter` | none | `{ ok: true }` after the character list was fetched again |
+| `reloadSettings` | none | `{ ok: true }` after the generation settings were applied again (see below) |
+| `reloadWorldInfo` | `names?: string[]`, `refreshList?: boolean` | `{ ok, all, names, refreshedList }` |
+| `getItemizedPrompt`, `extensionInstalled`, `extensionBranchSwitched` | see `script.js` | read-only snapshot, `{ ok: true }` |
+
+Rules for the sync channel:
+
+- **Reloads are awaitable.** `createBridgeReload` (`core/bridge-reload.js`) returns `reloadChat`, `reloadCharacter`, `reloadSettings`, and `reloadWorldInfo(names, { refreshList })`. Each returns a promise that settles when the engine acknowledged and never rejects: a failure, timeout (`BRIDGE_TIMEOUTS.RELOAD`), or engine error resolves to `{ ok: false, error }`. A reload is an addition to a save that already succeeded, so callers report a failed sync next to the success (`describeReloadFailure`) instead of failing the save.
+- **Generation waits for them.** In-flight reloads are counted in `state.engine.settingsSyncPending`. `generate` and `swipe` call `waitForPendingReloads` (bounded by `BRIDGE_TIMEOUTS.RELOAD_WAIT`) before they are posted. The API editors await `reloadSettings` before they refresh the page state and show the toast; world book edits only start `reloadWorldInfo` and do not block, because the editor stays usable while a cold engine boots.
+- **The engine serializes its state changes.** `generate`, `swipe`, every `reload*`, and a `status` call that switches chat run one at a time in arrival order, so a reload never interleaves with a running generation and a reload posted before a generate finishes first. Queued `reloadSettings`, `reloadCharacter`, `reloadWorldInfo`, and identical `reloadChat` requests share one run. `stop` and the read-only actions skip the queue: a stop must reach a running generation immediately, and a stop that arrives while a generate is still queued marks it stopped.
+- **Chat file revisions.** The server issues a new `chat_metadata.integrity` on every chat save and rejects a save that carries an older one. The Modern UI keeps the revision it last saw in `state.chatMetadata` and updates it after each save; `generate` and `swipe` send it as `integrity`. When the chat of that name is already open in the engine and holds another revision, the engine opens it again before it generates (a rejected earlier save does not block that). A payload without `integrity` keeps the old behavior.
+- **Chat metadata writes.** Chat-level settings (author's note, pinned background, ...) are written with `updateModernChatMetadata(entity, chatId, mutate)` in `actions/chat-context.js`: it runs in the per-chat file queue, saves the chat with the changed header and the current messages, stores the issued revision, then awaits `reloadChat`. It refuses while a generation is running.
+- **What `reloadSettings` applies.** The generation-related settings subset (sampler, API, preset, power user settings) and the extension settings of `memory` (re-inserting the summary prompt), `translate`, `connectionManager`, and `note`, merged key by key into the existing objects. It never calls the engine's full settings or extension loader, which would register listeners again; global world info activation and the world info budget are not applied.
+- **World book cache.** The engine caches every world book it loads. `reloadWorldInfo` drops the named entries (all when `names` is empty) and, unless `refreshList` is `false`, reads the world book name list again. The Modern world book actions call it after creating, editing, deleting, and importing.
+
 ## Remote resources
 
 `src/remote-resources/provider-registry.js` owns the registered provider list. Individual files under `src/remote-resources/providers/` own provider-specific search, validation, and download behavior.
@@ -76,6 +102,8 @@ Because third-party sites change independently, documentation describes implemen
 - `tests/modern-workspace.e2e.js`: entry, routes, shell, and absence of visible legacy navigation;
 - `tests/modern-*.e2e.js`: route-focused mocked behavior;
 - `tests/modern-action-helpers.e2e.js`: action helper behavior;
+- `tests/modern-bridge-headless.e2e.js`: the hidden engine's protocol contract (reload actions, ordering, chat file revisions), run against the real legacy page;
+- `tests/modern-engine-sync.e2e.js` and `tests/modern-chat-metadata.e2e.js`: the Modern side of the sync channel (awaitable reloads, generation waiting for them, chat metadata writes);
 - `tests/modern-real-backend-integration.e2e.js`: UI-to-real-backend contract paths;
 - `tests/modern-external-dependencies.e2e.js`: public URLs, external Git repositories, downloads, and real provider smoke tests.
 

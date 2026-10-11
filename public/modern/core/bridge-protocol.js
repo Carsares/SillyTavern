@@ -17,6 +17,8 @@ export const BRIDGE_ACTIONS = {
     RELOAD_CHAT: 'reloadChat',
     RELOAD_CHARACTER: 'reloadCharacter',
     RELOAD_SETTINGS: 'reloadSettings',
+    // payload { names?: string[], refreshList?: boolean }：清掉引擎的世界书缓存（不带 names 则全部），并默认刷新世界书名称列表。
+    RELOAD_WORLDINFO: 'reloadWorldInfo',
     // 只读观测：读取最近一次生成的 itemized 提示词分解快照（各部分 token 与总量），不触碰任何生成状态。
     GET_ITEMIZED_PROMPT: 'getItemizedPrompt',
 };
@@ -28,6 +30,10 @@ export const BRIDGE_TIMEOUTS = {
     STATUS: 60000,
     STOP: 15000,
     EXTENSION: 60000,
+    // 等待引擎确认一次 RELOAD_* 的上限；超时按失败处理，但引擎侧排队的重载之后仍会执行。
+    RELOAD: 30000,
+    // GENERATE / SWIPE 发出前等待在途重载完成的上限；超时后照常发送（引擎侧同样会让重载先于生成执行）。
+    RELOAD_WAIT: 10000,
 };
 
 // legacy → modern 的单向事件（不带 id、无响应）。生成期流式增量经此推送，modern 定点渲染。

@@ -4,6 +4,7 @@ import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
 import { createApiNovelConnectionActions } from './api-novel-connection.js';
 import { createApiHordeConnectionActions } from './api-horde-connection.js';
 import { createApiOAuthActions } from './api-oauth.js';
+import { noEngineSync } from '../core/bridge-reload.js';
 
 export function createApiConnectionActions({
     state,
@@ -17,6 +18,8 @@ export function createApiConnectionActions({
     secretKeyByChatSource,
     numberInput,
     uniqueValues,
+    // 保存后通知隐藏的生成引擎重载设置（core/bridge-reload.js 的 reloadSettings，等引擎确认；永不 reject）
+    reloadSettings = noEngineSync,
 }) {
     function getOaiSettings() {
         return state.settings.oai_settings || {};
@@ -136,6 +139,7 @@ export function createApiConnectionActions({
         numberInput,
         getNumberSetting,
         recordApiTestResult,
+        reloadSettings,
     });
     const {
         saveKoboldConnectionFromForm,
@@ -148,6 +152,7 @@ export function createApiConnectionActions({
         render,
         showToast,
         recordApiTestResult,
+        reloadSettings,
     });
     const {
         saveNovelConnectionFromForm,
@@ -160,6 +165,7 @@ export function createApiConnectionActions({
         render,
         showToast,
         recordApiTestResult,
+        reloadSettings,
     });
     const {
         loadHordeModels,
@@ -174,6 +180,7 @@ export function createApiConnectionActions({
         render,
         showToast,
         recordApiTestResult,
+        reloadSettings,
     });
     const {
         startOpenRouterAuth,
@@ -204,6 +211,7 @@ export function createApiConnectionActions({
         getOaiSettings,
         getSelectedApiMain,
         recordApiTestResult,
+        reloadSettings,
         saveTextCompletionConnectionFromForm,
         testTextCompletionConnection,
         saveKoboldConnectionFromForm,

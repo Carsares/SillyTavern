@@ -956,6 +956,21 @@ function reinsertMemory() {
 }
 
 /**
+ * Re-inserts the memory prompt with the current position, depth, role and template.
+ * The modern bridge calls it after it copied a fresh `extension_settings.memory` into this page, so the next generation
+ * uses the new injection settings without a reload. Safe to call repeatedly: it only overwrites this module's prompt.
+ * @returns {boolean} False when the extension's controls are not on the page (extension disabled or not initialized yet)
+ */
+export function reapplyMemorySettings() {
+    if (!$('#memory_contents').length) {
+        return false;
+    }
+
+    reinsertMemory();
+    return true;
+}
+
+/**
  * Set the summary value to the context and save it to the chat message extra.
  * @param {string} value Value of a summary
  * @param {boolean} saveToMessage Should the summary be saved to the chat message extra

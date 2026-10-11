@@ -20,6 +20,8 @@ export function createChatGenerationActions({
     refreshSelectedChatList,
     createModernChatFile,
     runModernChatFileOperation,
+    // 等待在途的引擎同步（reloadChat / Settings / Character / WorldInfo）完成，有上限；未注入时无需等待
+    waitForEngineSync = async (/** @type {{ timeoutMs?: number }} */ _options = {}) => ({ settled: true }),
 }) {
     let generationSequence = 0;
     let activeGenerationToken = 0;
@@ -47,6 +49,29 @@ export function createChatGenerationActions({
         state.engine.error = error.message;
         state.engine.status = status;
         state.engine.detail = error.message;
+    }
+
+    // Modern 已知的聊天文件 integrity（聊天头 chat_metadata.integrity，服务端每次保存都会换新）。引擎据此发现自己内存里的
+    // 同名聊天已落后于文件，先重开再生成，避免保存时被完整性校验拒绝。未读到聊天头时返回 undefined，引擎不做比较。
+    function getKnownChatIntegrity(contextKey, chatId) {
+        const integrity = state.chatMetadata?.[getChatCacheKey(contextKey, chatId)]?.integrity;
+        return typeof integrity === 'string' && integrity ? integrity : undefined;
+    }
+
+    // 发给引擎前先等设置 / 角色 / 聊天 / 世界书的同步结束，让这次生成用上刚保存的配置。等待有上限，超时照常发送
+    // （引擎侧按消息到达顺序串行，先发出的重载仍会先于这次生成执行）。返回 false 表示等待期间收到了停止请求。
+    async function waitForSyncBeforeEngine(token) {
+        const syncing = state.engine.settingsSyncPending > 0;
+        const detailBeforeSync = state.engine.detail;
+        if (syncing) {
+            state.engine.detail = '正在把最新设置同步到生成引擎。';
+            render();
+        }
+        await waitForEngineSync();
+        if (syncing && activeGenerationToken === token && state.engine.detail === '正在把最新设置同步到生成引擎。') {
+            state.engine.detail = detailBeforeSync;
+        }
+        return !stoppedGenerationTokens.has(token);
     }
 
     function finishGeneration(token) {
@@ -229,7 +254,7 @@ export function createChatGenerationActions({
         let bridgeCalled = false;
         try {
             return await runModernChatFileOperation(entity, chatId, async () => {
-                if (stoppedGenerationTokens.has(token)) {
+                if (!await waitForSyncBeforeEngine(token)) {
                     throw new Error('生成已停止');
                 }
                 bridgeCalled = true;
@@ -237,6 +262,7 @@ export function createChatGenerationActions({
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
                     chat: chatId,
+                    integrity: getKnownChatIntegrity(contextKey, chatId),
                     type,
                     message,
                     // Manual group activation: only forwarded when a specific member is forced, so other flows are unchanged
@@ -300,7 +326,7 @@ export function createChatGenerationActions({
         let bridgeCalled = false;
         try {
             await runModernChatFileOperation(entity, chatId, async () => {
-                if (stoppedGenerationTokens.has(token)) {
+                if (!await waitForSyncBeforeEngine(token)) {
                     throw new Error('生成已停止');
                 }
                 bridgeCalled = true;
@@ -308,6 +334,7 @@ export function createChatGenerationActions({
                     avatar: groupMode ? null : entity.avatar,
                     groupId: groupMode ? entity.id : null,
                     chat: chatId,
+                    integrity: getKnownChatIntegrity(contextKey, chatId),
                     messageIndex: index,
                     direction,
                 });

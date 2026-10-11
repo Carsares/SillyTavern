@@ -1,3 +1,4 @@
+import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 
 // KoboldAI Classic connection: just a server URL (no key, no model list), tested via /api/backends/kobold/status
@@ -9,6 +10,7 @@ export function createApiKoboldConnectionActions({
     render,
     showToast,
     recordApiTestResult,
+    reloadSettings = noEngineSync,
 }) {
     function getKoboldServerFromForm() {
         const input = elements.content.querySelector('[data-kobold-api-url]');
@@ -23,9 +25,10 @@ export function createApiKoboldConnectionActions({
         state.settings.main_api = 'kobold';
         state.settings.api_server = apiServer;
         await saveSettingsSerialized(apiFetch, state.settings);
+        const engineSync = await reloadSettings();
         state.apiMainDraft = '';
         await loadData({ silent: true });
-        showToast('KoboldAI 连接已保存', apiServer);
+        showToast('KoboldAI 连接已保存', `${apiServer}${describeReloadFailure(engineSync)}`);
     }
 
     async function testKoboldConnection() {

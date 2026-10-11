@@ -55,6 +55,7 @@ export function createActionRegistry({
         secretKeyByChatSource,
         numberInput,
         uniqueValues,
+        reloadSettings: bridgeReload.reloadSettings,
     });
     const {
         getOaiSettings,
@@ -129,6 +130,7 @@ export function createActionRegistry({
         numberInput,
         setObjectPath,
         worldEntryDefaults,
+        reloadWorldInfo: bridgeReload.reloadWorldInfo,
     });
     const {
         loadWorldDetail,
@@ -203,6 +205,9 @@ export function createActionRegistry({
     });
 
     return {
+        // 引擎同步通道（reloadChat / reloadCharacter / reloadSettings / reloadWorldInfo / waitForPendingReloads），
+        // 供之后新增、需要自己通知引擎的 action 工厂注入
+        bridgeReload,
         activityActions,
         apiConnectionActions,
         assetActions,

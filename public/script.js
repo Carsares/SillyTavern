@@ -50,6 +50,7 @@ import {
     initWorldInfo,
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
+    invalidateWorldInfoCache,
 } from './scripts/world-info.js';
 
 import {
@@ -5926,6 +5927,55 @@ export function stopGeneration() {
 
 const modernBridgeSource = BRIDGE_SOURCE;
 
+// Everything that changes which chat, character or settings the engine holds (generate, swipe, the reload actions and
+// a status call that switches chat) runs one at a time, in the order the messages arrived. A reload therefore never
+// interleaves with a running generation, and a reload the modern UI posted before a generate always finishes first.
+// STOP and the read-only actions do not use the lane: a stop must reach a running generation at once.
+let modernBridgeLaneTail = Promise.resolve();
+
+/**
+ * Runs a task after every task queued before it has settled (whether it succeeded or failed).
+ * @template T
+ * @param {() => Promise<T>} task Task to run
+ * @returns {Promise<T>} Result of the task
+ */
+function runInModernBridgeLane(task) {
+    const result = modernBridgeLaneTail.then(task);
+    modernBridgeLaneTail = result.then(() => {}, () => {});
+    return result;
+}
+
+/** @type {Map<string, { payload: any, promise: Promise<any> }>} */
+const modernBridgeQueuedReloads = new Map();
+
+/**
+ * Queues a reload in the lane. A request that comes in while an identical reload is still waiting for its turn joins
+ * it: the waiting reload reads the backend only once it runs, so it already covers the newer request.
+ * @template T
+ * @param {string} key Identifies reloads that can share one run
+ * @param {any} payload Payload of this request
+ * @param {(queued: any, incoming: any) => any} mergePayload Combines the payload of the waiting reload with the new request's
+ * @param {(payload: any) => Promise<T>} handler Reload to run
+ * @returns {Promise<T>} Result of the reload
+ */
+function runModernBridgeReloadInLane(key, payload, mergePayload, handler) {
+    const queued = modernBridgeQueuedReloads.get(key);
+    if (queued) {
+        queued.payload = mergePayload(queued.payload, payload);
+        return queued.promise;
+    }
+
+    const entry = { payload, promise: /** @type {Promise<T>} */ (/** @type {unknown} */ (null)) };
+    modernBridgeQueuedReloads.set(key, entry);
+    entry.promise = runInModernBridgeLane(() => {
+        if (modernBridgeQueuedReloads.get(key) === entry) {
+            modernBridgeQueuedReloads.delete(key);
+        }
+        return handler(entry.payload);
+    });
+    return entry.promise;
+}
+
 function formatModernBridgeChatName(chatName) {
     return String(chatName || '').replace(/\.jsonl$/i, '');
 }
@@ -6044,14 +6094,40 @@ function getModernBridgeMissingGroupMembers(group) {
     return members.filter(member => !characters.some(character => character.avatar === member || character.name === member));
 }
 
+// clearChat() (the first step of opening another chat) refuses when the last chat save failed, to protect unsaved data in the
+// interactive UI. In bridge mode the chat file is the source of truth and the modern UI writes it too; the usual cause of a
+// rejected save is exactly such a write, so its data is already moot and a failed save must not block opening the chat again.
+async function allowModernBridgeChatReopen() {
+    if (await chatSaveQueue.wait() === false) {
+        await chatSaveQueue.enqueue(async () => true);
+    }
+}
+
+// The server issues a new integrity revision on every chat save and rejects a save that carries an older one. The modern UI
+// writes chat files too (message edits, chat metadata), so the copy of a chat this engine holds can fall behind the file.
+// A generate or swipe payload carries the integrity the modern UI knows; when the open chat of that name holds another
+// one, the file changed under the engine and the chat must be opened again before anything is generated into it.
+function isModernBridgeChatBehindFile(payload) {
+    const expectedIntegrity = typeof payload?.integrity === 'string' ? payload.integrity : '';
+    return Boolean(expectedIntegrity) && String(chat_metadata?.integrity ?? '') !== expectedIntegrity;
+}
+
 async function useModernBridgeChatContext(payload = {}) {
     const { avatar, groupId, chat: chatName } = payload || {};
     await waitForModernBridgeReady();
+    await allowModernBridgeChatReopen();
     const nextChatName = formatModernBridgeChatName(chatName);
+    // Only a chat that was already open can have fallen behind; one this call opens is read from the file just now
+    const chatWasOpen = Boolean(nextChatName) && (groupId
+        ? selected_group === groupId && groups.find(x => x.id === groupId)?.chat_id === nextChatName
+        : !selected_group && characters[this_chid]?.avatar === avatar && characters[this_chid]?.chat === nextChatName);
 
     if (groupId) {
         const group = await selectModernBridgeGroup(groupId, nextChatName);
         if (nextChatName && group.chat_id !== nextChatName) {
+            await openGroupChat(groupId, nextChatName);
+        } else if (chatWasOpen && isModernBridgeChatBehindFile(payload)) {
+            console.debug('Modern bridge: the open group chat is behind its file, opening it again');
             await openGroupChat(groupId, nextChatName);
         }
         const currentGroup = groups.find(x => x.id === groupId);
@@ -6068,24 +6144,48 @@ async function useModernBridgeChatContext(payload = {}) {
         // 与 openCharacterChat 相同的收尾：把目标聊天记为角色卡的当前聊天
         $('#selected_chat_pole').val(nextChatName);
         await createOrEditCharacter(new CustomEvent('newChat'));
+    } else if (chatWasOpen && isModernBridgeChatBehindFile(payload)) {
+        console.debug('Modern bridge: the open chat is behind its file, opening it again');
+        await openCharacterChat(nextChatName);
     }
     return { character: characters[this_chid] };
 }
 
-// The bridge generation or swipe in progress. A modern「停止」request marks it, so the handler can tell a stopped
-// reply from a finished one: stopGeneration() alone cannot, because a stopped stream still ends through the normal path.
-/** @type {{ stopRequested: boolean } | null} */
-let modernBridgeActiveTask = null;
+// The bridge generations and swipes in progress or waiting for their turn in the lane. A modern「停止」request marks all
+// of them, so a handler can tell a stopped reply from a finished one: stopGeneration() alone cannot, because a stopped
+// stream still ends through the normal path. A task is registered when its message arrives, not when it starts, so a
+// stop that comes while it still waits behind a reload is not lost.
+/** @type {Set<{ stopRequested: boolean }>} */
+const modernBridgeTasks = new Set();
 
 function beginModernBridgeTask() {
     const task = { stopRequested: false };
-    modernBridgeActiveTask = task;
+    modernBridgeTasks.add(task);
     return task;
 }
 
 function endModernBridgeTask(task) {
-    if (modernBridgeActiveTask === task) {
-        modernBridgeActiveTask = null;
+    modernBridgeTasks.delete(task);
+}
+
+function requestModernBridgeStop() {
+    for (const task of modernBridgeTasks) {
+        task.stopRequested = true;
+    }
+}
+
+/**
+ * Registers a generate or swipe when its message arrives and runs it in the lane.
+ * @param {(payload: any, task: { stopRequested: boolean }) => Promise<any>} handler Handler of the action
+ * @param {any} payload Payload of the message
+ * @returns {Promise<any>} Result of the handler
+ */
+async function runModernBridgeTask(handler, payload) {
+    const task = beginModernBridgeTask();
+    try {
+        return await runInModernBridgeLane(() => handler(payload, task));
+    } finally {
+        endModernBridgeTask(task);
     }
 }
 
@@ -6139,10 +6239,9 @@ function ensureModernBridgeOnlineStatus() {
     }
 }
 
-async function handleModernBridgeGenerate(payload = {}) {
+async function handleModernBridgeGenerate(payload = {}, task = beginModernBridgeTask()) {
     const params = payload || {};
     const type = ['normal', 'continue', 'regenerate'].includes(params.type) ? params.type : 'normal';
-    const task = beginModernBridgeTask();
     try {
         const context = await useModernBridgeChatContext(params);
         const messageCountBefore = chat.length;
@@ -6207,9 +6306,8 @@ async function handleModernBridgeGenerate(payload = {}) {
     }
 }
 
-async function handleModernBridgeSwipe(payload = {}) {
+async function handleModernBridgeSwipe(payload = {}, task = beginModernBridgeTask()) {
     const params = payload || {};
-    const task = beginModernBridgeTask();
     try {
         const context = await useModernBridgeChatContext(params);
 
@@ -6277,6 +6375,7 @@ async function handleModernBridgeExtensionBranchSwitched() {
 async function handleModernBridgeReloadChat(payload = {}) {
     const { avatar, groupId, chat: chatName } = payload || {};
     await waitForModernBridgeReady();
+    await allowModernBridgeChatReopen();
     const nextChatName = formatModernBridgeChatName(chatName);
 
     if (groupId) {
@@ -6306,6 +6405,7 @@ async function handleModernBridgeReloadCharacter() {
 // 并累积）、accountStorage.init、setUserControls、loadExtensionSettings、onboarding/firstRun，以及
 // SETTINGS_LOADED_BEFORE/AFTER/SETTINGS_LOADED 事件重放（会触发一次性订阅者）。
 // 注：loadTextGenSettings 会在 textgen URL 控件上重绑 input 监听，但隐藏 iframe 无输入事件触发，实际无副作用。
+// 扩展设置只同步下面白名单里的四项（见 syncModernBridgeExtensionSettings），同样不整体重载。
 async function handleModernBridgeReloadSettings() {
     await waitForModernBridgeReady();
     const response = await fetch('/api/settings/get', {
@@ -6345,8 +6445,76 @@ async function handleModernBridgeReloadSettings() {
     }
     $('#max_context').val(max_context);
     $('#amount_gen').val(amount_gen);
+    await syncModernBridgeExtensionSettings(settings);
     await validateDisabledSamplers();
     return { ok: true };
+}
+
+// modern 侧会写、且会影响生成的扩展设置：记忆（摘要注入位置 / 深度 / 模板）、翻译、连接档案、作者注释的全局默认值。
+// 只做白名单；其余扩展的设置保持引擎内存里的样子。
+const MODERN_BRIDGE_SYNCED_EXTENSION_SETTINGS = Object.freeze(['memory', 'translate', 'connectionManager', 'note']);
+
+/**
+ * 把新读到的 settings.extension_settings 里白名单内的几项按字段合并进引擎内存里的 extension_settings。
+ * 不调用 loadExtensionSettings：它会重新发现并激活全部扩展、重复注册它们的监听（见上面 reload 的说明）。
+ * 逐项 Object.assign 到原对象上而不是整个替换，持有该对象引用的扩展代码也能看到新值；幂等，重复调用不累积任何监听。
+ * @param {object} freshSettings 刚从后端读到并解析的 settings
+ * @returns {Promise<void>}
+ */
+async function syncModernBridgeExtensionSettings(freshSettings) {
+    const freshExtensionSettings = freshSettings?.extension_settings;
+    if (!freshExtensionSettings || typeof freshExtensionSettings !== 'object') {
+        return;
+    }
+
+    for (const key of MODERN_BRIDGE_SYNCED_EXTENSION_SETTINGS) {
+        const freshValue = freshExtensionSettings[key];
+        if (!freshValue || typeof freshValue !== 'object' || Array.isArray(freshValue)) {
+            continue;
+        }
+        const current = extension_settings[key];
+        if (current && typeof current === 'object' && !Array.isArray(current)) {
+            Object.assign(current, structuredClone(freshValue));
+        } else {
+            extension_settings[key] = structuredClone(freshValue);
+        }
+    }
+
+    // 记忆扩展按新的位置 / 深度 / 角色 / 模板重新插入记忆提示词。扩展被禁用时它的模块不会被加载，也就不必导入。
+    if (!extension_settings.disabledExtensions?.includes('memory')) {
+        try {
+            const memory = await import('./scripts/extensions/memory/index.js');
+            memory.reapplyMemorySettings?.();
+        } catch (error) {
+            console.warn('Modern bridge could not re-apply the memory settings', error);
+        }
+    }
+}
+
+// 同步通道：modern 侧改了世界书文件后，让引擎丢弃对应的缓存（它读过一次就一直用缓存，不丢弃则生成永远用旧内容）。
+// payload.names 省略表示全部；refreshList 为 false 时只清缓存，不重新拉取世界书名称列表（只改了条目内容）。
+function normalizeModernBridgeWorldInfoPayload(payload) {
+    const rawNames = payload?.names;
+    if (rawNames !== undefined && rawNames !== null
+        && (!Array.isArray(rawNames) || rawNames.some(name => typeof name !== 'string' || !name))) {
+        throw new Error('世界书重载的 names 必须是非空字符串数组。');
+    }
+    const names = Array.isArray(rawNames) && rawNames.length ? [...new Set(rawNames)] : null;
+    return { names, refreshList: payload?.refreshList !== false };
+}
+
+// 排队中的两次世界书重载合并成一次：名称取并集（任一方是「全部」则全部），任一方要刷新列表就刷新
+function mergeModernBridgeWorldInfoPayloads(queued, incoming) {
+    return {
+        names: queued.names && incoming.names ? [...new Set([...queued.names, ...incoming.names])] : null,
+        refreshList: queued.refreshList || incoming.refreshList,
+    };
+}
+
+async function handleModernBridgeReloadWorldInfo({ names, refreshList }) {
+    await waitForModernBridgeReady();
+    await invalidateWorldInfoCache(names, { refreshList });
+    return { ok: true, all: !names, names: names ?? [], refreshedList: refreshList };
 }
 
 // 只读观测：把 itemizedParams 算出的 token 明细收敛成可序列化的提示词分解快照（各部分名称+token 与总量）。
@@ -6434,30 +6602,34 @@ window.addEventListener('message', async (event) => {
     }
 
     try {
+        // The lane is entered synchronously in message order, before the first await of any branch below
         if (action === BRIDGE_ACTIONS.GENERATE) {
-            postModernBridgeResult(event, id, await handleModernBridgeGenerate(payload));
+            postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeGenerate, payload));
             return;
         }
         if (action === BRIDGE_ACTIONS.SWIPE) {
-            postModernBridgeResult(event, id, await handleModernBridgeSwipe(payload));
+            postModernBridgeResult(event, id, await runModernBridgeTask(handleModernBridgeSwipe, payload));
             return;
         }
         if (action === BRIDGE_ACTIONS.STOP) {
-            if (modernBridgeActiveTask) {
-                modernBridgeActiveTask.stopRequested = true;
-            }
+            // Never queued behind a running generation: it has to abort that generation at once
+            requestModernBridgeStop();
             postModernBridgeResult(event, id, { stopped: stopGeneration() });
             return;
         }
         if (action === BRIDGE_ACTIONS.STATUS) {
-            const context = payload?.groupId || payload?.avatar ? await useModernBridgeChatContext(payload) : {};
-            const group = context.group || (selected_group ? groups.find(x => x.id === selected_group) : null);
-            postModernBridgeResult(event, id, {
-                avatar: selected_group ? '' : (characters[this_chid]?.avatar || ''),
-                groupId: group?.id || '',
-                chat: group?.chat_id || characters[this_chid]?.chat || '',
-                messageCount: chat.length,
-            });
+            const readStatus = async () => {
+                const context = payload?.groupId || payload?.avatar ? await useModernBridgeChatContext(payload) : {};
+                const group = context.group || (selected_group ? groups.find(x => x.id === selected_group) : null);
+                return {
+                    avatar: selected_group ? '' : (characters[this_chid]?.avatar || ''),
+                    groupId: group?.id || '',
+                    chat: group?.chat_id || characters[this_chid]?.chat || '',
+                    messageCount: chat.length,
+                };
+            };
+            // Only a status call that switches chat has to wait its turn; a plain probe answers at once
+            postModernBridgeResult(event, id, payload?.groupId || payload?.avatar ? await runInModernBridgeLane(readStatus) : await readStatus());
             return;
         }
         if (action === BRIDGE_ACTIONS.EXTENSION_INSTALLED) {
@@ -6469,15 +6641,21 @@ window.addEventListener('message', async (event) => {
             return;
         }
         if (action === BRIDGE_ACTIONS.RELOAD_CHAT) {
-            postModernBridgeResult(event, id, await handleModernBridgeReloadChat(payload));
+            const reloadKey = `${action}:${JSON.stringify([payload?.groupId ?? '', payload?.avatar ?? '', payload?.chat ?? ''])}`;
+            postModernBridgeResult(event, id, await runModernBridgeReloadInLane(reloadKey, payload, queued => queued, handleModernBridgeReloadChat));
             return;
         }
         if (action === BRIDGE_ACTIONS.RELOAD_CHARACTER) {
-            postModernBridgeResult(event, id, await handleModernBridgeReloadCharacter());
+            postModernBridgeResult(event, id, await runModernBridgeReloadInLane(action, null, queued => queued, handleModernBridgeReloadCharacter));
             return;
         }
         if (action === BRIDGE_ACTIONS.RELOAD_SETTINGS) {
-            postModernBridgeResult(event, id, await handleModernBridgeReloadSettings());
+            postModernBridgeResult(event, id, await runModernBridgeReloadInLane(action, null, queued => queued, handleModernBridgeReloadSettings));
+            return;
+        }
+        if (action === BRIDGE_ACTIONS.RELOAD_WORLDINFO) {
+            const worldInfoPayload = normalizeModernBridgeWorldInfoPayload(payload);
+            postModernBridgeResult(event, id, await runModernBridgeReloadInLane(action, worldInfoPayload, mergeModernBridgeWorldInfoPayloads, handleModernBridgeReloadWorldInfo));
             return;
         }
         if (action === BRIDGE_ACTIONS.GET_ITEMIZED_PROMPT) {
@@ -8362,8 +8540,9 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         // bridge 模式：隐藏 iframe 无人应答确认框（cancelButton:false 会永久挂起，约 180s 才超时），
         // 页面 reload 也会打断生成。完整性冲突通常源于 modern 侧刚编辑消息（bump 了 integrity），
         // 此处不弹框、不 reload、不强制覆盖（强制覆盖会用 iframe 陈旧状态盖掉 modern 的编辑），
-        // 直接返回保存失败，由上层 saved 信号暴露给 modern。M3 的 reloadChat 在编辑后异步同步 integrity，
-        // 能显著降低此冲突，但它是 fire-and-forget、未与下次生成串行，故极窄窗口内仍可能偶发（由 saved 信号兜住）。
+        // 直接返回保存失败，由上层 saved 信号暴露给 modern。modern 侧写聊天文件后会 reloadChat 同步 integrity，
+        // 且 generate / swipe 的 payload 带着 modern 已知的 integrity，引擎发现自己落后时先重开聊天
+        // （见 useModernBridgeChatContext），所以这里只剩文件被引擎和 modern 之外的写入者改动的情形。
         if (isModernBridgeMode) {
             console.warn('Chat integrity check failed in modern bridge mode; reporting save failure without prompting.');
             return false;

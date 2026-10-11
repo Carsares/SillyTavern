@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { mockBridgeFrame } from './modern-test-utils.js';
 
 function createTextCompletionCase(type, modelField, secretKey) {
     const initialModel = modelField ? `${type}/saved-model` : '';
@@ -42,7 +43,11 @@ function setInputValue(input, value) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-async function mockModernApiShell(page, settingsBundle, secretState = {}) {
+// Every API save now asks the hidden generation engine to reload its settings, so the engine frame is always stubbed:
+// the real engine would boot a whole legacy page in the middle of a page that only mocks the settings endpoints.
+// Returns the live list of bridge requests the page posted to the stub.
+async function mockModernApiShell(page, settingsBundle, secretState = {}, bridgeOptions = {}) {
+    const bridgeCalls = await mockBridgeFrame(page, bridgeOptions);
     await page.route('**/csrf-token', route => route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -120,6 +125,7 @@ async function mockModernApiShell(page, settingsBundle, secretState = {}) {
         contentType: 'application/json',
         body: JSON.stringify({}),
     }));
+    return bridgeCalls;
 }
 
 test.describe('Modern API page', () => {
@@ -980,5 +986,182 @@ test.describe('Modern API page', () => {
             },
         });
         expect(savedSettings.textgenerationwebui_settings.openrouter_model).toBe('openrouter/auto');
+    });
+});
+
+// Saving a connection used to leave the hidden generation engine on its boot-time settings, and the engine only learned
+// about a preset or connection change through unrelated reloads. Each of the five editors must now wait for the engine to
+// reload before it refreshes the page state and reports the save.
+test.describe('Modern API engine sync', () => {
+    const chatCompletionBundle = () => ({
+        settings: JSON.stringify({
+            main_api: 'openai',
+            oai_settings: {
+                chat_completion_source: 'custom',
+                custom_model: 'custom/saved-model',
+                custom_url: 'https://saved.example/v1',
+                preset_settings_openai: 'Chat Preset A',
+                temp_openai: 0.7,
+                openai_max_tokens: 300,
+                top_p_openai: 0.9,
+                freq_pen_openai: 0.1,
+                pres_pen_openai: 0.2,
+            },
+        }),
+        textgenerationwebui_preset_names: [],
+        textgenerationwebui_presets: [],
+        openai_setting_names: ['Chat Preset A'],
+        openai_settings: [JSON.stringify({ name: 'Chat Preset A' })],
+    });
+    const emptyPresets = {
+        textgenerationwebui_preset_names: [],
+        textgenerationwebui_presets: [],
+        openai_setting_names: [],
+        openai_settings: [],
+    };
+    const saveCases = [
+        {
+            name: 'chat completion',
+            bundle: chatCompletionBundle,
+            toast: '连接配置已保存',
+            edit: page => page.locator('[data-api-model]').fill('custom/new-model'),
+            expectSaved: saved => expect(saved.oai_settings.custom_model).toBe('custom/new-model'),
+        },
+        {
+            name: 'text completion',
+            bundle: () => ({
+                settings: JSON.stringify({
+                    main_api: 'textgenerationwebui',
+                    textgenerationwebui_settings: {
+                        type: 'openrouter',
+                        server_urls: { openrouter: 'https://openrouter.ai/api' },
+                        openrouter_model: 'openrouter/auto',
+                        preset: 'Text Preset A',
+                        temp: 0.7,
+                        top_p: 0.5,
+                        top_k: 40,
+                        min_p: 0.01,
+                        rep_pen: 1.2,
+                        rep_pen_range: 0,
+                    },
+                }),
+                ...emptyPresets,
+                textgenerationwebui_preset_names: ['Text Preset A'],
+                textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 })],
+            }),
+            toast: '文本补全连接已保存',
+            edit: page => page.locator('[data-textgen-model]').fill('openrouter/new-model'),
+            expectSaved: saved => expect(saved.textgenerationwebui_settings.openrouter_model).toBe('openrouter/new-model'),
+        },
+        {
+            name: 'KoboldAI',
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'kobold', api_server: 'http://saved.kobold:5000/api' }), ...emptyPresets }),
+            toast: 'KoboldAI 连接已保存',
+            edit: page => page.locator('[data-kobold-api-url]').fill('http://new.kobold:5001/api'),
+            expectSaved: saved => expect(saved.api_server).toBe('http://new.kobold:5001/api'),
+        },
+        {
+            name: 'NovelAI',
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'novel', model_novel: 'kayra-v1' }), ...emptyPresets }),
+            toast: 'NovelAI 连接已保存',
+            edit: page => page.locator('[data-novel-model]').selectOption('llama-3-erato-v1'),
+            expectSaved: saved => expect(saved.model_novel).toBe('llama-3-erato-v1'),
+        },
+        {
+            name: 'AI Horde',
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'koboldhorde', horde_settings: { models: ['koboldcpp/model-a'] } }), ...emptyPresets }),
+            toast: 'AI Horde 连接已保存',
+            routes: page => page.route('**/api/horde/text-models', route => route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([{ name: 'koboldcpp/model-a', count: 3, performance: 12.4 }, { name: 'koboldcpp/model-b', count: 1, performance: 5.1 }]),
+            })),
+            edit: async page => {
+                await expect(page.locator('[data-horde-model] option[value="koboldcpp/model-b"]')).toHaveCount(1);
+                await page.locator('[data-horde-model]').selectOption(['koboldcpp/model-a', 'koboldcpp/model-b']);
+            },
+            expectSaved: saved => expect(saved.horde_settings.models).toEqual(['koboldcpp/model-a', 'koboldcpp/model-b']),
+        },
+    ];
+
+    async function routeSettingsSave(page, settingsBundle, sequence) {
+        const saved = { settings: null };
+        await page.route('**/api/settings/save', route => {
+            saved.settings = route.request().postDataJSON();
+            settingsBundle.settings = JSON.stringify(saved.settings);
+            sequence.push('settings saved');
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+        });
+        return saved;
+    }
+
+    for (const saveCase of saveCases) {
+        test(`${saveCase.name}: the save waits for the engine reload before refreshing and reporting`, async ({ page }) => {
+            const settingsBundle = saveCase.bundle();
+            const sequence = [];
+            let settingsReads = 0;
+            let releaseReload = () => {};
+            const reloadGate = new Promise(resolve => {
+                releaseReload = resolve;
+            });
+            const bridgeCalls = await mockModernApiShell(page, settingsBundle, {}, {
+                replies: {
+                    reloadSettings: async () => {
+                        sequence.push('engine reload started');
+                        await reloadGate;
+                        sequence.push('engine reload finished');
+                    },
+                },
+            });
+            await page.route('**/api/settings/get', route => {
+                settingsReads++;
+                return route.fallback();
+            });
+            const saved = await routeSettingsSave(page, settingsBundle, sequence);
+            await saveCase.routes?.(page);
+
+            await page.goto('/modern/?view=api');
+            await expect(page.locator('[data-save-api-connection]')).toBeVisible();
+            await saveCase.edit(page);
+            await page.locator('[data-save-api-connection]').click();
+
+            // The engine is asked only after the settings are on disk
+            await expect.poll(() => sequence).toEqual(['settings saved', 'engine reload started']);
+            saveCase.expectSaved(saved.settings);
+            const readsWhileWaiting = settingsReads;
+            // Intentional wait: the assertion is that neither the toast nor the page refresh happens while the engine is still reloading
+            // eslint-disable-next-line playwright/no-wait-for-timeout
+            await page.waitForTimeout(700);
+            expect(await page.locator('.toast', { hasText: saveCase.toast }).count()).toBe(0);
+            expect(settingsReads).toBe(readsWhileWaiting);
+
+            releaseReload();
+            await expect(page.locator('.toast', { hasText: saveCase.toast })).toBeVisible();
+            expect(sequence).toEqual(['settings saved', 'engine reload started', 'engine reload finished']);
+            expect(settingsReads).toBeGreaterThan(readsWhileWaiting);
+            expect(bridgeCalls.filter(call => call.action === 'reloadSettings')).toHaveLength(1);
+        });
+    }
+
+    test('a failed engine reload still saves and the toast says the engine is out of sync', async ({ page }) => {
+        const settingsBundle = chatCompletionBundle();
+        const sequence = [];
+        await mockModernApiShell(page, settingsBundle, {}, {
+            replies: {
+                reloadSettings: () => {
+                    throw new Error('engine unavailable');
+                },
+            },
+        });
+        const saved = await routeSettingsSave(page, settingsBundle, sequence);
+
+        await page.goto('/modern/?view=api');
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-save-api-connection]').click();
+
+        const toast = page.locator('.toast', { hasText: '连接配置已保存' });
+        await expect(toast).toBeVisible();
+        await expect(toast).toContainText('生成引擎未能同步：engine unavailable');
+        expect(saved.settings.oai_settings.custom_model).toBe('custom/new-model');
     });
 });
