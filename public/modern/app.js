@@ -315,6 +315,7 @@ const { handleClick } = createRouter({
     toggleItemizedPrompt,
     closePalette,
     closeChatSidebarForMobileSelection,
+    runChatGlobalSearch: featureSlotActions.chatGlobalSearch.runChatGlobalSearch,
 });
 
 async function loadData(options) {

@@ -97,7 +97,23 @@ export function createModernState() {
         chatSummary: {}, // 聊天摘要（A6）
         chatBackground: {}, // 聊天背景（B5）
         connectionSwitcher: {}, // 输入框旁的连接档案切换（B1）
-        chatGlobalSearch: {}, // 跨角色聊天搜索（B2）
+        // 跨角色聊天搜索（B2，actions/chat-global-search.js）：scope 是侧栏搜索框的「当前 / 全部」，query 与 searchedQuery 只属于「全部」，
+        // token 随每次搜索自增（过期响应据此丢弃），controller 是进行中请求的 AbortController
+        chatGlobalSearch: {
+            scope: 'current',
+            query: '',
+            searchedQuery: '',
+            loading: false,
+            error: '',
+            results: [],
+            scannedFiles: 0,
+            totalFiles: 0,
+            partial: false,
+            partialReason: '',
+            elapsedMs: 0,
+            token: 0,
+            controller: null,
+        },
         maintenance: {}, // 设置页「数据维护」（B4）
         chatTranslation: {}, // 聊天消息翻译（B3）
         characterTranslation: {}, // 角色卡翻译（B3）

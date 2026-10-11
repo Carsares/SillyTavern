@@ -1,3 +1,5 @@
+import { createChatGlobalSearchActions } from '../actions/chat-global-search.js';
+
 /**
  * 聊天工具、设置页工具和输入框连接标签等界面插槽的业务动作注册处。
  *
@@ -36,6 +38,7 @@ import { createChatAuthorsNoteActions } from '../actions/chat-authors-note.js';
  */
 export function createFeatureSlotActions(deps) {
     return {
+        chatGlobalSearch: createChatGlobalSearchActions(deps), // 跨角色聊天搜索（B2）
         // 目前没有任何功能接入；各功能代理在这里各加一行自己的分组
         chatBackground: createChatBackgroundActions(deps),
         authorsNote: createChatAuthorsNoteActions(deps), // 作者注释（A5）

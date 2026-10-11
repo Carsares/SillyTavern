@@ -27,6 +27,7 @@ export function createRouter({
     closePalette,
     closeChatSidebarForMobileSelection,
     getBackgroundFilename,
+    runChatGlobalSearch,
 }) {
     async function setRoute(routeId) {
         if (!routeLabels[routeId]) {
@@ -120,11 +121,13 @@ export function createRouter({
         if (routeButton) {
             const openCharacterChat = routeButton.dataset.openCharacterChat;
             const openGroupChat = routeButton.dataset.openGroupChat;
+            // 带 data-open-chat-file 的按钮（全部聊天搜索的结果）直接打开这个会话；其余入口只切到角色/群聊，会话由列表决定
+            const openChatFile = routeButton.dataset.openChatFile || '';
             if (openCharacterChat) {
                 state.chatMode = 'character';
                 localStorage.setItem('st-modern-chat-mode', 'character');
                 state.selected.character = openCharacterChat;
-                state.selected.chat = '';
+                state.selected.chat = openChatFile;
                 clearChatTransientState();
                 clearChatSearch();
             }
@@ -132,7 +135,7 @@ export function createRouter({
                 state.chatMode = 'group';
                 localStorage.setItem('st-modern-chat-mode', 'group');
                 state.selected.group = openGroupChat;
-                state.selected.chat = '';
+                state.selected.chat = openChatFile;
                 clearChatTransientState();
                 clearChatSearch();
             }
@@ -185,6 +188,15 @@ export function createRouter({
 
         const routeClickHandler = routeModules[state.route]?.handleClick;
         if (routeClickHandler && await routeClickHandler(event) !== false) {
+            return;
+        }
+
+        // 命令面板的「在全部聊天中搜索」：先切到聊天页，再在「全部」范围里用面板里的关键词搜索
+        const searchAllButton = event.target.closest('[data-command-search-all]');
+        if (searchAllButton) {
+            const query = searchAllButton.dataset.commandSearchAll || '';
+            closePalette();
+            await Promise.all([setRoute('chat'), runChatGlobalSearch(query)]);
             return;
         }
 

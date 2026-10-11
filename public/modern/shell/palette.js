@@ -114,7 +114,20 @@ export function createPalette({
             .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))
             .slice(0, 40);
 
-        elements.paletteResults.innerHTML = commands.map(command => `
+        // 面板本身只做同步过滤；聊天内容要扫描文件，所以多给一行入口，点开后到聊天页的「全部」范围里搜索（shell/router.js）。
+        // 有其他匹配项时这一行不带 data-command-route：Enter 仍打开第一个匹配项；没有匹配项时它带上，Enter 直接搜索。
+        const searchText = String(state.paletteQuery ?? '').trim();
+        const searchAllRow = [...searchText].length >= 2 ? `
+            <button class="command-row" type="button" data-command-search-all="${escapeHtml(searchText)}" ${commands.length ? '' : 'data-command-route="chat"'}>
+                <span class="avatar-fallback"><i class="fa-solid fa-magnifying-glass"></i></span>
+                <span class="row-main">
+                    <span class="row-title">在全部聊天中搜索 “${escapeHtml(searchText)}”</span>
+                    <span class="row-subtitle">聊天 · 扫描所有角色和群聊的消息内容</span>
+                </span>
+            </button>
+        ` : '';
+
+        elements.paletteResults.innerHTML = searchAllRow + (commands.map(command => `
             <button class="command-row" type="button" data-command-route="${escapeHtml(command.route)}" data-command-select="${escapeHtml(command.select || '')}" data-command-id="${escapeHtml(command.id || '')}" data-command-action="${escapeHtml(command.action || '')}" data-command-preset-api="${escapeHtml(command.presetApi || '')}" data-command-preset-name="${escapeHtml(command.presetName || '')}">
                 <span class="avatar-fallback"><i class="fa-solid fa-arrow-right"></i></span>
                 <span class="row-main">
@@ -122,7 +135,7 @@ export function createPalette({
                     <span class="row-subtitle">${escapeHtml(command.type)} · ${escapeHtml(command.detail)}</span>
                 </span>
             </button>
-        `).join('') || renderInlineEmpty('没有匹配结果');
+        `).join('') || (searchAllRow ? '' : renderInlineEmpty('没有匹配结果')));
     }
 
     function openPalette(query = '') {

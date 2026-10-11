@@ -27,6 +27,7 @@ export function createChatInputEvents(ctx) {
         getSelectedChatEntity,
         clearChatSearch,
         searchSelectedChats,
+        runChatGlobalSearch,
         sendModernMessage,
         cancelModernMessageDelete,
         cancelModernMessageEdit,
@@ -51,7 +52,12 @@ export function createChatInputEvents(ctx) {
             return true;
         }
         if (event.target instanceof HTMLInputElement && event.target.matches('[data-chat-search-input]')) {
-            state.chatSearch.query = event.target.value;
+            // 「全部」范围的关键词与「当前」范围分开保存，切换范围时各自恢复
+            if (state.chatGlobalSearch.scope === 'all') {
+                state.chatGlobalSearch.query = event.target.value;
+            } else {
+                state.chatSearch.query = event.target.value;
+            }
             return true;
         }
 
@@ -113,6 +119,10 @@ export function createChatInputEvents(ctx) {
 
         if (event.target instanceof HTMLElement && event.target.matches('[data-chat-search-input]') && event.key === 'Enter') {
             event.preventDefault();
+            if (state.chatGlobalSearch.scope === 'all') {
+                runChatGlobalSearch();
+                return true;
+            }
             if (!state.chatSearch.query.trim()) {
                 clearChatSearch();
                 render();

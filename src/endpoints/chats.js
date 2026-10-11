@@ -451,6 +451,523 @@ function getGroupChatFilePath(groupChatsDir, chatId) {
     return isPathUnderParent(parentPath, filePath) ? filePath : null;
 }
 
+/**
+ * @typedef {object} ChatFile
+ * @property {string} [pngFile] Character card file name (character chats only)
+ * @property {string} [groupId] Group ID (group chats only)
+ * @property {string} [groupName] Group display name (group chats only)
+ * @property {string} filePath Absolute path of the chat file (server side only, never sent to clients)
+ * @property {number} mtime Last modification time in milliseconds
+ * @property {number} size File size in bytes
+ */
+
+/**
+ * Lists the chat files of a user: character chats (only for characters whose card still exists), group chats
+ * (resolved through the safe group chat path helper) and, optionally, chats lying directly in the chats root.
+ * A failing source (missing directory, unreadable group file, vanished file) is skipped without hiding the others.
+ * @param {Pick<import('../users.js').UserDirectoryList, 'characters' | 'chats' | 'groups' | 'groupChats'>} directories User directories
+ * @param {{ characters?: boolean, groups?: boolean, root?: boolean }} [options] Sources to list
+ * @returns {Promise<ChatFile[]>} Chat files in no particular order
+ */
+export async function listUserChatFiles(directories, { characters = true, groups = true, root = false } = {}) {
+    /** @type {ChatFile[]} */
+    const allChatFiles = [];
+
+    const getCharacterChatFiles = async () => {
+        const pngDirents = await fs.promises.readdir(directories.characters, { withFileTypes: true });
+        const pngFiles = pngDirents.filter(e => e.isFile() && path.extname(e.name) === '.png').map(e => e.name);
+
+        for (const pngFile of pngFiles) {
+            try {
+                const chatsDirectory = pngFile.replace('.png', '');
+                const pathToChats = path.join(directories.chats, chatsDirectory);
+                const pathStats = await fs.promises.stat(pathToChats).catch(() => null);
+                if (!pathStats?.isDirectory()) {
+                    continue;
+                }
+                const chatFiles = await fs.promises.readdir(pathToChats);
+                const jsonlFiles = chatFiles.filter(file => path.extname(file) === '.jsonl');
+
+                for (const file of jsonlFiles) {
+                    const filePath = path.join(pathToChats, file);
+                    const stats = await fs.promises.stat(filePath).catch(() => null);
+                    if (stats) {
+                        allChatFiles.push({ pngFile, filePath, mtime: stats.mtimeMs, size: stats.size });
+                    }
+                }
+            } catch {
+                // Skip a character whose chat directory can't be read
+                continue;
+            }
+        }
+    };
+
+    const getGroupChatFiles = async () => {
+        const groupDirents = await fs.promises.readdir(directories.groups, { withFileTypes: true });
+        const groupFiles = groupDirents.filter(e => e.isFile() && path.extname(e.name) === '.json').map(e => e.name);
+
+        for (const group of groupFiles) {
+            try {
+                const groupPath = path.join(directories.groups, group);
+                const groupContents = await fs.promises.readFile(groupPath, 'utf8');
+                const groupData = JSON.parse(groupContents);
+
+                if (Array.isArray(groupData.chats)) {
+                    for (const chat of groupData.chats) {
+                        const filePath = getGroupChatFilePath(directories.groupChats, chat);
+                        if (!filePath) {
+                            continue;
+                        }
+                        const stats = await fs.promises.stat(filePath).catch(() => null);
+                        if (stats?.isFile()) {
+                            const groupName = typeof groupData.name === 'string' && groupData.name ? groupData.name : String(groupData.id ?? '');
+                            allChatFiles.push({ groupId: groupData.id, groupName, filePath, mtime: stats.mtimeMs, size: stats.size });
+                        }
+                    }
+                }
+            } catch (error) {
+                // Skip group files that can't be read or parsed
+                continue;
+            }
+        }
+    };
+
+    const getRootChatFiles = async () => {
+        const dirents = await fs.promises.readdir(directories.chats, { withFileTypes: true });
+        const chatFiles = dirents.filter(e => e.isFile() && path.extname(e.name) === '.jsonl').map(e => e.name);
+
+        for (const file of chatFiles) {
+            const filePath = path.join(directories.chats, file);
+            const stats = await fs.promises.stat(filePath).catch(() => null);
+            if (stats) {
+                allChatFiles.push({ filePath, mtime: stats.mtimeMs, size: stats.size });
+            }
+        }
+    };
+
+    await Promise.allSettled([
+        characters ? getCharacterChatFiles() : null,
+        groups ? getGroupChatFiles() : null,
+        root ? getRootChatFiles() : null,
+    ]);
+
+    return allChatFiles;
+}
+
+/** Limits of `POST /api/chats/search-all`. */
+const CHAT_SEARCH_ALL = Object.freeze({
+    defaultLimit: 50,
+    maxLimit: 200,
+    defaultSnippetsPerChat: 3,
+    maxSnippetsPerChat: 10,
+    defaultTimeoutMs: 8000,
+    maxTimeoutMs: 15000,
+    concurrency: 6,
+    snippetRadius: 80,
+    maxHighlightsPerSnippet: 20,
+    maxQueryLength: 200,
+    maxTerms: 10,
+    maxNameLength: 80,
+    // How many lines are read between two checks of the deadline / client connection
+    stopCheckInterval: 128,
+});
+
+const CJK_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+// Characters JSON.stringify writes as escape sequences: a search term containing one cannot be found in the raw line
+const JSON_ESCAPED_CHARACTER_PATTERN = /["\\\u0000-\u001f\ud800-\udfff]/;
+
+/**
+ * Lowercases text without changing its length, so offsets found in the result are valid in the original text.
+ * Characters whose lowercase form has another length (such as U+0130) stay as they are.
+ * @param {string} text Text to fold
+ * @returns {string} Lowercase text of the same length
+ */
+function foldCase(text) {
+    const lower = text.toLowerCase();
+    if (lower.length === text.length) {
+        return lower;
+    }
+
+    let result = '';
+    for (const character of text) {
+        const lowerCharacter = character.toLowerCase();
+        result += lowerCharacter.length === character.length ? lowerCharacter : character;
+    }
+    return result;
+}
+
+/**
+ * Reads an integer option, falling back to a default for missing or non-numeric values and clamping to a range.
+ * @param {unknown} value Raw value
+ * @param {number} fallback Value for missing or invalid input
+ * @param {number} min Smallest allowed value
+ * @param {number} max Largest allowed value
+ * @returns {number} Integer between min and max
+ */
+function readIntegerOption(value, fallback, min, max) {
+    if ((typeof value !== 'number' && typeof value !== 'string') || value === '') {
+        return fallback;
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+    return Math.min(max, Math.max(min, Math.trunc(number)));
+}
+
+/**
+ * @typedef {object} ChatSearchAllOptions
+ * @property {string[]} terms Lowercase search terms; a chat must contain all of them
+ * @property {'all'|'characters'|'groups'} scope Which chats to search
+ * @property {number} limit Maximum number of chats to return
+ * @property {number} snippetsPerChat Maximum number of snippets per chat
+ * @property {number} timeoutMs Time budget of the whole search
+ */
+
+/**
+ * Validates the body of `POST /api/chats/search-all`.
+ * A query needs at least 2 characters, except when it contains a CJK character (one character is a word there).
+ * @param {unknown} body Request body
+ * @returns {{ ok: true, options: ChatSearchAllOptions } | { ok: false, error: string, message: string }} Parsed options or the error to report
+ */
+export function parseChatSearchAllRequest(body) {
+    const input = (body && typeof body === 'object') ? /** @type {Record<string, unknown>} */ (body) : {};
+    const query = typeof input.query === 'string' ? input.query.trim() : '';
+
+    if (!query) {
+        return { ok: false, error: 'query_required', message: 'The query is empty.' };
+    }
+    if (query.length > CHAT_SEARCH_ALL.maxQueryLength) {
+        return { ok: false, error: 'query_too_long', message: `The query is longer than ${CHAT_SEARCH_ALL.maxQueryLength} characters.` };
+    }
+    if ([...query].length < 2 && !CJK_PATTERN.test(query)) {
+        return { ok: false, error: 'query_too_short', message: 'The query needs at least 2 characters.' };
+    }
+
+    const terms = [...new Set(foldCase(query).split(/\s+/).filter(Boolean))];
+    if (terms.length > CHAT_SEARCH_ALL.maxTerms) {
+        return { ok: false, error: 'too_many_terms', message: `The query has more than ${CHAT_SEARCH_ALL.maxTerms} words.` };
+    }
+
+    const scope = input.scope === undefined || input.scope === null ? 'all' : input.scope;
+    if (scope !== 'all' && scope !== 'characters' && scope !== 'groups') {
+        return { ok: false, error: 'invalid_scope', message: 'The scope must be "all", "characters" or "groups".' };
+    }
+
+    return {
+        ok: true,
+        options: {
+            terms,
+            scope,
+            limit: readIntegerOption(input.limit, CHAT_SEARCH_ALL.defaultLimit, 1, CHAT_SEARCH_ALL.maxLimit),
+            snippetsPerChat: readIntegerOption(input.snippetsPerChat, CHAT_SEARCH_ALL.defaultSnippetsPerChat, 0, CHAT_SEARCH_ALL.maxSnippetsPerChat),
+            timeoutMs: readIntegerOption(input.timeoutMs, CHAT_SEARCH_ALL.defaultTimeoutMs, 1, CHAT_SEARCH_ALL.maxTimeoutMs),
+        },
+    };
+}
+
+/**
+ * Cuts a snippet of about 80 characters on each side of the first hit and marks every term occurrence inside it.
+ * Whitespace is replaced one-to-one with spaces so the highlight ranges stay valid; "…" marks a cut-off end.
+ * @param {string} text Message text
+ * @param {string} foldedText `foldCase(text)`
+ * @param {string[]} terms Lowercase search terms
+ * @returns {{ text: string, highlights: [number, number][] } | null} Snippet, or null if no term occurs
+ */
+function buildChatSearchSnippet(text, foldedText, terms) {
+    let firstHit = -1;
+    let firstHitLength = 0;
+    for (const term of terms) {
+        const position = foldedText.indexOf(term);
+        if (position !== -1 && (firstHit === -1 || position < firstHit)) {
+            firstHit = position;
+            firstHitLength = term.length;
+        }
+    }
+    if (firstHit === -1) {
+        return null;
+    }
+
+    let start = Math.max(0, firstHit - CHAT_SEARCH_ALL.snippetRadius);
+    let end = Math.min(text.length, firstHit + firstHitLength + CHAT_SEARCH_ALL.snippetRadius);
+    const isLowSurrogate = (/** @type {number} */ index) => {
+        const code = text.charCodeAt(index);
+        return code >= 0xdc00 && code <= 0xdfff;
+    };
+    if (start > 0 && isLowSurrogate(start)) {
+        start--;
+    }
+    if (end < text.length && isLowSurrogate(end)) {
+        end++;
+    }
+
+    const windowText = text.slice(start, end).replace(/[\r\n\t\f\v\u2028\u2029]/g, ' ');
+    const foldedWindow = foldedText.slice(start, end);
+    /** @type {[number, number][]} */
+    const ranges = [];
+    for (const term of terms) {
+        let position = foldedWindow.indexOf(term);
+        while (position !== -1) {
+            ranges.push([position, position + term.length]);
+            position = foldedWindow.indexOf(term, position + term.length);
+        }
+    }
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+    /** @type {[number, number][]} */
+    const merged = [];
+    for (const [rangeStart, rangeEnd] of ranges) {
+        const previous = merged[merged.length - 1];
+        if (previous && rangeStart <= previous[1]) {
+            previous[1] = Math.max(previous[1], rangeEnd);
+        } else {
+            merged.push([rangeStart, rangeEnd]);
+        }
+    }
+
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < text.length ? '…' : '';
+    const highlights = /** @type {[number, number][]} */ (merged
+        .slice(0, CHAT_SEARCH_ALL.maxHighlightsPerSnippet)
+        .map(([rangeStart, rangeEnd]) => [rangeStart + prefix.length, rangeEnd + prefix.length]));
+
+    return { text: `${prefix}${windowText}${suffix}`, highlights };
+}
+
+/**
+ * @typedef {object} ChatSearchSnippet
+ * @property {number} index Position of the message among the chat's messages (approximate if the file has corrupted lines)
+ * @property {string} name Speaker name
+ * @property {boolean} is_user Whether the user wrote the message
+ * @property {string|number} send_date Message time as stored in the chat
+ * @property {string} text Message excerpt
+ * @property {[number, number][]} highlights Highlighted ranges of `text`, as [start, end)
+ *
+ * @typedef {object} ChatSearchHit
+ * @property {'character'|'group'} kind Whether the chat belongs to a character or a group
+ * @property {string} [avatar] Character card file name
+ * @property {string} [groupId] Group ID
+ * @property {string} entityName Group name, or the card file name without extension for a character
+ * @property {string} file_id Chat file name without extension
+ * @property {string} file_name Chat file name with extension
+ * @property {string} file_size Human-readable file size
+ * @property {number} message_count Number of messages in the chat
+ * @property {string|number} last_mes Time of the last message
+ * @property {boolean} fileNameMatch Whether the file name contains every search term
+ * @property {number} matchCount Number of messages containing at least one search term
+ * @property {ChatSearchSnippet[]} snippets Excerpts of the first matching messages
+ */
+
+/**
+ * Reads one chat file line by line and decides whether it matches. Only lines that contain a search term are
+ * parsed, and only counts and a few excerpts are kept in memory.
+ * A chat matches when every term occurs in some message (the rule of `/api/chats/search`) or the file name
+ * contains every term. Corrupted lines are skipped.
+ * @param {ChatFile} file Chat file
+ * @param {Pick<ChatSearchAllOptions, 'terms' | 'snippetsPerChat'>} options Search options
+ * @param {() => boolean} shouldStop Tells whether the search was stopped (deadline, client left, limit reached)
+ * @returns {Promise<{ aborted: boolean, hit: ChatSearchHit | null }>} The hit, or null if the chat does not match
+ */
+function scanChatFile(file, { terms, snippetsPerChat }, shouldStop) {
+    const parsedPath = path.parse(file.filePath);
+    const fileNameMatch = terms.every(term => foldCase(parsedPath.name).includes(term));
+    // A term that JSON.stringify would escape (quote, backslash, control character) cannot be searched in raw lines
+    const canPrecheck = !terms.some(term => JSON_ESCAPED_CHARACTER_PATTERN.test(term));
+
+    return new Promise((resolve) => {
+        const input = fs.createReadStream(file.filePath, { encoding: 'utf8' });
+        const lines = readline.createInterface({ input, crlfDelay: Infinity });
+        const foundTerms = new Set();
+        /** @type {ChatSearchSnippet[]} */
+        const snippets = [];
+        let isFinished = false;
+        let isHeaderRead = false;
+        let lineCount = 0;
+        let messageCount = 0;
+        let matchCount = 0;
+        let lastLine = '';
+
+        const finish = (/** @type {{ aborted: boolean, hit: ChatSearchHit | null }} */ outcome) => {
+            if (isFinished) {
+                return;
+            }
+            isFinished = true;
+            lines.close();
+            input.destroy();
+            resolve(outcome);
+        };
+
+        input.once('error', () => finish({ aborted: false, hit: null }));
+        lines.once('error', () => finish({ aborted: false, hit: null }));
+
+        lines.on('line', (line) => {
+            if (isFinished || !line) {
+                return;
+            }
+            if (++lineCount % CHAT_SEARCH_ALL.stopCheckInterval === 0 && shouldStop()) {
+                finish({ aborted: true, hit: null });
+                return;
+            }
+            // The first line is the chat header, not a message
+            if (!isHeaderRead) {
+                isHeaderRead = true;
+                return;
+            }
+
+            messageCount++;
+            lastLine = line;
+            if (canPrecheck) {
+                const foldedLine = foldCase(line);
+                if (!terms.some(term => foldedLine.includes(term))) {
+                    return;
+                }
+            }
+
+            const message = tryParse(line);
+            if (!message || typeof message !== 'object') {
+                return;
+            }
+            const text = typeof message.mes === 'string' ? message.mes : (typeof message.mes === 'number' ? String(message.mes) : '');
+            if (!text) {
+                return;
+            }
+            const foldedText = foldCase(text);
+            const hitTerms = terms.filter(term => foldedText.includes(term));
+            if (hitTerms.length === 0) {
+                return;
+            }
+
+            matchCount++;
+            hitTerms.forEach(term => foundTerms.add(term));
+            if (snippets.length < snippetsPerChat) {
+                const snippet = buildChatSearchSnippet(text, foldedText, terms);
+                if (snippet) {
+                    snippets.push({
+                        index: messageCount - 1,
+                        name: String(message.name ?? '').slice(0, CHAT_SEARCH_ALL.maxNameLength),
+                        is_user: !!message.is_user,
+                        send_date: (typeof message.send_date === 'string' || typeof message.send_date === 'number') ? message.send_date : '',
+                        ...snippet,
+                    });
+                }
+            }
+        });
+
+        lines.once('close', () => {
+            if (isFinished) {
+                return;
+            }
+            const matches = fileNameMatch || foundTerms.size === terms.length;
+            if (!matches) {
+                finish({ aborted: false, hit: null });
+                return;
+            }
+
+            const lastMessage = lastLine ? tryParse(lastLine) : null;
+            const lastSendDate = lastMessage?.send_date;
+            const lastTime = (typeof lastSendDate === 'string' && lastSendDate) || (typeof lastSendDate === 'number' && lastSendDate)
+                || (messageCount > 0 ? new Date(Math.round(file.mtime)).toISOString() : file.mtime);
+            const isGroup = !!file.groupId;
+
+            finish({
+                aborted: false,
+                hit: {
+                    kind: isGroup ? 'group' : 'character',
+                    ...(isGroup ? { groupId: file.groupId } : { avatar: file.pngFile }),
+                    entityName: isGroup ? (file.groupName || String(file.groupId ?? '')) : String(file.pngFile).replace('.png', ''),
+                    file_id: parsedPath.name,
+                    file_name: parsedPath.base,
+                    file_size: formatBytes(file.size),
+                    message_count: messageCount,
+                    last_mes: lastTime,
+                    fileNameMatch,
+                    matchCount,
+                    snippets,
+                },
+            });
+        });
+    });
+}
+
+/**
+ * Scans chat files newest first with a few files in flight at a time, until all are scanned, the limit of matching
+ * chats is reached, the deadline passes or the client leaves. Results keep the newest-first order of the files.
+ * @param {ChatFile[]} files Chat files, newest first
+ * @param {ChatSearchAllOptions} options Search options
+ * @param {{ deadline: number, isClientGone: () => boolean }} control Time budget and client connection
+ * @returns {Promise<{ results: ChatSearchHit[], scannedFiles: number, partial: boolean, reason: string }>} Matching chats and how the scan ended
+ */
+async function scanChatFiles(files, options, { deadline, isClientGone }) {
+    const total = files.length;
+    /** @type {(ChatSearchHit | null | undefined)[]} */
+    const outcomes = new Array(total).fill(undefined);
+    /** @type {ChatSearchHit[]} */
+    const results = [];
+    let reason = '';
+    let nextIndex = 0;
+    let scannedFiles = 0;
+    let settledPrefix = 0;
+
+    const shouldStop = () => {
+        if (!reason) {
+            if (isClientGone()) {
+                reason = 'disconnected';
+            } else if (Date.now() >= deadline) {
+                reason = 'timeout';
+            }
+        }
+        return !!reason;
+    };
+
+    // Results are released in file order, so the limit always keeps the newest matching chats
+    const releaseSettledResults = () => {
+        while (results.length < options.limit && settledPrefix < total && outcomes[settledPrefix] !== undefined) {
+            const hit = outcomes[settledPrefix++];
+            if (hit) {
+                results.push(hit);
+            }
+        }
+        if (results.length >= options.limit) {
+            reason = reason || 'limit';
+        }
+    };
+
+    const worker = async () => {
+        while (!shouldStop()) {
+            const index = nextIndex++;
+            if (index >= total) {
+                return;
+            }
+            const outcome = await scanChatFile(files[index], options, shouldStop);
+            if (outcome.aborted) {
+                return;
+            }
+
+            scannedFiles++;
+            outcomes[index] = outcome.hit;
+            releaseSettledResults();
+        }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(CHAT_SEARCH_ALL.concurrency, total) }, worker));
+
+    // After a timeout the older chats that were already scanned are still valid results
+    if (reason === 'timeout') {
+        for (let index = settledPrefix; index < total && results.length < options.limit; index++) {
+            const hit = outcomes[index];
+            if (hit) {
+                results.push(hit);
+            }
+        }
+    }
+
+    // Partial: a file was never (fully) scanned, or matching chats beyond the limit were left out
+    const hasUnscannedFile = outcomes.some(outcome => outcome === undefined);
+    const hasHitBeyondLimit = results.length >= options.limit && outcomes.slice(settledPrefix).some(Boolean);
+    const partial = hasUnscannedFile || hasHitBeyondLimit;
+    return { results, scannedFiles, partial, reason: partial ? (reason || 'error') : '' };
+}
+
 export const router = express.Router();
 
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error
@@ -1057,77 +1574,61 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
     }
 });
 
+router.post('/search-all', async function (request, response) {
+    const parsed = parseChatSearchAllRequest(request.body);
+    if (!parsed.ok) {
+        return response.status(400).send({ error: parsed.error, message: parsed.message });
+    }
+
+    const { options } = parsed;
+    const startedAt = Date.now();
+    let isClientGone = false;
+    // Node emits 'close' on the request as soon as its body has been read, so only the response tells a real disconnect
+    if (typeof response.on === 'function') {
+        response.on('close', () => {
+            if (!response.writableFinished) {
+                isClientGone = true;
+            }
+        });
+    }
+
+    try {
+        const listedFiles = await listUserChatFiles(request.user.directories, {
+            characters: options.scope !== 'groups',
+            groups: options.scope !== 'characters',
+        });
+        // Chats without an owner (a group without ID) can't be opened from a search result
+        const files = listedFiles
+            .filter(file => file.pngFile || file.groupId)
+            .sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
+        const scan = await scanChatFiles(files, options, {
+            deadline: startedAt + options.timeoutMs,
+            isClientGone: () => isClientGone,
+        });
+        if (isClientGone) {
+            return;
+        }
+
+        return response.send({
+            results: scan.results,
+            scannedFiles: scan.scannedFiles,
+            totalFiles: files.length,
+            partial: scan.partial,
+            partialReason: scan.reason,
+            elapsedMs: Date.now() - startedAt,
+        });
+    } catch (error) {
+        console.error('Chat search-all error:', error);
+        return response.status(500).json({ error: 'Search failed' });
+    }
+});
+
 router.post('/recent', async function (request, response) {
     try {
-        /** @typedef {{pngFile?: string, groupId?: string, filePath: string, mtime: number}} ChatFile */
         /** @type {ChatFile[]} */
-        const allChatFiles = [];
+        const allChatFiles = await listUserChatFiles(request.user.directories, { root: true });
         /** @type {import('../../public/scripts/welcome-screen.js').PinnedChat[]} */
         const pinnedChats = Array.isArray(request.body.pinned) ? request.body.pinned : [];
-
-        const getCharacterChatFiles = async () => {
-            const pngDirents = await fs.promises.readdir(request.user.directories.characters, { withFileTypes: true });
-            const pngFiles = pngDirents.filter(e => e.isFile() && path.extname(e.name) === '.png').map(e => e.name);
-
-            for (const pngFile of pngFiles) {
-                const chatsDirectory = pngFile.replace('.png', '');
-                const pathToChats = path.join(request.user.directories.chats, chatsDirectory);
-                if (!fs.existsSync(pathToChats)) {
-                    continue;
-                }
-                const pathStats = await fs.promises.stat(pathToChats);
-                if (pathStats.isDirectory()) {
-                    const chatFiles = await fs.promises.readdir(pathToChats);
-                    const jsonlFiles = chatFiles.filter(file => path.extname(file) === '.jsonl');
-
-                    for (const file of jsonlFiles) {
-                        const filePath = path.join(pathToChats, file);
-                        const stats = await fs.promises.stat(filePath);
-                        allChatFiles.push({ pngFile, filePath, mtime: stats.mtimeMs });
-                    }
-                }
-            }
-        };
-
-        const getGroupChatFiles = async () => {
-            const groupDirents = await fs.promises.readdir(request.user.directories.groups, { withFileTypes: true });
-            const groups = groupDirents.filter(e => e.isFile() && path.extname(e.name) === '.json').map(e => e.name);
-
-            for (const group of groups) {
-                try {
-                    const groupPath = path.join(request.user.directories.groups, group);
-                    const groupContents = await fs.promises.readFile(groupPath, 'utf8');
-                    const groupData = JSON.parse(groupContents);
-
-                    if (Array.isArray(groupData.chats)) {
-                        for (const chat of groupData.chats) {
-                            const filePath = getGroupChatFilePath(request.user.directories.groupChats, chat);
-                            if (!filePath || !fs.existsSync(filePath)) {
-                                continue;
-                            }
-                            const stats = await fs.promises.stat(filePath);
-                            allChatFiles.push({ groupId: groupData.id, filePath, mtime: stats.mtimeMs });
-                        }
-                    }
-                } catch (error) {
-                    // Skip group files that can't be read or parsed
-                    continue;
-                }
-            }
-        };
-
-        const getRootChatFiles = async () => {
-            const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
-            const chatFiles = dirents.filter(e => e.isFile() && path.extname(e.name) === '.jsonl').map(e => e.name);
-
-            for (const file of chatFiles) {
-                const filePath = path.join(request.user.directories.chats, file);
-                const stats = await fs.promises.stat(filePath);
-                allChatFiles.push({ filePath, mtime: stats.mtimeMs });
-            }
-        };
-
-        await Promise.allSettled([getCharacterChatFiles(), getGroupChatFiles(), getRootChatFiles()]);
 
         const max = parseInt(request.body.max ?? Number.MAX_SAFE_INTEGER) + pinnedChats.length;
         const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => p.file_name === path.basename(chatFile.filePath) && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));

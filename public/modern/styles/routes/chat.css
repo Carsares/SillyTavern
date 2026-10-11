@@ -1094,3 +1094,140 @@
 .chat-bg-warning {
     color: var(--warning);
 }
+
+/* 跨角色聊天搜索（B2）：侧栏搜索框的「当前 / 全部」范围开关，以及「全部」范围下文件列表面板里按角色/群聊分组的结果 */
+/* 范围开关和搜索框合成一个网格项，面板的三行网格（标题、搜索区、列表）不变 */
+.chat-search-block {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.chat-search-block .chat-search-row {
+    margin-bottom: 0;
+}
+
+.chat-search-scope button {
+    min-height: 28px;
+}
+
+/* 范围开关多占一行，给聊天文件面板补回同样的高度，列表不会比原来更矮 */
+.chat-browser {
+    grid-template-rows: minmax(200px, 1.45fr) minmax(240px, 0.55fr);
+}
+
+/* 结果比普通会话列表高得多，「全部」范围下把侧栏的高度让给结果面板 */
+.chat-browser.chat-browser-global {
+    grid-template-rows: minmax(150px, 0.4fr) minmax(280px, 1.6fr);
+}
+
+.chat-global-results {
+    align-content: start;
+    gap: 10px;
+}
+
+.chat-global-summary {
+    padding: 0 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-global-status,
+.chat-global-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 82%, var(--surface));
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.chat-global-notice {
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+    color: var(--text);
+}
+
+.chat-global-notice > i {
+    margin-top: 3px;
+    color: var(--warning);
+}
+
+.chat-global-notice strong {
+    display: block;
+}
+
+.chat-global-notice.is-error {
+    border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.chat-global-notice.is-error > i {
+    color: var(--danger);
+}
+
+.chat-global-group {
+    display: grid;
+    gap: 4px;
+}
+
+.chat-global-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chat-global-group-title .avatar,
+.chat-global-group-title .avatar-fallback {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+}
+
+.chat-global-group-title .row-subtitle {
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.chat-global-hit {
+    align-items: flex-start;
+}
+
+.chat-global-snippet {
+    display: -webkit-box;
+    overflow: hidden;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+.chat-global-snippet-name {
+    margin-right: 6px;
+    color: var(--text);
+    font-weight: 700;
+}
+
+.chat-global-snippet-name::after {
+    content: "：";
+}
+
+.chat-global-snippet mark {
+    padding: 0 1px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--warning) 32%, transparent);
+    color: var(--text);
+}
+
+.chat-global-more {
+    display: block;
+    margin-top: 2px;
+}

@@ -17,6 +17,9 @@ export function createChatContextEvents(ctx) {
         loadChatMessages,
         searchSelectedChats,
         increaseCurrentMessageLimit,
+        clearChatGlobalSearch,
+        runChatGlobalSearch,
+        setChatSearchScope,
     } = ctx;
 
     async function handleChatContextClick(event) {
@@ -68,6 +71,25 @@ export function createChatContextEvents(ctx) {
             render();
             restoreScrollTop(chatResourceListSelector, resourceListScrollTop);
             restoreScrollTop(chatFileListSelector, chatFileListScrollTop);
+            return true;
+        }
+
+        // 「当前 / 全部」范围开关：只切换侧栏显示的范围，不发请求，两个范围各自保留自己的关键词和结果
+        const scopeButton = event.target.closest('[data-chat-search-scope]');
+        if (scopeButton) {
+            setChatSearchScope(scopeButton.dataset.chatSearchScope);
+            render();
+            return true;
+        }
+
+        if (event.target.closest('[data-chat-search-run]') && state.chatGlobalSearch.scope === 'all') {
+            await runChatGlobalSearch();
+            return true;
+        }
+
+        if (event.target.closest('[data-chat-search-clear]') && state.chatGlobalSearch.scope === 'all') {
+            clearChatGlobalSearch();
+            render();
             return true;
         }
 

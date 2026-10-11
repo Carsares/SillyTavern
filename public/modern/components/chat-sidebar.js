@@ -1,3 +1,5 @@
+import { createChatGlobalSearchComponents } from './chat-global-search.js';
+
 // The backend's chat summary (getChatInfo in src/endpoints/chats.js) fills an empty last message with this
 // English placeholder; message bubbles say [空消息], so search-result previews use the same wording.
 const backendEmptyMessagePlaceholder = '[The message is empty]';
@@ -14,7 +16,19 @@ export function createChatSidebarComponents({
     getChatId,
     getChatMessageCount,
     getChatUnreadCount,
+    getCharacterAvatarUrl,
+    getGroupAvatarUrl,
 }) {
+    const { getChatGlobalSearchSummary, renderChatGlobalSearchResults, renderChatSearchScopeSwitch } = createChatGlobalSearchComponents({
+        state,
+        escapeHtml,
+        formatDate,
+        formatNumber,
+        renderInlineEmpty,
+        getCharacterAvatarUrl,
+        getGroupAvatarUrl,
+    });
+
     function getChatPreviewText(chat) {
         const preview = String(chat?.preview_message || '');
         return preview.trim() === backendEmptyMessagePlaceholder ? '[空消息]' : preview;
@@ -40,8 +54,18 @@ export function createChatSidebarComponents({
         isSearching,
         isLoadingChats,
     }) {
+        const globalSearch = state.chatGlobalSearch;
+        const allScope = globalSearch.scope === 'all';
+        const searchQuery = allScope ? globalSearch.query : state.chatSearch.query;
+        const searchBusy = allScope ? globalSearch.loading : isSearching;
+        const canRunSearch = allScope ? !globalSearch.loading : (selected && !isSearching);
+        const canClearSearch = allScope
+            ? !!(globalSearch.query || globalSearch.searchedQuery || globalSearch.error)
+            : !!(state.chatSearch.query || state.chatSearch.searchedQuery);
+        const searchPlaceholder = allScope ? '在所有角色和群聊中搜索消息内容' : '搜索文件名和消息内容';
+
         return `
-                <aside class="chat-browser">
+                <aside class="chat-browser ${allScope ? 'chat-browser-global' : ''}">
                 <section class="panel chat-browser-panel">
                     <div class="panel-header">
                         <div>
@@ -67,8 +91,8 @@ export function createChatSidebarComponents({
                 <section class="panel chat-browser-panel">
                     <div class="panel-header">
                         <div>
-                            <h2 class="panel-title">聊天文件</h2>
-                            <p class="panel-subtitle">${escapeHtml(searchSummary)}</p>
+                            <h2 class="panel-title">${allScope ? '全部聊天' : '聊天文件'}</h2>
+                            <p class="panel-subtitle">${escapeHtml(allScope ? getChatGlobalSearchSummary() : searchSummary)}</p>
                         </div>
                         <div class="panel-actions">
                             <button class="icon-button" type="button" data-refresh-chat-list title="刷新聊天列表" ${selected && !isLoadingChats ? '' : 'disabled'}>
@@ -79,18 +103,25 @@ export function createChatSidebarComponents({
                             </button>
                         </div>
                     </div>
-                    <div class="chat-search-row">
-                        <input class="text-input" type="search" data-chat-search-input value="${escapeHtml(state.chatSearch.query)}" placeholder="搜索文件名和消息内容">
-                        <button class="icon-button" type="button" data-chat-search-run title="搜索聊天" ${selected && !isSearching ? '' : 'disabled'}>
-                            <i class="fa-solid ${isSearching ? 'fa-circle-notch fa-spin' : 'fa-magnifying-glass'}"></i>
-                        </button>
-                        <button class="icon-button" type="button" data-chat-search-clear title="清空搜索" ${state.chatSearch.query || state.chatSearch.searchedQuery ? '' : 'disabled'}>
-                            <i class="fa-solid fa-xmark"></i>
-                        </button>
+                    <div class="chat-search-block">
+                        ${renderChatSearchScopeSwitch(getChatModeLabel())}
+                        <div class="chat-search-row" data-chat-search-scope-active="${allScope ? 'all' : 'current'}">
+                            <input class="text-input" type="search" data-chat-search-input value="${escapeHtml(searchQuery)}" placeholder="${searchPlaceholder}">
+                            <button class="icon-button" type="button" data-chat-search-run title="${allScope ? '搜索全部聊天' : '搜索聊天'}" ${canRunSearch ? '' : 'disabled'}>
+                                <i class="fa-solid ${searchBusy ? 'fa-circle-notch fa-spin' : 'fa-magnifying-glass'}"></i>
+                            </button>
+                            <button class="icon-button" type="button" data-chat-search-clear title="清空搜索" ${canClearSearch ? '' : 'disabled'}>
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
                     </div>
+                    ${allScope ? `
+                    <div class="resource-list chat-global-results" data-chat-file-list="global-search">
+                        ${renderChatGlobalSearchResults()}
+                    </div>` : `
                     <div class="resource-list" data-chat-file-list="${escapeHtml(contextKey || '')}">
                         ${chats.map(chat => renderChatFileRow(chat)).join('') || renderInlineEmpty(selected ? `这个${getChatModeLabel()}暂无聊天文件` : `先选择一个${getChatModeLabel()}`)}
-                    </div>
+                    </div>`}
                 </section>
             </aside>
     `;
