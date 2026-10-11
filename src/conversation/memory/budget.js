@@ -5,8 +5,19 @@ export const SUMMARY_PROMPT_RESERVE = 2048;
 /** The composition layer must select the same frozen memory connection. */
 export function auxiliaryBudget(snapshot) {
     const connections = (snapshot.resources ?? []).filter(r => r.kind === 'connection');
-    const selected = snapshot.settings?.auxiliaryConnectionId ?? snapshot.settings?.connectionId;
-    const connection = selected != null ? connections.find(r => r.id === selected) : connections.length === 1 ? connections[0] : undefined;
+    const settings = snapshot.settings ?? snapshot.conversation?.settings ?? {};
+    const primary = connections.find(r => r.id === settings.connectionId);
+    let selected = settings.auxiliaryConnectionId;
+    if (!selected) {
+        const auxiliary = primary?.data?.auxiliary ?? {};
+        for (const role of ['memory', 'summary', 'summarization']) {
+            const value = auxiliary[role];
+            if (typeof value === 'string' && value) { selected = value; break; }
+            if (value?.connectionId) { selected = value.connectionId; break; }
+        }
+        selected ||= settings.connectionId;
+    }
+    const connection = connections.find(r => r.id === selected);
     invariant(connection, 'budget-blocked', 'A frozen memory connection with finite limits is required', 409);
     return { ...computeBudget(connection.data), connectionId: connection.id };
 }

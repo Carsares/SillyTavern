@@ -156,3 +156,75 @@ test('chat can focus current message without treating a missing message as found
     assert.ok(focused && scrolled);
     assert.equal(chat.focusMessage('missing'), false);
 }));
+
+test('message edit uploads replacement media and removal submits an empty array with the original revision', () => withDOM(async () => {
+    const snap = snapshot(); snap.messages = [{ id: 'm', role: 'user', content: 'original', revision: 1, media: [{ attachmentId: 'old', type: 'image', mimeType: 'image/png' }] }];
+    const commands = [];
+    const app = { state: { snapshot: snap, turn: null, activity: [] }, run: action => action(),
+        api: { attachmentUrl: id => `/attachments/${id}`, uploadAttachment: async body => {
+            assert.equal(body.base64, 'AQI='); return { id: 'new', mime: 'text/plain', name: body.name, size: 2 };
+        } }, applyCommand: async (...args) => { commands.push(args); } };
+    const view = createChat(app); view.render();
+    const click = label => descendants(view.root).find(node => node.tag === 'button' && node.textContent === label).listeners.click();
+    click('编辑'); click('移除此附件');
+    const file = descendants(view.root).find(node => node['aria-label'] === '编辑消息附件');
+    file.files = [{ name: 'note.txt', type: 'text/plain', size: 2, arrayBuffer: async () => Uint8Array.from([1, 2]).buffer }];
+    await click('上传并加入编辑');
+    await click('保存修改');
+    assert.equal(commands[0][0], 'message.edit'); assert.equal(commands[0][2], snap);
+    assert.deepEqual(commands[0][1].media, [{ attachmentId: 'new', type: 'document', mimeType: 'text/plain', name: 'note.txt', size: 2 }]);
+    assert.equal(snap.messages[0].media[0].attachmentId, 'old');
+    click('编辑'); click('移除此附件'); await click('保存修改');
+    assert.deepEqual(commands[1][1].media, []);
+}));
+test('memory creation refreshes versions while retaining an unsaved new draft', () => withDOM(async () => {
+    const { createMemory } = await import('../../../../public/modern/conversation/memory/view.js');
+    let pending; let command;
+    const app = { state: { snapshot: snapshot(), turn: null }, run: action => { pending = action(); return pending; }, notice() {}, applyCommand: async (...args) => { command = args; } };
+    const view = createMemory(app); view.render();
+    const content = descendants(view.root).find(node => node['aria-label'] === '新记忆内容');
+    content.value = 'keep this draft';
+    app.state.snapshot = { ...snapshot(), conversation: { id: 'c', contentRevision: 8, memoryRevision: 9 } };
+    view.render(); assert.equal(content.value, 'keep this draft');
+    descendants(view.root).find(node => node.tag === 'form').listeners.submit({ preventDefault() {} }); await pending;
+    assert.equal(command[0], 'memory.create'); assert.equal(command[1].content, 'keep this draft');
+    assert.equal(command[2].conversation.memoryRevision, 9); assert.equal(command[2].conversation.contentRevision, 8);
+}));
+test('explicit external url protocol and named URL fields all stay links rather than images', () => withDOM(async () => {
+    const { toolMediaView } = await import('../../../../public/modern/conversation/media/view.js');
+    const view = toolMediaView({}, { images: [{ url: 'https://example.com/current', external: true }, { externalURL: 'https://example.com/named' }, { externalUrl: 'https://example.com/alias' }, { url: 'https://example.com/unmarked' }] });
+    assert.equal(descendants(view).filter(node => node.tag === 'a').length, 3);
+    assert.equal(descendants(view).filter(node => node.tag === 'img').length, 0);
+}));
+test('auxiliary selectors save exact settings keys and capability guidance uses actual provider fields', () => withDOM(async () => {
+    const { createSettings } = await import('../../../../public/modern/conversation/settings/view.js');
+    const { connectionGuidance } = await import('../../../../public/modern/conversation/resources/guidance.js');
+    let pending; let saved;
+    const app = { state: { snapshot: snapshot() }, id: () => 'c', notice() {}, run: action => { pending = action(); return pending; },
+        api: { resources: async () => [{ id: 'aux', kind: 'connection', name: 'aux', revision: 1 }], automaticState: async () => ({ enabled: false }) },
+        applyCommand: async (type, body) => { saved = body.settings; } };
+    const view = createSettings(app); await view.load();
+    const selects = descendants(view.root).filter(node => node.tag === 'select');
+    for (const control of selects.slice(5)) control.value = 'aux';
+    descendants(view.root).find(node => node.tag === 'form').onsubmit({ preventDefault() {} }); await pending;
+    for (const key of ['auxiliaryConnectionId', 'embeddingConnectionId', 'imageConnectionId']) assert.equal(saved[key], 'aux');
+    const text = connectionGuidance().textContent;
+    for (const field of ['reasoningBudget', 'reasoningEfforts', 'mediaTokenCost', 'verified', 'embedding']) assert.ok(text.includes(field));
+    assert.match(text, /不会自动写入/);
+}));
+
+test('conflicting message media edits retain the staged removal and text for review', () => withDOM(async () => {
+    const snap = snapshot(); snap.messages = [{ id: 'm', role: 'user', content: 'before', revision: 1, media: [{ attachmentId: 'old', type: 'image', mimeType: 'image/png' }] }];
+    const app = { state: { snapshot: snap, turn: null, activity: [] }, run: action => action(), api: { attachmentUrl: id => `/attachments/${id}` }, applyCommand: async () => { throw new Error('revision-conflict'); } };
+    const view = createChat(app); view.render();
+    const click = label => descendants(view.root).find(node => node.tag === 'button' && node.textContent === label).listeners.click();
+    click('编辑'); click('移除此附件');
+    const editor = descendants(view.root).find(node => node['aria-label'] === '编辑消息');
+    editor.value = 'edited'; editor.listeners.input({ target: editor });
+    await assert.rejects(click('保存修改'), /revision-conflict/);
+    view.render();
+    assert.ok(descendants(view.root).includes(editor));
+    assert.equal(editor.value, 'edited');
+    assert.equal(descendants(view.root).filter(node => node.tag === 'button' && node.textContent === '移除此附件').length, 0);
+    assert.equal(snap.messages[0].media.length, 1);
+}));

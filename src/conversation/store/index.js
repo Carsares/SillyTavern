@@ -48,9 +48,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const tx = fn => {
         invariant(!closed && !busy, 'store-busy', 'Nested writes are not allowed', 409);
         busy = true; let began = false;
-        try { db.exec('BEGIN IMMEDIATE'); began = true; const state = read(); const result = fn(state); state[UNIT].flush(); db.exec('COMMIT'); return copy(result); }
-        catch (error) { if (began) db.exec('ROLLBACK'); throw error; }
-        finally { busy = false; }
+        try { db.exec('BEGIN IMMEDIATE'); began = true; const state = read(); const result = fn(state); state[UNIT].flush(); db.exec('COMMIT'); return copy(result); } catch (error) { if (began) db.exec('ROLLBACK'); throw error; } finally { busy = false; }
     };
     const get = (map, key) => { invariant(Object.hasOwn(map, key), 'not-found', 'Entity not found', 404); return map[key]; };
     const conv = (s, key) => get(s.conversations, key);
@@ -103,7 +101,8 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             if (Array.isArray(value)) return value.forEach(collectAttachments);
             if (!value || typeof value !== 'object') return;
             if (value.attachmentId !== undefined) {
-                const { path: internalPath, ...metadata } = get(s.attachments, value.attachmentId);
+                const metadata = copy(get(s.attachments, value.attachmentId));
+                delete metadata.path;
                 attachments[metadata.id] = copy(metadata);
             }
             Object.values(value).forEach(collectAttachments);
@@ -131,9 +130,11 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const validBlock = (s, cid, b) => (blockResourceScope(s, cid, b) ? validFrozenResources(s, blockResourceScope(s, cid, b), b.resourceRefs) : validResources(s, b.resourceRefs)) && (b.memoryRefs ?? []).every(r => { const m = s.memories[r.id ?? r.memoryId]; return m && m.conversationId === cid && m.revision === r.revision && m.status === 'valid'; }) && (b.sourceRefs ?? []).every(r => validSource(s, cid, r)) && [...(b.parentSummaryRefs ?? []), ...(b.summaryRef ? [b.summaryRef] : [])].every(r => { const p = s.summaries[r.id ?? r.summaryId]; return p && p.conversationId === cid && p.revision === r.revision && p.status === 'valid'; });
     const invalidate = (s, cid) => {
         let changed; let any = false;
-        do { changed = false; for (const kind of ['summaries', 'memories', 'folds']) for (const b of Object.values(s[kind])) {
-            if (b.conversationId === cid && b.status === 'valid' && !validBlock(s, cid, b)) { b.status = b.locked || b.origin === 'manual' ? 'pending-confirm' : 'stale'; changed = any = true; }
-        } } while (changed);
+        do {
+            changed = false; for (const kind of ['summaries', 'memories', 'folds']) for (const b of Object.values(s[kind])) {
+                if (b.conversationId === cid && b.status === 'valid' && !validBlock(s, cid, b)) { b.status = b.locked || b.origin === 'manual' ? 'pending-confirm' : 'stale'; changed = any = true; }
+            }
+        } while (changed);
         if (any) conv(s, cid).memoryRevision++;
         for (const j of Object.values(s.jobs)) if (j.conversationId === cid && ['pending', 'running', 'ready'].includes(j.status)
             && (!(j.dependencies?.sourceRefs ?? (Array.isArray(j.dependencies) ? j.dependencies : [])).every(r => validSource(s, cid, r)) || !validResources(s, j.dependencies?.resourceRefs))) {
@@ -151,8 +152,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const derived = (s, cid, proposal) => {
         const c = conv(s, cid);
         let foreground;
-        if (c.activeTurnId) { invariant(proposal.turnId === c.activeTurnId, 'conversation-busy', 'Background commit requires idle conversation', 409); foreground = live(s, proposal.turnId, proposal.attemptEpoch); }
-        else invariant(proposal.turnId === undefined && proposal.attemptEpoch === undefined, 'late-callback', 'Foreground proposal requires its active turn', 409);
+        if (c.activeTurnId) { invariant(proposal.turnId === c.activeTurnId, 'conversation-busy', 'Background commit requires idle conversation', 409); foreground = live(s, proposal.turnId, proposal.attemptEpoch); } else invariant(proposal.turnId === undefined && proposal.attemptEpoch === undefined, 'late-callback', 'Foreground proposal requires its active turn', 409);
         if (proposal.expectedMemoryRevision !== undefined) check(c.memoryRevision, proposal.expectedMemoryRevision);
         invariant((proposal.sourceRefs ?? []).every(r => validSource(s, cid, r)) && (foreground ? validFrozenResources(s, foreground, proposal.resourceRefs) : validResources(s, proposal.resourceRefs)), 'source-conflict', 'Sources or resources changed', 409);
         if (!['summaries', 'memories', 'folds'].some(kind => proposal[kind]?.length)) return { accepted: true, memoryRevision: c.memoryRevision };
@@ -184,6 +184,16 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             }
         }
     };
+    const turnSnapshot = (s, t) => {
+        live(s, t.id, t.attemptEpoch);
+        const view = snapshot(s, t.conversationId);
+        const temporary = { settings: copy(s.snapshots[t.snapshotId].settings) };
+        applyEffects(temporary, t.pendingEffects ?? []);
+        temporary.settings.worldInfo = { ...temporary.settings.worldInfo, turnIndex: t.turnIndex };
+        view.settings = temporary.settings;
+        view.conversation.settings = copy(temporary.settings);
+        return view;
+    };
     const finish = (s, tid, result, epoch, recovery = false) => {
         const t = get(s.turns, tid);
         invariant(!terminal(t) && t.attemptEpoch === epoch, 'late-callback', 'Turn already finished or epoch expired', 409);
@@ -211,7 +221,11 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             newMessage(s, c.id, tid, 'assistant', content, 'partial', media, { id: member.messageId, candidateId: member.candidateId, characterId: member.characterId, memberRunId: member.memberRunId, reasoning: t.reasoning });
             c.contentRevision++;
         }
-        if (success && t.type !== 'group') applyEffects(c, result.effects);
+        if (success && ['send', 'group', 'regenerate', 'continue'].includes(t.type)) {
+            check(c.settings.worldInfo?.turnIndex ?? 0, t.turnIndex);
+            applyEffects(c, t.type === 'group' ? t.pendingEffects : result.effects);
+            c.settings.worldInfo = { ...c.settings.worldInfo, turnIndex: t.turnIndex + 1 };
+        }
         Object.assign(t, redact({ status: result.status, content, reasoning: result.reasoning ?? t.reasoning, usage: result.usage ?? t.usage, error: result.error, completedAt: now() }));
         c.activeTurnId = null;
         const memoryBeforeRelease = c.memoryRevision;
@@ -221,9 +235,10 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         event(s, c.id, `turn.${t.status}`, { turnId: tid, status: t.status, recovery }, tid); return t;
     };
     const api = {
-        createConversation: ({ title = '', settings = {}, resourceRefs = [] } = {}) => tx(s => { const c = { id: id(), title, contentRevision: 0, memoryRevision: 0, activeTurnId: null, resourceRefs: copy(resourceRefs), explicitResourceRefs: copy(resourceRefs), settings: copy(settings), createdAt: now() }; s.conversations[c.id] = c; c.resourceRefs = refs(s, c); event(s, c.id, 'conversation.changed', {}); return c; }),
+        createConversation: ({ title = '', settings = {}, resourceRefs = [] } = {}) => tx(s => { const c = { id: id(), title, contentRevision: 0, memoryRevision: 0, activeTurnId: null, resourceRefs: copy(resourceRefs), explicitResourceRefs: copy(resourceRefs), settings: { ...copy(settings), worldInfo: { ...copy(settings.worldInfo ?? {}), turnIndex: 0 } }, createdAt: now() }; s.conversations[c.id] = c; c.resourceRefs = refs(s, c); event(s, c.id, 'conversation.changed', {}); return c; }),
         listConversations: () => redact(Object.values(read().conversations)),
         getConversation: cid => snapshot(read(), cid),
+        getTurnSnapshot: tid => { const s = read(); return turnSnapshot(s, get(s.turns, tid)); },
         deleteConversation: (cid, revision) => tx(s => { const c = conv(s, cid); idle(c); check(c.contentRevision, revision); for (const kind of ['messages', 'turns', 'snapshots', 'summaries', 'memories', 'folds', 'jobs', 'tools', 'traces']) for (const [key, value] of Object.entries(s[kind])) if (value.conversationId === cid) delete s[kind][key]; delete s.events[cid]; delete s.conversations[cid]; return { deleted: true }; }),
         createResource: input => tx(s => { invariant(RESOURCE_KINDS.includes(input.kind), 'invalid-resource', 'Unknown resource kind'); const r = { ...copy(input), id: id(), revision: 1 }; s.resources[r.id] = { revision: 1, versions: { 1: r } }; return redact(r); }),
         listResources: kind => Object.values(read().resources).filter(r => !r.deletedAt).map(r => redact(r.versions[r.revision])).filter(r => !kind || r.kind === kind),
@@ -239,7 +254,8 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             if (request.media !== undefined) validateMedia(s, request.media);
             if (request.targetMessageId) { const target = get(s.messages, request.targetMessageId); invariant(target.conversationId === cid && !target.deletedAt && current(target).role === 'assistant', 'invalid-target', 'Expected current assistant message'); }
             const before = snapshot(s, cid, true);
-            let plannedMembers;
+            let plannedMembers; let pendingEffects = [];
+            const turnIndex = c.settings.worldInfo?.turnIndex ?? 0;
             if (preflight) { const value = preflight(copy(before), copy(request)); invariant(!value?.then, 'async-preflight', 'Preflight must be synchronous'); if (request.type === 'group' && !request.retryTurnId) plannedMembers = copy(value?.members); }
             if (plannedMembers !== undefined) {
                 invariant(Array.isArray(plannedMembers) && plannedMembers.length > 0 && plannedMembers.length <= 32 && plannedMembers.every(m => m && typeof m.id === 'string' && m.id && typeof m.characterId === 'string' && before.resources.some(r => r.id === m.characterId && r.kind === 'character'))
@@ -253,6 +269,9 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
                 invariant(previous.conversationId === cid && ['failed', 'stopped', 'interrupted'].includes(previous.status) && previous.type === request.type, 'invalid-retry', 'Retry requires a failed turn of the same type and conversation', 409);
                 invariant(previous.request.content === request.content && canonicalJson(previous.request.media ?? []) === canonicalJson(request.media ?? []) && previous.targetMessageId === request.targetMessageId, 'invalid-retry', 'Retry must preserve the original input', 409);
                 if (request.type === 'group') {
+                    check(turnIndex, previous.turnIndex);
+                    pendingEffects = copy(previous.pendingEffects ?? []);
+                    applyEffects({ settings: copy(c.settings) }, pendingEffects);
                     const visited = new Set(); const completed = new Set(); let ancestor = previous; let originalPlan;
                     while (ancestor) {
                         invariant(!visited.has(ancestor.id) && ancestor.conversationId === cid && ancestor.type === 'group', 'invalid-retry', 'Invalid group retry chain', 409);
@@ -270,7 +289,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             } else if (['send', 'group'].includes(request.type)) { userMessageId = newMessage(s, cid, tid, 'user', request.content, 'completed', request.media ?? []).id; c.contentRevision++; }
             c.activeTurnId = tid; c.resourceRefs = refs(s, c);
             const snap = snapshot(s, cid); s.snapshots[snap.id] = snap;
-            const t = { id: tid, conversationId: cid, clientRequestId: request.clientRequestId, payloadHash: hash, type: request.type, targetMessageId: request.targetMessageId, status: 'queued', attemptEpoch: 1, snapshotId: snap.id, userMessageId, ...(plannedMembers !== undefined ? { plannedMembers } : {}), content: '', reasoning: '', usage: null, request: copy(request), cancelRequested: false, messageId: request.targetMessageId ?? id(), candidateId: id() };
+            const t = { id: tid, conversationId: cid, clientRequestId: request.clientRequestId, payloadHash: hash, type: request.type, targetMessageId: request.targetMessageId, status: 'queued', attemptEpoch: 1, snapshotId: snap.id, userMessageId, turnIndex, pendingEffects, ...(plannedMembers !== undefined ? { plannedMembers } : {}), content: '', reasoning: '', usage: null, request: copy(request), cancelRequested: false, messageId: request.targetMessageId ?? id(), candidateId: id() };
             s.turns[tid] = t; event(s, cid, 'turn.accepted', { turnId: tid }, tid); return { turn: t, snapshot: snap, replayed: false };
         }),
         startMember: (tid, input, epoch) => tx(s => {
@@ -297,7 +316,9 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             validateMedia(s, media);
             const content = input.content ?? '';
             invariant(!t.activeMember || t.activeMember.memberRunId === input.memberRunId && t.activeMember.characterId === input.characterId, 'invalid-member', 'Member does not match active stream', 409);
-            applyEffects(conv(s, t.conversationId), input.effects);
+            const temporary = { settings: turnSnapshot(s, t).settings };
+            applyEffects(temporary, input.effects);
+            (t.pendingEffects ??= []).push(...copy(input.effects ?? []));
             const streamIds = t.activeMember ? { id: t.activeMember.messageId, candidateId: t.activeMember.candidateId } : {};
             const m = content || media.length ? newMessage(s, t.conversationId, tid, 'assistant', content, 'completed', media, { ...streamIds, characterId: input.characterId, memberRunId: input.memberRunId }) : null;
             t.activeMember = null; t.content = content; t.reasoning = input.reasoning ?? t.reasoning;
@@ -338,30 +359,49 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
                 event(s, cid, 'memory.updated', { id: b.id, type: cmd.type });
             } else if (cmd.type.startsWith('memory.')) {
                 const b = get(s.memories, cmd.memoryId ?? cmd.blockId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Memory not found', 404); check(b.revision, cmd.expectedBlockRevision);
-                if (cmd.type === 'memory.edit') { b.content = cmd.content; b.origin = 'manual'; }
-                else if (cmd.type === 'memory.lock') b.locked = cmd.locked ?? true;
-                else if (cmd.type === 'memory.confirm') { b.sourceRefs = []; b.parentSummaryRefs = []; b.memoryRefs = []; b.resourceRefs = []; b.origin = 'manual'; b.status = 'valid'; }
-                else invariant(false, 'invalid-command', 'Unknown memory command');
+                if (cmd.type === 'memory.edit') { b.content = cmd.content; b.origin = 'manual'; } else if (cmd.type === 'memory.lock') b.locked = cmd.locked ?? true;
+                else if (cmd.type === 'memory.confirm') { b.sourceRefs = []; b.parentSummaryRefs = []; b.memoryRefs = []; b.resourceRefs = []; b.origin = 'manual'; b.status = 'valid'; } else invariant(false, 'invalid-command', 'Unknown memory command');
                 b.revision++; c.memoryRevision++; invalidate(s, cid); event(s, cid, 'memory.updated', { id: b.id });
             } else {
                 check(c.contentRevision, cmd.expectedContentRevision);
-                if (cmd.type === 'conversation.configure') { c.settings = { ...c.settings, ...copy(cmd.settings) }; if (cmd.title !== undefined) c.title = cmd.title; if (cmd.resourceRefs !== undefined) c.explicitResourceRefs = copy(cmd.resourceRefs); c.resourceRefs = refs(s, c); }
-                else if (cmd.type === 'fold.expand') { const b = get(s.folds, cmd.foldId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Fold not found', 404); b.status = 'stale'; b.revision++; c.memoryRevision++; }
-                else {
+                if (cmd.type === 'conversation.configure') { const turnIndex = c.settings.worldInfo?.turnIndex ?? 0; c.settings = { ...c.settings, ...copy(cmd.settings) }; c.settings.worldInfo = { ...c.settings.worldInfo, turnIndex }; if (cmd.title !== undefined) c.title = cmd.title; if (cmd.resourceRefs !== undefined) c.explicitResourceRefs = copy(cmd.resourceRefs); c.resourceRefs = refs(s, c); } else if (cmd.type === 'fold.expand') { const b = get(s.folds, cmd.foldId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Fold not found', 404); b.status = 'stale'; b.revision++; c.memoryRevision++; } else {
                     const m = get(s.messages, cmd.messageId); invariant(m.conversationId === cid && !m.deletedAt, 'not-found', 'Message not found', 404);
                     if (cmd.type === 'message.delete') m.deletedAt = now();
-                    else if (cmd.type === 'message.edit') { if (cmd.media !== undefined) validateMedia(s, cmd.media); const old = current(m); const v = { ...copy(old), content: cmd.content ?? old.content, media: copy(cmd.media ?? old.media), revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateRevision: old.candidateId ? Math.max(...m.versions.filter(v => v.candidateId === old.candidateId).map(v => v.candidateRevision)) + 1 : null }; m.versions.push(v); select(m, v); }
-                    else if (cmd.type === 'candidate.select') { const v = [...m.versions].reverse().find(v => v.candidateId === cmd.candidateId && (cmd.candidateRevision === undefined || v.candidateRevision === cmd.candidateRevision)); invariant(v, 'not-found', 'Candidate not found', 404); select(m, v); }
-                    else invariant(false, 'invalid-command', 'Unknown command');
+                    else if (cmd.type === 'message.edit') { if (cmd.media !== undefined) validateMedia(s, cmd.media); const old = current(m); const v = { ...copy(old), content: cmd.content ?? old.content, media: copy(cmd.media ?? old.media), revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateRevision: old.candidateId ? Math.max(...m.versions.filter(v => v.candidateId === old.candidateId).map(v => v.candidateRevision)) + 1 : null }; m.versions.push(v); select(m, v); } else if (cmd.type === 'candidate.select') { const v = [...m.versions].reverse().find(v => v.candidateId === cmd.candidateId && (cmd.candidateRevision === undefined || v.candidateRevision === cmd.candidateRevision)); invariant(v, 'not-found', 'Candidate not found', 404); select(m, v); } else invariant(false, 'invalid-command', 'Unknown command');
                 }
                 c.contentRevision++; invalidate(s, cid); event(s, cid, 'conversation.changed', { type: cmd.type });
             }
             return snapshot(s, cid);
         }),
         commitDerived: (cid, proposal) => tx(s => derived(s, cid, proposal)),
+        commitDerivedJob: jid => tx(s => {
+            const job = get(s.jobs, jid);
+            if (job.status === 'completed') return { accepted: true, jobId: jid, status: 'completed', ...copy(job.commitResult ?? {}), replayed: true };
+            idle(conv(s, job.conversationId));
+            invariant(job.status === 'ready' && job.result?.proposal, 'invalid-job', 'Derived job must have a ready proposal', 409);
+            const proposal = job.result.proposal;
+            invariant(proposal.turnId === undefined && proposal.attemptEpoch === undefined, 'invalid-job', 'Background job cannot claim foreground scope', 409);
+            const dependencies = job.dependencies ?? {};
+            invariant((dependencies.sourceRefs ?? (Array.isArray(dependencies) ? dependencies : [])).every(ref => validSource(s, job.conversationId, ref)) && validResources(s, dependencies.resourceRefs), 'source-conflict', 'Job dependencies changed', 409);
+            const result = derived(s, job.conversationId, proposal);
+            job.status = 'completed'; job.completedAt = now(); job.commitResult = { ...result, result: copy(result), jobId: jid, status: 'completed' };
+            event(s, job.conversationId, 'job.updated', { id: jid, status: 'completed' });
+            return { ...job.commitResult, replayed: false };
+        }),
         createJob: input => tx(s => { conv(s, input.conversationId); const fingerprint = canonicalJson([input.conversationId, input.kind, input.dependencies]); const old = Object.values(s.jobs).find(j => j.fingerprint === fingerprint); if (old) return old; const j = { ...copy(input), id: id(), fingerprint, status: 'pending', attempts: 0 }; s.jobs[j.id] = j; event(s, j.conversationId, 'job.updated', { id: j.id, status: j.status }); return j; }),
         listJobs: cid => Object.values(read().jobs).filter(j => !cid || j.conversationId === cid),
-        updateJob: (jid, patch) => tx(s => { const j = get(s.jobs, jid); for (const key of ['status', 'attempts', 'result', 'error', 'payload', 'completedAt']) if (patch[key] !== undefined) j[key] = copy(patch[key]); invariant(Number.isInteger(j.attempts) && j.attempts >= 0 && j.attempts <= 2, 'retry-limit', 'At most one recomputation allowed'); event(s, j.conversationId, 'job.updated', { id: jid, status: j.status }); return j; }),
+        updateJob: (jid, patch) => tx(s => {
+            const j = get(s.jobs, jid);
+            if (patch.dependencies !== undefined) {
+                const fingerprint = canonicalJson([j.conversationId, j.kind, patch.dependencies]);
+                invariant(j.status !== 'completed' || fingerprint === j.fingerprint, 'idempotency-conflict', 'Completed job dependencies cannot change', 409);
+                invariant(!Object.values(s.jobs).some(other => other.id !== jid && other.fingerprint === fingerprint), 'idempotency-conflict', 'Another job already owns these dependencies', 409);
+                j.dependencies = copy(patch.dependencies); j.fingerprint = fingerprint;
+            }
+            for (const key of ['status', 'attempts', 'result', 'error', 'payload', 'completedAt']) if (patch[key] !== undefined) j[key] = copy(patch[key]);
+            invariant(Number.isInteger(j.attempts) && j.attempts >= 0 && j.attempts <= 2, 'retry-limit', 'At most one recomputation allowed');
+            event(s, j.conversationId, 'job.updated', { id: jid, status: j.status }); return j;
+        }),
         recordTool: input => tx(s => { const t = get(s.turns, input.turnId); invariant(t.conversationId === input.conversationId, 'invalid-tool', 'Tool conversation mismatch'); const old = Object.values(s.tools).find(r => r.turnId === input.turnId && r.memberRunId === input.memberRunId && r.toolCallId === input.toolCallId); if (old) { invariant(old.requestHash === input.requestHash, 'idempotency-conflict', 'Tool call payload changed', 409); return { record: old, replayed: true }; } live(s, t.id, t.attemptEpoch); const r = { ...copy(input), id: id(), status: 'intent', attemptEpoch: t.attemptEpoch }; s.tools[r.id] = r; event(s, t.conversationId, 'tool.call', { id: r.id, name: r.name }, t.id); return { record: r, replayed: false }; }),
         finishTool: (rid, result) => tx(s => { const r = get(s.tools, rid); live(s, r.turnId, r.attemptEpoch); invariant(['intent', 'running'].includes(r.status), 'late-callback', 'Tool already finalized', 409); invariant(['completed', 'failed', 'unknown'].includes(result.status), 'invalid-status', 'Invalid tool status'); Object.assign(r, redact(result)); event(s, r.conversationId, 'tool.result', { id: rid, status: r.status }, r.turnId); return r; }),
         getTool: rid => redact(get(read().tools, rid)),

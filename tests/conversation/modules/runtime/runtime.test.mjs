@@ -33,6 +33,39 @@ function setup(executor, options = {}) {
 }
 const request = { schemaVersion: 1, clientRequestId: 'request', expectedContentRevision: 0, type: 'send', content: 'Hello' };
 
+for (const scenario of ['fits', 'still-over-budget', 'merged-over-budget']) test(`speculative compression commits only a fully validated plan: ${scenario}`, async () => {
+    let prepared = 0, commits = 0;
+    const executor = fakeExecutor();
+    const memory = {
+        async prepareCompact(snapshot) { prepared++; return { proposal: { id: prepared }, snapshot: { ...snapshot, folds: [...snapshot.folds, { id: prepared }] } }; },
+        combineProposals: proposals => ({ proposals }),
+        previewCompact: snapshot => ({ ...snapshot, folds: [{ id: 'merged' }], merged: true }),
+    };
+    const { runtime, store } = setup(executor, { memory, compile(snapshot) {
+        if (!snapshot.folds.length || scenario === 'still-over-budget' || scenario === 'merged-over-budget' && snapshot.merged) {
+            throw new ProtocolError('budget-blocked', 'Too much content');
+        }
+        return { messages: [], effects: [], budget: {} };
+    } });
+    store.commitDerived = () => { commits++; return { accepted: true }; };
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(prepared, scenario === 'still-over-budget' ? 2 : 1);
+    assert.equal(commits, scenario === 'fits' ? 1 : 0);
+    assert.equal(executor.calls.length, scenario === 'fits' ? 1 : 0);
+    assert.equal(turn.status, scenario === 'fits' ? 'completed' : 'failed');
+    await runtime.close();
+});
+
+for (const type of ['auxiliary', 'impersonate', 'send']) test(`${type} compiles unpersisted task instructions exactly where required`, async () => {
+    let options;
+    const { runtime } = setup(fakeExecutor(), { compile(snapshot, value) { options = value; return { messages: [], effects: [], budget: {} }; } });
+    runtime.start('c', { ...request, type });
+    assert.equal((await runtime.wait('turn')).status, 'completed');
+    assert.equal(options.draft, type === 'send' ? undefined : 'Hello');
+    await runtime.close();
+});
+
 test('registered model and tool media both survive turn completion without duplicate attachments', async () => {
     const image = { attachmentId: 'image', type: 'image' };
     const audio = { attachmentId: 'audio', type: 'audio' };

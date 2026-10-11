@@ -6,9 +6,9 @@ export const SECRET_SCHEMA = Object.freeze({ version: 1, containsCredentials: tr
 
 export function initializeDatabase(db) {
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
-    invariant(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repository'").get(), 'schema-version', 'The prototype repository layout must be exported before opening this store', 409);
+    invariant(!db.prepare('SELECT 1 FROM sqlite_master WHERE type=\'table\' AND name=\'repository\'').get(), 'schema-version', 'The prototype repository layout must be exported before opening this store', 409);
     db.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    const existing = db.prepare("SELECT value FROM metadata WHERE key='storageVersion'").get();
+    const existing = db.prepare('SELECT value FROM metadata WHERE key=\'storageVersion\'').get();
     invariant(!existing || existing.value === '2', 'schema-version', 'Unsupported storage schema', 409);
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -22,7 +22,7 @@ export function initializeDatabase(db) {
             CREATE UNIQUE INDEX IF NOT EXISTS turns_request ON turns(conversation_id, json_extract(data, '$.clientRequestId'));
             CREATE UNIQUE INDEX IF NOT EXISTS jobs_fingerprint ON jobs(json_extract(data, '$.fingerprint'));
             CREATE UNIQUE INDEX IF NOT EXISTS tools_call ON tools(conversation_id, json_extract(data, '$.turnId'), COALESCE(json_extract(data, '$.memberRunId'), ''), json_extract(data, '$.toolCallId'));`);
-        db.prepare("INSERT OR IGNORE INTO metadata VALUES ('storageVersion', '2')").run();
+        db.prepare('INSERT OR IGNORE INTO metadata VALUES (\'storageVersion\', \'2\')').run();
         db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
 }

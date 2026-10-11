@@ -158,7 +158,7 @@ export function compileContext(snapshot, options = {}) {
         if (!book) throw new ProtocolError('missing-resource', 'Snapshot does not contain selected worldbook');
         return book;
     });
-    const world = selectWorldInfo(books, { seed, turnIndex: settings.worldInfo?.turnIndex ?? groups.filter(group => group.complete).length,
+    const world = selectWorldInfo(books, { seed, turnIndex: settings.worldInfo?.turnIndex ?? 0,
         state: settings.worldInfo?.state ?? {}, history: [...groups.map(group => group.messages.map(message => plainText(message.content)).join('\n')), ...(draft ? [draft] : [])] });
     for (const entry of world.entries) add({ id: `world:${entry.key}`, layer: 'L3', role: entry.role, placement: entry.placement, priority: entry.priority,
         required: entry.required, content: entry.content, worldKey: entry.key });
@@ -198,9 +198,13 @@ export function compileContext(snapshot, options = {}) {
             const template = { ...PRESET_DEFAULTS.textTemplate, ...preset.textTemplate };
             const interpolate = (text, extra = {}) => expandMacros(text, { variables: state, bindings: { ...bindings, ...extra }, allowWrites: false }).content;
             request.prompt = interpolate(template.prefix) + request.messages.map(message => {
-                if (typeof message.content !== 'string') throw new ProtocolError('unsupported-media', 'Text templates require string content');
+                if (Array.isArray(message.content)) for (const part of message.content) {
+                    if (part.type !== 'text' && (message.role !== 'user' || !capabilities.media?.includes(part.type))) {
+                        throw new ProtocolError('unsupported-media', 'Text provider does not support this media role or type');
+                    }
+                }
                 const metadata = message.toolCalls || message.toolCallId || message.reasoning ? `\n${JSON.stringify({ toolCalls: message.toolCalls, toolCallId: message.toolCallId, reasoning: message.reasoning })}` : '';
-                return interpolate(template.message, { role: message.role, content: message.content + metadata, name: message.name ?? '' });
+                return interpolate(template.message, { role: message.role, content: plainText(message.content) + metadata, name: message.name ?? '' });
             }).join(template.separator) + interpolate(template.suffix);
         }
         const tokenCount = countRequest(request, { countTokens, mediaTokenCost: capabilities.mediaTokenCost });
@@ -245,8 +249,7 @@ export function compileContext(snapshot, options = {}) {
         if (next.tokenCount.tokens <= budget.workingBudget) {
             selected.push(block); result = next;
             if (!block.evidenceOnly) block.sourceRefs.forEach(ref => requiredSources.add(sourceKey(ref)));
-        }
-        else omitted.push({ id: block.id, reason: 'budget', sourceRefs: block.sourceRefs });
+        } else omitted.push({ id: block.id, reason: 'budget', sourceRefs: block.sourceRefs });
     }
     const fixed = result.blocks.filter(block => block.layer === 'L1').map(block => block.message);
     const fixedTokens = countRequest({ mode: 'chat', messages: fixed, tools: structuredClone(tools) }, { countTokens, mediaTokenCost: capabilities.mediaTokenCost });

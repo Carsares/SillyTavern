@@ -281,10 +281,21 @@ test('depth zero appends after whole history and beyond-range depth precedes all
     assert.equal(plan.messages.at(-1).content, 'after');
 });
 
-test('text templates refuse variable effects and media rather than discarding semantics', () => {
+test('text templates refuse variable effects and undeclared media', () => {
     const input = snapshot({ mode: 'text', textTemplate: { prefix: '{{set::x::bad}}' } });
     assert.throws(() => compileContext(input), { code: 'macro-write-forbidden' });
     input.resources[1].data.textTemplate = {};
     input.messages[0].media = [{ type: 'image', url: 'synthetic:image' }];
     assert.throws(() => compileContext(input), { code: 'unsupported-media' });
+});
+
+test('text templates keep declared media in typed messages and count it separately from the prompt', () => {
+    const image = { type: 'image', data: 'AA==', mimeType: 'image/png' };
+    const input = snapshot({ mode: 'text', textTemplate: { prefix: '', message: '{{role}}:{{content}}', separator: '\n', suffix: '' } },
+        [message('u', 't', 'user', 'describe', { media: [image] })]);
+    const plan = compileContext(input, { capabilities: { media: ['text', 'image'], mediaTokenCost: { image: 1000 } } });
+    assert.equal(plan.prompt, 'user:describe');
+    assert.deepEqual(plan.messages[0].content.at(-1), image);
+    assert.ok(plan.estimatedTokens >= 1000);
+    assert.throws(() => compileContext(input, { capabilities: { media: ['text', 'image'] } }), { code: 'media-budget-unknown' });
 });

@@ -72,10 +72,25 @@ export function createChat(app) {
     function editMessage(message, destination) {
         const edit = edits.get(message.id);
         const editor = el('textarea', { rows: 5, value: edit.content, 'aria-label': '编辑消息', oninput: event => { edit.content = event.target.value; } });
-        destination.replaceChildren(editor, button('保存修改', () => app.run(async () => {
-            await app.applyCommand('message.edit', { messageId: message.id, content: edit.content }, edit.snapshot);
-            edits.delete(message.id); messageRenderKey = null; render();
-        })), button('取消编辑', () => { edits.delete(message.id); destination.replaceChildren(); }));
+        const mediaRows = el('div');
+        const file = input('', { type: 'file', 'aria-label': '编辑消息附件' });
+        function renderMedia() {
+            mediaRows.replaceChildren(...edit.media.map((part, index) => el('div', {}, mediaView(app.api, part, edit.snapshot.attachments?.[part.attachmentId]),
+                button('移除此附件', () => { edit.media.splice(index, 1); renderMedia(); }))));
+        }
+        renderMedia();
+        destination.replaceChildren(editor, mediaRows, field('添加附件（替换时先移除旧附件）', file),
+            button('上传并加入编辑', () => app.run(async () => {
+                const selected = file.files?.[0];
+                if (!selected || !selected.size || selected.size > 8 * 1024 * 1024) throw new Error('请选择 1 字节至 8 MiB 的附件');
+                const record = await app.api.uploadAttachment({ name: selected.name, mime: selected.type || 'application/octet-stream', base64: encodeBase64(new Uint8Array(await selected.arrayBuffer())) });
+                const part = attachmentPart(record);
+                if (part.type === 'file') throw new Error('此类型可保存为附件，但不能作为消息媒体；请选择图像、音频、视频、PDF 或纯文本');
+                edit.media.push(part); file.value = ''; renderMedia();
+            })), button('保存修改', () => app.run(async () => {
+                await app.applyCommand('message.edit', { messageId: message.id, content: edit.content, media: structuredClone(edit.media) }, edit.snapshot);
+                edits.delete(message.id); messageRenderKey = null; render();
+            })), button('取消编辑', () => { edits.delete(message.id); destination.replaceChildren(); }));
     }
     function updateControls() {
         const { snapshot, turn, busy, pending } = app.state;
@@ -97,7 +112,7 @@ export function createChat(app) {
                 const details = el('div');
                 const actions = el('div', { class: 'actions' },
                     button('编辑', () => {
-                        edits.set(message.id, { content: message.content, snapshot: app.state.snapshot });
+                        edits.set(message.id, { content: message.content, media: structuredClone(message.media || []), snapshot: app.state.snapshot });
                         editMessage(message, details);
                     }, active),
                     button('删除', () => { if (confirm('删除这条消息？相关记忆和摘要可能失效。')) app.command('message.delete', { messageId: message.id }); }, active),

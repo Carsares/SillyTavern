@@ -1,3 +1,4 @@
+import { connectionGuidance } from './guidance.js';
 import { RESOURCE_KINDS } from '../../../shared/conversation/schemas/index.js';
 import { el, button, field, input, select, parseObject, empty } from '../core/dom.js';
 import { resourceDefaults, EXECUTORS, newWorldEntry, newPromptBlock } from './model.js';
@@ -70,7 +71,7 @@ export function createResources(app) {
                 value[key] = [...(value[key] || []), resourceKind === 'worldbook' ? newWorldEntry(crypto.randomUUID()) : newPromptBlock(crypto.randomUUID())];
                 data.value = JSON.stringify(value, null, 2);
             }))] : []),
-            ...(resourceKind === 'connection' ? [el('p', {}, '上下文和输出上限请填写所选模型的实际能力，界面不猜测默认额度。默认请求原生角色消息输入；保存后可在设置中检查服务端报告的实际输入模式与可用性。'), field('API 密钥（只写）', key), field('私密请求头（只写）', headers), el('p', {}, '密钥和请求头不会回显；密钥留空保留，私密请求头需重新填写。模型和执行器可用性以能力检查结果为准。')] : []),
+            ...(resourceKind === 'connection' ? [connectionGuidance(), el('p', {}, '上下文和输出上限请填写所选模型的实际能力，界面不猜测默认额度。默认请求原生角色消息输入；保存后可在设置中检查服务端报告的实际输入模式与可用性。'), field('API 密钥（只写）', key), field('私密请求头（只写）', headers), el('p', {}, '密钥和请求头不会回显；密钥留空保留，私密请求头需重新填写。模型和执行器可用性以能力检查结果为准。')] : []),
             el('button', { type: 'submit' }, '保存资源'), button('取消', () => editor.replaceChildren()),
         );
         form.addEventListener('submit', event => {

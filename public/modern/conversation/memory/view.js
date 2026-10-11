@@ -34,6 +34,8 @@ export function createMemory(app) {
         if (creationSnapshot?.conversation.id !== snapshot?.conversation.id) {
             creationSnapshot = snapshot; content.value = ''; locked.checked = false;
         }
+        // New records have no existing block to overwrite; use the latest displayed versions.
+        creationSnapshot = snapshot;
         creationControls.disabled = !snapshot || !terminal(app.state.turn) || !!snapshot?.conversation.activeTurnId;
         const events = (app.state.activity || []).filter(event => event.type === 'job.updated' || event.type === 'memory.updated' && event.payload?.status === 'failed');
         jobs.replaceChildren(el('h3', {}, '后台任务与事件'), ...savedJobs.filter(job => job.conversationId === snapshot?.conversation.id).map(job => el('article', { class: 'card' }, el('pre', {}, JSON.stringify(redact(job), null, 2)))), ...(events.length ? events.map(event => el('article', { class: 'card' }, el('pre', {}, JSON.stringify(redact(event.payload), null, 2)))) : [empty('尚未收到后台任务状态；这不代表任务已成功')]));

@@ -24,7 +24,7 @@ commit was changed by this task.
 - `core/operations.js`: authoritative snapshot acceptance and confirmed-write readback handling.
 - `core/dom.js`: safe DOM construction, forms, JSON display and downloads.
 - `chat/view.js`: messages, drafts, turns, candidates, edits, tool/group event cards.
-- `resources/model.js`, `resources/view.js`: six resource kinds and compiler defaults.
+- `resources/model.js`, `resources/view.js`, `resources/guidance.js`: six resource kinds and compiler defaults.
 - `settings/automatic.js`, `settings/view.js`: resource selection, tools/limits, capabilities and automatic groups.
 - `memory/model.js`, `memory/view.js`, `memory/sources.js`: memory editing/locking/confirmation, folds, compression and jobs.
 - `diagnostics/context.js`, `diagnostics/view.js`, `diagnostics/usage.js`, `diagnostics/tools.js`: context layers, traces, server usage tables and stored tool result expansion.
@@ -84,12 +84,12 @@ Backup/restore JSON uses the shared 256 MiB limit, including the restore envelop
 
 All commands have `type` and `expectedContentRevision` from the displayed snapshot.
 Existing memory commands additionally carry `expectedBlockRevision`; `memory.create`
-uses `expectedMemoryRevision` from the snapshot captured when the creation form loaded.
+uses `expectedMemoryRevision` from the latest displayed snapshot while preserving the unsaved creation draft.
 
 - `conversation.configure`: `{settings}` containing resource IDs, `worldbookIds`,
   `tools`, `toolLimits`, top-level `turnTimeoutMs`, and advanced settings from the editor.
-- `message.edit`: `{messageId,content}`; saves against the snapshot captured when
-  editing began. Failed/conflicting edits retain their input.
+- `message.edit`: `{messageId,content,media}`; saves against the snapshot captured when
+  editing began. Attachments can be uploaded, removed or replaced; an empty media array removes all media. Failed/conflicting edits retain text and staged media without mutating the displayed snapshot.
 - `message.delete`: `{messageId}`.
 - `candidate.select`: `{messageId,candidateId,candidateRevision}`.
 - `memory.create`: `{kind,content,locked,expectedMemoryRevision}`; kind is one of `character,relationship,world-state,timeline,user-fact`, content is 1–8000 characters; failed or
@@ -180,7 +180,7 @@ sources with cycle protection. Reads show loading/errors and remain retryable.
 
 Persisted media on messages, tool events and complete tool results is rendered
 through the attachment endpoint, using snapshot MIME metadata when necessary.
-Explicit externalURL/externalUrl media remains a link marked not persisted; it
+Explicit externalURL/externalUrl or `{url,external:true}` media remains a link marked not persisted; it
 never becomes an automatic remote image request. Unsafe URL schemes are not linked.
 
 ## Remaining integration boundaries
@@ -207,7 +207,7 @@ never becomes an automatic remote image request. Unsafe URL schemes are not link
 
 ## Focused checks
 
-`node --test tests/conversation/modules/client/*.test.mjs`: 51 tests passed at
+`node --test tests/conversation/modules/client/*.test.mjs`: 56 tests passed at
 client handoff. Includes request versions, structured failures, fragmented UTF-8
 SSE, reconnect/deduplication/cursor reset, recovered content offsets, terminal
 safety, redaction, canonical resource defaults, SDK mode labels and media gates. Additional regression tests cover snapshot/command readback, member delta isolation, memory kinds, server usage tables, candidate panel state, complete tool result reads, UTF-8 backup envelope sizing and the full static module graph. DOM checks use an in-memory test double, not a browser.
@@ -215,3 +215,11 @@ safety, redaction, canonical resource defaults, SDK mode labels and media gates.
 `./node_modules/.bin/eslint public/modern/conversation/**/*.js public/modern/conversation/app.js`:
 passed after correcting reported brace formatting.
 No browser/integration/provider tests or real user-data writes were performed.
+
+
+Auxiliary connection selectors save `auxiliaryConnectionId`, `embeddingConnectionId`
+and `imageConnectionId`, and each selected connection has a capability-read action.
+Connection resource guidance documents `type`, `effort`, `reasoningBudget`,
+`capabilities.reasoningEnabled/reasoningEfforts/media/mediaTokenCost/verified`.
+Examples are explanatory and never automatically applied or marked verified.
+`memoryFrequency` guidance documents the positive-integer conversation setting.

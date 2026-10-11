@@ -98,6 +98,9 @@ export function validateBackup(input) {
     for (const t of Object.values(data.turns)) {
         assert(TURN_TYPES.includes(t.type) && [...activeStates, ...TERMINAL_STATES].includes(t.status) && integer(t.attemptEpoch, 1)
             && text(t.content) && text(t.reasoning) && typeof t.cancelRequested === 'boolean', 'Invalid turn state');
+        assert(integer(t.turnIndex) && Array.isArray(t.pendingEffects), 'Invalid turn timing or temporary effects');
+        for (const effect of t.pendingEffects) assert(object(effect)
+            && (effect.type === 'variable.set' ? identifier(effect.name) : effect.type === 'worldbook.activate' && identifier(effect.key) && object(effect.value)), 'Invalid temporary effect');
         try { validateTurnRequest(t.request); } catch { assert(false, 'Invalid accepted request'); }
         if (t.request.media !== undefined) media(t.request.media);
         if (t.userMessageId) assert(owner('messages', t.userMessageId, t.conversationId) && data.messages[t.userMessageId].role === 'user', 'Invalid reused user message');
@@ -146,7 +149,8 @@ export function validateBackup(input) {
             assert(object(snap.attachments), 'Invalid snapshot attachment index');
             for (const [aid, attachment] of Object.entries(snap.attachments)) {
                 assert(has(data.attachments, aid) && object(attachment) && attachment.id === aid, 'Invalid snapshot attachment reference');
-                const { path: internalPath, ...metadata } = data.attachments[aid];
+                const metadata = { ...data.attachments[aid] };
+                delete metadata.path;
                 assert(canonicalJson(metadata) === canonicalJson(attachment), 'Snapshot attachment metadata differs from registered attachment');
             }
         }

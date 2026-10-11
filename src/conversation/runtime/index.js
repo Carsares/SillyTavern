@@ -47,21 +47,27 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         let preparedSnapshot = snapshot;
         const definitions = tools?.definitions({ type: request.type, enabled: snapshot.settings.tools }) ?? [];
         const enabledTools = capability.tools === false ? [] : definitions;
-        const query = snapshot.messages.filter(message => message.role === 'user' && !message.deletedAt).at(-1)?.content;
+        const separateDraft = ['auxiliary', 'impersonate'].includes(request.type);
+        const query = separateDraft && request.content?.trim() ? request.content
+            : snapshot.messages.filter(message => message.role === 'user' && !message.deletedAt).at(-1)?.content;
         if (retrieval && snapshot.settings.retrieval !== false && typeof query === 'string' && query.trim()) {
             const matches = await retrieval.search(turn.conversationId, query.slice(0, 4096), { snapshot, signal });
             preparedSnapshot = { ...snapshot, retrieval: matches.map((item, index) => ({ ...item, id: `retrieved-${index}` })) };
         }
         let requestPlan;
         let lastCompression;
+        const compressionBase = preparedSnapshot;
+        const proposals = [];
+        const compileOptions = {
+            type: request.type, targetMessageId: request.targetMessageId, capabilities: { ...capability, ...connection },
+            ...(separateDraft ? { draft: request.content, media: request.media } : {}),
+            workingBudget: connection.workingBudget, tools: enabledTools,
+            variables: snapshot.settings.variables ?? {}, seed: turn.id,
+        };
         for (let attempt = 0; attempt < 3; attempt++) {
             signal.throwIfAborted();
             try {
-                requestPlan = compile(preparedSnapshot, {
-                    type: request.type, targetMessageId: request.targetMessageId, capabilities: { ...capability, ...connection },
-                    workingBudget: connection.workingBudget, tools: enabledTools,
-                    variables: snapshot.settings.variables ?? {}, seed: turn.id,
-                });
+                requestPlan = compile(preparedSnapshot, compileOptions);
                 break;
             } catch (error) {
                 if (error.code !== 'budget-blocked' || !memory || attempt === 2) throw error;
@@ -69,11 +75,20 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 invariant(fingerprint !== lastCompression, 'compression-failed', 'Compression made no progress', 422);
                 lastCompression = fingerprint;
                 phase(turn, 'preparing');
-                await memory.compact(preparedSnapshot, { signal, budget: error.details?.budget ?? connection.workingBudget, turnId: turn.id, attemptEpoch: turn.attemptEpoch });
-                preparedSnapshot = { ...store.getConversation(turn.conversationId), resources: snapshot.resources, settings: snapshot.settings };
+                const prepared = await memory.prepareCompact(preparedSnapshot, { signal, budget: error.details?.budget ?? connection.workingBudget, turnId: turn.id, attemptEpoch: turn.attemptEpoch });
+                proposals.push(prepared.proposal);
+                preparedSnapshot = prepared.snapshot;
             }
         }
         signal.throwIfAborted();
+        if (proposals.length) {
+            const proposal = memory.combineProposals(proposals, compressionBase);
+            preparedSnapshot = memory.previewCompact(compressionBase, proposal);
+            requestPlan = compile(preparedSnapshot, compileOptions);
+            signal.throwIfAborted();
+            const committed = store.commitDerived(turn.conversationId, proposal);
+            invariant(committed !== false && committed?.accepted !== false && committed?.conflict !== true, 'revision-conflict', 'Prepared compression could not commit', 409);
+        }
         phase(turn, 'generating');
         tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan });
         const traceId = trace?.begin?.({ conversationId: turn.conversationId, turnId: turn.id, memberRunId: member?.id, requestPlan, connection });
@@ -96,35 +111,37 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             },
         }));
         let result;
-        try { result = await chosen.runTurn({
-            snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
-            limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
-            beforeRequest: async context => {
-                signal.throwIfAborted();
-                const current = store.getTurn(turn.id);
-                invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
-                callNumber++;
-                const task = active.get(turn.id);
-                if (task) task.modelStep = Symbol('model-step');
-                // The SDK calls this for every step, including tool continuations.
-                const messages = context?.messages ?? context?.context?.messages;
-                if (messages) {
-                    const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
-                    const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
-                    const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
-                        ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
-                    invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
-                }
-                trace?.record?.(traceId, { type: 'model.prepare', callNumber });
-            },
-            onEvent: async event => {
-                signal.throwIfAborted();
-                if (event.type === 'text.delta') store.appendDelta(turn.id, { text: event.text ?? '' }, turn.attemptEpoch);
-                else if (event.type === 'reasoning.delta') store.appendDelta(turn.id, { reasoning: event.text ?? '' }, turn.attemptEpoch);
-                else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
-                trace?.record?.(traceId, event);
-            },
-        }); } catch (error) { trace?.fail?.(traceId, error); throw error; }
+        try {
+            result = await chosen.runTurn({
+                snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
+                limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
+                beforeRequest: async context => {
+                    signal.throwIfAborted();
+                    const current = store.getTurn(turn.id);
+                    invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
+                    callNumber++;
+                    const task = active.get(turn.id);
+                    if (task) task.modelStep = Symbol('model-step');
+                    // The SDK calls this for every step, including tool continuations.
+                    const messages = context?.messages ?? context?.context?.messages;
+                    if (messages) {
+                        const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
+                        const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
+                        const estimated = (Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
+                            ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8')) + Buffer.byteLength(JSON.stringify(enabledTools), 'utf8');
+                        invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
+                    }
+                    trace?.record?.(traceId, { type: 'model.prepare', callNumber });
+                },
+                onEvent: async event => {
+                    signal.throwIfAborted();
+                    if (event.type === 'text.delta') store.appendDelta(turn.id, { text: event.text ?? '' }, turn.attemptEpoch);
+                    else if (event.type === 'reasoning.delta') store.appendDelta(turn.id, { reasoning: event.text ?? '' }, turn.attemptEpoch);
+                    else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
+                    trace?.record?.(traceId, event);
+                },
+            });
+        } catch (error) { trace?.fail?.(traceId, error); throw error; }
         signal.throwIfAborted();
         invariant(!['error', 'aborted'].includes(result.finishReason), 'model-failed', 'Model did not finish successfully', 502);
         trace?.finish?.(traceId, result);
@@ -152,7 +169,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 for (const member of members) {
                     controller.signal.throwIfAborted();
                     store.startMember?.(turn.id, { memberRunId: member.id, characterId: member.characterId }, turn.attemptEpoch);
-                    const memberSnapshot = groups.snapshot({ ...store.getConversation(turn.conversationId), resources: snapshot.resources }, member);
+                    const memberSnapshot = groups.snapshot(store.getTurnSnapshot(turn.id), member);
                     store.appendEvent(turn.conversationId, 'group.member', { member }, turn.id);
                     result = await runMember(turn, memberSnapshot, { ...request, type: 'send' }, controller.signal, member);
                     store.commitMember(turn.id, { memberRunId: member.id, characterId: member.characterId, ...result }, turn.attemptEpoch);
@@ -259,11 +276,9 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             const tick = () => {
                 if (closing || !automatic.has(conversationId)) return;
                 let snapshot;
-                try { snapshot = store.getConversation(conversationId); }
-                catch { automatic.delete(conversationId); return; }
+                try { snapshot = store.getConversation(conversationId); } catch { automatic.delete(conversationId); return; }
                 if (!snapshot.conversation.activeTurnId) {
-                    try { runtime.start(conversationId, { schemaVersion: 1, clientRequestId: randomUUID(), expectedContentRevision: snapshot.conversation.contentRevision, type: 'group', content }); }
-                    catch { automatic.delete(conversationId); return; }
+                    try { runtime.start(conversationId, { schemaVersion: 1, clientRequestId: randomUUID(), expectedContentRevision: snapshot.conversation.contentRevision, type: 'group', content }); } catch { automatic.delete(conversationId); return; }
                 }
                 const timer = setTimeout(tick, intervalMs);
                 timer.unref?.();

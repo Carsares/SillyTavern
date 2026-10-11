@@ -26,7 +26,10 @@ export function toolMediaView(api, value, attachments = {}) {
     function visit(item) {
         if (!item || typeof item !== 'object') return;
         if (typeof item.attachmentId === 'string') parts.set(`attachment:${item.attachmentId}`, item);
-        else if (typeof (item.externalURL || item.externalUrl) === 'string') parts.set(`external:${item.externalURL || item.externalUrl}`, item);
+        else {
+            const external = item.externalURL || item.externalUrl || (item.external === true ? item.url : undefined);
+            if (typeof external === 'string') parts.set(`external:${external}`, item);
+        }
         if (item.type === 'text' && typeof item.text === 'string') {
             try { visit(JSON.parse(item.text)); } catch { /* Plain text, not structured media. */ }
         }

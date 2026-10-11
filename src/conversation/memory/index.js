@@ -3,6 +3,8 @@ import { invariant, sourceRef, canonicalJson } from '../../../public/shared/conv
 import { derivedSources, sourcesValid, uniqueRefs, resourceRefs, resourcesValid, summaryParents } from './sources.js';
 
 import { selectBatch } from './budget.js';
+import { compactSnapshot, combineProposals } from './compaction.js';
+export { combineProposals } from './compaction.js';
 
 const KINDS = new Set(['character', 'relationship', 'world-state', 'timeline', 'user-fact']);
 const copy = value => structuredClone(value);
@@ -50,7 +52,7 @@ export function createMemoryService({ store, generate, now = Date.now }) {
             // Retain complete turns whenever at least one message is not yet summarized.
             const newTurns = new Set(messages.filter(m => !covered.has(canonicalJson(sourceRef(m)))).map(m => m.turnId));
             messages = messages.filter(m => newTurns.has(m.turnId));
-            if (!messages.length) return { summaries: [], memories: [], folds: [], sourceRefs: [], resourceRefs: resources };
+            if (!messages.length) return { summaries: [], memories: [], folds: [], sourceRefs: [], resourceRefs: resources, expectedMemoryRevision: snapshot.conversation.memoryRevision };
         }
         invariant(messages.length > 0, 'budget-blocked', 'No complete unfurled turns can be compressed', 409);
         const validMemories = snapshot.memories.filter(m => derivedSources(m, snapshot));
@@ -79,13 +81,20 @@ export function createMemoryService({ store, generate, now = Date.now }) {
             'budget-blocked', 'Derived content exceeds conservative summary token budget', 409);
         return { summaries, memories, folds, sourceRefs: allRefs, resourceRefs: resources, expectedMemoryRevision: snapshot.conversation.memoryRevision };
     }
-    async function compact(snapshot, { signal, budget, turnId, attemptEpoch } = {}) {
-        const proposal = await propose(snapshot, { signal, budget, foreground: true });
+    async function prepareCompact(snapshot, { signal, budget, turnId, attemptEpoch } = {}) {
+        const proposal = { ...await propose(snapshot, { signal, budget, foreground: true }),
+            ...(turnId !== undefined ? { turnId } : {}), ...(attemptEpoch !== undefined ? { attemptEpoch } : {}) };
         signal?.throwIfAborted();
-        const result = store.commitDerived(snapshot.conversationId ?? snapshot.conversation.id, { ...proposal, turnId, attemptEpoch });
+        return { proposal, snapshot: compactSnapshot(snapshot, proposal) };
+    }
+    async function compact(snapshot, options = {}) {
+        const { proposal } = await prepareCompact(snapshot, options);
+        options.signal?.throwIfAborted();
+        const result = store.commitDerived(snapshot.conversationId ?? snapshot.conversation.id, proposal);
         invariant(result !== false && result?.conflict !== true && result?.accepted !== false, 'revision-conflict', 'Derived commit conflicted', 409);
         return result;
     }
+    const dependenciesOf = snapshot => ({ sourceRefs: eligible(snapshot).map(sourceRef), resourceRefs: resourceRefs(snapshot) });
     function schedule(conversationId) {
         const snapshot = store.getConversation(conversationId);
         const messages = eligible(snapshot);
@@ -93,15 +102,16 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         const frequency = snapshot.settings?.memoryFrequency ?? 5;
         invariant(Number.isSafeInteger(frequency) && frequency > 0, 'invalid-memory-frequency', 'memoryFrequency must be a positive integer');
         if (!count || count % frequency !== 0) return null;
-        const dependencies = { sourceRefs: messages.map(sourceRef), resourceRefs: resourceRefs(snapshot) };
+        const dependencies = dependenciesOf(snapshot);
         return store.createJob({ conversationId, kind: 'memory', dependencies,
             payload: { snapshot: copy(snapshot), completedTurns: count }, status: 'pending', attempts: 0, createdAt: now() });
     }
     async function runJobs({ signal } = {}) {
+        invariant(typeof store.commitDerivedJob === 'function', 'atomic-job-commit-required', 'Store must atomically commit a ready derived job', 503);
         const results = [];
         for (const initial of store.listJobs()) {
             if (initial.kind !== 'memory' || ['completed', 'failed'].includes(initial.status) || (initial.status === 'stale' && initial.attempts >= 2)) continue;
-            let job = initial;
+            let job = initial, committing = false;
             if (job.status === 'stale') job = { ...job, result: { snapshot: store.getConversation(job.conversationId) } };
             try {
                 for (;;) {
@@ -113,8 +123,11 @@ export function createMemoryService({ store, generate, now = Date.now }) {
                             results.push({ id: job.id, status: 'stale' }); break;
                         }
                         job = { ...job, attempts: (job.attempts ?? 0) + 1, status: 'running' };
-                        store.updateJob(job.id, { attempts: job.attempts, status: 'running' });
-                        proposal = await propose(job.result?.snapshot ?? job.payload.snapshot, { signal });
+                        const generationSnapshot = job.result?.snapshot ?? job.payload.snapshot;
+                        const dependencies = dependenciesOf(generationSnapshot);
+                        const saved = store.updateJob(job.id, { attempts: job.attempts, status: 'running', dependencies, ...(job.result ? { result: job.result } : {}) });
+                        invariant(canonicalJson(saved.dependencies) === canonicalJson(dependencies), 'job-dependencies-not-updated', 'Store must persist recomputed job dependencies and fingerprint', 503);
+                        proposal = await propose(generationSnapshot, { signal });
                         job.result = { ...job.result, proposal };
                         store.updateJob(job.id, { status: 'ready', result: job.result });
                     }
@@ -122,22 +135,34 @@ export function createMemoryService({ store, generate, now = Date.now }) {
                     const current = store.getConversation(job.conversationId);
                     if (current.conversation.activeTurnId) { results.push({ id: job.id, status: 'ready' }); break; }
                     try {
-                        const result = [...proposal.summaries, ...proposal.memories, ...proposal.folds].length
-                            ? store.commitDerived(job.conversationId, proposal) : { accepted: true };
+                        committing = true;
+                        const result = store.commitDerivedJob(job.id);
                         invariant(result !== false && result?.conflict !== true && result?.accepted !== false, 'revision-conflict', 'Derived commit conflicted', 409);
-                        store.updateJob(job.id, { status: 'completed', completedAt: now() });
                         results.push({ id: job.id, status: 'completed' }); break;
                     } catch (error) {
+                        const persisted = store.listJobs().find(item => item.id === job.id);
+                        if (persisted?.status === 'completed') { results.push({ id: job.id, status: 'completed' }); break; }
+                        if (error.code === 'conversation-busy') { results.push({ id: job.id, status: 'ready' }); break; }
                         if (!['revision-conflict', 'source-conflict', 'stale-source', 'memory-protected', 'dependency-conflict', 'memory-locked'].includes(error.code)) throw error;
+                        committing = false;
                         if (job.attempts >= 2) {
                             store.updateJob(job.id, { status: 'stale', error: { code: error.code } });
                             results.push({ id: job.id, status: 'stale' }); break;
                         }
                         job.result = { snapshot: copy(current) };
-                        store.updateJob(job.id, { status: 'pending', result: job.result });
+                        store.updateJob(job.id, { status: 'pending', dependencies: dependenciesOf(current), result: job.result });
                     }
                 }
             } catch (error) {
+                // An atomic commit may have succeeded before its acknowledgement was
+                // lost. Never overwrite completed, or discard a ready proposal on an
+                // uncertain storage failure. Recovery retries the local commit only.
+                if (committing) {
+                    const persisted = store.listJobs().find(item => item.id === job.id);
+                    results.push({ id: job.id, status: persisted?.status === 'completed' ? 'completed' : 'ready', error: { code: error.code ?? 'job-commit-unknown' } });
+                    if (signal?.aborted) break;
+                    continue;
+                }
                 store.updateJob(job.id, { status: 'failed', error: { code: error.code ?? (signal?.aborted ? 'aborted' : 'memory-failed') } });
                 results.push({ id: job.id, status: 'failed' });
                 if (signal?.aborted) break;
@@ -145,7 +170,7 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         }
         return results;
     }
-    return { compact, schedule, drain(options) {
+    return { compact, prepareCompact, previewCompact: compactSnapshot, combineProposals, schedule, drain(options) {
         if (!draining) draining = runJobs(options).finally(() => { draining = undefined; });
         return draining;
     } };

@@ -18,6 +18,89 @@ function request(store, cid, extra = {}) { return { schemaVersion: 1, clientRequ
 function complete(store, cid) { const { turn } = store.beginTurn(cid, request(store, cid)); store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1); return store.getConversation(cid); }
 const code = expected => error => error.code === expected;
 
+test('recomputed job updates dependencies and fingerprint atomically before derived commit', t => {
+    const { store, cid } = fixture(t); const snapshot = complete(store, cid);
+    const message = snapshot.messages[0];
+    const job = store.createJob({ conversationId: cid, kind: 'memory', dependencies: { sourceRefs: [sourceRef(message)] }, payload: {} });
+    store.command(cid, { type: 'message.edit', messageId: message.id, content: 'corrected source', expectedContentRevision: snapshot.conversation.contentRevision });
+    const dependencies = { sourceRefs: [sourceRef(store.getConversation(cid).messages[0])] };
+    const saved = store.updateJob(job.id, { status: 'running', attempts: 1, dependencies });
+    assert.deepEqual(saved.dependencies, dependencies); assert.notEqual(saved.fingerprint, job.fingerprint);
+    assert.equal(store.createJob({ conversationId: cid, kind: 'memory', dependencies, payload: {} }).id, job.id);
+    store.updateJob(job.id, { status: 'ready', result: { proposal: { ...dependencies, summaries: [{ id: 'recomputed-summary', content: 'correct summary' }] } } });
+    assert.equal(store.commitDerivedJob(job.id).accepted, true);
+    assert.deepEqual(store.getConversation(cid).summaries[0].sourceRefs, dependencies.sourceRefs);
+    const other = store.createJob({ conversationId: cid, kind: 'memory', dependencies: { sourceRefs: [] }, payload: {} });
+    const before = store.exportData();
+    assert.throws(() => store.updateJob(other.id, { dependencies, status: 'running', attempts: 1 }), code('idempotency-conflict'));
+    assert.deepEqual(store.exportData(), before);
+    assert.throws(() => store.updateJob(job.id, { dependencies: { sourceRefs: [] } }), code('idempotency-conflict'));
+    assert.deepEqual(store.exportData(), before);
+});
+
+for (const status of ['failed', 'stopped', 'interrupted']) test(`group ${status} discards durable effects and retry inherits completed temporary effects`, t => {
+    const { store, cid } = fixture(t);
+    const chars = ['a', 'b'].map(name => store.createResource({ kind: 'character', name, data: {} }));
+    store.command(cid, { type: 'conversation.configure', resourceRefs: chars.map(r => ({ id: r.id })), expectedContentRevision: 0 });
+    const members = chars.map((r, i) => ({ id: `member-${i}`, characterId: r.id }));
+    const first = store.beginTurn(cid, request(store, cid, { type: 'group' }), () => ({ members })).turn;
+    store.commitMember(first.id, { memberRunId: members[0].id, characterId: chars[0].id, content: 'one', effects: [{ type: 'variable.set', name: 'score', previous: null, value: 1 }] }, 1);
+    assert.equal(store.getTurnSnapshot(first.id).settings.variables.score, 1);
+    assert.equal(store.getTurnSnapshot(first.id).settings.worldInfo.turnIndex, 0);
+    if (status === 'stopped') store.requestStop(first.id);
+    store.finishTurn(first.id, { status }, 1);
+    assert.equal(store.getConversation(cid).settings.variables?.score, undefined);
+    assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 0);
+    const retry = store.beginTurn(cid, request(store, cid, { type: 'group', retryTurnId: first.id })).turn;
+    assert.equal(store.getTurnSnapshot(retry.id).settings.variables.score, 1);
+    assert.deepEqual(retry.plannedMembers, members.slice(1));
+    store.commitMember(retry.id, { memberRunId: members[1].id, characterId: chars[1].id, content: 'two', effects: [{ type: 'variable.set', name: 'score', previous: 1, value: 2 }] }, 1);
+    store.finishTurn(retry.id, { status: 'completed' }, 1);
+    assert.equal(store.getConversation(cid).settings.variables.score, 2);
+    assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 1);
+});
+
+test('business counter is server controlled and drafts do not persist effects or advance it', t => {
+    const { store, cid } = fixture(t);
+    store.command(cid, { type: 'conversation.configure', settings: { worldInfo: { turnIndex: 99 } }, expectedContentRevision: 0 });
+    assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 0);
+    for (const type of ['auxiliary', 'impersonate']) {
+        const { turn } = store.beginTurn(cid, request(store, cid, { type }));
+        store.finishTurn(turn.id, { status: 'completed', content: 'draft', effects: [{ type: 'variable.set', name: 'x', value: 1 }] }, 1);
+        assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 0);
+        assert.equal(store.getConversation(cid).settings.variables?.x, undefined);
+    }
+    complete(store, cid);
+    assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 1);
+    const target = store.getConversation(cid).messages.at(-1).id;
+    for (const type of ['regenerate', 'continue']) {
+        const { turn } = store.beginTurn(cid, request(store, cid, { type, targetMessageId: target }));
+        store.finishTurn(turn.id, { status: 'completed', content: 'reply' }, 1);
+    }
+    assert.equal(store.getConversation(cid).settings.worldInfo.turnIndex, 3);
+});
+
+test('derived job commit is atomic, blocks active turns and replays without more events', t => {
+    const { store, cid } = fixture(t); const snap = complete(store, cid);
+    const refs = [sourceRef(snap.messages[0])];
+    const job = store.createJob({ conversationId: cid, kind: 'memory', dependencies: { sourceRefs: refs }, payload: {} });
+    const proposal = { sourceRefs: refs, summaries: [{ id: 'job-summary', content: 'summary' }], memories: [{ id: 'job-memory', content: 'fact', sourceRefs: [{ ...refs[0], revision: 999 }] }] };
+    store.updateJob(job.id, { status: 'ready', result: { proposal } });
+    const before = store.exportData();
+    assert.throws(() => store.commitDerivedJob(job.id), code('source-conflict'));
+    assert.deepEqual(store.exportData(), before);
+    proposal.memories = [];
+    store.updateJob(job.id, { status: 'ready', result: { proposal } });
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    assert.throws(() => store.commitDerivedJob(job.id), code('conversation-busy'));
+    store.finishTurn(turn.id, { status: 'failed' }, 1);
+    assert.equal(store.commitDerivedJob(job.id).status, 'completed');
+    const after = store.exportData();
+    assert.equal(store.commitDerivedJob(job.id).replayed, true);
+    assert.deepEqual(store.exportData(), after);
+    assert.equal(store.getConversation(cid).summaries.length, 1);
+});
+
 function imagePart(store, id) {
     store.saveAttachment({ id, name: `${id}.png`, mime: 'image/png', size: 10, sha256: 'a'.repeat(64), path: `opaque-${id}`, createdAt: 1 });
     return { attachmentId: id, type: 'image', mimeType: 'image/png' };
@@ -464,8 +547,9 @@ test('group member effects become visible immediately, replay once and never rea
     store.startMember(turn.id, { memberRunId: 'a', characterId: 'alice' }, 1);
     const first = { memberRunId: 'a', characterId: 'alice', content: 'one', effects };
     store.commitMember(turn.id, first, 1); store.commitMember(turn.id, first, 1);
-    assert.equal(store.getConversation(cid).settings.variables.score, 1);
-    assert.equal(store.getConversation(cid).settings.worldInfo.state['book:entry'].activeUntil, 2);
+    assert.equal(store.getConversation(cid).settings.variables?.score, undefined);
+    assert.equal(store.getTurnSnapshot(turn.id).settings.variables.score, 1);
+    assert.equal(store.getTurnSnapshot(turn.id).settings.worldInfo.state['book:entry'].activeUntil, 2);
     store.startMember(turn.id, { memberRunId: 'b', characterId: 'bob' }, 1);
     store.commitMember(turn.id, { memberRunId: 'b', characterId: 'bob', content: 'two', effects: [{ type: 'variable.set', name: 'score', previous: 1, value: 2 }] }, 1);
     store.finishTurn(turn.id, { status: 'completed', effects }, 1);
