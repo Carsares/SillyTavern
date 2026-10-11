@@ -1,18 +1,26 @@
 #!/usr/bin/env node
-import { CommandLineParser } from './src/command-line.js';
-import { serverDirectory } from './src/server-directory.js';
+import { pathToFileURL } from 'node:url';
 
-console.log(`Node version: ${process.version}. Running in ${process.env.NODE_ENV} environment. Server directory: ${serverDirectory}`);
+/** Version validation precedes imports that require node:sqlite or newer SDK syntax. */
+export async function main({ process: hostProcess = process, log = console, loadServer = () => import('./src/conversation/server.js') } = {}) {
+    const [major, minor] = hostProcess.versions.node.split('.').map(Number);
+    if (major < 22 || (major === 22 && minor < 19)) throw new Error('Node.js 22.19 or newer is required');
+    const { startServer, parseArguments } = await loadServer();
+    const application = await startServer(parseArguments(hostProcess.argv.slice(2)));
+    log.log(`Conversation v1 listening on ${application.address.address}:${application.address.port}`);
+    let closing;
+    const shutdown = () => {
+        closing ??= Promise.resolve().then(() => application.close()).catch(() => {
+            log.error('Shutdown failed'); hostProcess.exitCode = 1;
+        }).finally(() => {
+            for (const signal of ['SIGINT', 'SIGTERM']) hostProcess.removeListener(signal, shutdown);
+        });
+        return closing;
+    };
+    for (const signal of ['SIGINT', 'SIGTERM']) hostProcess.once(signal, shutdown);
+    return application;
+}
 
-// config.yaml will be set when parsing command line arguments
-const cliArgs = new CommandLineParser().parse(process.argv);
-globalThis.DATA_ROOT = cliArgs.dataRoot;
-globalThis.COMMAND_LINE_ARGS = cliArgs;
-process.chdir(serverDirectory);
-
-try {
-    await import('./src/server-main.js');
-} catch (error) {
-    console.error('A critical error has occurred while starting the server:', error);
-    process.exit(1);
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+    main().catch(() => { console.error('Conversation v1 failed to start'); process.exitCode = 1; });
 }
