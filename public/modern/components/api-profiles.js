@@ -109,7 +109,7 @@ export function createApiProfileComponents(ctx) {
             <div class="panel-header">
                 <div>
                     <h2 class="panel-title">连接档案</h2>
-                    <p class="panel-subtitle">把来源、模型、预设、地址等存成一组，在这里或聊天输入框旁一键切换，与旧版连接管理共用同一份档案。预设、代理按名称精确匹配，找不到的项会跳过并说明原因（旧版会挑最相近的）。</p>
+                    <p class="panel-subtitle">把来源、模型、预设、地址等存成一组，在这里或聊天输入框旁一键切换，档案与生成引擎共用。预设、代理按名称精确匹配，找不到的项会跳过并说明原因，不会改用名称相近的项。</p>
                 </div>
                 <div class="panel-actions">
                     ${switcher.createOpen ? '' : createButton}

@@ -126,7 +126,7 @@ const PROMPT_POST_PROCESSING_VALUES = Object.freeze([
 ]);
 
 const DEPENDS_ON_API_REASON = '依赖的 API 没有应用成功';
-const TEXT_COMPLETION_ONLY_UNSUPPORTED_REASON = '指令/上下文模板、系统提示词和分词器暂不支持，请在旧版设置里配置';
+const TEXT_COMPLETION_ONLY_UNSUPPORTED_REASON = '指令/上下文模板、系统提示词和分词器暂不支持随档案切换，保留当前设置';
 
 /**
  * @param {any} value 任意值

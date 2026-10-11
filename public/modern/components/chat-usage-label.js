@@ -68,7 +68,7 @@ function buildUsageView(snapshot, settings, kind) {
                 `按当前设置模拟一次发送，提示词约 ${formatNumber(usage.used)} token${percentText ? `，占提示词预算的 ${percentText}` : ''}`,
                 '不含输入框里未发送的文字',
                 ...budgetParts,
-                '超出预算时旧版会从最早的历史开始丢弃',
+                '超出预算时会从最早的历史开始丢弃',
             ].join('；'),
             level,
             percentText,
@@ -81,7 +81,7 @@ function buildUsageView(snapshot, settings, kind) {
         title: [
             `上次生成的提示词共 ${formatNumber(usage.used)} token${percentText ? `，占提示词预算的 ${percentText}` : ''}`,
             ...budgetParts,
-            '按当前设置计算预算，超出预算时旧版会从最早的历史开始丢弃',
+            '按当前设置计算预算，超出预算时会从最早的历史开始丢弃',
         ].join('；'),
         level,
         percentText,

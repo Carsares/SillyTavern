@@ -173,7 +173,7 @@ describe('prompt budget and hint text', () => {
         expect(describeChatCompletionContextHint({ limits: limitsFor('deepseek', 'm', true), context: 4095, maxTokens: 300 }))
             .toContain('已解锁，上限 2,000,000');
         expect(describeChatCompletionContextHint({ limits: limitsFor('openrouter', 'm'), context: 4095, maxTokens: 300 }))
-            .toContain('参考上限 128,000（该来源的实际上限取决于远端模型列表，旧版可能按实际模型再收紧）');
+            .toContain('参考上限 128,000（该来源的实际上限取决于远端模型列表，生成时可能按实际模型再收紧）');
         // 输入还不是数字时只给公式
         expect(describeChatCompletionContextHint({ limits: limitsFor('openai', 'gpt-4o'), context: '', maxTokens: 300 }))
             .toBe('上限 128,000；提示词预算 = 上下文 − Max Tokens');

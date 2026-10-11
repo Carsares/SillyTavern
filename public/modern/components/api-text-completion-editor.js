@@ -83,7 +83,7 @@ export function createApiTextCompletionEditorComponents(ctx) {
             <section class="form-section">
                 <div>
                     <h3 class="form-section-title">上下文与回复长度</h3>
-                    <p class="panel-subtitle">对应旧版的 Context 和 Response 滑块；超出提示词预算的历史会被旧版从最早的消息开始丢弃。</p>
+                    <p class="panel-subtitle">上下文长度减去回复长度就是提示词预算；超出预算的历史会从最早的消息开始丢弃。</p>
                 </div>
                 <div class="form-grid two-columns">
                     <label class="field-label api-limit-field">

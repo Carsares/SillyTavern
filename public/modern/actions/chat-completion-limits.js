@@ -385,7 +385,7 @@ function budgetHint(budget) {
 
 /**
  * API 页「上下文长度」字段下方的说明文字。
- * 固定上限的来源写「上限 N」；依赖远端模型列表的来源写「参考上限 N」并提示旧版可能再收紧；
+ * 固定上限的来源写「上限 N」；依赖远端模型列表的来源写「参考上限 N」并提示生成时可能再收紧；
  * 最后一句固定说明提示词预算怎么算，上下文和 Max Tokens 都是有效数字时补上当前预算。
  * @param {{ limits: ChatCompletionContextLimits, context?: number | string, maxTokens?: number | string }} options 范围与当前输入
  * @returns {string} 说明文字
@@ -393,7 +393,7 @@ function budgetHint(budget) {
 export function describeChatCompletionContextHint({ limits, context, maxTokens }) {
     let limitText;
     if (limits.dynamic) {
-        limitText = `参考上限 ${formatNumber(limits.max)}（该来源的实际上限取决于远端模型列表，旧版可能按实际模型再收紧）`;
+        limitText = `参考上限 ${formatNumber(limits.max)}（该来源的实际上限取决于远端模型列表，生成时可能按实际模型再收紧）`;
     } else if (!limits.unlockApplies) {
         limitText = `上限 ${formatNumber(limits.max)}（该来源固定，不受“解锁上限”影响）`;
     } else if (limits.unlocked) {

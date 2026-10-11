@@ -1102,7 +1102,7 @@ test.describe('Modern API context length', () => {
         // The remote model list decides here: the page can only offer the legacy fallback as a reference
         await page.locator('[data-api-source]').selectOption('openrouter');
         await expect(hint).toContainText('参考上限 128,000');
-        await expect(hint).toContainText('旧版可能按实际模型再收紧');
+        await expect(hint).toContainText('生成时可能按实际模型再收紧');
         await expect(contextInput).toHaveAttribute('max', '2000000');
 
         await page.locator('[data-api-source]').selectOption('custom');

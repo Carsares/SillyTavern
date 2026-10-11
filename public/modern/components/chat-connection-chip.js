@@ -140,7 +140,7 @@ export function createChatConnectionChipComponent(ctx) {
                         <i class="fa-solid fa-plug" aria-hidden="true"></i>
                         打开 API 页
                     </button>
-                    <p>档案里的预设、代理按名称精确匹配，找不到的项会跳过并说明原因（旧版会挑最相近的）。</p>
+                    <p>档案里的预设、代理按名称精确匹配，找不到的项会跳过并说明原因，不会改用名称相近的项。</p>
                 </div>
             </div>
         `;
