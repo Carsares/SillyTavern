@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { summarizeUsage } from '../../../../src/conversation/traces/usage.js';
+
+test('generation and auxiliary usage totals do not double-count cached/reasoning tokens', () => {
+    const usage = { inputTokens: 100, outputTokens: 20, cacheReadTokens: 80, cacheWriteTokens: 0, reasoningTokens: 10, totalTokens: 120, costUsd: 0.1, complete: true, requests: [{}] };
+    const traces = [
+        { id: 'a', turnId: 't', requestPlan: {}, usage },
+        { id: 'r', turnId: 't', parentTraceId: 'a', kind: 'outbound-request' },
+        { id: 'b', kind: 'memory', requestPlan: {}, usage },
+        { id: 's', parentTraceId: 'b', kind: 'outbound-request', category: 'memory' },
+    ];
+    const result = summarizeUsage(traces);
+    assert.equal(result.totals.calls, 2);
+    assert.equal(result.totals.totalTokens, 240);
+    assert.equal(result.totals.costUsd, 0.2);
+    assert.equal(result.categories.memory.inputTokens, 100);
+    assert.equal(result.turns[0].totalTokens, 120);
+});
+
+test('unreported or failed attempted requests make totals unknown instead of zero', () => {
+    const result = summarizeUsage([{ id: 't', requestPlan: {}, status: 'failed' }, { id: 'r', kind: 'outbound-request', parentTraceId: 't' }]);
+    assert.equal(result.totals.calls, 1); assert.equal(result.totals.inputTokens, null);
+    assert.equal(result.totals.costUsd, null); assert.equal(result.totals.complete, false);
+});
+
+test('partial cumulative usage is counted once and a later unreported request marks incomplete', () => {
+    const usage = { complete: true, inputTokens: 4, outputTokens: 2, totalTokens: 6, requests: [{}] };
+    const result = summarizeUsage([{ id: 'a', requestPlan: {}, events: [{ type: 'usage.updated', usage }, { type: 'usage.updated', usage }] },
+        { id: 'r1', kind: 'outbound-request', parentTraceId: 'a' }, { id: 'r2', kind: 'outbound-request', parentTraceId: 'a' }]);
+    assert.equal(result.totals.calls, 2); assert.equal(result.totals.complete, false);
+    assert.equal(result.totals.inputTokens, null);
+});

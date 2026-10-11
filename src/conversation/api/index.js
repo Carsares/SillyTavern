@@ -1,5 +1,6 @@
 import express from 'express';
 import { SCHEMA_VERSION, RESOURCE_KINDS, requireObject, requireString, requireRevision, invariant, serializeError } from '../../../public/shared/conversation/schemas/index.js';
+import { summarizeUsage } from '../traces/usage.js';
 
 const wrap = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(next);
 const publicTurn = turn => ({ ...turn, payloadHash: undefined, request: turn.request ? { ...turn.request, apiKey: undefined } : undefined });
@@ -49,6 +50,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
     router.get('/conversations/:id/messages/:messageId/candidates', wrap((req, res) => res.json(store.getCandidates(req.params.id, req.params.messageId))));
     router.get('/conversations/:id/jobs', wrap((req, res) => res.json(store.listJobs(req.params.id))));
     router.get('/conversations/:id/traces', wrap((req, res) => { store.getConversation(req.params.id); res.json(store.listTraces(req.params.id)); }));
+    router.get('/conversations/:id/usage', wrap((req, res) => { store.getConversation(req.params.id); res.json(summarizeUsage(store.listTraces(req.params.id))); }));
     router.get('/traces/:id', wrap((req, res) => res.json(store.getTrace(req.params.id))));
     router.get('/capabilities', wrap((req, res) => {
         if (req.query.connectionId) {

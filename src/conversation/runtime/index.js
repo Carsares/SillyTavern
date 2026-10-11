@@ -92,7 +92,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         }));
         let result;
         try { result = await chosen.runTurn({
-            snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions,
+            snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
             limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
             beforeRequest: async context => {
                 signal.throwIfAborted();

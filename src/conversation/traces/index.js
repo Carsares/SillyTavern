@@ -40,7 +40,7 @@ export function createTraceService({ store, now = () => new Date().toISOString()
         fail(traceId, error) {
             const record = pending.get(traceId);
             if (!record) return;
-            Object.assign(record, { status: 'failed', error: { code: error.code ?? 'generation-failed', message: error.message }, finishedAt: now() });
+            Object.assign(record, { status: 'failed', error: { code: error.code ?? 'generation-failed', message: 'Execution failed; review sanitized request and event records' }, finishedAt: now() });
             save(record);
             pending.delete(traceId);
         },
