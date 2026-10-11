@@ -83,9 +83,28 @@ export function expandTranscript(body, protocol, transcript) {
     });
     if (positions.length !== 1) throw fail('missing-transcript-marker', 'SDK compacted, duplicated or rewrote the marked history', 422);
     const { index, message, values } = positions[0];
-    if (message.role !== 'user' || values.length !== 1 || values[0] !== transcript.prompt ||
-        (Array.isArray(message.content) && message.content.length !== 1)) throw fail('rewritten-transcript-marker', 'SDK modified the original transcript segment', 422);
-    const after = input.slice(index + 1);
+    // Claude prepends separate environment/date reminder blocks to the user
+    // message even with verbatimPrompts. The original fragment must remain exact.
+    const original = values.filter(value => value.includes(transcript.marker));
+    const content = Array.isArray(message.content) ? message.content : [{ type: 'text', text: message.content }];
+    const markerIndex = content.findIndex(part => part.text === transcript.prompt);
+    if (message.role !== 'user' || original.length !== 1 || original[0] !== transcript.prompt || markerIndex !== content.length - 1 ||
+        content.slice(0, markerIndex).some(part => protocol !== 'anthropic' || part.type !== 'text' || !/^<system-reminder>[\s\S]*<\/system-reminder>\s*$/.test(part.text))) {
+        throw fail('rewritten-transcript-marker', 'SDK modified the original transcript segment', 422);
+    }
+    const suffix = input.slice(index + 1);
+    // Non-Claude model IDs cause SDK 0.3.289 to append its environment as a
+    // system message. Accept only the exact trusted runtime-generated block,
+    // once, immediately after the marker; never forward it to the provider.
+    const first = suffix[0];
+    if (protocol === 'anthropic' && transcript.sdkEnvironmentText &&
+        first?.role === 'system' && Object.keys(first).every(key => ['role', 'content'].includes(key)) &&
+        Array.isArray(first.content) && first.content.length === 1 &&
+        first.content[0].type === 'text' && first.content[0].text === transcript.sdkEnvironmentText &&
+        Object.keys(first.content[0]).every(key => ['type', 'text', 'cache_control'].includes(key)) &&
+        (first.content[0].cache_control === undefined ||
+            JSON.stringify(first.content[0].cache_control) === '{"type":"ephemeral"}')) suffix.shift();
+    const after = suffix;
     // Only genuine current-turn assistant/tool continuations may follow the marker.
     // Refuse hidden injected user reminders instead of silently treating them as history.
     for (const item of after) {
@@ -96,7 +115,7 @@ export function expandTranscript(body, protocol, transcript) {
     }
     const request = structuredClone(body);
     if (transcript.mode === 'structured-transcript') {
-        request[field] = [structuredClone(message), ...structuredClone(after)];
+        request[field] = [{ role: 'user', content: [{ type: protocol === 'anthropic' ? 'text' : 'input_text', text: transcript.prompt }] }, ...structuredClone(after)];
         if (protocol === 'anthropic') request.system = HISTORY_INSTRUCTIONS;
         else request.instructions = HISTORY_INSTRUCTIONS;
     } else {

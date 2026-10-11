@@ -161,14 +161,14 @@ Pinned dependencies (installed centrally; this module does not modify locks):
 | Package | Version | npm publication UTC |
 |---|---|---|
 | @anthropic-ai/claude-agent-sdk | 0.3.289 | 2026-10-03 20:12:59.628 |
-| @openai/codex-sdk | 0.160.0 | 2026-10-01 20:25:41.854 |
+| @openai/codex-sdk | 0.156.1 | 2026-09-23T02:45:50.362Z (parent npm verification; exceeds 7 days) |
 
 Both exceed seven days of release age on 2026-10-11. Runtime verifies the exact
 package versions and requires the platform-native optional packages. Public
 installed sources: `@anthropic-ai/claude-agent-sdk/sdk.d.ts` Options, EffortLevel,
 ThinkingConfig; `@openai/codex-sdk/dist/index.d.ts` CodexOptions, ThreadOptions,
 ModelReasoningEffort. Codex configuration keys checked against the pinned
-[official config schema](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/core/config.schema.json).
+[official config schema](https://github.com/openai/codex/blob/rust-v0.156.1/codex-rs/core/config.schema.json).
 Protocol controls: [Claude thinking](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking),
 [Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort),
 [Responses reasoning](https://developers.openai.com/api/docs/guides/reasoning).
@@ -180,10 +180,9 @@ sandbox policies: allowed task file succeeds, outside generated canary read
 fails, another executable fails, outside write fails. This does not prove the
 real SDK runtime's startup/network needs are all satisfied.
 
-Remaining final integration: real pinned SDK + local fake provider, exercising
-startup, marker preservation, tool loop, stop, outbound network restriction and
-resource shutdown. No real SDK runtime or paid service has been run in this
-unit-test phase. Native availability must not be inferred from fake-SDK success.
+Installed SDK integration is now exercised against a local fake provider; see
+the evidence below. Live provider behavior remains a separate verification
+owned by the parent. No paid service was called by this SDK integration suite.
 
 Concrete hard refusals (not silently degraded): Claude native deep system roles
 (Messages only has a top-level system field); media blocks without a verified
@@ -192,3 +191,97 @@ history rewriting; unsupported sampling parameters/schema constraints; unverifie
 OS platforms. For deep system, use a native Responses executor or explicitly
 choose structured-transcript; flattening would change semantics. These boundaries
 remain visible integration work rather than a claim of full provider parity.
+
+## Installed SDK integration evidence (2026-10-11, macOS arm64)
+
+`node --test tests/conversation/integration/installed-sdk.test.mjs tests/conversation/modules/sdk/*.test.mjs`
+exits 0: 55 tests, 55 pass, no skips (18 installed integration, 37 unit).
+Both Claude 0.3.289 and Codex 0.156.1 pass six actual SDK scenarios:
+text/native history, MCP domain-tool round trip, initial budget rejection,
+budget rejection after a tool result, in-flight abort, and rejection of a
+model-issued host tool. OS checks confirm no preference/IPC allow rules and
+TCP access only to the selected gateway port. Every SDK turn asserts gateway
+connection refusal and removal of the isolated runtime directory after cleanup.
+Unit OS tests additionally verify denied outside-file reads/writes and executable
+launches. The parent MDM test checks fail-closed behavior and boolean-only output.
+These tests use local fake HTTP, not saved credentials or paid models; they do
+not establish provider-specific support, accuracy of provider token limits, or
+protection against OS/runtime vulnerabilities.
+
+### Historical failure before the approved version change
+
+Codex 0.160.0 loads after resolving its import-only package and `vendor/.../bin/codex`
+layout, but all six actual SDK cases fail before upstream model dispatch. The
+native error observed during local diagnostic execution is:
+`thread/start failed: failed to load configuration: Failed to synchronize managed preferences`.
+The pinned upstream `codex-rs/config/src/loader/macos.rs` invokes
+`CFPreferencesAppSynchronize("com.openai.codex")` and fails when it returns zero.
+No host preference read/write or cfprefsd IPC allowance remains in our profile;
+broadening those permissions is not an acceptable way to pass this test.
+Any `/etc/codex` installation is rejected before process launch rather than
+silently replacing host administrator configuration. A missing directory is
+kept inaccessible to the child with ENOENT semantics.
+
+Known fixes from actual execution: ESM-only package resolution, native binary
+layout, exact ancestor metadata permission for canonicalization, OS ICU/locale
+read access for Bun Intl, Claude-owned temp directory variables, and removal of
+separate SDK reminder blocks preceding the exact unmodified transcript fragment.
+A missing, modified, repeated or non-final fragment still fails closed. Cancellation
+after upstream dispatch now reports `aborted` with `outcome: unknown`, not a
+misclassified transport failure. Temporary diagnostic logging was removed.
+
+
+### Codex compatibility target 0.156.1
+
+The pinned compatibility target is now 0.156.1; the failed 0.160.0 run above is
+historical evidence, not the result for the replacement. The official 0.156.1
+`macos.rs` still checks forced MDM keys before copying a value, but has no
+`CFPreferencesAppSynchronize` call. SDK `CodexOptions`, `ThreadOptions`, signal
+cancellation and `exec --experimental-json` are source-compatible with our use.
+Actual replacement integration now passes the scenarios documented above.
+
+Before starting Codex, the trusted parent runs a fixed `/usr/bin/osascript`
+JavaScript/ObjC program. It calls `CFPreferencesAppSynchronize` for
+`com.openai.codex`, then `CFPreferencesAppValueIsForced` for
+`config_toml_base64` and `requirements_toml_base64`. Only three booleans leave
+that process. No preference value getter or setter is called. Refresh failure,
+invalid output, timeout, process failure, or either forced key rejects startup.
+The child continues to have no user-preference or cfprefsd IPC permission.
+This is a startup presence check, not support for managed hosts or continuous
+monitoring of administrator policy changes during a turn.
+
+### Domain tool authorization and local token lifecycle
+
+Codex uses the official 0.156.1 `bearer_token_env_var` configuration with the
+fixed name `CONVERSATION_MCP_TOKEN`. Only the isolated child environment carries
+the ephemeral value; no MCP header value is passed through SDK config/CLI
+arguments or a separate config file. The installed tests assert this separation.
+The SDK API key is likewise passed by the SDK through its child environment.
+Diagnostics must never inspect or print process arguments or environments.
+
+Each registered domain tool has explicit `approval_mode: 'approve'` in
+`mcp_servers.domain.tools`; this is limited to the caller-authorized domain
+registry. It does not enable shell, file, networking tools or change OS policy.
+Actual Responses tool calls use `namespace: 'mcp__domain', name: '<tool>'`
+matching the SDK's declared namespace. Gateway permits still require an exact
+model-issued name/arguments pair and are consumed once before execution.
+Claude can emit a warning that allowedTools shadows canUseTool; enforcement
+does not rely on that callback, but on the gateway permit and OS restrictions.
+
+Every run owns a random gateway token and local listener. Finally aborts the SDK,
+joins its subprocess, closes active gateway sockets and removes runtime files.
+Tests confirm the listener refuses connections after both success and failure;
+the old local token has no remaining active gateway through which to authorize
+a request. The token is never an upstream provider credential.
+
+### Non-Claude model environment suffix
+
+The real Claude SDK emits a separate system-role environment block after the
+marker when using `deepseek-v4-flash`. Both SDKs now have local integration
+coverage using the live script's two-message content, empty tools, and rounds=1.
+The gateway removes only one immediately adjacent block whose text exactly
+matches the trusted environment factory's current isolated directory, model,
+Darwin release and date. Extra keys, changed text, duplicate or displaced blocks
+remain `unexpected-sdk-context` failures. No environment description is sent
+upstream. A future SDK template change (or date rollover during startup) fails
+closed and needs explicit compatibility validation.

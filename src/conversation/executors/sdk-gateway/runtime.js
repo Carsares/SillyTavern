@@ -33,7 +33,7 @@ export function createSdkExecutor(executor, dependencies, execute) {
             args.signal?.addEventListener('abort', onAbort, { once: true });
             if (args.signal?.aborted) controller.abort();
             const timer = setTimeout(() => controller.abort(), timeoutMs);
-            let gateway, environment, cleanupSdk, gatewayAbort;
+            let gateway, environment, cleanupSdk, gatewayAbort, outcome, failure;
             try {
                 controller.signal.throwIfAborted();
                 const sdk = injectedSdk ?? await loadSdk(executor);
@@ -46,6 +46,7 @@ export function createSdkExecutor(executor, dependencies, execute) {
                 const address = await gateway.start();
                 controller.signal.throwIfAborted();
                 environment = await environmentFactory({ executor, gateway: address, signal: controller.signal });
+                transcript.sdkEnvironmentText = environment.claudeEnvironmentText?.(connection.model);
                 if (!environment.security?.enforced) throw fail('isolation-required', 'SDK process requires an enforced OS isolation backend', 503);
                 await args.onEvent?.({ type: 'executor.metadata', capabilities: { ...capabilities, security: environment.security } });
                 controller.signal.throwIfAborted();
@@ -55,12 +56,13 @@ export function createSdkExecutor(executor, dependencies, execute) {
                 const result = gateway.result();
                 if (!result.usage.requests.length || result.usage.requests.some(r => !r.complete)) throw fail('incomplete-sdk-turn', 'SDK did not complete a gateway-controlled model request', 502);
                 if (result.toolStates.some(tool => tool.state !== 'completed')) throw fail('incomplete-sdk-tools', 'SDK ended with unresolved domain tool calls', 502);
-                return { ...result, finishReason, capabilities: { ...capabilities, security: environment.security } };
+                outcome = { ...result, finishReason, capabilities: { ...capabilities, security: environment.security } };
             } catch (error) {
-                if (gateway) gateway.check();
-                if (controller.signal.aborted) throw fail('aborted', 'SDK turn stopped; external effects may be unknown');
-                if (error?.name === 'ProtocolError') throw error;
-                throw fail('sdk-execution-failed', 'SDK execution failed', 502);
+                // A gateway failure identifies the cause of an SDK cancellation.
+                try { gateway?.check(); } catch (gatewayError) { failure = gatewayError; }
+                failure ??= controller.signal.aborted
+                    ? fail('aborted', 'SDK turn stopped; external effects may be unknown')
+                    : error?.name === 'ProtocolError' ? error : fail('sdk-execution-failed', 'SDK execution failed', 502);
             } finally {
                 clearTimeout(timer);
                 args.signal?.removeEventListener('abort', onAbort);
@@ -70,8 +72,10 @@ export function createSdkExecutor(executor, dependencies, execute) {
                 for (const close of [cleanupSdk, () => environment?.close(), () => gateway?.close()]) {
                     try { await close?.(); } catch { errors.push(true); }
                 }
-                if (errors.length) throw fail('sdk-shutdown-incomplete', 'One or more SDK resources failed to close', 503);
+                if (errors.length) failure ??= fail('sdk-shutdown-incomplete', 'One or more SDK resources failed to close', 503);
             }
+            if (failure) throw failure;
+            return outcome;
         },
     };
 }

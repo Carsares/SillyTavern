@@ -15,8 +15,7 @@ export function filterRequest(body, protocol, domain, model, maxOutputTokens) {
                 return nested.length ? [{ ...tool, tools: nested }] : [];
             }
             let name;
-            try { name = domain.nameOf(tool.name, namespace); }
-            catch { removedTools.push(typeof tool.name === 'string' ? tool.name : tool.type ?? 'unknown'); return []; }
+            try { name = domain.nameOf(tool.name, namespace); } catch { removedTools.push(typeof tool.name === 'string' ? tool.name : tool.type ?? 'unknown'); return []; }
             const definition = domain.definition(name);
             if (protocol === 'anthropic') return [{ name: tool.name, description: definition.description ?? '', input_schema: definition.parameters }];
             if (tool.type !== 'function') { removedTools.push(tool.name); return []; }

@@ -89,8 +89,10 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
             const record = { requestIndex: index, estimatedTokens, rawUsage: null, complete: false };
             requests.push(record);
             let upstream;
-            try { upstream = await fetchImpl(upstreamUrl, { method: 'POST', headers, body: JSON.stringify(request), signal: callSignal, redirect: 'error' }); }
-            catch { throw fail('model-result-unknown', 'Model transport failed; no automatic retry', 502); }
+            try { upstream = await fetchImpl(upstreamUrl, { method: 'POST', headers, body: JSON.stringify(request), signal: callSignal, redirect: 'error' }); } catch {
+                if (callSignal.aborted) throw fail('aborted', 'Model request stopped; external result may be unknown', 499, { outcome: 'unknown' });
+                throw fail('model-result-unknown', 'Model transport failed; no automatic retry', 502);
+            }
             if (!upstream.ok) { await upstream.body?.cancel(); throw fail('upstream-http-error', 'Model provider rejected request', 502, { upstreamStatus: upstream.status }); }
             const inspector = responseInspector({ protocol, domain, requestIndex: index, emit,
                 usage(raw) { if (raw) record.rawUsage = mergeUsage(record.rawUsage, raw); } });
@@ -124,13 +126,11 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
                         yield new TextEncoder().encode(`${frame}\n\n`);
                     }
                     await completed();
-                } catch (error) { stop(error?.code ? error : fail('model-result-unknown', 'Model stream interrupted', 502)); throw fatal; }
-                finally { active = false; }
+                } catch (error) { stop(error?.code ? error : fail('model-result-unknown', 'Model stream interrupted', 502)); throw fatal; } finally { active = false; }
             })();
             return new Response(new ReadableStream({
                 async pull(output) {
-                    try { const item = await iterator.next(); if (item.done) output.close(); else output.enqueue(item.value); }
-                    catch (error) { output.error(error); }
+                    try { const item = await iterator.next(); if (item.done) output.close(); else output.enqueue(item.value); } catch (error) { output.error(error); }
                 },
                 async cancel() { if (!record.complete) stop(fail('aborted', 'SDK disconnected from model stream')); await iterator.return(); },
             }), { headers: { 'content-type': 'text/event-stream' } });
@@ -175,8 +175,7 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
                     });
                 }
                 res.end();
-            } catch { res.destroy(); }
-            finally { res.removeListener('close', onClose); }
+            } catch { res.destroy(); } finally { res.removeListener('close', onClose); }
         });
         server.requestTimeout = 30000;
         server.headersTimeout = 10000;

@@ -30,7 +30,7 @@
         "@jimp/wasm-png": "^1.6.0",
         "@jimp/wasm-webp": "^1.6.0",
         "@mozilla/readability": "^0.6.0",
-        "@openai/codex-sdk": "0.160.0",
+        "@openai/codex-sdk": "0.156.1",
         "@popperjs/core": "^2.11.8",
         "@zeldafan0225/ai_horde": "^5.2.0",
         "agent-base": "^7.1.3",

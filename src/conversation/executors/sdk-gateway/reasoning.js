@@ -41,8 +41,7 @@ export function reasoningControls(executor, value, maxOutputTokens) {
 export function applyReasoning(request, executor, value, maxOutputTokens) {
     const controls = reasoningControls(executor, value, maxOutputTokens);
     if (controls.wire) {
-        if (executor === 'claude') { delete request.thinking; delete request.output_config; }
-        else delete request.reasoning;
+        if (executor === 'claude') { delete request.thinking; delete request.output_config; } else delete request.reasoning;
         Object.assign(request, structuredClone(controls.wire));
     }
     // Also validate SDK defaults after the gateway clamps max_tokens.

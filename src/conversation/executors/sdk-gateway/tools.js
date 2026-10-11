@@ -27,8 +27,7 @@ function valid(schema, value) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         if (schema.required?.some(k => !Object.hasOwn(value, k))) return false;
         for (const [key, item] of Object.entries(value)) {
-            if (Object.hasOwn(schema.properties ?? {}, key)) { if (!valid(schema.properties[key], item)) return false; }
-            else if (schema.additionalProperties === false || (typeof schema.additionalProperties === 'object' && !valid(schema.additionalProperties, item))) return false;
+            if (Object.hasOwn(schema.properties ?? {}, key)) { if (!valid(schema.properties[key], item)) return false; } else if (schema.additionalProperties === false || (typeof schema.additionalProperties === 'object' && !valid(schema.additionalProperties, item))) return false;
         }
     }
     return true;

@@ -2,7 +2,7 @@ import { createSdkExecutor } from '../sdk-gateway/runtime.js';
 import { fail } from '../sdk-gateway/contracts.js';
 import { reasoningControls } from '../sdk-gateway/reasoning.js';
 
-// Keys checked against rust-v0.160.0/codex-rs/core/config.schema.json.
+// SDK interface checked against rust-v0.156.1; policy remains enforced by the gateway and OS.
 // Flags narrow the SDK; gateway tool checks and the OS sandbox are mandatory.
 export function codexProcessConfig({ address, tools }) {
     return {
@@ -24,8 +24,9 @@ export function codexProcessConfig({ address, tools }) {
             enable_request_compression: false, non_prefixed_mcp_tool_names: false,
         },
         mcp_servers: tools.length ? { domain: {
-            url: address.mcpUrl, http_headers: { Authorization: `Bearer ${address.token}` },
+            url: address.mcpUrl, bearer_token_env_var: 'CONVERSATION_MCP_TOKEN',
             enabled_tools: tools.map(t => t.name), required: true,
+            tools: Object.fromEntries(tools.map(t => [t.name, { approval_mode: 'approve' }])),
         } } : {},
     };
 }
