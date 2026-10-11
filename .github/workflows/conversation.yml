@@ -23,6 +23,31 @@ on:
       - 'src/tokenizers/**'
       - 'package*.json'
       - '.github/workflows/conversation.yml'
+  # Changes are committed directly to master (see AGENTS.md), so pushes run the same path-filtered checks.
+  push:
+    branches: [master]
+    paths:
+      - 'src/conversation/**'
+      - 'public/shared/conversation/**'
+      # Agent is mounted in the original server and hosted by Modern pages.
+      - 'public/modern/**'
+      - 'tests/conversation/**'
+      - 'tests/modern-agent-workspace.test.mjs'
+      - 'server.js'
+      - 'conversation-server.js'
+      - 'src/workspace-bootstrap.js'
+      - 'src/server-main.js'
+      - 'src/server-exit.js'
+      - 'src/server-global.js'
+      - 'src/server-directory.js'
+      - 'src/command-line.js'
+      - 'src/endpoints/users-admin.js'
+      - 'src/endpoints/users-private.js'
+      - 'src/character-card-parser.js'
+      - 'src/png/**'
+      - 'src/tokenizers/**'
+      - 'package*.json'
+      - '.github/workflows/conversation.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,7 +1,7 @@
 import zlib from 'node:zlib';
 import { Buffer } from 'node:buffer';
 
-import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import extract from 'png-chunks-extract';
 
 import encode from '../src/png/encode.js';
@@ -196,6 +196,61 @@ describe('character-card-parser hasCharacterCardData()', () => {
         expect(hasCharacterCardData(createImage())).toBe(false);
         expect(console.error).not.toHaveBeenCalled();
         expect(console.warn).not.toHaveBeenCalled();
+    });
+});
+
+describe('character-card-parser decompression limit', () => {
+    const MiB = 1024 * 1024;
+    let oversized;
+    let truncated;
+
+    beforeAll(() => {
+        // Each chunk is about 128 KiB / 64 KiB on disk but inflates to 129 MiB / 64 MiB.
+        oversized = zlib.deflateSync(Buffer.alloc(129 * MiB));
+        const complete = zlib.deflateSync(Buffer.alloc(64 * MiB));
+        truncated = complete.subarray(0, complete.length - 8);
+    });
+
+    beforeEach(() => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        jest.spyOn(zlib, 'inflateSync');
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('stops inflating after one chunk exceeds the limit and still reads uncompressed card data', () => {
+        const image = buildPng([
+            ...Array.from({ length: 20 }, () => zTXt('ccv3', '', { compressed: oversized })),
+            tEXt('chara', toBase64(makeCard('Uncompressed fallback'))),
+        ]);
+
+        expect(readName(image)).toBe('Uncompressed fallback');
+        expect(zlib.inflateSync).toHaveBeenCalledTimes(1);
+
+        zlib.inflateSync.mockClear();
+        expect(hasCharacterCardData(image)).toBe(true);
+        expect(zlib.inflateSync).toHaveBeenCalledTimes(1);
+    });
+
+    test('counts output of chunks that fail midway against the limit shared by all chunks', () => {
+        const image = buildPng([
+            ...Array.from({ length: 20 }, () => zTXt('ccv3', '', { compressed: truncated })),
+            zTXt('chara', toBase64(makeCard('Compressed after the limit'))),
+            iTXt('chara', toBase64(makeCard('Uncompressed iTXt fallback'))),
+        ]);
+
+        // 64 MiB from the first broken chunk leaves less than another 64 MiB, so the second one hits the limit.
+        expect(readName(image)).toBe('Uncompressed iTXt fallback');
+        expect(zlib.inflateSync).toHaveBeenCalledTimes(2);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Decompression limit for this image reached'));
+    });
+
+    test('reads a compressed card again after another image spent its limit', () => {
+        expect(hasCharacterCardData(buildPng([zTXt('ccv3', '', { compressed: oversized })]))).toBe(false);
+        expect(readName(buildPng([zTXt('chara', toBase64(makeCard('Next image')))]))).toBe('Next image');
     });
 });
 

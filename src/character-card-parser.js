@@ -17,9 +17,14 @@ const CARD_KEYWORDS = ['ccv3', 'chara'];
 const TEXT_CHUNK_NAMES = ['tEXt', 'zTXt', 'iTXt'];
 
 /**
- * Upper bound for a single inflated zTXt/iTXt payload, guards against decompression bombs.
+ * Upper bound for all zTXt/iTXt payloads inflated while reading one image, guards against decompression bombs.
  */
 const MAX_INFLATED_TEXT_BYTES = 128 * 1024 * 1024;
+
+/**
+ * Highest output-to-input ratio of a deflate stream (258 bytes from a 2-bit match code).
+ */
+const MAX_DEFLATE_RATIO = 1032;
 
 /**
  * Wraps PNG chunk data into a Buffer without copying.
@@ -44,16 +49,28 @@ function readChunkKeyword(bytes) {
 }
 
 /**
- * Inflates zlib-compressed text chunk data.
+ * Inflates zlib-compressed text chunk data within the remaining decompression budget of one image.
  * @param {Buffer} data Compressed data
  * @param {number} compressionMethod Compression method byte from the chunk
+ * @param {{ remaining: number }} budget Bytes that may still be inflated, reduced by this call
  * @returns {Buffer} Inflated data
  */
-function inflateText(data, compressionMethod) {
+function inflateText(data, compressionMethod, budget) {
     if (compressionMethod !== 0) {
         throw new Error(`Unsupported compression method: ${compressionMethod}`);
     }
-    return zlib.inflateSync(data, { maxOutputLength: MAX_INFLATED_TEXT_BYTES });
+    if (budget.remaining <= 0) {
+        throw new Error('Decompression limit for this image reached');
+    }
+    try {
+        const inflated = zlib.inflateSync(data, { maxOutputLength: budget.remaining });
+        budget.remaining -= inflated.length;
+        return inflated;
+    } catch (error) {
+        // The output produced before a failure is not reported, so charge the most this input could have inflated to.
+        budget.remaining = error?.code === 'ERR_BUFFER_TOO_LARGE' ? 0 : Math.max(0, budget.remaining - data.length * MAX_DEFLATE_RATIO);
+        throw error;
+    }
 }
 
 /**
@@ -62,14 +79,15 @@ function inflateText(data, compressionMethod) {
  * @param {string} name Chunk type
  * @param {Buffer} bytes Chunk data
  * @param {number} offset Offset of the first byte after the keyword separator
+ * @param {{ remaining: number }} budget Decompression budget shared by the chunks of one image
  * @returns {string} Decoded text
  */
-function decodeChunkText(name, bytes, offset) {
+function decodeChunkText(name, bytes, offset, budget) {
     switch (name) {
         case 'tEXt':
             return bytes.subarray(offset).toString('latin1');
         case 'zTXt':
-            return inflateText(bytes.subarray(offset + 1), bytes[offset]).toString('latin1');
+            return inflateText(bytes.subarray(offset + 1), bytes[offset], budget).toString('latin1');
         case 'iTXt': {
             const compressionFlag = bytes[offset];
             const compressionMethod = bytes[offset + 1];
@@ -83,7 +101,7 @@ function decodeChunkText(name, bytes, offset) {
                 return text.toString('utf8');
             }
             if (compressionFlag === 1) {
-                return inflateText(text, compressionMethod).toString('utf8');
+                return inflateText(text, compressionMethod, budget).toString('utf8');
             }
             throw new Error(`Unsupported iTXt compression flag: ${compressionFlag}`);
         }
@@ -153,15 +171,17 @@ function getTextChunks(image) {
 
 /**
  * Finds the base64 text of the first readable character card chunk, V3 (ccv3) first.
+ * Compressed chunks share one decompression budget; once it is spent, only uncompressed chunks are still read.
  * @param {{ name: string, keyword: string, bytes: Buffer, offset: number }[]} textChunks Text chunks from getTextChunks()
  * @param {(chunk: { name: string }, keyword: string, error: Error) => void} [onUnreadable] Called for each chunk that cannot be decoded
  * @returns {string|null} Encoded card text, or null when no card chunk is readable
  */
 function findCardText(textChunks, onUnreadable) {
+    const budget = { remaining: MAX_INFLATED_TEXT_BYTES };
     for (const keyword of CARD_KEYWORDS) {
         for (const chunk of textChunks.filter((textChunk) => textChunk.keyword === keyword)) {
             try {
-                return decodeChunkText(chunk.name, chunk.bytes, chunk.offset);
+                return decodeChunkText(chunk.name, chunk.bytes, chunk.offset, budget);
             } catch (error) {
                 onUnreadable?.(chunk, keyword, error);
             }

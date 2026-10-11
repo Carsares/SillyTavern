@@ -17,6 +17,9 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER = ['docker', '--context', 'desktop-linux']
 TAG = 'sillytavern-agent-validation:local'
+# The server and src/healthcheck.js both read this from the container environment;
+# without it the healthcheck exits 0 without checking anything.
+HEARTBEAT_SECONDS = 2
 
 
 def docker(*args, env=None):
@@ -62,6 +65,7 @@ def main():
         # Reserve an unpredictable name; cleanup targets only this invocation.
         docker('create', '--name', name, '--label', 'conversation.validation=' + suffix,
                '--mount', 'type=volume,src=' + volume + ',dst=/home/node/app/data',
+               '-e', 'SILLYTAVERN_HEARTBEATINTERVAL=' + str(HEARTBEAT_SECONDS),
                '-p', '127.0.0.1::8000', TAG, env=environment)
         owned_containers.append(name)
         # JSON is valid YAML. These credentials belong only to this new test container.
@@ -95,6 +99,8 @@ def main():
         assert request(port, '/')[0] == 200  # follows the original Modern entry redirect
         status, html = request(port, '/modern/')
         assert status == 200 and b'<html' in html.lower()
+        # Past two intervals the startup heartbeat alone is stale, so success needs periodic rewrites.
+        time.sleep(HEARTBEAT_SECONDS * 2 + 1)
         docker('exec', name, 'node', 'src/healthcheck.js')
         assert request(port, '/api/conversation/v1/conversations', {'schemaVersion': 1})[0] == 403
         token = json.loads(request(port, '/csrf-token')[1])['token']

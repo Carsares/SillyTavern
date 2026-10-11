@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStore } from '../../../../src/conversation/store/index.js';
@@ -387,6 +387,24 @@ test('process lock, reopening recovery, unknown tool dedupe and consistent backu
     assert.deepEqual(restored.events(cid), reopened.events(cid));
     assert.throws(() => restored.restoreData(reopened.exportData()), code('restore-not-empty'));
     reopened.close();
+});
+
+test('a lock left by a killed writer that reused this PID is taken over, while this process still cannot open a store twice', t => {
+    const directory = mkdtempSync(join(tmpdir(), 'conversation-store-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const lock = join(directory, '.writer.lock');
+    // Docker restarts give node the same PID; the old { pid } format and another instance are both leftovers.
+    for (const leftover of [{ pid: process.pid }, { pid: process.pid, instance: 'previous-container-run' }]) {
+        writeFileSync(lock, JSON.stringify(leftover));
+        const store = createStore({ directory });
+        const owner = JSON.parse(readFileSync(lock, 'utf8'));
+        assert.equal(owner.pid, process.pid);
+        assert.equal(typeof owner.instance, 'string');
+        assert.notEqual(owner.instance, 'previous-container-run');
+        assert.throws(() => createStore({ directory }), code('store-locked'));
+        store.close();
+        assert.throws(() => readFileSync(lock), { code: 'ENOENT' });
+    }
 });
 
 test('group members commit exactly once and finalization never adds parent bubble', t => {

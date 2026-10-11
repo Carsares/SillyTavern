@@ -18,6 +18,10 @@ const redact = value => {
 };
 const omitProxy = value => Array.isArray(value) ? value.map(omitProxy) : value && typeof value === 'object'
     ? Object.fromEntries(Object.entries(value).filter(([key]) => !/^proxy$/i.test(key)).map(([key, item]) => [key, omitProxy(item)])) : value;
+// A restarted container can give node the PID of the writer that was killed, so a lock naming this
+// PID is live only while this process instance holds it; otherwise it is a leftover from an earlier run.
+const WRITER_INSTANCE = randomUUID();
+const heldLocks = new Set();
 
 /** Synchronous single-writer repository. Every state change and its events share one SQLite commit. */
 export function createStore({ directory, now = () => new Date().toISOString(), id = randomUUID }) {
@@ -29,13 +33,15 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const actual = realpathSync(path);
     invariant(basename(actual) === 'conversation-v1' || actual.startsWith(temp + sep), 'invalid-directory', 'Directory resolves outside an allowed location');
     const lock = resolve(actual, '.writer.lock');
-    const claim = () => { const fd = openSync(lock, 'wx', 0o600); writeFileSync(fd, JSON.stringify({ pid: process.pid })); closeSync(fd); };
+    const claim = () => { const fd = openSync(lock, 'wx', 0o600); writeFileSync(fd, JSON.stringify({ pid: process.pid, instance: WRITER_INSTANCE })); closeSync(fd); heldLocks.add(lock); };
+    const release = () => { heldLocks.delete(lock); unlinkSync(lock); };
     try { claim(); } catch (error) {
         if (error.code !== 'EEXIST') throw error;
         let owner;
         try { owner = JSON.parse(readFileSync(lock, 'utf8')); } catch { invariant(false, 'store-locked', 'Store lock cannot be verified', 409); }
         let alive = true;
-        try { process.kill(owner.pid, 0); } catch (probe) { if (probe.code === 'ESRCH') alive = false; }
+        if (owner?.pid === process.pid) alive = heldLocks.has(lock);
+        else try { process.kill(owner.pid, 0); } catch (probe) { if (probe.code === 'ESRCH') alive = false; }
         invariant(!alive, 'store-locked', 'Store already has a writer', 409);
         unlinkSync(lock); claim();
     }
@@ -43,7 +49,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     try {
         db = new DatabaseSync(resolve(actual, 'store.sqlite'));
         initializeDatabase(db);
-    } catch (error) { db?.close(); unlinkSync(lock); throw error; }
+    } catch (error) { db?.close(); release(); throw error; }
     let closed = false;
     let busy = false;
     const listeners = new Set();
@@ -519,7 +525,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             recovery[UNIT].flush();
             return { restored: true };
         }),
-        close: () => { if (!closed) { invariant(!busy, 'store-busy', 'Cannot close in a transaction'); db.close(); closed = true; unlinkSync(lock); } },
+        close: () => { if (!closed) { invariant(!busy, 'store-busy', 'Cannot close in a transaction'); db.close(); closed = true; release(); } },
     };
     try { invariant(read().schemaVersion === SCHEMA_VERSION, 'schema-version', 'Unsupported database schema', 409); api.recoverInterrupted(); } catch (error) { api.close(); throw error; }
     return api;

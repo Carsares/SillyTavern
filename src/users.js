@@ -1210,7 +1210,8 @@ export async function createBackupArchive(handle, response) {
     archive.pipe(response);
 
     // Append files from a sub-directory, putting its contents at the root of archive
-    const ignore = allowKeysExposure ? [] : [SECRETS_FILE, 'backups/secrets_migration_*.json'];
+    // The Agent workspace database keeps connection credentials, so without key exposure it is left to Agent's own backup.
+    const ignore = allowKeysExposure ? [] : [SECRETS_FILE, 'backups/secrets_migration_*.json', 'conversation-v1/**'];
     archive.glob('**/*', {
         cwd: directories.root,
         follow: false,
