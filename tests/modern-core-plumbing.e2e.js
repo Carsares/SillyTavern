@@ -1,6 +1,6 @@
 /* global localStorage */
 import { test, expect } from '@playwright/test';
-import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, gotoModern, mockBridgeFrame, mockModernWorkspace } from './modern-test-utils.js';
 
 function fulfillJson(route, body, status = 200) {
     return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -31,37 +31,6 @@ function trackRequestOutcomes(page, pathPattern) {
     return outcomes;
 }
 
-// Stand-in for the hidden legacy iframe: answers every bridge call with { ok: true } and records the action
-async function mockBridgeFrame(page) {
-    const actions = [];
-    await page.route(/.*\?modernBridge=1$/u, route => route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: `<!doctype html>
-            <html>
-                <body>
-                    <script>
-                        window.addEventListener('message', async event => {
-                            const message = event.data || {};
-                            if (message.source !== 'sillytavern-modern-bridge' || !message.action) return;
-                            await fetch('/modern-core-plumbing-bridge', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ action: message.action }),
-                            });
-                            parent.postMessage({ source: 'sillytavern-modern-bridge', id: message.id, result: { ok: true } }, event.origin);
-                        });
-                    </script>
-                </body>
-            </html>`,
-    }));
-    await page.route('**/modern-core-plumbing-bridge', route => {
-        actions.push(route.request().postDataJSON()?.action);
-        return fulfillJson(route, { ok: true });
-    });
-    return actions;
-}
-
 function readStorage(page, key) {
     return page.evaluate(storageKey => localStorage.getItem(storageKey), key);
 }
@@ -74,7 +43,7 @@ test.describe('Modern API client and bridge plumbing', () => {
         const restores = [];
         const outcomes = trackRequestOutcomes(page, /^\/api\/settings\/(make|restore)-snapshot$/u);
         await mockModernWorkspace(page, fixture);
-        const bridgeActions = await mockBridgeFrame(page);
+        const bridgeCalls = await mockBridgeFrame(page);
         await page.route('**/api/settings/get-snapshots', route => fulfillJson(route, snapshots));
         await page.route('**/api/settings/make-snapshot', route => {
             creates.push(route.request().method());
@@ -98,7 +67,7 @@ test.describe('Modern API client and bridge plumbing', () => {
         await page.locator('[data-confirm-settings-restore]').click();
         await expect(page.locator('.toast', { hasText: '设置已恢复' })).toBeVisible();
         // The bridge reload is the last step of the restore, after its response has been handled
-        await expect.poll(() => bridgeActions).toContain('reloadSettings');
+        await expect.poll(() => bridgeCalls.map(call => call.action)).toContain('reloadSettings');
 
         expect(creates).toEqual(['POST']);
         expect(restores).toEqual([{ name: 'settings-older.json' }]);
@@ -128,6 +97,41 @@ test.describe('Modern API client and bridge plumbing', () => {
         expect(result).toBeNull();
         expect(deletes).toEqual(['DELETE /api/remote-resources/records/record-1']);
         await expect.poll(() => outcomes).toEqual(['DELETE /api/remote-resources/records/record-1 finished']);
+    });
+
+    // Self-check of the shared stub (modern-test-utils.js mockBridgeFrame) that other suites rely on
+    test('the bridge stub records each action payload and answers per action', async ({ page }) => {
+        await mockModernWorkspace(page, createModernResourceFixture());
+        const bridgeCalls = await mockBridgeFrame(page, {
+            replies: {
+                status: payload => ({ chat: payload.chat, messageCount: 3 }),
+                generate: () => {
+                    throw new Error('model offline');
+                },
+            },
+        });
+
+        await gotoModern(page, 'dashboard', '工作台');
+        const outcome = await page.evaluate(async () => {
+            const { createLegacyBridge } = await import('/modern/core/legacy-bridge.js');
+            const bridge = createLegacyBridge();
+            const status = await bridge.callLegacyBridge('status', { chat: 'chat-1' });
+            const fallback = await bridge.callLegacyBridge('stop', { reason: 'user' });
+            const failure = await bridge.callLegacyBridge('generate', { chat: 'chat-1' }).catch(error => error.message);
+            bridge.disposeLegacyBridge();
+            return { status, fallback, failure };
+        });
+
+        expect(outcome).toEqual({
+            status: { chat: 'chat-1', messageCount: 3 },
+            fallback: { ok: true },
+            failure: 'model offline',
+        });
+        expect(bridgeCalls).toEqual([
+            { action: 'status', payload: { chat: 'chat-1' } },
+            { action: 'stop', payload: { reason: 'user' } },
+            { action: 'generate', payload: { chat: 'chat-1' } },
+        ]);
     });
 
     test('the legacy engine ping reads its 204 reply instead of leaving it aborted', async ({ page }) => {

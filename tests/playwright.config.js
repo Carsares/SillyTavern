@@ -11,8 +11,19 @@ const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL || '';
 
 // The managed mock server runs on a dedicated port against a gitignored data
 // root so it never touches ./data/default-user.
-const mockServerPort = 8100;
+//
+// Concurrent runs (several terminals or agents) must not share one server: with
+// `reuseExistingServer` the run that started it also stops it, which kills the
+// other runs mid-test with ERR_CONNECTION_REFUSED. PLAYWRIGHT_MOCK_PORT gives a
+// run its own server, data root and (unless `--output` is passed) artifact dir.
+// The default port keeps the original paths, so CI and plain runs are unchanged.
+const defaultMockServerPort = 8100;
+// The development server of the repository listens here; never reuse or start a mock on it
+const reservedDevServerPort = 8000;
+const mockServerPort = resolveMockServerPort(process.env.PLAYWRIGHT_MOCK_PORT);
+const isDefaultMockServer = mockServerPort === defaultMockServerPort;
 const mockServerBaseURL = `http://127.0.0.1:${mockServerPort}`;
+const mockServerDataRoot = isDefaultMockServer ? './tests/.e2e-data' : `./tests/.e2e-data-${mockServerPort}`;
 const defaultBaseURL = externalBaseURL || mockServerBaseURL;
 
 // Playwright runs every configured project by default, which would pull the
@@ -23,6 +34,25 @@ const requestedProjects = resolveRequestedProjects();
 const runDefault = requestedProjects.size === 0 || requestedProjects.has('default');
 const runRealBackend = requestedProjects.has('real-backend');
 const runExternal = requestedProjects.has('external');
+
+/**
+ * Parse PLAYWRIGHT_MOCK_PORT. An unset or empty value selects the default port.
+ * @param {string | undefined} rawPort Raw environment value.
+ * @returns {number} Port of the managed mock server.
+ */
+function resolveMockServerPort(rawPort) {
+    if (rawPort === undefined || rawPort.trim() === '') {
+        return defaultMockServerPort;
+    }
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        throw new Error(`PLAYWRIGHT_MOCK_PORT must be an integer between 1024 and 65535, got "${rawPort}"`);
+    }
+    if (port === reservedDevServerPort) {
+        throw new Error(`PLAYWRIGHT_MOCK_PORT must not be ${reservedDevServerPort}: it is reserved for the development server`);
+    }
+    return port;
+}
 
 /**
  * Collect the project names passed via `--project`/`-p` on the CLI.
@@ -114,8 +144,11 @@ export default defineConfig({
     },
     workers: 4,
     fullyParallel: true,
+    // Playwright empties its artifact directory at the start of a run, so a run on a custom
+    // port gets a sibling directory instead of wiping the default one (`--output` still wins)
+    ...(isDefaultMockServer ? {} : { outputDir: `./test-results-${mockServerPort}` }),
     webServer: needWebServer ? {
-        command: `node server.js --dataRoot=./tests/.e2e-data --port=${mockServerPort} --listen=false --browserLaunchEnabled=false`,
+        command: `node server.js --dataRoot=${mockServerDataRoot} --port=${mockServerPort} --listen=false --browserLaunchEnabled=false`,
         cwd: repoRoot,
         url: mockServerBaseURL,
         reuseExistingServer: !process.env.CI,

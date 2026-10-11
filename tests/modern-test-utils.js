@@ -418,3 +418,81 @@ export async function expectModernOnly(page) {
     await expect(page.locator('text=原版')).toHaveCount(0);
     await expect(page.locator('text=旧版')).toHaveCount(0);
 }
+
+// postMessage `source` of the legacy bridge protocol (public/modern/core/bridge-protocol.js BRIDGE_SOURCE). Kept as a
+// literal on purpose: tests/modern-bridge-headless.e2e.js is the contract test that notices a protocol change.
+const BRIDGE_STUB_SOURCE = 'sillytavern-modern-bridge';
+// Routed endpoint the stub iframe forwards each bridge request to, so the Node side can record it and pick the reply
+const BRIDGE_STUB_ENDPOINT = '/__modern-test-bridge-stub';
+
+/**
+ * @typedef {object} BridgeCall One request the modern page posted to the (stubbed) legacy engine frame.
+ * @property {string} action Bridge action name, e.g. `generate`, `reloadSettings`, `stop`.
+ * @property {any} payload Payload exactly as posted; `undefined` when the page sent none.
+ */
+
+/**
+ * Replace the hidden legacy-engine iframe (`/index.html?modernBridge=1`) with a stub, record every bridge request
+ * the modern page posts to it, and answer each one with a result chosen per action.
+ *
+ * Call it before the page loads. Do not combine it with a hand-written `?modernBridge=1` route in the same page.
+ *
+ * `replies` maps an action name to what the stub answers for it:
+ * - a value: answered as the bridge `result` as is;
+ * - a function `(payload, call) => result`, sync or async: its return value is the `result`. Await a promise in it to
+ *   hold the reply back (a slow generation). Throwing makes the stub answer with a bridge `error` carrying the
+ *   thrown message, which the page sees as a rejected `callLegacyBridge`.
+ * Actions without an entry (and replies resolving to `undefined`) are answered with `{ ok: true }`. The `replies`
+ * object is read on every request, so a test may add or change entries after the call.
+ * @param {import('@playwright/test').Page} page Page that hosts the modern UI.
+ * @param {object} [options] Stub options.
+ * @param {Record<string, any>} [options.replies] Custom reply per action name, see above.
+ * @returns {Promise<BridgeCall[]>} Live array, in arrival order, of the requests received so far. Read it with
+ * `expect.poll(() => calls.map(call => call.action))`, since the page posts asynchronously.
+ */
+export async function mockBridgeFrame(page, { replies = {} } = {}) {
+    /** @type {BridgeCall[]} */
+    const calls = [];
+    await page.route(/.*\?modernBridge=1$/u, route => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `<!doctype html>
+            <html>
+                <body>
+                    <script>
+                        window.addEventListener('message', async event => {
+                            const message = event.data || {};
+                            if (message.source !== ${JSON.stringify(BRIDGE_STUB_SOURCE)} || !message.action) return;
+                            let answer;
+                            try {
+                                const response = await fetch(${JSON.stringify(BRIDGE_STUB_ENDPOINT)}, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: message.action, payload: message.payload }),
+                                });
+                                answer = await response.json();
+                            } catch (error) {
+                                answer = { error: { message: error.message } };
+                            }
+                            parent.postMessage({ source: ${JSON.stringify(BRIDGE_STUB_SOURCE)}, id: message.id, ...answer }, event.origin);
+                        });
+                    </script>
+                </body>
+            </html>`,
+    }));
+    await page.route(`**${BRIDGE_STUB_ENDPOINT}`, async route => {
+        const { action, payload } = postJson(route);
+        const call = { action, payload };
+        calls.push(call);
+        let answer;
+        try {
+            const reply = Object.hasOwn(replies, action) ? replies[action] : undefined;
+            const result = typeof reply === 'function' ? await reply(payload, call) : reply;
+            answer = { result: result === undefined ? { ok: true } : result };
+        } catch (error) {
+            answer = { error: { message: error?.message || String(error) } };
+        }
+        return fulfillJson(route, answer);
+    });
+    return calls;
+}
