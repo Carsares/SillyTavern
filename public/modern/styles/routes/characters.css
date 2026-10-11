@@ -107,3 +107,51 @@
 .character-form .form-section.has-error {
     border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
 }
+
+/* 角色卡内嵌世界书：未导入时用警告色描边并带「导入并关联」按钮，已关联时只是一行状态。 */
+.character-embedded-world {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
+.character-embedded-world.is-pending {
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.character-embedded-world-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
+    min-width: 0;
+}
+
+.character-embedded-world-summary .kv-value {
+    overflow: visible;
+    font-family: inherit;
+    text-align: left;
+    white-space: normal;
+}
+
+.character-embedded-world.is-pending .kv-value {
+    color: var(--warning);
+    font-weight: 680;
+}
+
+.character-embedded-world-summary .kv-value.is-empty {
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+/* 内嵌世界书的一次性询问和重名处理紧贴在状态行下方 */
+.character-embedded-world + .inline-form {
+    margin-bottom: 14px;
+}

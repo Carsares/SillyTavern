@@ -25,6 +25,9 @@ export function createCharactersEvents(ctx) {
         updateCharacterFormField,
         replaceCharacterAvatar,
         importCharacterFile,
+        startCharacterEmbeddedWorldImport,
+        resolveCharacterEmbeddedWorldConflict,
+        dismissCharacterEmbeddedWorldPrompt,
     } = ctx;
 
     async function handleCharactersClick(event) {
@@ -52,6 +55,29 @@ export function createCharactersEvents(ctx) {
         const loadCharacterButton = event.target.closest('[data-load-character-detail]');
         if (loadCharacterButton) {
             await reloadCharacterDetail(loadCharacterButton.dataset.loadCharacterDetail);
+            return;
+        }
+
+        const importEmbeddedWorldButton = event.target.closest('[data-import-character-embedded-world]');
+        if (importEmbeddedWorldButton) {
+            try {
+                await startCharacterEmbeddedWorldImport(importEmbeddedWorldButton.dataset.importCharacterEmbeddedWorld);
+            } catch (error) {
+                state.errors.push({ key: 'character-embedded-world', message: error.message });
+                showToast('内嵌世界书导入失败', error.message);
+                render();
+            }
+            return;
+        }
+
+        const embeddedWorldConflictButton = event.target.closest('[data-character-embedded-world-conflict-choice]');
+        if (embeddedWorldConflictButton) {
+            resolveCharacterEmbeddedWorldConflict(embeddedWorldConflictButton.dataset.characterEmbeddedWorldConflictChoice);
+            return;
+        }
+
+        if (event.target.closest('[data-dismiss-character-embedded-world-prompt]')) {
+            dismissCharacterEmbeddedWorldPrompt();
             return;
         }
 

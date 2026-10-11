@@ -110,6 +110,9 @@ export function createCharacterRouteContext(characters) {
         updateCharacterFormField,
         replaceCharacterAvatar,
         importCharacterFile,
+        startCharacterEmbeddedWorldImport,
+        resolveCharacterEmbeddedWorldConflict,
+        dismissCharacterEmbeddedWorldPrompt,
     } = characters;
 
     return {
@@ -139,6 +142,9 @@ export function createCharacterRouteContext(characters) {
         updateCharacterFormField,
         replaceCharacterAvatar,
         importCharacterFile,
+        startCharacterEmbeddedWorldImport,
+        resolveCharacterEmbeddedWorldConflict,
+        dismissCharacterEmbeddedWorldPrompt,
     };
 }
 

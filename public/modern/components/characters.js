@@ -1,4 +1,5 @@
 import { formatCharacterCreator, getCharacterWorldStatus, withDisplayCreator } from '../actions/character-data.js';
+import { getEmbeddedBookInfo } from '../core/character-book.js';
 import { createCharacterFormComponents } from './character-forms.js';
 
 export function createCharactersComponents(ctx) {
@@ -184,6 +185,7 @@ export function createCharactersComponents(ctx) {
             ${renderCharacterCreatorRow(detail.data?.creator)}
             ${renderCharacterWorldRow(detail.data?.extensions?.world)}
         </div>
+        ${renderCharacterEmbeddedWorld(detail, character.avatar)}
         <section class="detail-description">
             ${canExpandDescription ? '<input class="visually-hidden detail-description-toggle" id="character-description-toggle" type="checkbox" data-character-description-toggle>' : ''}
             <div class="detail-description-header">
@@ -235,6 +237,111 @@ export function createCharactersComponents(ctx) {
         }
 
         return renderCharacterMetaRow('关联世界书', world, { attributes: `data-character-world="${status}"` });
+    }
+
+    // 角色卡内嵌世界书（data.character_book）：生成只读取 data.extensions.world 指向的世界书文件，
+    // 没有导入并关联的内嵌世界书不会参与生成，所以这里标出状态并提供「导入并关联」。
+    function renderCharacterEmbeddedWorld(detail, avatar) {
+        const info = getEmbeddedBookInfo(detail);
+        // 懒加载模式下列表只返回摘要（没有 character_book），读取完整卡之前无法判断
+        if (!info.has) {
+            return detail.shallow === true
+                ? `
+        <div class="character-embedded-world" data-character-embedded-world="unknown">
+            <div class="character-embedded-world-summary">
+                <span class="kv-key">内嵌世界书</span>
+                <span class="kv-value is-empty">未检查，点上方「读取完整卡」后显示</span>
+            </div>
+        </div>`
+                : '';
+        }
+
+        const ui = state.characterEmbeddedWorld || {};
+        const world = String(detail.data?.extensions?.world ?? '').trim();
+        const worldStatus = getCharacterWorldStatus(world, state);
+        const linked = worldStatus === 'found';
+        const importing = ui.importing === avatar;
+        // 别的角色正在写入时不并发；别的角色停在重名选择上时不拦着，点导入会把那个选择当作取消
+        const otherBusy = Boolean(ui.importing) && !importing && !ui.conflict;
+        let summary = `${formatNumber(info.entryCount)} 条 · 未导入`;
+        let title = '这张角色卡自带世界书，但还没有导入。未导入、未关联时，生成不会使用它。';
+        if (linked) {
+            summary = `${formatNumber(info.entryCount)} 条 · 已关联「${world}」`;
+            title = `卡里的内嵌世界书已作为独立世界书「${world}」关联到这个角色。`;
+        } else if (worldStatus === 'missing') {
+            summary = `${formatNumber(info.entryCount)} 条 · 未导入（原关联「${world}」未找到）`;
+            title = `世界书目录里没有「${world}」。导入时会优先使用这个名称重新创建并恢复关联。`;
+        } else if (worldStatus === 'unknown') {
+            summary = `${formatNumber(info.entryCount)} 条 · 无法确认是否已导入`;
+            title = '世界书列表读取失败，无法确认这个角色是否已关联世界书。';
+        }
+
+        return `
+        <div class="character-embedded-world${linked ? '' : ' is-pending'}" data-character-embedded-world="${linked ? 'linked' : 'pending'}">
+            <div class="character-embedded-world-summary">
+                <span class="kv-key">内嵌世界书</span>
+                <span class="kv-value" title="${escapeHtml(title)}">${escapeHtml(summary)}</span>
+            </div>
+            ${linked ? '' : `
+            <button
+                class="secondary-button"
+                type="button"
+                data-import-character-embedded-world="${escapeHtml(avatar)}"
+                title="把卡里的世界书导入为独立的世界书文件，并关联到这个角色"
+                ${importing || otherBusy ? 'disabled aria-busy="true"' : ''}
+            >
+                <i class="fa-solid ${importing ? 'fa-circle-notch fa-spin' : 'fa-book-atlas'}"></i>
+                ${importing ? '导入中…' : '导入并关联'}
+            </button>`}
+        </div>
+        ${!linked && ui.prompt === avatar && !importing ? renderCharacterEmbeddedWorldPrompt(avatar, info, otherBusy) : ''}
+        ${ui.conflict?.avatar === avatar ? renderCharacterEmbeddedWorldConflict(ui.conflict) : ''}`;
+    }
+
+    // 导入角色卡后的一次性询问（旧版在选中角色时弹确认框，这里改成详情里的内联提示）。
+    function renderCharacterEmbeddedWorldPrompt(avatar, info, otherBusy) {
+        return `
+        <div class="settings-form inline-form character-draft-notice" data-character-embedded-world-prompt="${escapeHtml(avatar)}">
+            <div class="character-form-status">
+                <span class="dot warning"></span>
+                <span><strong>这张角色卡带有内嵌世界书</strong> 共 ${formatNumber(info.entryCount)} 条。现在导入并关联吗？不导入的话，生成时不会使用它。</span>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-dismiss-character-embedded-world-prompt>
+                    <i class="fa-solid fa-xmark"></i>
+                    暂不导入
+                </button>
+                <button class="primary-button" type="button" data-import-character-embedded-world="${escapeHtml(avatar)}" ${otherBusy ? 'disabled' : ''}>
+                    <i class="fa-solid fa-book-atlas"></i>
+                    导入并关联
+                </button>
+            </div>
+        </div>`;
+    }
+
+    // 世界书名称已被占用：内联给出「另存为 / 覆盖 / 取消」，不用 window.confirm。
+    function renderCharacterEmbeddedWorldConflict(conflict) {
+        return `
+        <div class="settings-form inline-form danger-panel" data-character-embedded-world-conflict>
+            <div>
+                <strong>已有同名世界书「${escapeHtml(conflict.existingName)}」</strong>
+                <p class="panel-subtitle">要导入的内嵌世界书（${formatNumber(conflict.entryCount)} 条）和它重名。可以另存为「${escapeHtml(conflict.alternateName)}」，也可以覆盖已有内容。</p>
+            </div>
+            <div class="message-edit-actions">
+                <button class="secondary-button" type="button" data-character-embedded-world-conflict-choice="cancel">
+                    <i class="fa-solid fa-xmark"></i>
+                    取消
+                </button>
+                <button class="secondary-button" type="button" data-character-embedded-world-conflict-choice="overwrite">
+                    <i class="fa-solid fa-rotate"></i>
+                    覆盖「${escapeHtml(conflict.existingName)}」
+                </button>
+                <button class="primary-button" type="button" data-character-embedded-world-conflict-choice="rename">
+                    <i class="fa-solid fa-copy"></i>
+                    另存为「${escapeHtml(conflict.alternateName)}」
+                </button>
+            </div>
+        </div>`;
     }
 
     // 编辑区已收起但仍有未保存修改时，在角色详情顶部提示，并提供继续编辑与放弃两个出口。

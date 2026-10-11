@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createRemoteResourceActions, describeRemoteSearchError, describeUrlImportError, summarizeRemoteError } from '../public/modern/actions/remote-resources.js';
-import { gotoModern, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
 
 function fulfillJson(route, body, status = 200) {
     return route.fulfill({
@@ -60,8 +60,8 @@ function createItems(providerId, providerName, count, prefix = '') {
 }
 
 // Mocks every remote-resources endpoint so the page never reaches a real resource site.
-async function mockRemoteResourcesWorkspace(page, { providers, onSearch }) {
-    await mockModernWorkspace(page);
+async function mockRemoteResourcesWorkspace(page, { providers, onSearch, fixture }) {
+    await mockModernWorkspace(page, fixture);
     const searchRequests = [];
     const settledSearches = [];
     await page.route('**/api/remote-resources/providers', route => fulfillJson(route, providers));
@@ -718,5 +718,165 @@ test.describe('Modern remote resources records and URL import', () => {
         await expect(page.locator('.remote-record-card', { hasText: 'Alpha Card' })).toHaveCount(0);
         await expect(page.locator('.remote-record-card')).toHaveCount(2);
         await expect(page.locator('[data-remote-record-delete-confirm]')).toHaveCount(0);
+    });
+});
+
+test.describe('Modern remote resources and embedded world books', () => {
+    test('prompts about an unlinked embedded world book after importing a remote character', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        const provider = createProvider('lore-site', 'Lore Site');
+        await mockRemoteResourcesWorkspace(page, {
+            fixture,
+            providers: [provider],
+            onSearch: () => ({ items: createItems('lore-site', 'Lore Site', 1), total: 1, errors: [] }),
+        });
+        const importedBodies = [];
+        const savedRecords = [];
+        await page.route('**/api/remote-resources/records', route => {
+            if (route.request().method() !== 'POST') {
+                return fulfillJson(route, []);
+            }
+            const record = { id: 'record-1', ...route.request().postDataJSON() };
+            savedRecords.push(record);
+            return fulfillJson(route, record);
+        });
+        await page.route('**/api/remote-resources/download', route => route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="Remote Lore.json"' },
+            body: JSON.stringify({ spec: 'chara_card_v2' }),
+        }));
+        await page.route('**/api/characters/import', route => {
+            importedBodies.push(route.request().postData() || '');
+            const character = {
+                avatar: 'remote-lore.png',
+                name: 'Remote Lore',
+                description: 'Remote lore card.',
+                data: {
+                    name: 'Remote Lore',
+                    description: 'Remote lore card.',
+                    first_mes: 'Hi',
+                    creator: 'Remote',
+                    tags: [],
+                    extensions: { world: '', talkativeness: 0.5, fav: false, depth_prompt: { prompt: '', depth: 4, role: 'system' } },
+                    character_book: { name: 'Remote Book', extensions: {}, entries: [{ keys: ['k'], content: 'c', insertion_order: 1, enabled: true }, { keys: ['l'], content: 'd', insertion_order: 2, enabled: true }, { keys: ['m'], content: 'e', insertion_order: 3, enabled: true }] },
+                },
+            };
+            fixture.characters.push(character);
+            fixture.characterDetails[character.avatar] = character;
+            return fulfillJson(route, { file_name: character.avatar });
+        });
+
+        await openRemoteResources(page, 1);
+        await page.locator('[data-remote-resource-query]').fill('Lore');
+        await page.locator('[data-search-remote-resources]').click();
+        await expect(page.locator('.remote-resource-card')).toHaveCount(1);
+        await page.locator('[data-import-remote-resource="0"]').click();
+
+        await expect(page.locator('.toast', { hasText: 'Remote Lore 带有内嵌世界书' })).toContainText('共 3 条');
+        await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible();
+        expect(importedBodies).toHaveLength(1);
+        expect(savedRecords[0]).toMatchObject({ localType: 'character', localId: 'remote-lore.png', action: 'import' });
+        // 与旧版共用的「只提示一次」标记
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.accountStorage?.['AlertWI_remote-lore.png']).toBe('true');
+
+        // 导入后选中的就是新角色，详情里有内联的导入询问
+        await page.locator('[data-route="characters"]').first().click();
+        await expect(page.locator('.page-title')).toHaveText('角色库');
+        await expect(page.locator('.detail-title')).toHaveText('Remote Lore');
+        const prompt = page.locator('[data-character-embedded-world-prompt="remote-lore.png"]');
+        await expect(prompt).toContainText('这张角色卡带有内嵌世界书');
+        await expect(page.locator('[data-character-embedded-world="pending"]')).toContainText('3 条 · 未导入');
+    });
+
+    test('does not prompt when the imported remote character has no embedded world book', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockRemoteResourcesWorkspace(page, {
+            fixture,
+            providers: [createProvider('lore-site', 'Lore Site')],
+            onSearch: () => ({ items: createItems('lore-site', 'Lore Site', 1), total: 1, errors: [] }),
+        });
+        await page.route('**/api/remote-resources/records', route => (route.request().method() === 'POST'
+            ? fulfillJson(route, { id: 'record-1' })
+            : fulfillJson(route, [])));
+        await page.route('**/api/remote-resources/download', route => route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="Plain.json"' },
+            body: '{}',
+        }));
+        await page.route('**/api/characters/import', route => fulfillJson(route, { file_name: 'alice.png' }));
+
+        await openRemoteResources(page, 1);
+        await page.locator('[data-remote-resource-query]').fill('Plain');
+        await page.locator('[data-search-remote-resources]').click();
+        await expect(page.locator('.remote-resource-card')).toHaveCount(1);
+        await page.locator('[data-import-remote-resource="0"]').click();
+
+        await expect(page.locator('.toast', { hasText: '角色已导入' })).toBeVisible();
+        await expect(page.locator('.toast', { hasText: '内嵌世界书' })).toHaveCount(0);
+        expect(fixture.requests.settingsSave).toHaveLength(0);
+    });
+
+    test('hands the imported character to the embedded world check and tells the engine about an imported world book', async () => {
+        const offered = [];
+        const worldReloads = [];
+        const state = {
+            selected: { character: '', chat: '', worldbook: '' },
+            worldbooks: [],
+            worldDetails: {},
+            settingsBundle: {},
+            remoteResources: {
+                results: [
+                    { providerId: 'p', providerName: 'P', id: 'c1', resourceType: 'character', title: 'Card', sourceUrl: '', metadata: {} },
+                    { providerId: 'p', providerName: 'P', id: 'w1', resourceType: 'worldbook', title: 'Lore', sourceUrl: '', metadata: {} },
+                ],
+                records: [],
+                operation: { key: '', running: false },
+            },
+        };
+        const actions = createRemoteResourceActions({
+            state,
+            apiFetch: async (url, options = {}) => {
+                if (url === '/api/characters/import') {
+                    return { file_name: 'card-1.png' };
+                }
+                if (url === '/api/files/sanitize-filename') {
+                    return { fileName: 'Lore.json' };
+                }
+                if (url === '/api/worldinfo/import') {
+                    return { name: 'Lore' };
+                }
+                if (url === '/api/remote-resources/records') {
+                    return { id: 'record', ...options.body };
+                }
+                throw new Error(`Unexpected URL ${url}`);
+            },
+            apiFetchResponse: async () => new Response('{}', { headers: { 'content-disposition': 'attachment; filename="Card.json"' } }),
+            loadData: async () => {
+                offered.push('loadData');
+            },
+            render: () => {},
+            showToast: () => {},
+            callLegacyBridge: async () => {},
+            loadWorldDetail: async () => {},
+            ensureWorldbookFileWriteAllowed: () => {},
+            restoreWorldbookFile: () => {},
+            // 引擎很慢时导入也不能被拖住：这个同步永远不结束
+            reloadWorldInfo: names => {
+                worldReloads.push(names);
+                return new Promise(() => {});
+            },
+            offerCharacterEmbeddedWorld: async (avatar, options) => {
+                offered.push([avatar, options]);
+                return { offered: false };
+            },
+        });
+
+        await actions.importRemoteResource(0);
+        expect(offered).toEqual(['loadData', ['card-1.png', { source: 'remote' }]]);
+        expect(worldReloads).toEqual([]);
+
+        await actions.importRemoteResource(1);
+        expect(worldReloads).toEqual([['Lore']]);
+        expect(state.selected.worldbook).toBe('Lore');
     });
 });

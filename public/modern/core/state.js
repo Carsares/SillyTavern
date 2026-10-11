@@ -141,6 +141,13 @@ export function createModernState() {
             name: '',
             deleteChats: false,
         },
+        // 角色卡内嵌世界书导入（actions/character-embedded-world.js）：prompt 是正在显示一次性导入询问的角色，
+        // importing 是正在导入的角色，conflict 是等待用户选择的重名处理 { avatar, requestedName, existingName, alternateName, entryCount }。
+        characterEmbeddedWorld: {
+            prompt: '',
+            importing: '',
+            conflict: null,
+        },
         avatarCacheBust: {},
         // 正在执行「读取完整卡」的角色头像文件名，用于按钮的读取中状态。
         characterDetailLoading: '',

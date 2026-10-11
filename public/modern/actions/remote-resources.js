@@ -1,4 +1,5 @@
 import { BRIDGE_ACTIONS, BRIDGE_TIMEOUTS } from '../core/bridge-protocol.js';
+import { noEngineSync } from '../core/bridge-reload.js';
 import { downloadFile } from '../core/utils.js';
 
 const remoteResourceTypes = new Set(['', 'character', 'worldbook', 'extension', 'asset', 'preset']);
@@ -166,6 +167,10 @@ export function createRemoteResourceActions({
     loadWorldDetail,
     ensureWorldbookFileWriteAllowed,
     restoreWorldbookFile,
+    // 世界书文件变化后通知隐藏的生成引擎丢弃缓存（core/bridge-reload.js 的 reloadWorldInfo，永不 reject）
+    reloadWorldInfo = noEngineSync,
+    // 导入角色卡后检查卡里是否带着尚未关联的内嵌世界书并提示一次（actions/character-embedded-world.js，内部吞掉错误）
+    offerCharacterEmbeddedWorld = async (/** @type {string} */ _avatar, /** @type {{ source?: 'file' | 'remote' }} */ _options = {}) => ({ offered: false }),
     confirmAction = message => window.confirm(message),
 }) {
     let remoteSearchToken = null;
@@ -886,6 +891,8 @@ export function createRemoteResourceActions({
 
             const importedName = result?.name || worldName;
             restoreWorldbookFile(importedName);
+            // 不等引擎确认：冷启动的引擎要数秒才响应，导入流程不必等它；生成发出前会等待在途同步
+            void reloadWorldInfo([importedName]);
             state.selected.worldbook = importedName;
             delete state.worldDetails[importedName];
             await loadData({ silent: true });
@@ -907,6 +914,10 @@ export function createRemoteResourceActions({
             state.selected.chat = '';
         }
         await loadData({ silent: true });
+        if (avatar) {
+            // 卡里带着尚未关联的内嵌世界书时提示一次：详情页内联询问 + 一条提示（导入发生在别的页面，用户未必看得到详情）
+            await offerCharacterEmbeddedWorld(avatar, { source: 'remote' });
+        }
         return avatar || fileName;
     }
 

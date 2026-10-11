@@ -1,9 +1,11 @@
 import {
     downloadFile,
 } from '../core/utils.js';
+import { noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 import { createCharacterDataHelpers } from './character-data.js';
 import { createCharacterDetailActions } from './character-detail.js';
+import { createCharacterEmbeddedWorldActions } from './character-embedded-world.js';
 
 // /api/characters/import 失败时后端返回的原因代码 → 用户可读的说明。
 const characterImportErrorMessages = {
@@ -47,6 +49,7 @@ export function createCharacterActions({
     render,
     showToast,
     reloadCharacter,
+    reloadWorldInfo = noEngineSync,
 }) {
     const {
         characterCreateFormData,
@@ -71,6 +74,38 @@ export function createCharacterActions({
     function emptyCharacterEditing() {
         return { avatar: '', form: {}, errors: {}, baseline: {} };
     }
+
+    // 内嵌世界书导入把角色的关联世界书改了：打开的编辑器和草稿里记着旧的关联，保存时会把新关联写回旧值，
+    // 所以把基线同步成新值；表单里没改过关联的，表单值也一起换成新值，改过的保持用户的选择。
+    function syncLinkedWorldIntoEditState(avatar, _previousWorld, nextWorld) {
+        const apply = entry => {
+            if (!entry?.form || !entry.baseline) {
+                return;
+            }
+            const untouched = String(entry.form.world ?? '') === String(entry.baseline.world ?? '');
+            entry.baseline.world = nextWorld;
+            if (untouched) {
+                entry.form.world = nextWorld;
+            }
+        };
+
+        if (state.characterEditing.avatar === avatar) {
+            apply(state.characterEditing);
+        }
+        apply(getCharacterEditDraft(avatar));
+    }
+
+    const embeddedWorldActions = createCharacterEmbeddedWorldActions({
+        state,
+        apiFetch,
+        loadData,
+        render,
+        showToast,
+        loadCharacterDetail,
+        reloadCharacter,
+        reloadWorldInfo,
+        onWorldLinked: syncLinkedWorldIntoEditState,
+    });
 
     function emptyCharacterCreating() {
         return { active: false, form: defaultCharacterForm(), errors: {}, avatarFile: null };
@@ -372,6 +407,8 @@ export function createCharacterActions({
         forgetCharacterEditState(avatar);
         state.selected.character = '';
         state.selected.chat = '';
+        // 旧版删除角色时同样清掉「内嵌世界书已提示」标记；失败只影响以后同名导入是否再提示，不让删除报错
+        await embeddedWorldActions.forgetEmbeddedWorldAlert(avatar).catch(() => {});
         await loadData({ silent: true });
         showToast('角色已删除', avatar);
         render();
@@ -422,6 +459,8 @@ export function createCharacterActions({
         await loadData({ silent: true });
         if (avatar) {
             await loadCharacterDetail(avatar, { force: true });
+            // 卡里带着尚未关联的内嵌世界书时，在角色详情里提示一次（不会抛错，导入本身已经成功）
+            await embeddedWorldActions.offerEmbeddedWorldAfterImport(avatar, { source: 'file', character: state.characterDetails[avatar] });
         }
         showToast('角色已导入', avatar || file.name);
         render();
@@ -498,5 +537,6 @@ export function createCharacterActions({
         updateCharacterFormField,
         replaceCharacterAvatar,
         importCharacterFile,
+        ...embeddedWorldActions,
     };
 }

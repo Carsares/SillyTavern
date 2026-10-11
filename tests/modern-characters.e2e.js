@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { test, expect } from '@playwright/test';
-import { createModernResourceFixture, gotoModern, mockModernWorkspace } from './modern-test-utils.js';
+import { createModernResourceFixture, gotoModern, mockBridgeFrame, mockModernWorkspace } from './modern-test-utils.js';
 
 function createScrollableCharacters(count = 32) {
     return Array.from({ length: count }, (_, index) => {
@@ -686,5 +686,352 @@ test.describe('Modern character resources', () => {
         expect(JSON.parse(multipartField(bodyText, 'extensions'))).toEqual({ talkativeness: 0.5 });
         expect(bodyText.match(/name="alternate_greetings"/g)).toHaveLength(2);
         expect(fixture.requests.characterCreate).toHaveLength(0);
+    });
+});
+
+// ---- 角色卡内嵌世界书：详情里的状态行、导入并关联、重名处理、导入角色后的一次性提示 ----
+
+function createLoreCharacter({ avatar = 'lore-alice.png', name = 'Lore Alice', world = '', bookName = 'Lore Alice Book', entries = 2 } = {}) {
+    return createDisplayCharacter({
+        avatar,
+        name,
+        creator: 'Modern E2E',
+        world,
+        extra: {
+            data: {
+                name,
+                description: `${name} visible description.`,
+                personality: '',
+                scenario: '',
+                first_mes: `Hello from ${name}.`,
+                creator: 'Modern E2E',
+                tags: [],
+                extensions: { world, talkativeness: 0.5, fav: false, depth_prompt: { prompt: '', depth: 4, role: 'system' } },
+                character_book: {
+                    name: bookName,
+                    extensions: {},
+                    entries: Array.from({ length: entries }, (_, index) => ({
+                        keys: [`key-${index + 1}`],
+                        content: `Entry ${index + 1}`,
+                        insertion_order: 10 * (index + 1),
+                        enabled: true,
+                        extensions: {},
+                    })),
+                },
+            },
+        },
+    });
+}
+
+function mergeDeep(target, source) {
+    const output = { ...target };
+    for (const [key, value] of Object.entries(source || {})) {
+        output[key] = value && typeof value === 'object' && !Array.isArray(value) && target?.[key] && typeof target[key] === 'object'
+            ? mergeDeep(target[key], value)
+            : value;
+    }
+    return output;
+}
+
+// 世界书相关接口的模拟：重名返回 409，成功写入后同步世界书列表；log 按到达顺序记录每个写请求。
+async function mockEmbeddedWorldApis(page, fixture) {
+    const log = [];
+    const edits = [];
+    const merges = [];
+    fixture.settingsBundle.world_names = fixture.worldbooks.map(worldbook => worldbook.file_id);
+    await page.route('**/api/files/sanitize-filename', route => {
+        log.push('sanitize-filename');
+        const { fileName } = route.request().postDataJSON();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ fileName: String(fileName).replace(/[\\/:*?"<>|]/g, '') }) });
+    });
+    await page.route('**/api/worldinfo/edit', route => {
+        const body = route.request().postDataJSON();
+        log.push('worldinfo/edit');
+        edits.push(body);
+        const exists = fixture.worldbooks.some(worldbook => worldbook.file_id === body.name);
+        if (exists && body.overwrite === false) {
+            return route.fulfill({ status: 409, contentType: 'text/plain', body: 'World info file already exists' });
+        }
+        if (!exists) {
+            fixture.worldbooks.push({ file_id: body.name, name: body.name });
+            fixture.settingsBundle.world_names = fixture.worldbooks.map(worldbook => worldbook.file_id);
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    await page.route('**/api/characters/merge-attributes', route => {
+        const body = route.request().postDataJSON();
+        log.push('merge-attributes');
+        merges.push(body);
+        const previous = fixture.characterDetails[body.avatar] || fixture.characters.find(item => item.avatar === body.avatar);
+        const next = mergeDeep(previous, { data: body.data });
+        fixture.characterDetails[body.avatar] = next;
+        fixture.characters = fixture.characters.map(item => item.avatar === body.avatar ? next : item);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    return { log, edits, merges };
+}
+
+function embeddedWorldRow(page) {
+    return page.locator('[data-character-embedded-world]');
+}
+
+test.describe('Modern character embedded world books', () => {
+    test('shows the embedded book state and imports it once: write, link, then reload the engine', async ({ page }) => {
+        const fixture = createModernResourceFixture({ characters: [createDisplayCharacter({ avatar: 'plain.png', name: 'Plain Fixture', creator: 'Modern E2E' }), createLoreCharacter()] });
+        await mockModernWorkspace(page, fixture);
+        const { log, edits, merges } = await mockEmbeddedWorldApis(page, fixture);
+        const bridgeCalls = await mockBridgeFrame(page);
+        const dialogs = [];
+        page.on('dialog', dialog => {
+            dialogs.push(dialog.message());
+            return dialog.dismiss();
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+
+        await page.locator('[data-select-character="plain.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Plain Fixture');
+        await expect(embeddedWorldRow(page)).toHaveCount(0);
+
+        await page.locator('[data-select-character="lore-alice.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Lore Alice');
+        const row = embeddedWorldRow(page);
+        await expect(row).toHaveAttribute('data-character-embedded-world', 'pending');
+        await expect(row).toContainText('内嵌世界书');
+        await expect(row).toContainText('2 条 · 未导入');
+        const importButton = row.locator('[data-import-character-embedded-world]');
+        await expect(importButton).toHaveText('导入并关联');
+        await expect(page.locator('[data-character-world="none"]')).toBeVisible();
+
+        await importButton.click();
+
+        await expect(row).toHaveAttribute('data-character-embedded-world', 'linked');
+        await expect(row).toContainText('2 条 · 已关联「Lore Alice Book」');
+        await expect(row.locator('[data-import-character-embedded-world]')).toHaveCount(0);
+        await expect(page.locator('[data-character-world="found"]')).toContainText('Lore Alice Book');
+        await expect(page.locator('.toast', { hasText: '内嵌世界书已导入' })).toContainText('「Lore Alice Book」2 条，已关联到角色');
+
+        // 请求顺序：清理文件名 → 写世界书（不覆盖）→ 写关联；引擎先重载角色再重载世界书
+        expect(log).toEqual(['sanitize-filename', 'worldinfo/edit', 'merge-attributes']);
+        expect(edits).toHaveLength(1);
+        expect(edits[0]).toMatchObject({ name: 'Lore Alice Book', overwrite: false });
+        expect(Object.values(edits[0].data.entries).map(entry => entry.content)).toEqual(['Entry 1', 'Entry 2']);
+        expect(Object.keys(edits[0].data.entries)).toEqual(['0', '1']);
+        expect(merges).toEqual([{ avatar: 'lore-alice.png', data: { extensions: { world: 'Lore Alice Book' } } }]);
+        await expect.poll(() => bridgeCalls.map(call => call.action)).toEqual(expect.arrayContaining(['reloadCharacter', 'reloadWorldInfo']));
+        const worldReload = bridgeCalls.find(call => call.action === 'reloadWorldInfo');
+        expect(worldReload.payload).toEqual({ names: ['Lore Alice Book'] });
+        expect(bridgeCalls.map(call => call.action).indexOf('reloadCharacter')).toBeLessThan(bridgeCalls.map(call => call.action).indexOf('reloadWorldInfo'));
+
+        // 幂等：切换角色再回来、整页刷新数据后都不再出现按钮，也没有新的写请求
+        await page.locator('[data-select-character="plain.png"]').click();
+        await page.locator('[data-select-character="lore-alice.png"]').click();
+        await expect(row).toHaveAttribute('data-character-embedded-world', 'linked');
+        await expect(row.locator('[data-import-character-embedded-world]')).toHaveCount(0);
+        expect(log).toHaveLength(3);
+        expect(dialogs).toEqual([]);
+    });
+
+    test('a taken name offers save-as (2), overwrite and cancel inline without window.confirm', async ({ page }) => {
+        const fixture = createModernResourceFixture({ characters: [createLoreCharacter({ bookName: 'modernlore' })] });
+        await mockModernWorkspace(page, fixture);
+        const { edits, merges } = await mockEmbeddedWorldApis(page, fixture);
+        const dialogs = [];
+        page.on('dialog', dialog => {
+            dialogs.push(dialog.message());
+            return dialog.dismiss();
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        const importButton = embeddedWorldRow(page).locator('[data-import-character-embedded-world]');
+        await importButton.click();
+
+        // 与已有的 ModernLore 只差大小写，也算重名
+        const conflict = page.locator('[data-character-embedded-world-conflict]');
+        await expect(conflict).toContainText('已有同名世界书「ModernLore」');
+        await expect(conflict.locator('[data-character-embedded-world-conflict-choice="rename"]')).toContainText('另存为「modernlore (2)」');
+        await expect(conflict.locator('[data-character-embedded-world-conflict-choice="overwrite"]')).toContainText('覆盖「ModernLore」');
+        await expect(importButton).toBeDisabled();
+        expect(edits).toHaveLength(0);
+
+        await conflict.locator('[data-character-embedded-world-conflict-choice="cancel"]').click();
+        await expect(conflict).toHaveCount(0);
+        await expect(page.locator('.toast', { hasText: '已取消导入' })).toBeVisible();
+        await expect(importButton).toBeEnabled();
+        expect(edits).toHaveLength(0);
+        expect(merges).toHaveLength(0);
+
+        await importButton.click();
+        await page.locator('[data-character-embedded-world-conflict-choice="rename"]').click();
+
+        await expect(embeddedWorldRow(page)).toContainText('已关联「modernlore (2)」');
+        expect(edits).toHaveLength(1);
+        expect(edits[0]).toMatchObject({ name: 'modernlore (2)', overwrite: false });
+        expect(merges[0].data.extensions.world).toBe('modernlore (2)');
+        expect(dialogs).toEqual([]);
+    });
+
+    test('overwrite writes into the existing world book file and links to it', async ({ page }) => {
+        const fixture = createModernResourceFixture({ characters: [createLoreCharacter({ bookName: 'ModernLore' })] });
+        await mockModernWorkspace(page, fixture);
+        const { edits, merges } = await mockEmbeddedWorldApis(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await embeddedWorldRow(page).locator('[data-import-character-embedded-world]').click();
+        await page.locator('[data-character-embedded-world-conflict-choice="overwrite"]').click();
+
+        await expect(embeddedWorldRow(page)).toContainText('已关联「ModernLore」');
+        expect(edits).toHaveLength(1);
+        expect(edits[0]).toMatchObject({ name: 'ModernLore', overwrite: true });
+        expect(merges[0].data.extensions.world).toBe('ModernLore');
+        await expect(page.locator('.toast', { hasText: '内嵌世界书已导入' })).toContainText('已覆盖同名世界书');
+    });
+
+    test('restores a link that points at a missing world book under its original name', async ({ page }) => {
+        const fixture = createModernResourceFixture({ characters: [createLoreCharacter({ world: 'Vanished Lore', bookName: 'Some Other Name' })] });
+        await mockModernWorkspace(page, fixture);
+        const { edits, merges } = await mockEmbeddedWorldApis(page, fixture);
+        const bridgeCalls = await mockBridgeFrame(page);
+
+        await gotoModern(page, 'characters', '角色库');
+        await expect(page.locator('[data-character-world="missing"]')).toContainText('Vanished Lore（未找到）');
+        const row = embeddedWorldRow(page);
+        await expect(row).toContainText('未导入（原关联「Vanished Lore」未找到）');
+
+        await row.locator('[data-import-character-embedded-world]').click();
+
+        await expect(row).toHaveAttribute('data-character-embedded-world', 'linked');
+        await expect(page.locator('[data-character-world="found"]')).toContainText('Vanished Lore');
+        expect(edits).toHaveLength(1);
+        expect(edits[0]).toMatchObject({ name: 'Vanished Lore', overwrite: false });
+        // 关联名没有变化，不重写角色卡
+        expect(merges).toHaveLength(0);
+        await expect.poll(() => bridgeCalls.map(call => call.action)).toContain('reloadWorldInfo');
+        expect(bridgeCalls.map(call => call.action)).not.toContain('reloadCharacter');
+        expect(bridgeCalls.find(call => call.action === 'reloadWorldInfo').payload).toEqual({ names: ['Vanished Lore'] });
+    });
+
+    test('moving on to another character while a name clash is pending cancels that choice', async ({ page }) => {
+        const fixture = createModernResourceFixture({
+            characters: [
+                createLoreCharacter({ avatar: 'clash.png', name: 'Clash Alice', bookName: 'ModernLore' }),
+                createLoreCharacter({ avatar: 'free.png', name: 'Free Bruno', bookName: 'Free Lore' }),
+            ],
+        });
+        await mockModernWorkspace(page, fixture);
+        const { edits } = await mockEmbeddedWorldApis(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await embeddedWorldRow(page).locator('[data-import-character-embedded-world]').click();
+        await expect(page.locator('[data-character-embedded-world-conflict]')).toBeVisible();
+
+        await page.locator('[data-select-character="free.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Free Bruno');
+        const importButton = embeddedWorldRow(page).locator('[data-import-character-embedded-world]');
+        await expect(importButton).toBeEnabled();
+        await importButton.click();
+        await expect(embeddedWorldRow(page)).toContainText('已关联「Free Lore」');
+
+        await page.locator('[data-select-character="clash.png"]').click();
+        await expect(page.locator('.detail-title')).toHaveText('Clash Alice');
+        await expect(page.locator('[data-character-embedded-world-conflict]')).toHaveCount(0);
+        await expect(embeddedWorldRow(page).locator('[data-import-character-embedded-world]')).toBeEnabled();
+        expect(edits.map(edit => edit.name)).toEqual(['Free Lore']);
+    });
+
+    test('an open editor follows the new link so saving does not write the old one back', async ({ page }) => {
+        const fixture = createModernResourceFixture({ characters: [createLoreCharacter()] });
+        await mockModernWorkspace(page, fixture);
+        const { merges } = await mockEmbeddedWorldApis(page, fixture);
+
+        await gotoModern(page, 'characters', '角色库');
+        await page.locator('[data-edit-character="lore-alice.png"]').click();
+        const worldSelect = page.locator('[data-character-field="world"][data-character-scope="edit"]');
+        await expect(worldSelect).toHaveValue('');
+        await page.locator('[data-character-field="description"][data-character-scope="edit"]').fill('Edited while importing.');
+
+        await embeddedWorldRow(page).locator('[data-import-character-embedded-world]').click();
+        await expect(embeddedWorldRow(page)).toContainText('已关联「Lore Alice Book」');
+        await expect(worldSelect).toHaveValue('Lore Alice Book');
+        await expect(page.locator('[data-character-field="description"][data-character-scope="edit"]')).toHaveValue('Edited while importing.');
+
+        await page.locator('[data-save-character-edit]').click();
+        await expect.poll(() => merges.length).toBe(2);
+        expect(merges[1].data.extensions.world).toBe('Lore Alice Book');
+        expect(merges[1].data.description).toBe('Edited while importing.');
+    });
+
+    test('prompts once after importing a character file that carries a book, and shares the AlertWI marker', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        const { edits, merges } = await mockEmbeddedWorldApis(page, fixture);
+        await page.route('**/api/characters/import', route => {
+            const character = createLoreCharacter({ avatar: 'imported-lore.png', name: 'Imported Lore' });
+            fixture.characters.push(character);
+            fixture.characterDetails[character.avatar] = character;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ file_name: 'imported-lore.png' }) });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        const importInput = page.locator('[data-character-import-file]');
+        await importInput.setInputFiles({ name: 'imported-lore.json', mimeType: 'application/json', buffer: Buffer.from('{}') });
+
+        await expect(page.locator('.detail-title')).toHaveText('Imported Lore');
+        const prompt = page.locator('[data-character-embedded-world-prompt="imported-lore.png"]');
+        await expect(prompt).toContainText('这张角色卡带有内嵌世界书');
+        await expect(prompt).toContainText('共 2 条');
+        expect(edits).toHaveLength(0);
+        // 与旧版共用的「只提示一次」标记已经写入设置
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.accountStorage?.['AlertWI_imported-lore.png']).toBe('true');
+
+        await prompt.locator('[data-dismiss-character-embedded-world-prompt]').click();
+        await expect(prompt).toHaveCount(0);
+        await expect(embeddedWorldRow(page)).toContainText('2 条 · 未导入');
+        expect(edits).toHaveLength(0);
+
+        // 同一个头像再次导入不再提示（先清掉旧提示，下一条「角色已导入」一定来自第二次导入，此时询问逻辑已经跑完）
+        await page.locator('.toast').evaluateAll(toasts => toasts.forEach(toast => toast.remove()));
+        await importInput.setInputFiles({ name: 'imported-lore.json', mimeType: 'application/json', buffer: Buffer.from('{}') });
+        await expect(page.locator('.toast', { hasText: '角色已导入' })).toHaveCount(1);
+        await expect(page.locator('[data-character-embedded-world-prompt]')).toHaveCount(0);
+
+        // 按钮仍然可用
+        await embeddedWorldRow(page).locator('[data-import-character-embedded-world]').click();
+        await expect(embeddedWorldRow(page)).toContainText('已关联「Lore Alice Book」');
+        expect(edits).toHaveLength(1);
+        expect(merges).toHaveLength(1);
+    });
+
+    test('the prompt import button imports and clears the prompt; a card without a book gets no prompt', async ({ page }) => {
+        const fixture = createModernResourceFixture();
+        await mockModernWorkspace(page, fixture);
+        const { edits } = await mockEmbeddedWorldApis(page, fixture);
+        let importCount = 0;
+        await page.route('**/api/characters/import', route => {
+            importCount += 1;
+            const character = importCount === 1
+                ? createDisplayCharacter({ avatar: 'no-book.png', name: 'No Book', creator: 'Modern E2E' })
+                : createLoreCharacter({ avatar: 'with-book.png', name: 'With Book' });
+            fixture.characters.push(character);
+            fixture.characterDetails[character.avatar] = character;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ file_name: character.avatar }) });
+        });
+
+        await gotoModern(page, 'characters', '角色库');
+        const importInput = page.locator('[data-character-import-file]');
+        await importInput.setInputFiles({ name: 'no-book.json', mimeType: 'application/json', buffer: Buffer.from('{}') });
+        await expect(page.locator('.detail-title')).toHaveText('No Book');
+        await expect(page.locator('[data-character-embedded-world-prompt]')).toHaveCount(0);
+        await expect(embeddedWorldRow(page)).toHaveCount(0);
+
+        await importInput.setInputFiles({ name: 'with-book.json', mimeType: 'application/json', buffer: Buffer.from('{}') });
+        await expect(page.locator('.detail-title')).toHaveText('With Book');
+        const prompt = page.locator('[data-character-embedded-world-prompt]');
+        await expect(prompt).toBeVisible();
+        await prompt.locator('[data-import-character-embedded-world]').click();
+
+        await expect(embeddedWorldRow(page)).toContainText('已关联「Lore Alice Book」');
+        await expect(prompt).toHaveCount(0);
+        expect(edits).toHaveLength(1);
     });
 });

@@ -147,6 +147,7 @@ export function createActionRegistry({
         render,
         showToast,
         reloadCharacter: bridgeReload.reloadCharacter,
+        reloadWorldInfo: bridgeReload.reloadWorldInfo,
     });
     const {
         getCharacterAvatarUrl,
@@ -202,6 +203,8 @@ export function createActionRegistry({
         loadWorldDetail,
         ensureWorldbookFileWriteAllowed,
         restoreWorldbookFile,
+        reloadWorldInfo: bridgeReload.reloadWorldInfo,
+        offerCharacterEmbeddedWorld: characterActions.offerEmbeddedWorldAfterImport,
     });
 
     return {
