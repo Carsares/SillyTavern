@@ -174,7 +174,7 @@ export function bindSettingsMaintenanceEvents(ctx) {
 
     // 只有「确认」类按钮才会发出删除请求；Esc 取消当前打开的确认框
     function handleKeydown(event) {
-        if (event.key !== 'Escape' || state.settingsSection !== 'maintenance') {
+        if (event.key !== 'Escape' || state.settingsSection !== 'data') {
             return false;
         }
         const maintenance = state.maintenance;

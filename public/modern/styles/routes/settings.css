@@ -1,11 +1,79 @@
-.settings-edit-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-}
-
 .settings-tabs {
     margin: 0 0 14px;
+}
+
+.settings-tab-body {
+    display: grid;
+    gap: 16px;
+}
+
+.settings-tab-body > .section-panel,
+.settings-data > .section-panel,
+.settings-connection > .section-panel {
+    margin-top: 0;
+}
+
+.settings-data {
+    display: grid;
+    gap: 16px;
+}
+
+/* 设置快照列表固定高度、内部滚动，下面的原始设置和数据维护分区不会被几十份快照推到很远 */
+[data-settings-snapshots] .backup-layout {
+    height: min(460px, 60vh);
+}
+
+[data-settings-snapshots] .backup-preview textarea {
+    height: 100%;
+    min-height: 0;
+}
+
+/* 页头的保存状态：改动即保存后在这里显示「保存中 / 已保存 · 时间 / 保存失败」 */
+.settings-save-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.settings-save-status.is-saved {
+    border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+    color: var(--success);
+}
+
+.settings-save-status.is-warning {
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+    color: var(--warning);
+    cursor: help;
+}
+
+.settings-save-status.is-error {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+    color: var(--danger);
+    cursor: help;
+}
+
+/* 「系统信息」标签：只读卡片 */
+.settings-system-grid .card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-system-grid .card-title .badge {
+    gap: 5px;
+    min-height: 22px;
+    padding: 1px 8px;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 /* 「聊天工具」标签（components/settings-chat-tools.js）：各功能的设置分区自上而下排列，每个分区自己是一个 .form-section */
@@ -14,35 +82,7 @@
     gap: 12px;
 }
 
-/* Startup config shown for reference: a dashed frame and a lock badge set it apart from the editable form */
-.settings-readonly-section {
-    border-style: dashed;
-}
-
-.settings-readonly-section .form-section-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.settings-readonly-section .form-section-title .badge {
-    gap: 5px;
-    min-height: 22px;
-    padding: 1px 8px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-/* Read-only values read as displayed config rather than greyed-out form fields */
-.settings-readonly-section .text-input:disabled {
-    border-style: dashed;
-    background: transparent;
-    color: var(--text);
-    cursor: default;
-    opacity: 1;
-}
-
-/* 「数据维护」标签（components/settings-maintenance*.js，B4） */
+/* 「数据与备份」标签里的数据维护分区（components/settings-maintenance*.js，B4） */
 .maintenance-sections {
     display: grid;
     gap: 0;

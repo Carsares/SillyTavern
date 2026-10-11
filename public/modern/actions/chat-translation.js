@@ -325,19 +325,24 @@ export function createChatTranslationActions({
     }
 
     // 设置写盘后通知引擎重载并等它完成，再刷新页面数据，保存后立刻翻译或生成都读到新配置
-    async function persistTranslateSettings(doneTitle, doneText) {
+    // quiet：设置页改动即保存时不弹成功提示（页头的保存状态已经说明），引擎没同步时仍然提示
+    async function persistTranslateSettings(doneTitle, doneText, { quiet = false } = {}) {
         await saveSettingsSerialized(apiFetch, state.settings);
         const engineSync = await reloadSettings();
         await loadData({ silent: true });
-        showToast(doneTitle, `${doneText}${describeReloadFailure(engineSync)}`);
+        const failure = describeReloadFailure(engineSync);
+        if (!quiet || failure) {
+            showToast(doneTitle, `${doneText}${failure}`);
+        }
     }
 
     /**
      * 保存翻译设置：服务、目标语言、DeepL 接口；新填的密钥和地址写进密钥库（空输入不动已有值），清除项从密钥库删除。
      * internal_language 和 auto_mode 保持原值。
      * @param {{ provider: string, target_language: string, deepl_endpoint: string, secrets?: Record<string, string>, clear?: string[] }} values 表单取值
+     * @param {{ quiet?: boolean }} [options] quiet 见 persistTranslateSettings
      */
-    async function saveTranslateSettings(values) {
+    async function saveTranslateSettings(values, { quiet = false } = {}) {
         const ui = ensureChatTranslationState(state);
         if (ui.settingsSaving) {
             return;
@@ -375,7 +380,7 @@ export function createChatTranslationActions({
             translate.provider = provider.id;
             translate.target_language = targetLanguage;
             translate.deepl_endpoint = values.deepl_endpoint === 'pro' ? 'pro' : 'free';
-            await persistTranslateSettings('翻译设置已保存', `${provider.label} / ${getLanguageLabel(targetLanguage)}`);
+            await persistTranslateSettings('翻译设置已保存', `${provider.label} / ${getLanguageLabel(targetLanguage)}`, { quiet });
         } finally {
             ui.settingsSaving = false;
             render();

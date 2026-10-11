@@ -232,27 +232,40 @@ async function mockMaintenance(page, overrides = {}) {
     return { fixture, state, requests, bridgeCalls };
 }
 
-async function openMaintenance(page) {
-    await page.addInitScript(() => {
-        localStorage.setItem('st-modern-settings-section', 'maintenance');
-    });
+async function openMaintenance(page, section = 'data') {
+    await page.addInitScript(value => {
+        localStorage.setItem('st-modern-settings-section', value);
+    }, section);
     await gotoModern(page, 'settings', '设置中心');
-    await expect(page.locator('[data-settings-section="maintenance"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('[data-settings-section="data"]')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('[data-settings-maintenance]')).toBeVisible();
 }
 
 test.describe('Modern data maintenance', () => {
     test.use({ viewport: desktopViewport });
 
-    test('shows the maintenance tab with all six sections', async ({ page }) => {
+    test('shows the data tab with the snapshot list, the raw settings editor and the five maintenance sections', async ({ page }) => {
         await mockMaintenance(page);
         await openMaintenance(page);
 
-        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/界面与请求/, /聊天工具/, /账户与资源/, /设置快照/, /数据维护/, /原始设置/, /安全诊断/]);
-        await expect(page.locator('[data-maintenance-section]')).toHaveCount(6);
-        for (const section of ['storage', 'data-maid', 'duplicate-greetings', 'snapshots', 'chat-backups', 'export']) {
-            await expect(page.locator(`[data-maintenance-section="${section}"]`)).toBeVisible();
+        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/模型连接/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
+        // Snapshots first, then the raw settings editor, then the maintenance panel
+        const order = await page.locator('[data-settings-panel="data"] .settings-data').evaluate(element => [...element.children].map(child => {
+            if (child.matches('[data-settings-snapshots]')) {
+                return 'snapshots';
+            }
+            if (child.querySelector('[data-open-raw-settings]')) {
+                return 'raw';
+            }
+            return child.matches('[data-settings-maintenance]') ? 'maintenance' : child.tagName;
+        }));
+        expect(order).toEqual(['snapshots', 'raw', 'maintenance']);
+        await expect(page.locator('[data-settings-snapshots] .backup-row')).toHaveCount(SNAPSHOT_NAMES.length);
+        await expect(page.locator('[data-maintenance-section]')).toHaveCount(5);
+        for (const section of ['storage', 'data-maid', 'duplicate-greetings', 'chat-backups', 'export']) {
+            await expect(page.locator(`[data-settings-maintenance] [data-maintenance-section="${section}"]`)).toBeVisible();
         }
+        await expect(page.locator('[data-maintenance-section="snapshots"]')).toHaveCount(0);
     });
 
     test('measures storage usage and lists the directories with sizes', async ({ page }) => {
@@ -375,20 +388,33 @@ test.describe('Modern data maintenance', () => {
         expect(requests.delete[0].hashes).not.toContain('h-sb-1');
     });
 
-    test('closes the report on the server when leaving the tab', async ({ page }) => {
+    test('closes the report on the server when leaving the data tab', async ({ page }) => {
         const { requests } = await mockMaintenance(page);
         await openMaintenance(page);
         await page.locator('[data-maintenance-scan-data-maid]').click();
         await expect(page.locator('[data-maintenance-category="images"]')).toBeVisible();
         expect(requests.finalize).toHaveLength(0);
 
-        await page.locator('[data-settings-section="status"]').click();
+        await page.locator('[data-settings-section="system"]').click();
 
         await expect.poll(() => requests.finalize).toEqual([{ token: 'tok-1' }]);
-        await page.locator('[data-settings-section="maintenance"]').click();
+        await page.locator('[data-settings-section="data"]').click();
         // The old report is gone; the page asks for a new scan
         await expect(page.locator('[data-maintenance-category]')).toHaveCount(0);
         await expect(page.locator('[data-maintenance-scan-data-maid]')).toContainText('开始扫描');
+    });
+
+    test('keeps the scan report on the data tab when the remembered tab is the old maintenance tab', async ({ page }) => {
+        const { requests } = await mockMaintenance(page);
+        await openMaintenance(page, 'maintenance');
+
+        await page.locator('[data-maintenance-scan-data-maid]').click();
+        await expect.poll(() => requests.report.length).toBe(1);
+
+        await expect(page.locator('[data-maintenance-category="images"]')).toBeVisible();
+        await expect(page.locator('[data-maintenance-data-maid-row]')).toHaveCount(5);
+        expect(requests.report).toHaveLength(1);
+        expect(requests.finalize).toHaveLength(0);
     });
 
     test('lists duplicate greeting-only chats, separating the one a card points at, and cancel moves nothing', async ({ page }) => {
@@ -460,22 +486,26 @@ test.describe('Modern data maintenance', () => {
         const { state, requests } = await mockMaintenance(page);
         await openMaintenance(page);
 
-        const newest = page.locator(`[data-maintenance-snapshot-row="${SNAPSHOT_NAMES[0]}"]`);
-        await expect(newest).toContainText('最新 · 不可删除');
+        // The snapshot list of the data tab carries the delete buttons; the newest row is marked instead
+        const newest = page.locator(`[data-settings-snapshots] [data-maintenance-snapshot-row="${SNAPSHOT_NAMES[0]}"]`);
+        await expect(newest.locator('.badge')).toHaveText('最新');
         await expect(newest.locator('[data-maintenance-snapshot-delete]')).toHaveCount(0);
 
-        const target = page.locator(`[data-maintenance-snapshot-row="${SNAPSHOT_NAMES[2]}"]`);
-        await target.locator('[data-maintenance-snapshot-delete]').click();
+        const target = page.locator(`[data-settings-snapshots] [data-maintenance-snapshot-row="${SNAPSHOT_NAMES[2]}"]`);
+        await target.locator(`[data-maintenance-snapshot-delete="${SNAPSHOT_NAMES[2]}"]`).click();
         await expect(target.locator('[data-maintenance-snapshot-delete-confirm]')).toBeVisible();
         await target.locator('[data-maintenance-snapshot-delete-cancel]').click();
+        await expect(target.locator('[data-maintenance-snapshot-delete-confirm]')).toHaveCount(0);
         expect(requests.snapshotDeletes).toHaveLength(0);
 
-        await target.locator('[data-maintenance-snapshot-delete]').click();
+        await target.locator(`[data-maintenance-snapshot-delete="${SNAPSHOT_NAMES[2]}"]`).click();
+        expect(requests.snapshotDeletes).toHaveLength(0);
         await target.locator('[data-maintenance-snapshot-delete-confirm]').click();
 
         await expect(page.locator('[data-maintenance-snapshot-result]')).toContainText('已删除 1 份快照');
         expect(requests.snapshotDeletes).toEqual([{ name: SNAPSHOT_NAMES[2] }]);
         await expect(target).toHaveCount(0);
+        await expect(page.locator('[data-settings-snapshots] .backup-row')).toHaveCount(3);
         expect(state.snapshots).toHaveLength(3);
     });
 
@@ -483,7 +513,7 @@ test.describe('Modern data maintenance', () => {
         const { state, requests } = await mockMaintenance(page);
         await openMaintenance(page);
 
-        await page.locator('[data-maintenance-snapshot-keep]').fill('2');
+        await page.locator('[data-settings-snapshots] [data-maintenance-snapshot-keep]').fill('2');
         await page.locator('[data-maintenance-snapshot-prune-preview]').click();
         const preview = page.locator('[data-maintenance-snapshot-prune-preview-pane]');
         await expect(preview).toContainText('将删除最旧的 2 份快照');
@@ -503,6 +533,7 @@ test.describe('Modern data maintenance', () => {
         await expect(page.locator('[data-maintenance-snapshot-result]')).toContainText('已删除 2 份快照');
         expect(requests.snapshotPrunes[2]).toEqual({ keep: 2, dryRun: false, names: [SNAPSHOT_NAMES[2], SNAPSHOT_NAMES[3]] });
         expect(state.snapshots).toHaveLength(2);
+        await expect(page.locator('[data-settings-snapshots] .backup-row')).toHaveCount(2);
     });
 
     test('rejects a keep value below 1 without asking the server', async ({ page }) => {

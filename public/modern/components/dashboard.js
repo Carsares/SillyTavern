@@ -78,7 +78,7 @@ export function createDashboardComponents(ctx) {
                 ${renderActionCard('群组', '维护成员和群聊策略', `${formatNumber(state.groups.length)} 个群组`, 'fa-users', 'groups')}
                 ${renderActionCard('世界书', '查看知识库文件和条目', `${formatNumber(state.worldbooks.length || provider.worldCount)} 本`, 'fa-book-open', 'worldbooks')}
                 ${renderActionCard('预设', '浏览模型参数和提示模板', `${formatNumber(getPresetCount())} 个`, 'fa-sliders', 'presets')}
-                ${renderActionCard('API', '检查连接、模型和密钥状态', connection.sourceLabel || connection.label, 'fa-plug', 'api')}
+                ${renderActionCard('模型连接', '设置 API、模型、密钥和上下文长度', connection.sourceLabel || connection.label, 'fa-plug', 'api')}
                 ${renderActionCard('活动', '查看聊天统计和最近活动', '统计缓存', 'fa-chart-line', 'activity')}
                 ${renderActionCard('扩展', '查看已发现扩展', `${formatNumber(state.extensions.length)} 个`, 'fa-cubes', 'extensions')}
             </div>
@@ -124,7 +124,7 @@ export function createDashboardComponents(ctx) {
         <div class="dashboard-connection-warning">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <span>连接配置不完整：${escapeHtml(issues.join('、'))}</span>
-            <button class="secondary-button" type="button" data-route="api">打开 API</button>
+            <button class="secondary-button" type="button" data-route="api">打开模型连接</button>
         </div>
     `;
     }

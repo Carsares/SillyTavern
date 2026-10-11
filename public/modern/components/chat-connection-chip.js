@@ -2,7 +2,7 @@
 // 与 chat-usage-label.js 的用量标签并排（本标签靠左，用量标签靠右）。别的功能不要改这个文件。
 //
 // 标签显示当前生效的连接（getEffectiveConnection）；点开后是一个弹层：连接档案列表（标出当前档案）、当前来源最近用过的模型、
-// 「从当前连接创建档案」、上一次切换的结果明细，以及去 API 页的链接。点击、键盘和外部点击关闭都写在 routes/chat-connection-events.js，
+// 「从当前连接创建档案」、上一次切换的结果明细，以及去设置中心「模型连接」的链接。点击、键盘和外部点击关闭都写在 routes/chat-connection-events.js，
 // 业务动作在 actions/connection-profiles.js（注册在 shell/feature-slot-actions.js）。
 // 生成中或正在切换时标签是禁用的，并把原因写在标签旁边；弹层是否展开存在 state.connectionSwitcher.open。
 import { getEffectiveConnection } from '../core/connection-labels.js';
@@ -17,7 +17,7 @@ import { escapeHtml } from '../core/utils.js';
 /**
  * 上一次切换结果的明细：已应用的项和跳过的项（带原因）。
  * @param {import('../actions/connection-profiles.js').SwitchResult} result 切换结果
- * @param {{ dismissAttribute: string }} options 收起按钮使用的 data 属性名（聊天弹层和 API 页各用各的）
+ * @param {{ dismissAttribute: string }} options 收起按钮使用的 data 属性名（聊天弹层和设置中心的模型连接各用各的）
  * @returns {string} HTML
  */
 export function renderSwitchResult(result, { dismissAttribute }) {
@@ -68,10 +68,10 @@ export function createChatConnectionChipComponent(ctx) {
 
     function renderModelList(view, busy) {
         if (!view.models.supported) {
-            return '<p class="connection-empty">当前 API 不能在这里换模型，请到 API 页修改。</p>';
+            return '<p class="connection-empty">当前 API 不能在这里换模型，请到设置中心的「模型连接」修改。</p>';
         }
         if (!view.models.items.length) {
-            return '<p class="connection-empty">还没有模型记录。在 API 页保存连接后，用过的模型会出现在这里。</p>';
+            return '<p class="connection-empty">还没有模型记录。在设置中心的「模型连接」里填过的模型会出现在这里。</p>';
         }
         return `
             <ul class="connection-list" aria-label="最近使用的模型">
@@ -138,7 +138,7 @@ export function createChatConnectionChipComponent(ctx) {
                 <div class="connection-popover-foot">
                     <button class="secondary-button compact-button" type="button" data-route="api" data-connection-focusable>
                         <i class="fa-solid fa-plug" aria-hidden="true"></i>
-                        打开 API 页
+                        打开模型连接
                     </button>
                     <p>档案里的预设、代理按名称精确匹配，找不到的项会跳过并说明原因，不会改用名称相近的项。</p>
                 </div>

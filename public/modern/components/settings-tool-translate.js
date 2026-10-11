@@ -67,7 +67,7 @@ export function createSettingsToolTranslate(ctx) {
             <optgroup label="全部语言">${rest.map(language => option(language.code)).join('')}</optgroup>`;
     }
 
-    // API Key 不回显（密码框，留空表示不改，勾选「清除」才删除）；服务地址不是机密，后端也不打码，所以直接填进输入框
+    // API Key 不回显（密码框，粘贴后失焦即保存，点「清除」删除已保存的值）；服务地址不是机密，后端也不打码，所以直接填进输入框
     function renderSecretRow(provider, kind, selectedProvider) {
         const secretKey = kind === 'key' ? provider.keySecret : provider.urlSecret;
         const active = getActiveSecret(secretKey);
@@ -83,11 +83,11 @@ export function createSettingsToolTranslate(ctx) {
             <div class="translate-secret-row" data-translate-for="${escapeHtml(provider.id)}" ${hidden}>
                 <label class="field-label">
                     <span>${escapeHtml(title)}${requiredMark}</span>
-                    <input class="text-input" type="password" autocomplete="off" data-translate-secret="${escapeHtml(secretKey)}" placeholder="${active ? '已保存，留空则不改' : '尚未设置'}">
+                    <input class="text-input" type="password" autocomplete="off" data-translate-secret="${escapeHtml(secretKey)}" placeholder="${active ? '已保存；粘贴新密钥会替换' : '粘贴后离开输入框即保存'}">
                 </label>
                 <div class="translate-secret-status">
                     <span class="translate-secret-state ${active ? 'is-saved' : ''}" data-translate-secret-state="${escapeHtml(secretKey)}">${active ? `已保存（${escapeHtml(active.value)}）` : '未设置'}</span>
-                    ${active ? `<label class="checkbox-card compact-checkbox"><input type="checkbox" data-translate-clear-secret="${escapeHtml(secretKey)}"><span>清除已保存的值</span></label>` : ''}
+                    ${active ? `<button class="secondary-button compact-button" type="button" data-translate-clear-secret="${escapeHtml(secretKey)}"><i class="fa-solid fa-eraser" aria-hidden="true"></i>清除</button>` : ''}
                 </div>
             </div>`;
         }
@@ -172,7 +172,7 @@ export function createSettingsToolTranslate(ctx) {
                     </select>
                 </label>
             </div>
-            ${looksLikeFactoryDefaults(settings) ? '<p class="panel-subtitle translate-default-hint" data-translate-default-hint><i class="fa-solid fa-circle-info" aria-hidden="true"></i> 目标语言还是翻译扩展的出厂值（英语）。要把消息和角色卡翻译成中文，请选「简体中文」后保存。</p>' : ''}
+            ${looksLikeFactoryDefaults(settings) ? '<p class="panel-subtitle translate-default-hint" data-translate-default-hint><i class="fa-solid fa-circle-info" aria-hidden="true"></i> 目标语言还是翻译扩展的出厂值（英语）。要把消息和角色卡翻译成中文，选「简体中文」即可。</p>' : ''}
             <p class="panel-subtitle" data-translate-provider-description>${escapeHtml(provider?.description || '')}</p>
             <div class="translate-secret-grid">
                 <div class="translate-secret-row" data-translate-for="deepl" ${settings.provider === 'deepl' ? '' : 'hidden'}>
@@ -195,10 +195,6 @@ export function createSettingsToolTranslate(ctx) {
                 <button class="secondary-button" type="button" data-translate-test ${testing || saving ? 'disabled' : ''}>
                     <i class="fa-solid fa-vial"></i>
                     测试翻译
-                </button>
-                <button class="primary-button" type="button" data-translate-save ${saving ? 'disabled aria-busy="true"' : ''}>
-                    <i class="fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}"></i>
-                    ${saving ? '保存中…' : '保存翻译设置'}
                 </button>
             </div>
             ${renderTranslateTestResult(ui.settingsTest, escapeHtml)}

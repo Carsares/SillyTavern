@@ -7,7 +7,6 @@ import { createPresetsRoute } from '../routes/presets.js';
 import { createPersonasRoute } from '../routes/personas.js';
 import { createAssetsRoute } from '../routes/assets.js';
 import { createRemoteResourcesRoute } from '../routes/remote-resources.js';
-import { createApiRoute } from '../routes/api.js';
 import { createExtensionsRoute } from '../routes/extensions.js';
 import { createActivityRoute } from '../routes/activity.js';
 import { createSettingsRoute } from '../routes/settings.js';
@@ -25,7 +24,6 @@ export function createRouteModules(routeContext) {
         personas: createPersonasRoute(routeContext),
         assets: createAssetsRoute(routeContext),
         remoteResources: createRemoteResourcesRoute(routeContext),
-        api: createApiRoute(routeContext),
         extensions: createExtensionsRoute(routeContext),
         activity: createActivityRoute(routeContext),
         settings: createSettingsRoute(routeContext),

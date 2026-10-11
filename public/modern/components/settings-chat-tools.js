@@ -33,11 +33,11 @@ export function createSettingsChatToolsComponents(ctx) {
 
     function renderSettingsChatToolsPanel() {
         return `
-        <section class="panel section-panel" data-settings-chat-tools>
+        <section class="panel section-panel" data-settings-chat-tools data-preserve-inputs>
             <div class="panel-header">
                 <div>
-                    <h2 class="panel-title">聊天工具设置</h2>
-                    <p class="panel-subtitle">翻译、摘要和推理解析等聊天辅助功能的设置。</p>
+                    <h2 class="panel-title">聊天工具</h2>
+                    <p class="panel-subtitle">翻译、摘要等聊天辅助功能。改动会自动保存。</p>
                 </div>
             </div>
             <div class="settings-tool-sections">

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { mockBridgeFrame } from './modern-test-utils.js';
 
-/* global localStorage */
+/* global localStorage, document */
 
 function createTextCompletionCase(type, modelField, secretKey) {
     const initialModel = modelField ? `${type}/saved-model` : '';
@@ -39,11 +39,6 @@ const textCompletionCases = [
     createTextCompletionCase('huggingface', '', 'api_key_huggingface'),
     createTextCompletionCase('generic', 'generic_model', 'api_key_generic'),
 ];
-
-function setInputValue(input, value) {
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-}
 
 // Every API save now asks the hidden generation engine to reload its settings, so the engine frame is always stubbed:
 // the real engine would boot a whole legacy page in the middle of a page that only mocks the settings endpoints.
@@ -130,65 +125,131 @@ async function mockModernApiShell(page, settingsBundle, secretState = {}, bridge
     return bridgeCalls;
 }
 
-test.describe('Modern API page', () => {
-    test('keeps unsupported main API visible before switching to a modern editor', async ({ page }) => {
-        // Uses a synthetic unknown main_api to exercise the fallback: all real main_apis are now editable in the modern UI
-        const settingsBundle = {
-            settings: JSON.stringify({
-                main_api: 'legacy-unknown-api',
-                preset_settings: 'Legacy Preset',
-                textgenerationwebui_settings: {
-                    type: 'ooba',
-                    server_urls: {
-                        ooba: 'http://127.0.0.1:5000',
-                    },
-                    custom_model: 'ooba/saved-model',
-                },
-            }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
-        };
+// 设置中心「模型连接」标签（原 API 页）的改动即保存：每个字段失焦或选择后单独校验、单独保存，再通知生成引擎重载。
+// 字段 → 设置路径的映射和校验在 public/modern/actions/api-autosave.js；保存、回滚和引擎同步在 actions/settings-autosave.js。
 
+const emptyPresets = () => ({
+    textgenerationwebui_preset_names: [],
+    textgenerationwebui_presets: [],
+    openai_setting_names: [],
+    openai_settings: [],
+});
+
+// 保存请求按顺序记下来，页面之后读到的设置跟着保存走，和真实服务端一样
+async function routeSettingsSave(page, settingsBundle, order = []) {
+    const saved = { bodies: [] };
+    await page.route('**/api/settings/save', route => {
+        const body = route.request().postDataJSON();
+        saved.bodies.push(body);
+        settingsBundle.settings = JSON.stringify(body);
+        order.push('settings saved');
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    return saved;
+}
+
+async function routeSecretWrites(page) {
+    const writes = [];
+    await page.route('**/api/secrets/write', route => {
+        writes.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    return writes;
+}
+
+const saveStatus = page => page.locator('[data-settings-save-status]');
+
+// 文本补全各来源：有模型字段的改模型，有密钥映射的写密钥；没有的不显示对应输入框
+async function editTextCompletionModelAndKey(page, item, saved, secretWrites) {
+    const modelInput = page.locator('[data-textgen-model]');
+    const keyInput = page.locator('[data-textgen-api-key]');
+    if (Object.keys(item.expectedModelSettings).length) {
+        await expect(modelInput).toHaveValue(item.initialModel);
+        await modelInput.fill(item.modelValue);
+        await modelInput.press('Enter');
+        await expect.poll(() => saved.bodies.at(-1)?.textgenerationwebui_settings).toMatchObject(item.expectedModelSettings);
+    } else {
+        await expect(modelInput).toHaveCount(0);
+    }
+    if (item.secretValue) {
+        await keyInput.fill(item.secretValue);
+        await keyInput.press('Enter');
+        await expect.poll(() => secretWrites.length).toBe(item.expectedSecretWrites.length);
+    } else {
+        await expect(keyInput).toHaveCount(0);
+    }
+}
+
+test.describe('Modern connection settings', () => {
+    test('the old API page opens the 模型连接 tab of the settings center', async ({ page }) => {
+        const settingsBundle = {
+            settings: JSON.stringify({ main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'custom/saved-model', custom_url: 'https://saved.example/v1' } }),
+            ...emptyPresets(),
+        };
         await mockModernApiShell(page, settingsBundle);
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.form-section-title', { hasText: '连接' })).toBeVisible();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
+        await expect(page).toHaveURL(/view=settings/);
+        await expect(page.locator('.page-title')).toHaveText('设置中心');
+        await expect(page.locator('[data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/saved-model');
+        await expect(saveStatus(page)).toHaveText('改动会自动保存');
+        // 侧栏不再有单独的 API 入口，也没有保存按钮
+        await expect(page.locator('#navList [data-route="api"]')).toHaveCount(0);
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
+
+        // 其它页面上指向 API 的按钮也打开这里
+        await page.locator('#navList [data-route="dashboard"]').click();
+        await page.locator('.dashboard-grid [data-route="api"]').first().click();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
+        await expect(page.locator('[data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+    });
+
+    test('keeps an unsupported main API visible and switches the editor as soon as another one is picked', async ({ page }) => {
+        // Uses a synthetic unknown main_api to exercise the fallback: all real main_apis are editable in the modern UI
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'legacy-unknown-api',
+                textgenerationwebui_settings: {
+                    type: 'ooba',
+                    server_urls: { ooba: 'http://127.0.0.1:5000' },
+                    custom_model: 'ooba/saved-model',
+                },
+            }),
+            ...emptyPresets(),
+        };
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+
         await expect(page.locator('[data-api-main]')).toHaveValue('legacy-unknown-api');
         await expect(page.locator('[data-api-main] option:checked')).toHaveText('当前：legacy-unknown-api（暂不支持编辑）');
-        await expect(page.locator('text=当前主 API 暂不支持在现代页编辑。')).toBeVisible();
+        await expect(page.locator('text=当前主 API 暂不支持在这里编辑')).toBeVisible();
 
         await page.locator('[data-api-main]').selectOption('textgenerationwebui');
 
+        await expect.poll(() => saved.bodies.at(-1)?.main_api).toBe('textgenerationwebui');
         await expect(page.locator('[data-textgen-type]')).toHaveValue('ooba');
         await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:5000');
         await expect(page.locator('[data-textgen-model]')).toHaveValue('ooba/saved-model');
+        await expect(saveStatus(page)).toContainText('主 API 已保存');
     });
 
-    test('edits and tests the KoboldAI Classic connection in the modern editor', async ({ page }) => {
-        let savedSettings = null;
+    test('KoboldAI: the address saves on its own, where the engine reads it, and the test uses the saved value', async ({ page }) => {
         let statusBody = null;
         const settingsBundle = {
             settings: JSON.stringify({
                 main_api: 'kobold',
                 api_server: 'http://saved.kobold:5000/api',
+                kai_settings: { api_server: 'http://saved.kobold:5000/api', preset_settings: 'gui' },
             }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle);
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-
+        const saved = await routeSettingsSave(page, settingsBundle);
         await page.route('**/api/backends/kobold/status', route => {
             statusBody = route.request().postDataJSON();
             return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ model: 'koboldcpp/test-model' }) });
@@ -196,52 +257,42 @@ test.describe('Modern API page', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('[data-api-main]')).toHaveValue('kobold');
-        await expect(page.locator('[data-kobold-api-url]')).toHaveValue('http://saved.kobold:5000/api');
-        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
+        const url = page.locator('[data-kobold-api-url]');
+        await expect(url).toHaveValue('http://saved.kobold:5000/api');
+        await expect(page.locator('[data-textgen-max-context]')).toBeVisible();
 
-        await page.locator('[data-kobold-api-url]').fill('http://new.kobold:5001/api');
-        await page.locator('[data-save-api-connection]').click();
+        // 不是完整地址：字段旁报错，不保存
+        await url.fill('not a url');
+        await url.press('Enter');
+        await expect(page.locator('[data-api-field-error="koboldUrl"]')).toContainText('完整地址');
+        await expect(url).toHaveAttribute('aria-invalid', 'true');
+        await expect(saveStatus(page)).toContainText('有字段未保存');
+        expect(saved.bodies).toEqual([]);
 
-        await expect.poll(() => savedSettings?.api_server).toBe('http://new.kobold:5001/api');
-        expect(savedSettings.main_api).toBe('kobold');
+        await url.fill('http://new.kobold:5001/api');
+        await url.blur();
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        // 引擎先读 kai_settings.api_server，两处都要写
+        expect(saved.bodies[0]).toMatchObject({ main_api: 'kobold', api_server: 'http://new.kobold:5001/api', kai_settings: { api_server: 'http://new.kobold:5001/api', preset_settings: 'gui' } });
+        await expect(page.locator('[data-api-field-error="koboldUrl"]')).toHaveCount(0);
 
         await page.locator('[data-test-api]').click();
-
         await expect.poll(() => statusBody?.api_server).toBe('http://new.kobold:5001/api');
-        await expect(page.locator('.api-history-panel')).toContainText('koboldcpp/test-model');
+        await expect(page.locator('[data-api-test-status]')).toHaveText('可用');
+        await expect(page.locator('[data-api-test-detail]')).toContainText('koboldcpp/test-model');
     });
 
-    test('edits and tests the NovelAI connection without exposing secrets', async ({ page }) => {
-        let savedSettings = null;
-        let writtenSecret = null;
+    test('NovelAI: the model saves where the engine reads it and the key is stored without being shown', async ({ page }) => {
         let statusCalled = false;
         const settingsBundle = {
-            settings: JSON.stringify({
-                main_api: 'novel',
-                model_novel: 'kayra-v1',
-            }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            settings: JSON.stringify({ main_api: 'novel', model_novel: 'kayra-v1', nai_settings: { model_novel: 'kayra-v1', temperature: 1 } }),
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle, {
             api_key_novel: [{ id: 'saved', value: '********nai', label: 'saved', active: true }],
         });
-
-        await page.route('**/api/secrets/write', route => {
-            writtenSecret = route.request().postDataJSON();
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const secretWrites = await routeSecretWrites(page);
         await page.route('**/api/novelai/status', route => {
             statusCalled = true;
             return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tier: 2 }) });
@@ -249,42 +300,37 @@ test.describe('Modern API page', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('[data-api-main]')).toHaveValue('novel');
         await expect(page.locator('[data-novel-model]')).toHaveValue('kayra-v1');
-        await expect(page.locator('[data-novel-secret-status]')).toHaveText('密钥已保存');
+        await expect(page.locator('[data-novel-api-key]')).toHaveAttribute('placeholder', '已保存；粘贴新密钥会替换');
 
         await page.locator('[data-novel-model]').selectOption('llama-3-erato-v1');
-        await page.locator('[data-novel-api-key]').fill('nai-secret-token');
-        await page.locator('[data-save-api-connection]').click();
+        await expect.poll(() => saved.bodies.at(-1)?.nai_settings?.model_novel).toBe('llama-3-erato-v1');
+        expect(saved.bodies.at(-1)).toMatchObject({ main_api: 'novel', model_novel: 'llama-3-erato-v1', nai_settings: { temperature: 1 } });
 
-        await expect.poll(() => savedSettings?.model_novel).toBe('llama-3-erato-v1');
-        expect(savedSettings.main_api).toBe('novel');
-        expect(writtenSecret).toMatchObject({ key: 'api_key_novel', value: 'nai-secret-token' });
+        await page.locator('[data-novel-api-key]').fill('nai-secret-token');
+        await page.locator('[data-novel-api-key]').press('Enter');
+        await expect.poll(() => secretWrites.length).toBe(1);
+        expect(secretWrites[0]).toMatchObject({ key: 'api_key_novel', value: 'nai-secret-token' });
+        await expect(page.locator('[data-novel-api-key]')).toHaveValue('');
         await expect(page.locator('body')).not.toContainText('nai-secret-token');
 
-        await page.locator('[data-test-api]').click();
+        // NovelAI 的 Clio / Kayra / Erato 引擎固定只用 8,192：超出时提示
+        await page.locator('[data-textgen-max-context]').fill('16384');
+        await page.locator('[data-textgen-max-context]').blur();
+        await expect(page.locator('[data-textgen-context-hint]')).toContainText('引擎对 NovelAI 最多使用 8,192');
 
+        await page.locator('[data-test-api]').click();
         await expect.poll(() => statusCalled).toBe(true);
-        await expect(page.locator('.api-history-panel')).toContainText('Scroll');
+        await expect(page.locator('[data-api-test-detail]')).toContainText('Scroll');
     });
 
-    test('edits and tests the AI Horde connection with a live model list', async ({ page }) => {
-        let savedSettings = null;
-        let writtenSecret = null;
+    test('AI Horde: the model selection saves on every change and refreshing the list keeps it', async ({ page }) => {
         let userInfoCalled = false;
         const settingsBundle = {
-            settings: JSON.stringify({
-                main_api: 'koboldhorde',
-                horde_settings: { models: ['koboldcpp/model-a'] },
-            }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            settings: JSON.stringify({ main_api: 'koboldhorde', horde_settings: { models: ['koboldcpp/model-a'] } }),
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle);
-
         await page.route('**/api/horde/text-models', route => route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -293,18 +339,8 @@ test.describe('Modern API page', () => {
                 { name: 'koboldcpp/model-b', count: 1, performance: 5.1 },
             ]),
         }));
-
-        await page.route('**/api/secrets/write', route => {
-            writtenSecret = route.request().postDataJSON();
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const secretWrites = await routeSecretWrites(page);
         await page.route('**/api/horde/user-info', route => {
             userInfoCalled = true;
             return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ anonymous: false, user: { username: 'tester', kudos: 42 } }) });
@@ -312,25 +348,21 @@ test.describe('Modern API page', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('[data-api-main]')).toHaveValue('koboldhorde');
         await expect(page.locator('[data-horde-model] option[value="koboldcpp/model-b"]')).toHaveCount(1);
         await expect(page.locator('[data-horde-model]')).toHaveValues(['koboldcpp/model-a']);
 
         await page.locator('[data-horde-model]').selectOption(['koboldcpp/model-a', 'koboldcpp/model-b']);
-        await page.locator('[data-horde-api-key]').fill('horde-secret');
-        await page.locator('[data-save-api-connection]').click();
+        await expect.poll(() => saved.bodies.at(-1)?.horde_settings?.models).toEqual(['koboldcpp/model-a', 'koboldcpp/model-b']);
 
-        await expect.poll(() => savedSettings?.horde_settings?.models).toEqual(['koboldcpp/model-a', 'koboldcpp/model-b']);
-        expect(savedSettings.main_api).toBe('koboldhorde');
-        expect(writtenSecret).toMatchObject({ key: 'api_key_horde', value: 'horde-secret' });
+        await page.locator('[data-horde-api-key]').fill('horde-secret');
+        await page.locator('[data-horde-api-key]').blur();
+        await expect.poll(() => secretWrites[0]).toMatchObject({ key: 'api_key_horde', value: 'horde-secret' });
         await expect(page.locator('body')).not.toContainText('horde-secret');
 
         await page.locator('[data-test-api]').click();
-
         await expect.poll(() => userInfoCalled).toBe(true);
-        await expect(page.locator('.api-history-panel')).toContainText('tester');
+        await expect(page.locator('[data-api-test-detail]')).toContainText('tester');
 
-        // Refreshing the model list keeps the current selection instead of resetting it
         await page.locator('[data-horde-refresh]').click();
         await expect(page.locator('[data-horde-model]')).toHaveValues(['koboldcpp/model-a', 'koboldcpp/model-b']);
     });
@@ -340,10 +372,7 @@ test.describe('Modern API page', () => {
         let exchangeBody = null;
         const settingsBundle = {
             settings: JSON.stringify({ main_api: 'openai', oai_settings: { chat_completion_source: 'openrouter' } }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
 
         await mockModernApiShell(page, settingsBundle);
@@ -366,9 +395,7 @@ test.describe('Modern API page', () => {
         await expect(page.locator('body')).not.toContainText('sk-or-test-key');
     });
 
-    test('edits and tests chat completion connection without exposing secrets', async ({ page }) => {
-        let savedSettings = null;
-        let writtenSecret = null;
+    test('chat completion: every field saves on its own and the test uses the saved values', async ({ page }) => {
         let generateBody = null;
         const settingsBundle = {
             settings: JSON.stringify({
@@ -380,83 +407,64 @@ test.describe('Modern API page', () => {
                     reverse_proxy: 'https://proxy.saved/v1',
                     preset_settings_openai: 'Chat Preset A',
                     temp_openai: 0.7,
+                    openai_max_context: 8000,
                     openai_max_tokens: 300,
                     top_p_openai: 0.9,
                     freq_pen_openai: 0.1,
                     pres_pen_openai: 0.2,
                 },
             }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
+            ...emptyPresets(),
             openai_setting_names: ['Chat Preset A', 'Chat Preset B'],
             openai_settings: [
                 JSON.stringify({ name: 'Chat Preset A' }),
-                JSON.stringify({ name: 'Chat Preset B' }),
+                JSON.stringify({ name: 'Chat Preset B', temperature: 0.5 }),
             ],
         };
-
         await mockModernApiShell(page, settingsBundle, {
             api_key_custom: [{ id: 'saved', value: '********tom', label: 'saved', active: true }],
         });
-
-        await page.route('**/api/secrets/write', route => {
-            writtenSecret = route.request().postDataJSON();
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
-
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const secretWrites = await routeSecretWrites(page);
         await page.route('**/api/backends/chat-completions/generate', route => {
             generateBody = route.request().postDataJSON();
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ choices: [{ message: { content: 'OK from custom' } }] }),
-            });
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: 'OK from custom' } }] }) });
         });
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('[data-api-main]')).toHaveValue('openai');
         await expect(page.locator('[data-api-source]')).toHaveValue('custom');
         await expect(page.locator('[data-api-model]')).toHaveValue('custom/saved-model');
         await expect(page.locator('[data-api-custom-url]')).toHaveValue('https://saved.example/v1');
         await expect(page.locator('[data-api-reverse-proxy]')).toHaveValue('https://proxy.saved/v1');
-        await expect(page.locator('[data-api-secret-status]')).toHaveText('密钥已保存');
-        await expect(page.locator('body')).not.toContainText('sk-chat-secret');
-        await expect(page.locator('form[data-api-connection-form] [data-api-key]')).toHaveCount(1);
+        await expect(page.locator('[data-api-field="api-key"] [data-secret-state]')).toHaveText('已保存');
         await expect(page.locator('[data-api-key]')).toHaveAttribute('name', 'chat_completion_api_key');
         await expect(page.locator('[data-api-key]')).toHaveAttribute('autocomplete', 'new-password');
-        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
+        await expect(page.locator('[data-api-current-connection]')).toContainText('custom/saved-model');
 
-        await page.locator('[data-api-model]').fill('custom/new-model');
-        await page.locator('[data-api-custom-url]').fill('https://custom.example/v1');
-        await page.locator('[data-api-reverse-proxy]').fill('https://proxy.example/v1');
+        // 选择预设 = 应用预设：预设里的采样参数一起写入
         await page.locator('[data-api-preset]').selectOption('Chat Preset B');
-        await page.locator('[data-api-temperature]').fill('0.44');
-        await page.locator('[data-api-max-tokens]').fill('512');
-        await page.locator('[data-api-top-p]').fill('0.88');
-        await page.locator('[data-api-frequency-penalty]').fill('0.12');
-        await page.locator('[data-api-presence-penalty]').fill('0.34');
-        await page.locator('[data-api-key]').fill('sk-chat-secret');
-        await page.locator('[data-api-key]').press('Enter');
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.preset_settings_openai).toBe('Chat Preset B');
+        expect(saved.bodies.at(-1).oai_settings.temp_openai).toBe(0.5);
 
-        await expect.poll(() => savedSettings?.oai_settings?.custom_model).toBe('custom/new-model');
-        expect(savedSettings.main_api).toBe('openai');
-        expect(savedSettings.chat_completion_source).toBe('custom');
-        expect(savedSettings.oai_settings).toMatchObject({
+        const edits = [
+            ['[data-api-model]', 'custom/new-model'],
+            ['[data-api-custom-url]', 'https://custom.example/v1'],
+            ['[data-api-reverse-proxy]', 'https://proxy.example/v1'],
+            ['[data-api-temperature]', '0.44'],
+            ['[data-api-max-tokens]', '512'],
+            ['[data-api-top-p]', '0.88'],
+            ['[data-api-frequency-penalty]', '0.12'],
+            ['[data-api-presence-penalty]', '0.34'],
+        ];
+        for (const [selector, value] of edits) {
+            const before = saved.bodies.length;
+            await page.locator(selector).fill(value);
+            await page.locator(selector).press('Enter');
+            await expect.poll(() => saved.bodies.length).toBe(before + 1);
+        }
+        expect(saved.bodies.at(-1).main_api).toBe('openai');
+        expect(saved.bodies.at(-1).oai_settings).toMatchObject({
             chat_completion_source: 'custom',
             custom_model: 'custom/new-model',
             custom_url: 'https://custom.example/v1',
@@ -468,14 +476,13 @@ test.describe('Modern API page', () => {
             freq_pen_openai: 0.12,
             pres_pen_openai: 0.34,
         });
-        expect(writtenSecret).toMatchObject({
-            key: 'api_key_custom',
-            value: 'sk-chat-secret',
-        });
+
+        await page.locator('[data-api-key]').fill('sk-chat-secret');
+        await page.locator('[data-api-key]').press('Enter');
+        await expect.poll(() => secretWrites[0]).toMatchObject({ key: 'api_key_custom', value: 'sk-chat-secret' });
         await expect(page.locator('body')).not.toContainText('sk-chat-secret');
 
         await page.locator('[data-test-api]').click();
-
         await expect.poll(() => generateBody).toMatchObject({
             chat_completion_source: 'custom',
             model: 'custom/new-model',
@@ -488,12 +495,13 @@ test.describe('Modern API page', () => {
             presence_penalty: 0.34,
             stream: false,
         });
-        await expect(page.locator('.api-history-panel')).toContainText('custom/new-model');
-        await expect(page.locator('.api-history-panel')).toContainText('OK from custom');
+        await expect(page.locator('[data-api-test-status]')).toHaveText('可用');
+        await expect(page.locator('[data-api-test-detail]')).toContainText('OK from custom');
+        const recent = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-recent-models') || '{}'));
+        expect(recent['openai:custom']).toEqual(['custom/new-model']);
     });
 
-    test('blocks saving chat completion parameters outside the legacy ranges and marks the fields', async ({ page }) => {
-        const savedBodies = [];
+    test('an out-of-range field is marked and left unsaved while the others still save, and blocks the test', async ({ page }) => {
         const generateBodies = [];
         const settingsBundle = {
             settings: JSON.stringify({
@@ -503,7 +511,6 @@ test.describe('Modern API page', () => {
                     custom_model: 'custom/saved-model',
                     custom_url: 'https://saved.example/v1',
                     temp_openai: 0.7,
-                    // Max Tokens 128000 (the last save below) has to stay under the context length
                     openai_max_context: 200000,
                     openai_max_tokens: 300,
                     top_p_openai: 0.9,
@@ -511,230 +518,162 @@ test.describe('Modern API page', () => {
                     pres_pen_openai: 0.2,
                 },
             }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle);
-        await page.route('**/api/settings/save', route => {
-            savedBodies.push(route.request().postDataJSON());
-            settingsBundle.settings = JSON.stringify(savedBodies.at(-1));
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
+        const saved = await routeSettingsSave(page, settingsBundle);
         await page.route('**/api/backends/chat-completions/generate', route => {
             generateBodies.push(route.request().postDataJSON());
             return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: 'OK' } }] }) });
         });
 
         await page.goto('/modern/?view=api');
-        await expect(page.locator('[data-api-top-p]')).toHaveValue('0.9');
         // The inputs expose the same limits as the legacy sliders.
         await expect(page.locator('[data-api-top-p]')).toHaveAttribute('max', '1');
         await expect(page.locator('[data-api-temperature]')).toHaveAttribute('max', '2');
         await expect(page.locator('[data-api-frequency-penalty]')).toHaveAttribute('min', '-2');
         await expect(page.locator('[data-api-max-tokens]')).toHaveAttribute('max', '128000');
 
-        await page.locator('[data-api-model]').fill('custom/new-model');
-        await page.locator('[data-api-top-p]').fill('5');
-        await page.locator('[data-api-temperature]').fill('2.5');
-        await page.locator('[data-api-presence-penalty]').fill('-3');
-        await page.locator('[data-api-max-tokens]').fill('12.5');
-        await page.locator('[data-save-api-connection]').click();
-
+        const topP = page.locator('[data-api-top-p]');
+        await topP.fill('5');
+        await topP.blur();
         const topPError = page.locator('[data-api-field-error="topP"]');
         await expect(topPError).toHaveText('Top P 需在 0 到 1 之间');
-        await expect(page.locator('[data-api-top-p]')).toHaveAttribute('aria-invalid', 'true');
-        await expect(page.locator('[data-api-top-p]')).toHaveAttribute('aria-describedby', 'api-field-error-topP');
-        await expect(page.locator('[data-api-field-error="temperature"]')).toHaveText('Temperature 需在 0 到 2 之间');
-        await expect(page.locator('[data-api-field-error="presencePenalty"]')).toHaveText('Presence Penalty 需在 -2 到 2 之间');
-        await expect(page.locator('[data-api-field-error="maxTokens"]')).toHaveText('Max Tokens 需为 1 到 128000 之间的整数');
-        await expect(page.locator('[data-api-field-error="frequencyPenalty"]')).toHaveCount(0);
-        await expect(page.locator('.toast', { hasText: '连接配置未保存' })).toContainText('Temperature 需在 0 到 2 之间');
-        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toHaveCount(0);
-        // The user's edits stay in the form so they can be corrected.
-        await expect(page.locator('[data-api-model]')).toHaveValue('custom/new-model');
-        await expect(page.locator('[data-api-top-p]')).toHaveValue('5');
-        await expect(page.locator('[data-api-temperature]')).toBeFocused();
+        await expect(topP).toHaveAttribute('aria-invalid', 'true');
+        await expect(topP).toHaveAttribute('aria-describedby', 'api-field-error-topP');
+        await expect(saveStatus(page)).toContainText('有字段未保存');
 
-        // Enter in a field takes the same validated path instead of the browser's native bubble.
-        await page.locator('[data-api-model]').press('Enter');
-        await expect(topPError).toHaveText('Top P 需在 0 到 1 之间');
-
-        // Testing the connection does not send out-of-range parameters either.
-        await page.locator('[data-test-api]').click();
-        await expect(page.locator('.toast', { hasText: '连接测试未执行' })).toBeVisible();
-        expect(generateBodies).toEqual([]);
-        expect(savedBodies).toEqual([]);
-
-        // Correcting a marked field hides its error as soon as it changes, without shifting the layout.
-        const saveButton = page.locator('[data-save-api-connection]');
-        const saveButtonTop = (await saveButton.boundingBox()).y;
-        await page.locator('[data-api-top-p]').fill('0.5');
-        await page.locator('[data-api-top-p]').blur();
-        await expect(topPError).toBeHidden();
-        await expect(page.locator('[data-api-top-p]')).not.toHaveAttribute('aria-invalid', 'true');
-        expect((await saveButton.boundingBox()).y).toBe(saveButtonTop);
+        await page.locator('[data-api-max-tokens]').fill('12.5');
+        await page.locator('[data-api-max-tokens]').blur();
+        await expect(page.locator('[data-api-field-error="maxTokens"]')).toHaveText('回复长度 需为 1 到 128,000 之间的整数');
         await page.locator('[data-api-temperature]').fill('');
         await page.locator('[data-api-temperature]').blur();
         await expect(page.locator('[data-api-field-error="temperature"]')).toHaveText('请填写 Temperature');
+        expect(saved.bodies).toEqual([]);
 
-        await page.locator('[data-api-temperature]').fill('2');
-        await page.locator('[data-api-presence-penalty]').fill('-2');
+        // A valid field next to the broken ones still saves on its own
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-api-model]').press('Enter');
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        expect(saved.bodies[0].oai_settings).toMatchObject({ custom_model: 'custom/new-model', top_p_openai: 0.9, temp_openai: 0.7, openai_max_tokens: 300 });
+
+        // The test does not run on values the page shows but did not save
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试失败' })).toContainText('有字段没有保存');
+        expect(generateBodies).toEqual([]);
+
+        // Correcting the fields removes the errors and saves them
+        await topP.fill('0.5');
+        await topP.blur();
         await page.locator('[data-api-max-tokens]').fill('128000');
-        // The last field still has focus: its change fires on mousedown, and the click must still land on the button.
-        await saveButton.click();
-
-        await expect.poll(() => savedBodies.length).toBe(1);
-        expect(savedBodies[0].oai_settings).toMatchObject({
-            custom_model: 'custom/new-model',
-            temp_openai: 2,
-            openai_max_tokens: 128000,
-            top_p_openai: 0.5,
-            freq_pen_openai: 0.1,
-            pres_pen_openai: -2,
-        });
-        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+        await page.locator('[data-api-max-tokens]').blur();
+        await page.locator('[data-api-temperature]').fill('2');
+        await page.locator('[data-api-temperature]').blur();
         await expect(page.locator('.field-error')).toHaveCount(0);
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings).toMatchObject({ top_p_openai: 0.5, openai_max_tokens: 128000, temp_openai: 2 });
+
+        await page.locator('[data-test-api]').click();
+        await expect.poll(() => generateBodies.length).toBe(1);
     });
 
     test('treats a reasoning-only chat completion test reply as a working connection', async ({ page }) => {
         const generateBodies = [];
         const generateResponses = [
             // Reasoning model spent the whole test token budget on reasoning (DeepSeek-style payload).
-            {
-                choices: [{
-                    message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to reply OK, so' },
-                    finish_reason: 'length',
-                }],
-            },
+            { choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'The user wants me to reply OK, so' }, finish_reason: 'length' }] },
             // Truly empty reply without any reasoning is still a failure.
-            {
-                choices: [{
-                    message: { role: 'assistant', content: '' },
-                    finish_reason: 'stop',
-                }],
-            },
+            { choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'stop' }] },
             // Backend error payloads keep their original message.
-            {
-                error: { message: 'Unauthorized' },
-            },
+            { error: { message: 'Unauthorized' } },
         ];
         const settingsBundle = {
             settings: JSON.stringify({
                 main_api: 'openai',
-                oai_settings: {
-                    chat_completion_source: 'custom',
-                    custom_model: 'deepseek-v4-flash',
-                    custom_url: 'https://api.deepseek.com',
-                    openai_max_tokens: 300,
-                },
+                oai_settings: { chat_completion_source: 'custom', custom_model: 'deepseek-v4-flash', custom_url: 'https://api.deepseek.com', openai_max_tokens: 300 },
             }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle, {
             api_key_custom: [{ id: 'saved', value: '********seek', label: 'saved', active: true }],
         });
-
         await page.route('**/api/backends/chat-completions/generate', route => {
             generateBodies.push(route.request().postDataJSON());
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify(generateResponses[generateBodies.length - 1]),
-            });
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(generateResponses[generateBodies.length - 1]) });
         });
 
         await page.goto('/modern/?view=api');
-        await expect(page.locator('[data-api-source]')).toHaveValue('custom');
         await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-v4-flash');
 
-        const historyRows = page.locator('.api-history-panel .resource-row');
         const reasoningOnlyDetail = '连接正常：模型只返回了推理内容（测试请求的 token 上限较低）';
-
         await page.locator('[data-test-api]').click();
         await expect(page.locator('.toast', { hasText: '连接测试成功' })).toContainText(reasoningOnlyDetail);
-        await expect(historyRows).toHaveCount(1);
-        await expect(historyRows.nth(0)).toContainText(`deepseek-v4-flash: ${reasoningOnlyDetail}`);
-        await expect(historyRows.nth(0).locator('.success')).toHaveText('可用');
-        expect(generateBodies[0]).toMatchObject({
-            chat_completion_source: 'custom',
-            model: 'deepseek-v4-flash',
-            custom_url: 'https://api.deepseek.com',
-            max_tokens: 20,
-            stream: false,
-        });
+        await expect(page.locator('[data-api-test-status]')).toHaveText('可用');
+        await expect(page.locator('[data-api-test-detail]')).toHaveText(`deepseek-v4-flash: ${reasoningOnlyDetail}`);
+        expect(generateBodies[0]).toMatchObject({ chat_completion_source: 'custom', model: 'deepseek-v4-flash', custom_url: 'https://api.deepseek.com', max_tokens: 20, stream: false });
 
         await page.locator('[data-test-api]').click();
         await expect(page.locator('.toast', { hasText: '连接测试失败' })).toContainText('模型没有返回可显示内容。');
-        await expect(historyRows).toHaveCount(2);
-        await expect(historyRows.nth(0)).toContainText('模型没有返回可显示内容。');
-        await expect(historyRows.nth(0).locator('.danger')).toHaveText('失败');
+        await expect(page.locator('[data-api-test-status]')).toHaveText('失败');
+        await expect(page.locator('[data-api-test-detail]')).toHaveText('模型没有返回可显示内容。');
 
         await page.locator('[data-test-api]').click();
         await expect(page.locator('.toast', { hasText: '连接测试失败' }).filter({ hasText: 'Unauthorized' })).toBeVisible();
-        await expect(historyRows).toHaveCount(3);
-        await expect(historyRows.nth(0)).toContainText('Unauthorized');
-        await expect(historyRows.nth(0).locator('.danger')).toHaveText('失败');
+        await expect(page.locator('[data-api-test-detail]')).toHaveText('Unauthorized');
         expect(generateBodies).toHaveLength(3);
     });
 
     test('keeps supported chat completion sources outside the short list', async ({ page }) => {
-        let savedSettings = null;
         const settingsBundle = {
-            settings: JSON.stringify({
-                main_api: 'openai',
-                oai_settings: {
-                    chat_completion_source: 'aimlapi',
-                    aimlapi_model: 'aimlapi/saved-model',
-                },
-            }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            settings: JSON.stringify({ main_api: 'openai', oai_settings: { chat_completion_source: 'aimlapi', aimlapi_model: 'aimlapi/saved-model' } }),
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle);
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
+        const saved = await routeSettingsSave(page, settingsBundle);
 
         await page.goto('/modern/?view=api');
 
         await expect(page.locator('[data-api-source]')).toHaveValue('aimlapi');
         await expect(page.locator('[data-api-model]')).toHaveValue('aimlapi/saved-model');
         await page.locator('[data-api-model]').fill('aimlapi/new-model');
-        await page.locator('[data-save-api-connection]').click();
+        await page.locator('[data-api-model]').blur();
 
-        await expect.poll(() => savedSettings?.oai_settings?.aimlapi_model).toBe('aimlapi/new-model');
-        expect(savedSettings.chat_completion_source).toBe('aimlapi');
-        expect(savedSettings.oai_settings.chat_completion_source).toBe('aimlapi');
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.aimlapi_model).toBe('aimlapi/new-model');
+        expect(saved.bodies.at(-1).oai_settings.chat_completion_source).toBe('aimlapi');
     });
 
-    test('edits and tests text completion connection without exposing secrets', async ({ page }) => {
-        let savedSettings = null;
-        let writtenSecret = null;
+    test('switching the chat completion source saves it and shows that source\'s fields', async ({ page }) => {
+        const settingsBundle = {
+            settings: JSON.stringify({
+                main_api: 'openai',
+                oai_settings: { chat_completion_source: 'custom', custom_model: 'custom/saved-model', custom_url: 'https://saved.example/v1', siliconflow_model: 'Qwen/Qwen3-8B' },
+            }),
+            ...emptyPresets(),
+        };
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+        await expect(page.locator('[data-api-field="custom-url"]')).toBeVisible();
+        await expect(page.locator('[data-api-field="siliconflow-endpoint"]')).toHaveCount(0);
+
+        await page.locator('[data-api-source]').selectOption('siliconflow');
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.chat_completion_source).toBe('siliconflow');
+        expect(saved.bodies.at(-1).chat_completion_source).toBe('siliconflow');
+        await expect(page.locator('[data-api-model]')).toHaveValue('Qwen/Qwen3-8B');
+        await expect(page.locator('[data-api-field="custom-url"]')).toHaveCount(0);
+        // SiliconFlow 端点没保存过时按引擎默认的 global 显示，看一眼不会改动它
+        await expect(page.locator('[data-api-endpoint]')).toHaveValue('global');
+        expect(saved.bodies.at(-1).oai_settings).not.toHaveProperty('siliconflow_endpoint');
+    });
+
+    test('text completion: every field saves on its own and the test uses the saved endpoint', async ({ page }) => {
         let statusBody = null;
         const settingsBundle = {
             settings: JSON.stringify({
                 main_api: 'textgenerationwebui',
                 textgenerationwebui_settings: {
                     type: 'openrouter',
-                    server_urls: {
-                        openrouter: 'https://openrouter.ai/api',
-                    },
+                    server_urls: { openrouter: 'https://openrouter.ai/api' },
                     openrouter_model: 'openrouter/auto',
                     preset: 'Text Preset A',
                     temp: 0.7,
@@ -745,45 +684,18 @@ test.describe('Modern API page', () => {
                     rep_pen_range: 0,
                 },
             }),
+            ...emptyPresets(),
             textgenerationwebui_preset_names: ['Text Preset A', 'Text Preset B'],
-            textgenerationwebui_presets: [
-                JSON.stringify({ temp: 0.7 }),
-                JSON.stringify({ temp: 0.8 }),
-            ],
-            openai_setting_names: [],
-            openai_settings: [],
+            textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 }), JSON.stringify({ temp: 0.8 })],
         };
-
         await mockModernApiShell(page, settingsBundle, {
             api_key_openrouter: [{ id: 'saved', value: '********ret', label: 'saved', active: true }],
         });
-
-        await page.route('**/api/secrets/write', route => {
-            writtenSecret = route.request().postDataJSON();
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
-
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const secretWrites = await routeSecretWrites(page);
         await page.route('**/api/backends/text-completions/status', route => {
             statusBody = route.request().postDataJSON();
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ result: 'openrouter/new-model', data: [{ id: 'openrouter/new-model' }] }),
-            });
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ result: 'openrouter/new-model' }) });
         });
 
         await page.goto('/modern/?view=api');
@@ -791,37 +703,32 @@ test.describe('Modern API page', () => {
         await expect(page.locator('[data-textgen-type]')).toHaveValue('openrouter');
         await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('https://openrouter.ai/api');
         await expect(page.locator('[data-textgen-model]')).toHaveValue('openrouter/auto');
-        await expect(page.locator('[data-textgen-sampling="temp"]')).toHaveValue('0.7');
-        await expect(page.locator('[data-textgen-sampling="top_p"]')).toHaveValue('0.5');
-        await expect(page.locator('[data-textgen-sampling="top_k"]')).toHaveValue('40');
         await expect(page.locator('[data-textgen-sampling="min_p"]')).toHaveValue('0.01');
-        await expect(page.locator('[data-textgen-sampling="rep_pen"]')).toHaveValue('1.2');
-        await expect(page.locator('[data-textgen-sampling="rep_pen_range"]')).toHaveValue('0');
-        await expect(page.locator('[data-textgen-secret-status]')).toHaveText('密钥已保存');
-        await expect(page.locator('body')).not.toContainText('sk-secret');
-        await expect(page.locator('form[data-api-connection-form] [data-textgen-api-key]')).toHaveCount(1);
+        await expect(page.locator('[data-textgen-field="api-key"] [data-secret-state]')).toHaveText('已保存');
         await expect(page.locator('[data-textgen-api-key]')).toHaveAttribute('name', 'text_completion_api_key');
-        await expect(page.locator('[data-textgen-api-key]')).toHaveAttribute('autocomplete', 'new-password');
-        await expect(page.locator('[data-save-api-connection]')).toHaveAttribute('type', 'submit');
 
-        await page.locator('[data-textgen-endpoint]').fill('https://openrouter.ai/api/v1');
-        await page.locator('[data-textgen-model]').fill('openrouter/new-model');
+        const edits = [
+            ['[data-textgen-endpoint]', 'https://openrouter.ai/api/v1'],
+            ['[data-textgen-model]', 'openrouter/new-model'],
+            ['[data-textgen-sampling="temp"]', '0.82'],
+            ['[data-textgen-sampling="top_p"]', '0.91'],
+            ['[data-textgen-sampling="top_k"]', '64'],
+            ['[data-textgen-sampling="min_p"]', '0.04'],
+            ['[data-textgen-sampling="rep_pen"]', '1.08'],
+            ['[data-textgen-sampling="rep_pen_range"]', '256'],
+        ];
+        for (const [selector, value] of edits) {
+            const before = saved.bodies.length;
+            await page.locator(selector).fill(value);
+            await page.locator(selector).press('Enter');
+            await expect.poll(() => saved.bodies.length).toBe(before + 1);
+        }
         await page.locator('[data-textgen-preset]').selectOption('Text Preset B');
-        await page.locator('[data-textgen-sampling="temp"]').fill('0.82');
-        await page.locator('[data-textgen-sampling="top_p"]').fill('0.91');
-        await page.locator('[data-textgen-sampling="top_k"]').fill('64');
-        await page.locator('[data-textgen-sampling="min_p"]').fill('0.04');
-        await page.locator('[data-textgen-sampling="rep_pen"]').fill('1.08');
-        await page.locator('[data-textgen-sampling="rep_pen_range"]').fill('256');
-        await page.locator('[data-textgen-api-key]').fill('sk-secret-textgen');
-        await page.locator('[data-save-api-connection]').click();
-
-        await expect.poll(() => savedSettings?.textgenerationwebui_settings?.openrouter_model).toBe('openrouter/new-model');
-        expect(savedSettings.main_api).toBe('textgenerationwebui');
-        expect(savedSettings.textgenerationwebui_settings.type).toBe('openrouter');
-        expect(savedSettings.textgenerationwebui_settings.server_urls.openrouter).toBe('https://openrouter.ai/api/v1');
-        expect(savedSettings.textgenerationwebui_settings.preset).toBe('Text Preset B');
-        expect(savedSettings.textgenerationwebui_settings).toMatchObject({
+        await expect.poll(() => saved.bodies.at(-1)?.textgenerationwebui_settings?.preset).toBe('Text Preset B');
+        expect(saved.bodies.at(-1).textgenerationwebui_settings).toMatchObject({
+            type: 'openrouter',
+            server_urls: { openrouter: 'https://openrouter.ai/api/v1' },
+            openrouter_model: 'openrouter/new-model',
             temp: 0.82,
             top_p: 0.91,
             top_k: 64,
@@ -829,173 +736,111 @@ test.describe('Modern API page', () => {
             rep_pen: 1.08,
             rep_pen_range: 256,
         });
-        expect(writtenSecret).toMatchObject({
-            key: 'api_key_openrouter',
-            value: 'sk-secret-textgen',
-        });
+
+        // 采样参数清空不再悄悄存成 0
+        await page.locator('[data-textgen-sampling="top_k"]').fill('');
+        await page.locator('[data-textgen-sampling="top_k"]').blur();
+        await expect(page.locator('[data-api-field-error="textgenSampling-top_k"]')).toHaveText('请填写 Top K');
+        expect(saved.bodies.at(-1).textgenerationwebui_settings.top_k).toBe(64);
+        await page.locator('[data-textgen-sampling="top_k"]').fill('64');
+        await page.locator('[data-textgen-sampling="top_k"]').blur();
+        await expect(page.locator('[data-api-field-error="textgenSampling-top_k"]')).toHaveCount(0);
+
+        await page.locator('[data-textgen-api-key]').fill('sk-secret-textgen');
+        await page.locator('[data-textgen-api-key]').blur();
+        await expect.poll(() => secretWrites[0]).toMatchObject({ key: 'api_key_openrouter', value: 'sk-secret-textgen' });
         await expect(page.locator('body')).not.toContainText('sk-secret-textgen');
 
         await page.locator('[data-test-api]').click();
-
-        await expect.poll(() => statusBody).toMatchObject({
-            api_server: 'https://openrouter.ai/api/v1',
-            api_type: 'openrouter',
-        });
-        await expect(page.locator('.api-history-panel')).toContainText('openrouter/new-model');
+        await expect.poll(() => statusBody).toMatchObject({ api_server: 'https://openrouter.ai/api/v1', api_type: 'openrouter' });
+        await expect(page.locator('[data-api-test-detail]')).toContainText('openrouter/new-model');
     });
 
     test('saves every legacy text completion type with its model and secret mapping', async ({ page }) => {
-        let savedSettings = null;
-        const writtenSecrets = [];
         const settingsBundle = {
             settings: '',
+            ...emptyPresets(),
             textgenerationwebui_preset_names: ['Text Preset A'],
-            textgenerationwebui_presets: [
-                JSON.stringify({ temp: 0.7 }),
-            ],
-            openai_setting_names: [],
-            openai_settings: [],
+            textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 })],
         };
-
         await mockModernApiShell(page, settingsBundle);
-
-        await page.route('**/api/secrets/write', route => {
-            writtenSecrets.push(route.request().postDataJSON());
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const secretWrites = await routeSecretWrites(page);
 
         for (const [index, item] of textCompletionCases.entries()) {
             const savedTextgen = {
                 type: item.type,
-                server_urls: {
-                    [item.type]: `http://127.0.0.1:${9100 + index}/saved`,
-                },
+                server_urls: { [item.type]: `http://127.0.0.1:${9100 + index}/saved` },
                 preset: 'Text Preset A',
                 ...item.modelSettings,
             };
-
-            savedSettings = null;
-            writtenSecrets.length = 0;
-            settingsBundle.settings = JSON.stringify({
-                main_api: 'textgenerationwebui',
-                textgenerationwebui_settings: savedTextgen,
-            });
+            saved.bodies.length = 0;
+            secretWrites.length = 0;
+            settingsBundle.settings = JSON.stringify({ main_api: 'textgenerationwebui', textgenerationwebui_settings: savedTextgen });
 
             await page.goto('/modern/?view=api');
-            await expect(page.locator('[data-textgen-type]')).toBeVisible();
+            await expect(page.locator('[data-textgen-type]')).toHaveValue(item.type);
 
             const typeOptions = await page.locator('[data-textgen-type] option').evaluateAll(options => options.map(option => option.value));
             expect([...typeOptions].sort()).toEqual(textCompletionCases.map(({ type }) => type).sort());
-            await expect(page.locator('[data-textgen-type]')).toHaveValue(item.type);
             await expect(page.locator('[data-textgen-endpoint]')).toHaveValue(savedTextgen.server_urls[item.type]);
-            await expect(page.locator('[data-textgen-model]')).toHaveValue(item.initialModel);
 
             const newEndpoint = `http://127.0.0.1:${9200 + index}/${item.type}`;
             await page.locator('[data-textgen-endpoint]').fill(newEndpoint);
-            await page.locator('[data-textgen-preset]').selectOption('Text Preset A');
-            await page.locator('[data-textgen-model]').fill(item.modelValue);
-            await page.locator('[data-textgen-api-key]').evaluate(setInputValue, item.secretValue);
-            await page.locator('[data-save-api-connection]').click();
+            await page.locator('[data-textgen-endpoint]').press('Enter');
+            await expect.poll(() => saved.bodies.at(-1)?.textgenerationwebui_settings?.server_urls?.[item.type]).toBe(newEndpoint);
 
-            await expect.poll(() => savedSettings?.textgenerationwebui_settings?.type).toBe(item.type);
-            expect(savedSettings.main_api).toBe('textgenerationwebui');
-            expect(savedSettings.textgenerationwebui_settings).toMatchObject({
-                type: item.type,
-                preset: 'Text Preset A',
-                server_urls: {
-                    [item.type]: newEndpoint,
-                },
-                ...item.expectedModelSettings,
-            });
-            expect(savedSettings.textgenerationwebui_settings).not.toHaveProperty('model');
-            expect(writtenSecrets.map(({ key, value }) => ({ key, value }))).toEqual(item.expectedSecretWrites);
+            await editTextCompletionModelAndKey(page, item, saved, secretWrites);
+            expect(saved.bodies.at(-1).textgenerationwebui_settings).toMatchObject({ type: item.type, preset: 'Text Preset A', ...item.expectedModelSettings });
+            expect(saved.bodies.at(-1).textgenerationwebui_settings).not.toHaveProperty('model');
+            expect(secretWrites.map(({ key, value }) => ({ key, value }))).toEqual(item.expectedSecretWrites);
         }
     });
 
-    test('refreshes text completion fields when switching source in the modern editor', async ({ page }) => {
-        let savedSettings = null;
+    test('switching the text completion source saves it and shows that source\'s endpoint, model and key', async ({ page }) => {
         const settingsBundle = {
             settings: JSON.stringify({
                 main_api: 'textgenerationwebui',
                 textgenerationwebui_settings: {
                     type: 'openrouter',
-                    server_urls: {
-                        openrouter: 'https://openrouter.ai/api',
-                        ollama: 'http://127.0.0.1:11434',
-                    },
+                    server_urls: { openrouter: 'https://openrouter.ai/api', ollama: 'http://127.0.0.1:11434' },
                     openrouter_model: 'openrouter/auto',
                     ollama_model: 'llama3.1',
                     preset: 'Text Preset A',
                 },
             }),
-            textgenerationwebui_preset_names: ['Text Preset A'],
-            textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 })],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
-
         await mockModernApiShell(page, settingsBundle, {
             api_key_openrouter: [{ id: 'saved', value: '********ret', label: 'saved', active: true }],
         });
-
-        await page.route('**/api/settings/save', route => {
-            savedSettings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(savedSettings);
-            return route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ ok: true }),
-            });
-        });
+        const saved = await routeSettingsSave(page, settingsBundle);
 
         await page.goto('/modern/?view=api');
-
-        await expect(page.locator('[data-textgen-type]')).toHaveValue('openrouter');
-        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('https://openrouter.ai/api');
-        await expect(page.locator('[data-textgen-model]')).toHaveValue('openrouter/auto');
-        await expect(page.locator('[data-textgen-secret-status]')).toHaveText('密钥已保存');
+        await expect(page.locator('[data-textgen-field="api-key"]')).toBeVisible();
 
         await page.locator('[data-textgen-type]').selectOption('ollama');
-
+        await expect.poll(() => saved.bodies.at(-1)?.textgenerationwebui_settings?.type).toBe('ollama');
         await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('http://127.0.0.1:11434');
         await expect(page.locator('[data-textgen-model]')).toHaveValue('llama3.1');
-        await expect(page.locator('[data-textgen-secret-status]')).toHaveText('无密钥字段');
-        await expect(page.locator('[data-textgen-field="api-key"]')).toBeHidden();
+        await expect(page.locator('[data-textgen-field="api-key"]')).toHaveCount(0);
 
         await page.locator('[data-textgen-endpoint]').fill('http://127.0.0.1:11435');
+        await page.locator('[data-textgen-endpoint]').blur();
         await page.locator('[data-textgen-model]').fill('llama3.2');
-        await page.locator('[data-save-api-connection]').click();
-
-        await expect.poll(() => savedSettings?.textgenerationwebui_settings?.type).toBe('ollama');
-        expect(savedSettings.textgenerationwebui_settings).toMatchObject({
+        await page.locator('[data-textgen-model]').blur();
+        await expect.poll(() => saved.bodies.at(-1)?.textgenerationwebui_settings?.ollama_model).toBe('llama3.2');
+        expect(saved.bodies.at(-1).textgenerationwebui_settings).toMatchObject({
             type: 'ollama',
-            ollama_model: 'llama3.2',
-            server_urls: {
-                openrouter: 'https://openrouter.ai/api',
-                ollama: 'http://127.0.0.1:11435',
-            },
+            server_urls: { openrouter: 'https://openrouter.ai/api', ollama: 'http://127.0.0.1:11435' },
+            openrouter_model: 'openrouter/auto',
         });
-        expect(savedSettings.textgenerationwebui_settings.openrouter_model).toBe('openrouter/auto');
     });
 });
 
-// 上下文长度（openai_max_context）此前在现代页任何地方都不能改，实际一直是旧版默认的 4095。
-// 范围按来源、模型和「解锁上限」变化，对齐旧版 onModelChange；提示词预算 = 上下文 − Max Tokens。
-test.describe('Modern API context length', () => {
+// 上下文长度：不再要求先勾选「解锁上限」。超过按模型的上限只提示，保存时自动替引擎打开解锁标记；
+// 长度和连接字段分开保存，端点没填也能改长度。
+test.describe('Modern connection lengths', () => {
     const chatBundle = (oaiSettings = {}) => ({
         settings: JSON.stringify({
             main_api: 'openai',
@@ -1008,27 +853,14 @@ test.describe('Modern API context length', () => {
                 ...oaiSettings,
             },
         }),
-        textgenerationwebui_preset_names: [],
-        textgenerationwebui_presets: [],
+        ...emptyPresets(),
         openai_setting_names: ['Chat Preset A'],
         openai_settings: [JSON.stringify({ name: 'Chat Preset A', openai_max_context: 4095 })],
     });
 
-    async function routeSettingsSave(page, settingsBundle, order = []) {
-        const saved = { bodies: [] };
-        await page.route('**/api/settings/save', route => {
-            const body = route.request().postDataJSON();
-            saved.bodies.push(body);
-            settingsBundle.settings = JSON.stringify(body);
-            order.push('settings saved');
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-        return saved;
-    }
-
-    test('saves a larger context length and the unlock flag, then reloads the engine settings', async ({ page }) => {
+    test('a context above the model limit saves with the engine unlock flag and only warns', async ({ page }) => {
         const order = [];
-        const settingsBundle = chatBundle();
+        const settingsBundle = chatBundle({ chat_completion_source: 'openai', openai_model: 'gpt-4o' });
         const bridgeCalls = await mockModernApiShell(page, settingsBundle, {}, {
             replies: { reloadSettings: () => { order.push('engine reloaded'); } },
         });
@@ -1038,140 +870,68 @@ test.describe('Modern API context length', () => {
 
         const contextInput = page.locator('[data-api-max-context]');
         const hint = page.locator('[data-api-context-hint]');
-        // Without the field the budget was fixed at 4095 - 300 = 3795 tokens
         await expect(contextInput).toHaveValue('4095');
-        await expect(contextInput).toHaveAttribute('min', '512');
         await expect(contextInput).toHaveAttribute('max', '2000000');
-        await expect(hint).toContainText('上限 2,000,000');
-        await expect(hint).toContainText('提示词预算 = 上下文 − Max Tokens（当前 3,795）');
-        await expect(page.locator('[data-api-max-context-unlocked]')).not.toBeChecked();
+        await expect(hint).toHaveText('当前模型已知上限 128,000；提示词预算 3,795（上下文 − 回复长度）');
+        await expect(page.locator('[data-api-max-context-unlocked]')).toHaveCount(0);
 
-        await contextInput.fill('32000');
-        await page.locator('[data-save-api-connection]').click();
+        // 输入时说明就跟着变，失焦才保存
+        await contextInput.fill('200000');
+        await expect(hint).toContainText('超过当前模型已知上限 128,000，请求可能被服务拒绝');
+        await expect(hint).toHaveClass(/is-warning/);
+        expect(saved.bodies).toEqual([]);
+        await contextInput.blur();
 
-        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.openai_max_context).toBe(32000);
-        expect(saved.bodies.at(-1).oai_settings).toMatchObject({ max_context_unlocked: false, openai_max_tokens: 300 });
-        // The engine is told to reload after the file is written, not before
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings).toMatchObject({ openai_max_context: 200000, max_context_unlocked: true, openai_max_tokens: 300 });
         await expect.poll(() => order).toEqual(['settings saved', 'engine reloaded']);
-        expect(bridgeCalls.map(call => call.action)).toContain('reloadSettings');
-        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
-        await expect(contextInput).toHaveValue('32000');
-        await expect(hint).toContainText('（当前 31,700）');
-    });
+        expect(bridgeCalls.filter(call => call.action === 'reloadSettings')).toHaveLength(1);
+        await expect(saveStatus(page)).toContainText('上下文长度已保存');
+        await expect(page.locator('.field-error')).toHaveCount(0);
 
-    test('the allowed range follows the source, the model and the unlock checkbox', async ({ page }) => {
-        const settingsBundle = chatBundle({
-            chat_completion_source: 'openai',
-            openai_model: 'gpt-4o',
-            deepseek_model: 'deepseek-chat',
-            openrouter_model: 'openai/gpt-4.1',
-        });
-        await mockModernApiShell(page, settingsBundle);
+        // 「填入模型上限」写回 128,000，解锁标记随之关掉
+        await page.locator('[data-api-context-fill]').click();
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings).toMatchObject({ openai_max_context: 128000, max_context_unlocked: false });
+        await expect(contextInput).toHaveValue('128000');
+        await expect(page.locator('[data-api-context-fill]')).toBeHidden();
 
-        await page.goto('/modern/?view=api');
-
-        const contextInput = page.locator('[data-api-max-context]');
-        const hint = page.locator('[data-api-context-hint]');
-        await expect(contextInput).toHaveAttribute('max', '128000');
-        await expect(hint).toContainText('上限 128,000；提示词预算 = 上下文 − Max Tokens');
-
-        // Typing another model refreshes the limit when the field loses focus
+        // 换成上限更小的模型时，解锁标记跟着模型重新判断，保存的上下文才不会被引擎钳回去
         await page.locator('[data-api-model]').fill('gpt-4');
         await page.locator('[data-api-model]').blur();
-        await expect(contextInput).toHaveAttribute('max', '8191');
-        await expect(hint).toContainText('上限 8,191');
-
-        await page.locator('[data-api-max-context-unlocked]').check();
-        await expect(contextInput).toHaveAttribute('max', '2000000');
-        await expect(hint).toContainText('已解锁，上限 2,000,000');
-        await page.locator('[data-api-max-context-unlocked]').uncheck();
-        await expect(contextInput).toHaveAttribute('max', '8191');
-
-        // A model suggestion fills the model without a change event, the limit still follows
-        await page.locator('[data-api-model-suggestion="gpt-4.1"]').click();
-        await expect(page.locator('[data-api-model]')).toHaveValue('gpt-4.1');
-        await expect(contextInput).toHaveAttribute('max', '1000000');
-
-        await page.locator('[data-api-source]').selectOption('deepseek');
-        await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-chat');
-        await expect(contextInput).toHaveAttribute('max', '1000000');
-        await page.locator('[data-api-max-context-unlocked]').check();
-        await expect(contextInput).toHaveAttribute('max', '2000000');
-        await page.locator('[data-api-max-context-unlocked]').uncheck();
-
-        // The remote model list decides here: the page can only offer the legacy fallback as a reference
-        await page.locator('[data-api-source]').selectOption('openrouter');
-        await expect(hint).toContainText('参考上限 128,000');
-        await expect(hint).toContainText('生成时可能按实际模型再收紧');
-        await expect(contextInput).toHaveAttribute('max', '2000000');
-
-        await page.locator('[data-api-source]').selectOption('custom');
-        await expect(hint).toContainText('上限 2,000,000（该来源固定，不受“解锁上限”影响）');
-        await expect(contextInput).toHaveAttribute('max', '2000000');
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings).toMatchObject({ openai_model: 'gpt-4', max_context_unlocked: true });
+        await expect(hint).toContainText('超过当前模型已知上限 8,191');
     });
 
-    test('blocks saving and testing when the context length is out of range or Max Tokens is not below it', async ({ page }) => {
-        const settingsBundle = chatBundle({ chat_completion_source: 'openai', openai_model: 'gpt-4' });
-        const generateBodies = [];
+    test('sources without a fixed limit explain why and offer no fill button', async ({ page }) => {
+        const settingsBundle = chatBundle({ openrouter_model: 'openai/gpt-4.1' });
         await mockModernApiShell(page, settingsBundle);
-        const saved = await routeSettingsSave(page, settingsBundle);
-        await page.route('**/api/backends/chat-completions/generate', route => {
-            generateBodies.push(route.request().postDataJSON());
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: 'OK' } }] }) });
-        });
+        await routeSettingsSave(page, settingsBundle);
 
         await page.goto('/modern/?view=api');
 
-        const contextInput = page.locator('[data-api-max-context]');
-        const contextError = page.locator('[data-api-field-error="maxContext"]');
-        const maxTokensError = page.locator('[data-api-field-error="maxTokens"]');
+        const hint = page.locator('[data-api-context-hint]');
+        await expect(hint).toContainText('该来源不限制上下文长度');
+        await expect(page.locator('[data-api-context-fill]')).toBeHidden();
 
-        // gpt-4 only has an 8k window in the legacy limits
-        await contextInput.fill('100000');
-        await page.locator('[data-save-api-connection]').click();
-        await expect(contextError).toHaveText('上下文长度 需为 512 到 8,191 之间的整数（模型确实支持更长上下文时，可勾选“解锁上限”放宽到 2,000,000）');
-        await expect(contextInput).toHaveAttribute('aria-invalid', 'true');
-        await expect(contextInput).toHaveAttribute('aria-describedby', 'api-field-error-maxContext');
-        await expect(page.locator('.toast', { hasText: '连接配置未保存' })).toContainText('上下文长度 需为 512 到 8,191');
-        await expect(contextInput).toBeFocused();
-
-        // The same check guards the connection test, which must not send out-of-range settings either
-        await page.locator('[data-test-api]').click();
-        await expect(page.locator('.toast', { hasText: '连接测试未执行' })).toBeVisible();
-        expect(generateBodies).toEqual([]);
-        expect(saved.bodies).toEqual([]);
-
-        // Lowering the field clears its error; Max Tokens that fills the whole context is the next problem
-        await contextInput.fill('5000');
-        await page.locator('[data-api-max-tokens]').fill('6000');
-        await page.locator('[data-save-api-connection]').click();
-        await expect(maxTokensError).toHaveText('Max Tokens 需小于上下文长度（5,000），否则没有空间放提示词');
-        await expect(page.locator('[data-api-max-tokens]')).toHaveAttribute('aria-invalid', 'true');
-        await expect(contextError).toBeHidden();
-        expect(saved.bodies).toEqual([]);
-
-        // Raising the context length answers the Max Tokens error without touching that field
-        await contextInput.fill('8000');
-        await contextInput.blur();
-        await expect(maxTokensError).toBeHidden();
-        await expect(page.locator('[data-api-max-tokens]')).not.toHaveAttribute('aria-invalid', 'true');
-
-        await page.locator('[data-save-api-connection]').click();
-        await expect.poll(() => saved.bodies.length).toBe(1);
-        expect(saved.bodies[0].oai_settings).toMatchObject({ openai_max_context: 8000, openai_max_tokens: 6000, openai_model: 'gpt-4' });
-        // The toast comes after the page re-rendered with the saved values, so later edits are not overwritten
-        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
-        await expect(page.locator('.field-error:visible')).toHaveCount(0);
-
-        // Unlocking lifts the model limit
-        await contextInput.fill('100000');
-        await page.locator('[data-api-max-context-unlocked]').check();
-        await page.locator('[data-save-api-connection]').click();
-        await expect.poll(() => saved.bodies.length).toBe(2);
-        expect(saved.bodies[1].oai_settings).toMatchObject({ openai_max_context: 100000, max_context_unlocked: true });
+        await page.locator('[data-api-source]').selectOption('openrouter');
+        await expect(hint).toContainText('参考上限 128,000，实际以该来源的模型列表为准');
+        await expect(page.locator('[data-api-context-fill]')).toBeHidden();
     });
 
-    test('edits the text completion context length, response length and unlock flag', async ({ page }) => {
+    test('a reply as long as the context is saved but flagged', async ({ page }) => {
+        const settingsBundle = chatBundle();
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+        await page.locator('[data-api-max-tokens]').fill('5000');
+        await page.locator('[data-api-max-tokens]').blur();
+
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.openai_max_tokens).toBe(5000);
+        await expect(page.locator('[data-api-context-hint]')).toContainText('回复长度不小于上下文长度，没有空间放提示词');
+        await expect(page.locator('[data-api-context-hint]')).toHaveClass(/is-warning/);
+    });
+
+    test('text completion lengths save even while the endpoint is still empty', async ({ page }) => {
         const order = [];
         const settingsBundle = {
             settings: JSON.stringify({
@@ -1179,16 +939,9 @@ test.describe('Modern API context length', () => {
                 max_context: 8192,
                 amount_gen: 350,
                 power_user: { max_context_unlocked: false, keep_me: 'untouched' },
-                textgenerationwebui_settings: {
-                    type: 'ooba',
-                    server_urls: { ooba: 'http://127.0.0.1:5000' },
-                    custom_model: 'ooba/saved-model',
-                },
+                textgenerationwebui_settings: { type: 'ooba', server_urls: {} },
             }),
-            textgenerationwebui_preset_names: [],
-            textgenerationwebui_presets: [],
-            openai_setting_names: [],
-            openai_settings: [],
+            ...emptyPresets(),
         };
         const bridgeCalls = await mockModernApiShell(page, settingsBundle, {}, {
             replies: { reloadSettings: () => { order.push('engine reloaded'); } },
@@ -1200,57 +953,52 @@ test.describe('Modern API context length', () => {
         const contextInput = page.locator('[data-textgen-max-context]');
         const responseInput = page.locator('[data-textgen-amount-gen]');
         const hint = page.locator('[data-textgen-context-hint]');
-        const unlocked = page.locator('[data-textgen-max-context-unlocked]');
+        await expect(page.locator('[data-textgen-endpoint]')).toHaveValue('');
         await expect(contextInput).toHaveValue('8192');
+        await expect(contextInput).toHaveAttribute('max', '524288');
         await expect(responseInput).toHaveValue('350');
-        await expect(unlocked).not.toBeChecked();
-        await expect(hint).toContainText('上下文 512 到 8,192，回复 16 到 2,048');
-        await expect(hint).toContainText('提示词预算 = 上下文 − 回复长度（当前 7,842）');
+        await expect(hint).toHaveText('提示词预算 7,842（上下文 − 回复长度）');
+        await expect(page.locator('[data-textgen-max-context-unlocked]')).toHaveCount(0);
 
-        // Locked: 16384 is beyond the legacy slider, so nothing is written
-        await contextInput.fill('16384');
-        await responseInput.fill('99999');
-        await page.locator('[data-save-api-connection]').click();
-        await expect(page.locator('[data-api-field-error="textMaxContext"]')).toHaveText('上下文长度 需为 512 到 8,192 之间的整数（模型确实支持更长时，可勾选“解锁上限”放宽）');
-        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toContainText('回复长度 需为 16 到 2,048 之间的整数');
-        await expect(page.locator('.toast', { hasText: '文本补全连接未保存' })).toBeVisible();
-        expect(saved.bodies).toEqual([]);
-
-        // Unlocking widens both ranges and re-judges the visible errors
-        await unlocked.check();
-        await expect(hint).toContainText('已解锁');
-        await expect(page.locator('[data-api-field-error="textMaxContext"]')).toBeHidden();
-        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toContainText('16 到 65,536');
-
-        // The reply cannot fill the whole context
-        await responseInput.fill('20000');
-        await page.locator('[data-save-api-connection]').click();
-        await expect(page.locator('[data-api-field-error="textAmountGen"]')).toHaveText('回复长度 需小于上下文长度（16,384），否则没有空间放提示词');
-        expect(saved.bodies).toEqual([]);
-
-        await responseInput.fill('4096');
-        await page.locator('[data-save-api-connection]').click();
-
+        await contextInput.fill('32768');
+        await contextInput.blur();
         await expect.poll(() => saved.bodies.length).toBe(1);
         expect(saved.bodies[0]).toMatchObject({
             main_api: 'textgenerationwebui',
-            max_context: 16384,
-            amount_gen: 4096,
+            max_context: 32768,
+            amount_gen: 350,
             power_user: { max_context_unlocked: true, keep_me: 'untouched' },
         });
         await expect.poll(() => order).toEqual(['settings saved', 'engine reloaded']);
         expect(bridgeCalls.map(call => call.action)).toContain('reloadSettings');
-        await expect(contextInput).toHaveValue('16384');
-        await expect(unlocked).toBeChecked();
+
+        await responseInput.fill('4096');
+        await responseInput.blur();
+        await expect.poll(() => saved.bodies.at(-1)?.amount_gen).toBe(4096);
+        await expect(hint).toHaveText('提示词预算 28,672（上下文 − 回复长度）');
+
+        // 降回旧版未解锁的范围时解锁标记跟着关掉
+        await contextInput.fill('4096');
+        await contextInput.blur();
+        await responseInput.fill('350');
+        await responseInput.blur();
+        await expect.poll(() => saved.bodies.at(-1)).toMatchObject({ max_context: 4096, amount_gen: 350, power_user: { max_context_unlocked: false } });
+
+        // 端点填错只报它自己的错，不影响别的字段
+        await page.locator('[data-textgen-endpoint]').fill('127.0.0.1:5000');
+        await page.locator('[data-textgen-endpoint]').blur();
+        await expect(page.locator('[data-api-field-error="textgenEndpoint"]')).toContainText('完整地址');
+
+        // 范围外的值不保存
+        const before = saved.bodies.length;
+        await contextInput.fill('600000');
+        await contextInput.blur();
+        await expect(page.locator('[data-api-field-error="textMaxContext"]')).toHaveText('上下文长度 需为 512 到 524,288 之间的整数');
+        expect(saved.bodies).toHaveLength(before);
     });
 
     test('saving the current configuration as a preset keeps the context length and unlock flag', async ({ page }) => {
-        const settingsBundle = chatBundle({
-            preset_settings_openai: 'Chat Preset A',
-            openai_max_context: 32000,
-            max_context_unlocked: true,
-            siliconflow_model: 'ignored',
-        });
+        const settingsBundle = chatBundle({ preset_settings_openai: 'Chat Preset A', openai_max_context: 32000, max_context_unlocked: true, siliconflow_model: 'ignored' });
         let presetSave = null;
         await mockModernApiShell(page, settingsBundle);
         await routeSettingsSave(page, settingsBundle);
@@ -1270,88 +1018,55 @@ test.describe('Modern API context length', () => {
     });
 });
 
-// Saving a connection used to leave the hidden generation engine on its boot-time settings, and the engine only learned
-// about a preset or connection change through unrelated reloads. Each of the five editors must now wait for the engine to
-// reload before it refreshes the page state and reports the save.
-test.describe('Modern API engine sync', () => {
-    const chatCompletionBundle = () => ({
+// 保存、引擎同步和失败处理：每次改动都先落盘，再通知引擎重载；失败时回滚并说明。
+test.describe('Modern connection autosave', () => {
+    const chatBundle = () => ({
         settings: JSON.stringify({
             main_api: 'openai',
-            oai_settings: {
-                chat_completion_source: 'custom',
-                custom_model: 'custom/saved-model',
-                custom_url: 'https://saved.example/v1',
-                preset_settings_openai: 'Chat Preset A',
-                temp_openai: 0.7,
-                openai_max_tokens: 300,
-                top_p_openai: 0.9,
-                freq_pen_openai: 0.1,
-                pres_pen_openai: 0.2,
-            },
+            oai_settings: { chat_completion_source: 'custom', custom_model: 'custom/saved-model', custom_url: 'https://saved.example/v1', temp_openai: 0.7, openai_max_tokens: 300 },
         }),
-        textgenerationwebui_preset_names: [],
-        textgenerationwebui_presets: [],
-        openai_setting_names: ['Chat Preset A'],
-        openai_settings: [JSON.stringify({ name: 'Chat Preset A' })],
+        ...emptyPresets(),
     });
-    const emptyPresets = {
-        textgenerationwebui_preset_names: [],
-        textgenerationwebui_presets: [],
-        openai_setting_names: [],
-        openai_settings: [],
-    };
-    const saveCases = [
+    const editCases = [
         {
             name: 'chat completion',
-            bundle: chatCompletionBundle,
-            toast: '连接配置已保存',
-            edit: page => page.locator('[data-api-model]').fill('custom/new-model'),
+            bundle: chatBundle,
+            edit: async page => {
+                await page.locator('[data-api-model]').fill('custom/new-model');
+                await page.locator('[data-api-model]').blur();
+            },
             expectSaved: saved => expect(saved.oai_settings.custom_model).toBe('custom/new-model'),
         },
         {
             name: 'text completion',
             bundle: () => ({
-                settings: JSON.stringify({
-                    main_api: 'textgenerationwebui',
-                    textgenerationwebui_settings: {
-                        type: 'openrouter',
-                        server_urls: { openrouter: 'https://openrouter.ai/api' },
-                        openrouter_model: 'openrouter/auto',
-                        preset: 'Text Preset A',
-                        temp: 0.7,
-                        top_p: 0.5,
-                        top_k: 40,
-                        min_p: 0.01,
-                        rep_pen: 1.2,
-                        rep_pen_range: 0,
-                    },
-                }),
-                ...emptyPresets,
-                textgenerationwebui_preset_names: ['Text Preset A'],
-                textgenerationwebui_presets: [JSON.stringify({ temp: 0.7 })],
+                settings: JSON.stringify({ main_api: 'textgenerationwebui', textgenerationwebui_settings: { type: 'openrouter', server_urls: { openrouter: 'https://openrouter.ai/api' }, openrouter_model: 'openrouter/auto' } }),
+                ...emptyPresets(),
             }),
-            toast: '文本补全连接已保存',
-            edit: page => page.locator('[data-textgen-model]').fill('openrouter/new-model'),
+            edit: async page => {
+                await page.locator('[data-textgen-model]').fill('openrouter/new-model');
+                await page.locator('[data-textgen-model]').blur();
+            },
             expectSaved: saved => expect(saved.textgenerationwebui_settings.openrouter_model).toBe('openrouter/new-model'),
         },
         {
             name: 'KoboldAI',
-            bundle: () => ({ settings: JSON.stringify({ main_api: 'kobold', api_server: 'http://saved.kobold:5000/api' }), ...emptyPresets }),
-            toast: 'KoboldAI 连接已保存',
-            edit: page => page.locator('[data-kobold-api-url]').fill('http://new.kobold:5001/api'),
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'kobold', api_server: 'http://saved.kobold:5000/api' }), ...emptyPresets() }),
+            edit: async page => {
+                await page.locator('[data-kobold-api-url]').fill('http://new.kobold:5001/api');
+                await page.locator('[data-kobold-api-url]').blur();
+            },
             expectSaved: saved => expect(saved.api_server).toBe('http://new.kobold:5001/api'),
         },
         {
             name: 'NovelAI',
-            bundle: () => ({ settings: JSON.stringify({ main_api: 'novel', model_novel: 'kayra-v1' }), ...emptyPresets }),
-            toast: 'NovelAI 连接已保存',
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'novel', model_novel: 'kayra-v1' }), ...emptyPresets() }),
             edit: page => page.locator('[data-novel-model]').selectOption('llama-3-erato-v1'),
             expectSaved: saved => expect(saved.model_novel).toBe('llama-3-erato-v1'),
         },
         {
             name: 'AI Horde',
-            bundle: () => ({ settings: JSON.stringify({ main_api: 'koboldhorde', horde_settings: { models: ['koboldcpp/model-a'] } }), ...emptyPresets }),
-            toast: 'AI Horde 连接已保存',
+            bundle: () => ({ settings: JSON.stringify({ main_api: 'koboldhorde', horde_settings: { models: ['koboldcpp/model-a'] } }), ...emptyPresets() }),
             routes: page => page.route('**/api/horde/text-models', route => route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -1365,22 +1080,10 @@ test.describe('Modern API engine sync', () => {
         },
     ];
 
-    async function routeSettingsSave(page, settingsBundle, sequence) {
-        const saved = { settings: null };
-        await page.route('**/api/settings/save', route => {
-            saved.settings = route.request().postDataJSON();
-            settingsBundle.settings = JSON.stringify(saved.settings);
-            sequence.push('settings saved');
-            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-        });
-        return saved;
-    }
-
-    for (const saveCase of saveCases) {
-        test(`${saveCase.name}: the save waits for the engine reload before refreshing and reporting`, async ({ page }) => {
-            const settingsBundle = saveCase.bundle();
+    for (const editCase of editCases) {
+        test(`${editCase.name}: a change is saved first and then the engine reloads`, async ({ page }) => {
+            const settingsBundle = editCase.bundle();
             const sequence = [];
-            let settingsReads = 0;
             let releaseReload = () => {};
             const reloadGate = new Promise(resolve => {
                 releaseReload = resolve;
@@ -1394,60 +1097,96 @@ test.describe('Modern API engine sync', () => {
                     },
                 },
             });
-            await page.route('**/api/settings/get', route => {
-                settingsReads++;
-                return route.fallback();
-            });
             const saved = await routeSettingsSave(page, settingsBundle, sequence);
-            await saveCase.routes?.(page);
+            await editCase.routes?.(page);
 
             await page.goto('/modern/?view=api');
-            await expect(page.locator('[data-save-api-connection]')).toBeVisible();
-            await saveCase.edit(page);
-            await page.locator('[data-save-api-connection]').click();
+            await editCase.edit(page);
 
             // The engine is asked only after the settings are on disk
             await expect.poll(() => sequence).toEqual(['settings saved', 'engine reload started']);
-            saveCase.expectSaved(saved.settings);
-            const readsWhileWaiting = settingsReads;
-            // Intentional wait: the assertion is that neither the toast nor the page refresh happens while the engine is still reloading
-            // eslint-disable-next-line playwright/no-wait-for-timeout
-            await page.waitForTimeout(700);
-            expect(await page.locator('.toast', { hasText: saveCase.toast }).count()).toBe(0);
-            expect(settingsReads).toBe(readsWhileWaiting);
+            editCase.expectSaved(saved.bodies.at(-1));
+            await expect(saveStatus(page)).toContainText('已保存');
 
             releaseReload();
-            await expect(page.locator('.toast', { hasText: saveCase.toast })).toBeVisible();
-            expect(sequence).toEqual(['settings saved', 'engine reload started', 'engine reload finished']);
-            expect(settingsReads).toBeGreaterThan(readsWhileWaiting);
+            await expect.poll(() => sequence).toEqual(['settings saved', 'engine reload started', 'engine reload finished']);
             expect(bridgeCalls.filter(call => call.action === 'reloadSettings')).toHaveLength(1);
         });
     }
 
-    test('a failed engine reload still saves and the toast says the engine is out of sync', async ({ page }) => {
-        const settingsBundle = chatCompletionBundle();
-        const sequence = [];
+    test('a failed engine reload keeps the save and the status says the engine is out of sync', async ({ page }) => {
+        const settingsBundle = chatBundle();
         await mockModernApiShell(page, settingsBundle, {}, {
-            replies: {
-                reloadSettings: () => {
-                    throw new Error('engine unavailable');
-                },
-            },
+            replies: { reloadSettings: () => { throw new Error('engine unavailable'); } },
         });
-        const saved = await routeSettingsSave(page, settingsBundle, sequence);
+        const saved = await routeSettingsSave(page, settingsBundle);
 
         await page.goto('/modern/?view=api');
         await page.locator('[data-api-model]').fill('custom/new-model');
-        await page.locator('[data-save-api-connection]').click();
+        await page.locator('[data-api-model]').blur();
 
-        const toast = page.locator('.toast', { hasText: '连接配置已保存' });
-        await expect(toast).toBeVisible();
-        await expect(toast).toContainText('生成引擎未能同步：engine unavailable');
-        expect(saved.settings.oai_settings.custom_model).toBe('custom/new-model');
+        await expect(saveStatus(page)).toContainText('已保存，但生成引擎未同步');
+        await expect(saveStatus(page)).toHaveAttribute('title', /engine unavailable/);
+        expect(saved.bodies.at(-1).oai_settings.custom_model).toBe('custom/new-model');
+    });
+
+    test('a failed save is rolled back, reported and the field shows the saved value again', async ({ page }) => {
+        const settingsBundle = chatBundle();
+        const bridgeCalls = await mockModernApiShell(page, settingsBundle);
+        await page.route('**/api/settings/save', route => route.fulfill({ status: 500, contentType: 'text/plain', body: 'disk full' }));
+
+        await page.goto('/modern/?view=api');
+        await page.locator('[data-api-temperature]').fill('1.3');
+        await page.locator('[data-api-temperature]').blur();
+
+        await expect(page.locator('.toast', { hasText: 'Temperature 保存失败' })).toBeVisible();
+        await expect(saveStatus(page)).toContainText('Temperature 保存失败');
+        await expect(page.locator('[data-api-temperature]')).toHaveValue('0.7');
+        expect(bridgeCalls.filter(call => call.action === 'reloadSettings')).toHaveLength(0);
+    });
+
+    test('typing that has not been saved yet survives a full page redraw', async ({ page }) => {
+        const settingsBundle = chatBundle();
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+        const temperature = page.locator('[data-api-temperature]');
+        await temperature.fill('0.85');
+        await expect(temperature).toBeFocused();
+
+        // 刷新数据会整页重绘（后台轮询也一样）；正在输入的值和焦点都要留下。
+        // Chromium 在移除正在编辑的输入框时会触发 change，这一项随之保存，同样不会丢
+        const inputBefore = await temperature.elementHandle();
+        await page.evaluate(() => /** @type {HTMLButtonElement} */ (document.querySelector('button[title="刷新数据"]')).click());
+        await expect.poll(() => inputBefore.evaluate(node => node.isConnected)).toBe(false);
+        await expect(temperature).toHaveValue('0.85');
+        await expect(temperature).toBeFocused();
+
+        await temperature.blur();
+        await expect.poll(() => saved.bodies.at(-1)?.oai_settings?.temp_openai).toBe(0.85);
+        expect(saved.bodies.filter(body => body.oai_settings.temp_openai === 0.85)).toHaveLength(1);
+    });
+
+    test('leaving a field unchanged does not write the settings again', async ({ page }) => {
+        const settingsBundle = chatBundle();
+        await mockModernApiShell(page, settingsBundle);
+        const saved = await routeSettingsSave(page, settingsBundle);
+
+        await page.goto('/modern/?view=api');
+        await page.locator('[data-api-model]').fill('custom/new-model');
+        await page.locator('[data-api-model]').press('Enter');
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        // 回车已经保存，随后失焦不再写一次
+        await page.locator('[data-api-model]').blur();
+        await page.locator('[data-api-temperature]').fill('0.7');
+        await page.locator('[data-api-temperature]').blur();
+        await expect(saveStatus(page)).toContainText('模型已保存');
+        expect(saved.bodies).toHaveLength(1);
     });
 });
 
-// 连接档案（B1）：API 页的「连接档案」区读写旧版连接管理扩展保存的真实档案（extension_settings.connectionManager）。
+// 连接档案（B1）：设置中心「模型连接」的「连接档案」区读写旧版连接管理扩展保存的真实档案（extension_settings.connectionManager）。
 // 映射、精确匹配和跳过原因由 tests/modern-connection-profiles.test.js 覆盖；聊天输入框旁的切换见 tests/modern-chat-connection.e2e.js。
 test.describe('Modern API connection profiles', () => {
     const claudeProfile = {
@@ -1540,10 +1279,9 @@ test.describe('Modern API connection profiles', () => {
         await expect(section(page).locator('.panel-title')).toHaveText('连接档案');
         await expect(section(page)).toContainText('还没有连接档案');
         await expect(section(page)).toContainText('精确匹配');
-        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('未创建');
-        // 页面上由当前设置整理出的来源卡仍在，改名为「连接来源概览」
-        await expect(page.locator('.panel-title', { hasText: '连接来源概览' })).toBeVisible();
-        await expect(page.locator('.api-profile-card')).toHaveCount(3);
+        // 由当前设置整理出的来源概览和诊断卡已去掉，只留真正保存的档案
+        await expect(page.locator('.api-profile-card')).toHaveCount(0);
+        await expect(page.locator('.api-diagnostic-card')).toHaveCount(0);
 
         await section(page).locator('[data-api-connection-profile-create-open]').click();
         const nameInput = section(page).locator('[data-api-connection-create-name]');
@@ -1572,17 +1310,18 @@ test.describe('Modern API connection profiles', () => {
         await expect(page.locator('.toast', { hasText: '已创建连接档案' })).toBeVisible();
         // 创建后附带同步引擎，页面其余部分不受影响
         await expect.poll(() => bridgeCalls.filter(call => call.action === 'reloadSettings').length).toBe(1);
-        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('1 个档案，当前：我的自定义连接');
     });
 
-    test('validates the name inline and keeps unsaved connection edits while the create form opens', async ({ page }) => {
+    test('validates the name inline and keeps the connection edit that was saved on the way', async ({ page }) => {
         const { saves } = await mockProfileWorkspace(page);
         await page.goto('/modern/?view=api');
 
         await page.locator('[data-api-model]').fill('custom/unsaved-edit');
         await section(page).locator('[data-api-connection-profile-create-open]').click();
-        // 只替换档案区，上面的表单没有被重绘
+        // 只替换档案区，上面的表单没有被重绘；离开模型框时这一项已经保存
         await expect(page.locator('[data-api-model]')).toHaveValue('custom/unsaved-edit');
+        await expect.poll(() => saves.length).toBe(1);
+        expect(saves[0].oai_settings.custom_model).toBe('custom/unsaved-edit');
 
         page.on('dialog', dialog => {
             throw new Error(`unexpected dialog: ${dialog.message()}`);
@@ -1596,7 +1335,7 @@ test.describe('Modern API connection profiles', () => {
         await nameInput.fill('');
         await nameInput.press('Enter');
         await expect(section(page).locator('[data-api-connection-error]')).toContainText('请填写档案名称');
-        expect(saves).toHaveLength(0);
+        expect(saves).toHaveLength(1);
 
         await section(page).locator('[data-api-connection-create-cancel]').click();
         await expect(section(page).locator('[data-api-connection-create-name]')).toHaveCount(0);
@@ -1615,7 +1354,6 @@ test.describe('Modern API connection profiles', () => {
         await expect(card(page, 'p-ooba')).toContainText('文本补全');
         await expect(card(page, 'p-ooba')).toContainText('http://127.0.0.1:5001');
         await expect(card(page, 'p-ooba')).toContainText('当前');
-        await expect(page.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: /^连接档案$/ }) })).toContainText('2 个档案，当前：本地 Ooba');
 
         await card(page, 'p-claude').locator('[data-api-connection-profile-apply]').click();
         const result = section(page).locator('[data-connection-result]');
@@ -1704,13 +1442,13 @@ test.describe('Modern API connection profiles', () => {
         expect(saves.at(-1).oai_settings.claude_model).toBe('claude-sonnet-4');
     });
 
-    test('saving the connection records the model in the recent-model list used by the chat switcher', async ({ page }) => {
+    test('saving the model records it in the recent-model list used by the chat switcher', async ({ page }) => {
         await mockProfileWorkspace(page);
         await page.goto('/modern/?view=api');
 
         await page.locator('[data-api-model]').fill('custom/new-model');
-        await page.locator('[data-save-api-connection]').click();
-        await expect(page.locator('.toast', { hasText: '连接配置已保存' })).toBeVisible();
+        await page.locator('[data-api-model]').blur();
+        await expect(page.locator('[data-settings-save-status]')).toContainText('模型已保存');
 
         const recent = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-recent-models') || '{}'));
         expect(recent['openai:custom']).toEqual(['custom/new-model']);

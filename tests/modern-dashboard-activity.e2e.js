@@ -272,10 +272,15 @@ test.describe('Modern dashboard and activity', () => {
         await expect(warning).toContainText('聊天补全来源未配置');
         await expect(warning).toContainText('模型未配置');
 
-        await warning.locator('[data-route="api"]').click();
+        const openConnection = warning.locator('[data-route="api"]');
+        await expect(openConnection).toContainText('打开模型连接');
+        await openConnection.click();
 
-        await expect(page).toHaveURL(/\/modern\/\?view=api/);
-        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        // The API page is now the 模型连接 tab of the settings center
+        await expect(page).toHaveURL(/\/modern\/\?view=settings(&|$)/);
+        await expect(page.locator('.page-title')).toHaveText('设置中心');
+        await expect(page.locator('.settings-tabs [data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-api-main]')).toBeVisible();
     });
 
     test('labels activity metrics in Chinese', async ({ page }) => {

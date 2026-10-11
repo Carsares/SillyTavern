@@ -1,15 +1,17 @@
 import {
     CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX,
-    describeChatCompletionContextHint,
-    describeTextCompletionLimitHint,
+    TEXT_COMPLETION_INPUT_RANGE,
+    describeChatCompletionContext,
+    describeTextCompletionContext,
     formatPercent,
     getChatCompletionContextLimits,
-    getChatCompletionContextRange,
+    getChatCompletionSuggestedContext,
     getIntegerRangeError,
     getPromptBudget,
-    getTextCompletionLimits,
     getUsageSummary,
     readContextSettings,
+    resolveChatContextUnlock,
+    resolveTextContextUnlock,
 } from '../public/modern/actions/chat-completion-limits.js';
 import { buildOpenAiPresetFromSettings } from '../public/modern/actions/openai-preset-fields.js';
 import { getChatUsageView } from '../public/modern/components/chat-usage-label.js';
@@ -149,10 +151,21 @@ describe('chat completion context limits mirror the legacy onModelChange clampin
         expect(limitsFor('brand-new-source', 'm')).toMatchObject({ max: 128000, dynamic: true });
     });
 
-    test('validation range only blocks beyond 2,000,000 for dynamic sources and uses the limit for the rest', () => {
-        expect(getChatCompletionContextRange(limitsFor('openai', 'gpt-4o'))).toEqual({ min: 512, max: 128000 });
-        expect(getChatCompletionContextRange(limitsFor('openrouter', 'x'))).toEqual({ min: 512, max: 2000000 });
-        expect(getChatCompletionContextRange(limitsFor('deepseek', 'x', true))).toEqual({ min: 512, max: 2000000 });
+    test('saving a context above the per-model limit turns the engine unlock flag on instead of being rejected', () => {
+        expect(resolveChatContextUnlock({ source: 'openai', model: 'gpt-4o', context: 200000 })).toBe(true);
+        expect(resolveChatContextUnlock({ source: 'openai', model: 'gpt-4o', context: 128000 })).toBe(false);
+        // 依赖模型列表的来源按参考上限判断
+        expect(resolveChatContextUnlock({ source: 'openrouter', model: 'x', context: 200000 })).toBe(true);
+        // 「解锁上限」对 custom、minimax 不起作用，不改这个字段
+        expect(resolveChatContextUnlock({ source: 'custom', model: 'x', context: 900000 })).toBeNull();
+        expect(resolveChatContextUnlock({ source: 'minimax', model: 'x', context: 900000 })).toBeNull();
+    });
+
+    test('the fill button offers the per-model limit only when the source has a fixed one', () => {
+        expect(getChatCompletionSuggestedContext({ source: 'openai', model: 'gpt-4o' })).toBe(128000);
+        expect(getChatCompletionSuggestedContext({ source: 'deepseek', model: 'deepseek-chat' })).toBe(1000000);
+        expect(getChatCompletionSuggestedContext({ source: 'openrouter', model: 'x' })).toBeNull();
+        expect(getChatCompletionSuggestedContext({ source: 'custom', model: 'x' })).toBeNull();
     });
 });
 
@@ -165,33 +178,35 @@ describe('prompt budget and hint text', () => {
         expect(getPromptBudget(4095, undefined)).toBeNaN();
     });
 
-    test('the hint states the limit, the formula and the current budget', () => {
-        expect(describeChatCompletionContextHint({ limits: limitsFor('custom', 'm'), context: 32000, maxTokens: 300 }))
-            .toBe('上限 2,000,000（该来源固定，不受“解锁上限”影响）；提示词预算 = 上下文 − Max Tokens（当前 31,700）');
-        expect(describeChatCompletionContextHint({ limits: limitsFor('openai', 'gpt-4o'), context: 4095, maxTokens: 300 }))
-            .toBe('上限 128,000；提示词预算 = 上下文 − Max Tokens（当前 3,795）');
-        expect(describeChatCompletionContextHint({ limits: limitsFor('deepseek', 'm', true), context: 4095, maxTokens: 300 }))
-            .toContain('已解锁，上限 2,000,000');
-        expect(describeChatCompletionContextHint({ limits: limitsFor('openrouter', 'm'), context: 4095, maxTokens: 300 }))
-            .toContain('参考上限 128,000（该来源的实际上限取决于远端模型列表，生成时可能按实际模型再收紧）');
-        // 输入还不是数字时只给公式
-        expect(describeChatCompletionContextHint({ limits: limitsFor('openai', 'gpt-4o'), context: '', maxTokens: 300 }))
-            .toBe('上限 128,000；提示词预算 = 上下文 − Max Tokens');
+    test('the chat completion hint states the model limit and the budget, and warns instead of blocking', () => {
+        expect(describeChatCompletionContext({ source: 'openai', model: 'gpt-4o', context: 4095, maxTokens: 300 }))
+            .toEqual({ text: '当前模型已知上限 128,000；提示词预算 3,795（上下文 − 回复长度）', level: 'info' });
+        expect(describeChatCompletionContext({ source: 'openai', model: 'gpt-4o', context: 200000, maxTokens: 300 }))
+            .toMatchObject({ level: 'warning', text: expect.stringContaining('超过当前模型已知上限 128,000') });
+        expect(describeChatCompletionContext({ source: 'custom', model: 'm', context: 32000, maxTokens: 300 }).text)
+            .toBe('该来源不限制上下文长度，按模型实际支持的长度填写；提示词预算 31,700（上下文 − 回复长度）');
+        expect(describeChatCompletionContext({ source: 'openrouter', model: 'm', context: 4095, maxTokens: 300 }).text)
+            .toContain('参考上限 128,000，实际以该来源的模型列表为准');
+        expect(describeChatCompletionContext({ source: 'openai', model: 'gpt-4o', context: 1000, maxTokens: 1000 }))
+            .toMatchObject({ level: 'warning', text: expect.stringContaining('没有空间放提示词') });
+        // 输入还不是数字时只说上限
+        expect(describeChatCompletionContext({ source: 'openai', model: 'gpt-4o', context: '', maxTokens: 300 }).text)
+            .toBe('当前模型已知上限 128,000');
     });
 });
 
 describe('text completion limits', () => {
-    test('locked and unlocked ranges follow power-user.js', () => {
-        expect(getTextCompletionLimits()).toEqual({
-            unlocked: false,
-            context: { min: 512, max: 8192 },
-            response: { min: 16, max: 2048 },
-        });
-        expect(getTextCompletionLimits({ unlocked: true })).toEqual({
-            unlocked: true,
+    test('the input range is the legacy unlocked range, without a lock switch', () => {
+        expect(TEXT_COMPLETION_INPUT_RANGE).toEqual({
             context: { min: 512, max: 524288 },
             response: { min: 16, max: 65536 },
         });
+    });
+
+    test('the engine unlock flag turns on only when a value passes the legacy locked limits', () => {
+        expect(resolveTextContextUnlock({ context: 8192, response: 350 })).toBe(false);
+        expect(resolveTextContextUnlock({ context: 32768, response: 350 })).toBe(true);
+        expect(resolveTextContextUnlock({ context: 8192, response: 4096 })).toBe(true);
     });
 
     test('integer range errors name the field and the allowed range', () => {
@@ -202,13 +217,12 @@ describe('text completion limits', () => {
         expect(getIntegerRangeError({ label: '回复长度', text: 'abc', min: 16, max: 2048 })).toBe('回复长度 需为 16 到 2,048 之间的整数');
     });
 
-    test('the hint shows both ranges, the unlock option and the budget', () => {
-        const hint = describeTextCompletionLimitHint({ limits: getTextCompletionLimits(), context: 8192, response: 350 });
-        expect(hint).toContain('上下文 512 到 8,192');
-        expect(hint).toContain('勾选“解锁上限”后上下文可到 524,288');
-        expect(hint).toContain('提示词预算 = 上下文 − 回复长度（当前 7,842）');
-        expect(describeTextCompletionLimitHint({ limits: getTextCompletionLimits({ unlocked: true }), context: 100000, response: 350 }))
-            .toContain('已解锁');
+    test('the hint shows the budget and warns about the NovelAI engine cap', () => {
+        expect(describeTextCompletionContext({ mainApi: 'textgenerationwebui', context: 8192, response: 350 }))
+            .toEqual({ text: '提示词预算 7,842（上下文 − 回复长度）', level: 'info' });
+        expect(describeTextCompletionContext({ mainApi: 'novel', context: 16384, response: 350 }))
+            .toMatchObject({ level: 'warning', text: expect.stringContaining('引擎对 NovelAI 最多使用 8,192') });
+        expect(describeTextCompletionContext({ mainApi: 'textgenerationwebui', context: 512, response: 600 }).level).toBe('warning');
     });
 });
 

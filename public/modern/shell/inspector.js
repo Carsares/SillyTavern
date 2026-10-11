@@ -3,6 +3,9 @@ import { syncChatUsageLabels } from '../components/chat-usage-label.js';
 import { routeLabels } from '../core/constants.js';
 import { createInspectorSections } from './inspector-sections.js';
 
+// 设置中心「界面」里的「打开页面时展开右侧上下文抽屉」复选框及其标签
+const INSPECTOR_PREFERENCE_CONTROL = '[data-modern-inspector-open], label:has(> [data-modern-inspector-open])';
+
 // Two stored values:
 // - st-modern-inspector-open: the 设置 page's「默认展开上下文抽屉」preference. core/state.js seeds the initial
 //   state from it and only saving Modern preferences writes it. Older builds also wrote it on every toggle,
@@ -166,6 +169,11 @@ export function createInspector({
             // composedPath() is fixed at dispatch time, so a click on a control that re-rendered the drawer
             // (and detached itself) still counts as inside
             const path = event.composedPath();
+            // The 默认展开 checkbox saves on change, which fires only after this click: treat clicks on it or its label
+            // like the preference save above
+            if (path.some(node => node instanceof Element && node.matches(INSPECTOR_PREFERENCE_CONTROL))) {
+                return;
+            }
             if (!state.inspectorOpen || isInsideInspectorControls(path)) {
                 return;
             }

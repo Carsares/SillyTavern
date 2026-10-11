@@ -1,7 +1,6 @@
 /**
- * 数据维护标签的两个备份类分区：设置快照（列出、单个删除、按数量清理）和聊天备份（统计、按天数清理）。
+ * 数据维护的两个备份类部分：设置快照的按数量清理（列表本身在 settings-snapshots.js）和聊天备份（统计、按天数清理）。
  */
-const SNAPSHOT_LIST_LIMIT = 30;
 const PREVIEW_NAME_LIMIT = 20;
 
 export function createMaintenanceBackupComponents(ctx) {
@@ -54,69 +53,22 @@ export function createMaintenanceBackupComponents(ctx) {
     `;
     }
 
-    function renderSnapshotRow(snapshot, isNewest, snapshots) {
-        const name = snapshot.name || '';
-        const isConfirming = snapshots.confirmDelete === name;
-        const isBusy = snapshots.deleting === name;
-        return `
-        <article class="backup-row" data-maintenance-snapshot-row="${escapeHtml(name)}">
-            <div class="row-main">
-                <strong class="row-title">${escapeHtml(name)}</strong>
-                <span class="row-subtitle">${escapeHtml(formatTime(snapshot.date))} · ${escapeHtml(formatBytes(snapshot.size))}</span>
-            </div>
-            <div class="row-actions">
-                ${isNewest ? '<span class="badge active">最新 · 不可删除</span>' : isConfirming ? `
-                    <button class="secondary-button" type="button" data-maintenance-snapshot-delete-cancel ${isBusy ? 'disabled' : ''}>取消</button>
-                    <button class="secondary-button danger-action" type="button" data-maintenance-snapshot-delete-confirm ${isBusy ? 'disabled' : ''}>
-                        <i class="fa-solid ${isBusy ? 'fa-circle-notch fa-spin' : 'fa-trash'}"></i>
-                        确认删除
-                    </button>
-                ` : `
-                    <button class="secondary-button" type="button" data-maintenance-snapshot-delete="${escapeHtml(name)}" ${snapshots.deleting || snapshots.pruning ? 'disabled' : ''}>
-                        <i class="fa-solid fa-trash"></i>
-                        删除
-                    </button>
-                `}
-            </div>
-        </article>
-    `;
-    }
-
-    function renderSnapshotSection(maintenance) {
+    // 设置快照的列表（预览、恢复、删除）在「数据与备份」标签的快照分区（components/settings-snapshots.js），
+    // 这里只提供列表下方的按数量清理、错误和结果
+    function renderSnapshotMaintenance(maintenance) {
         const snapshots = maintenance.snapshots;
-        const list = state.settingsSnapshots;
-        const items = list.items || [];
-        const totalBytes = items.reduce((sum, item) => sum + (item.size || 0), 0);
+        const items = state.settingsSnapshots.items || [];
         const result = snapshots.result;
-
         return `
-        <section class="panel section-panel" data-maintenance-section="snapshots">
-            <div class="panel-header">
-                <div>
-                    <h2 class="panel-title">设置快照</h2>
-                    <p class="panel-subtitle">快照是 settings.json 的备份，自动保存会按间隔产生并保留最近 50 份。这里可以删除单份，或按数量清理旧的。最新的一份不能删除。</p>
-                </div>
-                <button class="secondary-button" type="button" data-maintenance-load-snapshots ${list.loading ? 'disabled' : ''}>
-                    <i class="fa-solid ${list.loading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}"></i>
-                    刷新
-                </button>
-            </div>
             ${snapshots.error ? `<p class="danger maintenance-wrap" data-maintenance-snapshot-error>${escapeHtml(snapshots.error)}</p>` : ''}
-            ${list.loaded ? `
-                <p class="panel-subtitle">共 ${escapeHtml(formatNumber(items.length))} 份 · ${escapeHtml(formatBytes(totalBytes))}${items.length > SNAPSHOT_LIST_LIMIT ? `；列表只显示最新的 ${SNAPSHOT_LIST_LIMIT} 份` : ''}</p>
-                <div class="resource-list maintenance-snapshot-list">
-                    ${items.slice(0, SNAPSHOT_LIST_LIMIT).map((snapshot, index) => renderSnapshotRow(snapshot, index === 0, snapshots)).join('') || '<div class="muted">暂无设置快照</div>'}
-                </div>
-                ${items.length > 1 ? renderSnapshotPrune(snapshots) : ''}
-            ` : `<p class="panel-subtitle">${list.loading ? '正在读取设置快照…' : '点「刷新」读取设置快照。'}</p>`}
+            ${items.length > 1 ? renderSnapshotPrune(snapshots) : ''}
             ${result ? `
                 <div class="maintenance-result" data-maintenance-snapshot-result>
                     <p><strong>已删除 ${escapeHtml(formatNumber(result.names.length))} 份快照，释放 ${escapeHtml(formatBytes(result.freedBytes))}。</strong></p>
                     ${result.skipped?.length ? `<p class="warning-text">${escapeHtml(formatNumber(result.skipped.length))} 份没有删除（已不在清理范围内或删除失败）。</p>` : ''}
                 </div>
             ` : ''}
-        </section>
-    `;
+        `;
     }
 
     // ------------------------------------------------------------ 聊天备份
@@ -231,7 +183,7 @@ export function createMaintenanceBackupComponents(ctx) {
     }
 
     return {
-        renderSnapshotSection,
+        renderSnapshotMaintenance,
         renderChatBackupSection,
     };
 }

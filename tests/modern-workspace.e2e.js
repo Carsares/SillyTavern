@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { mockBridgeFrame } from './modern-test-utils.js';
 
 const modernRoutes = [
     ['dashboard', '工作台'],
@@ -10,11 +11,30 @@ const modernRoutes = [
     ['personas', '用户人设'],
     ['assets', '素材库'],
     ['remoteResources', '远程资源'],
-    ['api', 'API 连接管理'],
     ['extensions', '扩展'],
     ['activity', '活动与统计'],
     ['settings', '设置中心'],
 ];
+
+// The settings center saves every connection field as soon as it changes. Keep those writes away from the shared
+// e2e data root and stub the hidden generation engine that each save asks to reload. Returns the captured bodies.
+async function captureSettingsSaves(page) {
+    await mockBridgeFrame(page);
+    const saves = [];
+    await page.route('**/api/settings/save', route => {
+        saves.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    return saves;
+}
+
+// The former API page is the 模型连接 tab of the settings center
+async function expectConnectionTab(page) {
+    await expect(page).toHaveURL(/\/modern\/\?view=settings(&|$)/);
+    await expect(page.locator('.page-title')).toHaveText('设置中心');
+    await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
+    await expect(page.locator('.settings-tabs [data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+}
 
 test.describe('Modern workspace', () => {
     test('redirects the root entry to the modern workspace', async ({ page }) => {
@@ -74,26 +94,56 @@ test.describe('Modern workspace', () => {
         });
     }
 
-    test('shows text completion API shallow editor in the modern page', async ({ page }) => {
+    test('opens the former API page as the model connection tab of the settings center', async ({ page }) => {
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        page.on('console', message => {
+            if (message.type() === 'error') {
+                errors.push(message.text());
+            }
+        });
+
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-loaded', 'true');
+        await expectConnectionTab(page);
+        await expect(page.locator('.nav-button.active')).toHaveAttribute('data-route', 'settings');
+        await expect(page.locator('.nav-button[data-route="api"]')).toHaveCount(0);
+        await expect(page.locator('[data-api-connection-form]')).toBeVisible();
+        expect(errors).toEqual([]);
+    });
+
+    test('shows text completion API shallow editor in the modern page', async ({ page }) => {
+        const saves = await captureSettingsSaves(page);
+        await page.goto('/modern/?view=api');
+
+        await expectConnectionTab(page);
         await page.locator('[data-api-main]').selectOption('textgenerationwebui');
 
         await expect(page.locator('[data-textgen-type]')).toBeVisible();
         await expect(page.locator('[data-textgen-endpoint]')).toBeVisible();
-        await expect(page.locator('[data-save-api-connection]')).toHaveCount(1);
+        // The main API is saved on its own as soon as it is picked; there is no separate save button
+        await expect(page.locator('[data-settings-save-status]')).toContainText('主 API 已保存');
+        expect(saves.at(-1).main_api).toBe('textgenerationwebui');
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
 
     test('hides irrelevant API fields for SiliconFlow', async ({ page }) => {
+        await captureSettingsSaves(page);
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await expectConnectionTab(page);
         await page.locator('[data-api-main]').selectOption('openai');
         await page.locator('[data-api-source]').selectOption('siliconflow');
 
         await expect(page.locator('[data-api-field="siliconflow-endpoint"]')).toBeVisible();
-        await expect(page.locator('[data-api-field="custom-url"]')).toBeHidden();
+        // Fields that do not apply to the source are not rendered at all
+        await expect(page.locator('[data-api-field="custom-url"]')).toHaveCount(0);
+
+        await page.locator('[data-api-source]').selectOption('custom');
+        await expect(page.locator('[data-api-field="custom-url"]')).toBeVisible();
+        await expect(page.locator('[data-api-field="reverse-proxy"]')).toBeVisible();
+        await expect(page.locator('[data-api-field="siliconflow-endpoint"]')).toHaveCount(0);
     });
 
     test('shows API diagnostics, model suggestions, and test history', async ({ page }) => {
@@ -116,6 +166,7 @@ test.describe('Modern workspace', () => {
             openai_settings: [JSON.stringify({ chat_completion_source: 'siliconflow' })],
         };
 
+        const saves = await captureSettingsSaves(page);
         await page.route('**/api/settings/get', route => route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -129,18 +180,35 @@ test.describe('Modern workspace', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.api-diagnostic-card')).toHaveCount(7);
+        // The connection diagnostics live in the context drawer while the 模型连接 tab is open
+        await expectConnectionTab(page);
+        const diagnostics = page.locator('#inspector .inspector-section', { hasText: '连接诊断' });
+        const diagnostic = label => diagnostics.locator('.kv-row', { has: page.locator('.kv-key', { hasText: new RegExp(`^${label}$`) }) }).locator('.kv-value');
+        await expect(diagnostics.locator('.kv-row')).toHaveCount(9);
+        await expect(diagnostic('来源')).toHaveText('SiliconFlow（siliconflow）');
+        await expect(diagnostic('模型')).toHaveText('deepseek-ai/DeepSeek-V3');
+        await expect(diagnostic('测试状态')).toHaveText('未测试');
+        await expect(page.locator('[data-api-current-connection]')).toContainText('deepseek-ai/DeepSeek-V3');
+
+        // Suggestions leave out the model in use; picking one saves it right away
+        await expect(page.locator('[data-api-model-suggestion="deepseek-ai/DeepSeek-V3"]')).toHaveCount(0);
         await page.locator('[data-api-model-suggestion="deepseek-ai/DeepSeek-V4-Pro"]').click();
         await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-ai/DeepSeek-V4-Pro');
+        await expect(page.locator('[data-settings-save-status]')).toContainText('模型已保存');
+        expect(saves.at(-1).oai_settings.siliconflow_model).toBe('deepseek-ai/DeepSeek-V4-Pro');
 
         await page.locator('[data-test-api]').click();
 
-        await expect(page.locator('.api-history-panel')).toContainText('可用');
-        await expect(page.locator('.api-history-panel')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
+        await expect(page.locator('[data-api-test-status]')).toHaveText('可用');
+        await expect(page.locator('[data-api-test-detail]')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
+        await expect(page.locator('[data-api-current-connection]')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
+        await expect(diagnostic('测试状态')).toHaveText('可用');
+        await expect(diagnostic('测试详情')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
+        await expect(diagnostic('最近测试')).toHaveText('1 条');
 
-        await page.locator('[data-api-profile-main="textgenerationwebui"]').click();
+        await page.locator('[data-api-main]').selectOption('textgenerationwebui');
         await expect(page.locator('[data-textgen-type]')).toBeVisible();
-        await expect(page.locator('[data-save-api-connection]')).toHaveCount(1);
+        await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
 
     test('edits modern preferences and shows request compression runtime settings', async ({ page }) => {
@@ -177,20 +245,29 @@ test.describe('Modern workspace', () => {
         await page.goto('/modern/?view=settings');
 
         await expect(page.locator('.page-title')).toHaveText('设置中心');
+        // Interface preferences live in the browser and are saved as soon as they change
+        await page.locator('.settings-tabs [data-settings-section="preferences"]').click();
         await page.locator('[data-modern-theme]').selectOption('dark');
+        await expect(page.locator('[data-settings-save-status]')).toContainText('主题已保存');
         await page.locator('[data-modern-chat-mode]').selectOption('group');
+        await expect(page.locator('[data-settings-save-status]')).toContainText('默认聊天类型已保存');
         await page.locator('[data-modern-inspector-open]').check();
-        await page.locator('[data-save-modern-preferences]').click();
+        await expect(page.locator('[data-settings-save-status]')).toContainText('上下文抽屉默认状态已保存');
+        await expect(page.locator('[data-save-modern-preferences]')).toHaveCount(0);
 
         await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
         await expect.poll(() => page.evaluate('window.localStorage.getItem("st-modern-chat-mode")')).toBe('group');
+        await expect.poll(() => page.evaluate('window.localStorage.getItem("st-modern-inspector-open")')).toBe('true');
 
-        await expect(page.locator('[data-request-compression-enabled]')).not.toBeChecked();
-        await expect(page.locator('[data-request-compression-enabled]')).toBeDisabled();
-        await expect(page.locator('[data-request-compression-min]')).toHaveValue('1024');
-        await expect(page.locator('[data-request-compression-min]')).toBeDisabled();
-        await expect(page.locator('[data-request-compression-max]')).toHaveValue('4096');
-        await expect(page.locator('[data-request-compression-max]')).toBeDisabled();
+        // Request compression is the runtime config.yaml value, shown read-only on the 系统信息 tab
+        await page.locator('.settings-tabs [data-settings-section="system"]').click();
+        const compression = page.locator('[data-request-compression-readonly]');
+        const compressionValue = label => compression.locator('.kv-row', { has: page.locator('.kv-key', { hasText: new RegExp(`^${label}$`) }) }).locator('.kv-value');
+        await expect(compressionValue('启用')).toHaveText('否');
+        await expect(compressionValue('最小载荷')).toHaveText('1.0 KB');
+        await expect(compressionValue('最大载荷')).toHaveText('4.0 KB');
+        await expect(compression.locator('input, select, button')).toHaveCount(0);
+        await expect(page.locator('[data-request-compression-enabled], [data-request-compression-min], [data-request-compression-max]')).toHaveCount(0);
         await expect(page.locator('[data-save-request-compression]')).toHaveCount(0);
         expect(settingsSaveCount).toBe(0);
     });
@@ -219,7 +296,7 @@ test.describe('Modern workspace', () => {
 
         await page.goto('/modern/?view=api');
 
-        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await expectConnectionTab(page);
         await expect(page.locator('.route-error-banner')).toHaveCount(0);
     });
 
@@ -231,11 +308,14 @@ test.describe('Modern workspace', () => {
         await expect(page.locator('#paletteSearch')).toBeFocused();
 
         await page.locator('#paletteSearch').fill('API');
-        await expect(page.locator('#paletteResults [data-command-route="api"]').first()).toBeVisible();
+        // 模型连接 (API、模型、密钥和上下文长度) is the first match and opens the settings center on that tab
+        const firstMatch = page.locator('#paletteResults [data-command-route]').first();
+        await expect(firstMatch).toHaveAttribute('data-command-route', 'api');
+        await expect(firstMatch).toContainText('模型连接');
         await page.keyboard.press('Enter');
 
         await expect(page.locator('#commandPalette')).toBeHidden();
-        await expect(page.locator('.page-title')).toHaveText('API 连接管理');
+        await expectConnectionTab(page);
     });
 
     test('opens global search results from the topbar search input', async ({ page }) => {

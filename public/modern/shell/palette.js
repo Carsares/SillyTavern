@@ -107,8 +107,8 @@ export function createPalette({
             { type: '动作', label: '新建角色', detail: '打开角色创建表单', route: 'characters', action: 'create-character' },
             { type: '动作', label: '新建群组', detail: '打开群组创建表单', route: 'groups', action: 'create-group' },
             { type: '动作', label: '新建世界书', detail: '打开世界书创建表单', route: 'worldbooks', action: 'create-worldbook' },
-            { type: '动作', label: 'API 连接检查', detail: '进入 API 管理页', route: 'api' },
-            { type: '动作', label: '设置快照', detail: '进入设置中心', route: 'settings' },
+            { type: '动作', label: '模型连接', detail: 'API、模型、密钥和上下文长度', route: 'api' },
+            { type: '动作', label: '设置快照', detail: '备份和恢复设置', route: 'settings-data' },
         ];
         const commands = [...routeCommands, ...actionCommands, ...characterCommands, ...groupCommands, ...chatCommands, ...worldCommands, ...presetCommands, ...personaCommands, ...extensionCommands, ...backgroundCommands, ...assetCommands]
             .filter(command => !query || normalizeText(`${command.type} ${command.label} ${command.detail}`).includes(query))

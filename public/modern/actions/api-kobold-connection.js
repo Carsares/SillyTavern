@@ -1,38 +1,19 @@
-import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
-import { saveSettingsSerialized } from '../core/keyed-queue.js';
-
-// KoboldAI Classic connection: just a server URL (no key, no model list), tested via /api/backends/kobold/status
+// KoboldAI Classic connection test: just a server URL (no key, no model list), tested via /api/backends/kobold/status.
+// The address is saved by actions/api-autosave.js; the test reads the saved value.
 export function createApiKoboldConnectionActions({
     state,
-    elements,
     apiFetch,
-    loadData,
     render,
     showToast,
     recordApiTestResult,
-    reloadSettings = noEngineSync,
 }) {
-    function getKoboldServerFromForm() {
-        const input = elements.content.querySelector('[data-kobold-api-url]');
-        return (input?.value.trim() || state.settings.api_server || '').trim();
-    }
-
-    async function saveKoboldConnectionFromForm() {
-        const apiServer = getKoboldServerFromForm();
-        if (!apiServer) {
-            throw new Error('请填写 KoboldAI 服务地址。');
-        }
-        state.settings.main_api = 'kobold';
-        state.settings.api_server = apiServer;
-        await saveSettingsSerialized(apiFetch, state.settings);
-        const engineSync = await reloadSettings();
-        state.apiMainDraft = '';
-        await loadData({ silent: true });
-        showToast('KoboldAI 连接已保存', `${apiServer}${describeReloadFailure(engineSync)}`);
+    // The engine reads kai_settings.api_server first (kai-settings.js loadKoboldSettings)
+    function getSavedKoboldServer() {
+        return String(state.settings.kai_settings?.api_server || state.settings.api_server || '').trim();
     }
 
     async function testKoboldConnection() {
-        const apiServer = getKoboldServerFromForm();
+        const apiServer = getSavedKoboldServer();
         if (!apiServer) {
             throw new Error('请填写 KoboldAI 服务地址。');
         }
@@ -56,7 +37,6 @@ export function createApiKoboldConnectionActions({
     }
 
     return {
-        saveKoboldConnectionFromForm,
         testKoboldConnection,
     };
 }

@@ -1,84 +1,75 @@
-.api-current {
+/* ===== 设置中心「模型连接」标签 ===== */
+
+.settings-connection {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 16px;
 }
 
-.api-current > div {
-    min-width: 0;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+.connection-editor > .panel-header .panel-actions {
+    align-items: center;
 }
 
-.api-current strong {
-    display: block;
-    overflow: hidden;
-    margin-top: 5px;
-    font-family: var(--mono);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+/* 测试结果的详情：测试过才显示 */
+.connection-test-detail {
+    margin: -4px 0 12px;
+    overflow-wrap: anywhere;
+    color: var(--text-muted);
+    font-size: 13px;
 }
 
-.connection-test {
+.connection-test-detail.danger {
+    color: var(--danger);
+}
+
+/* 字段标题右侧的小状态（密钥「已保存 / 未保存」） */
+.field-label-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-width: 0;
-    margin-top: 12px;
-    color: var(--text-muted);
-}
-
-.connection-test span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.api-diagnostic-list {
-    display: grid;
+    justify-content: space-between;
     gap: 8px;
 }
 
-.api-diagnostic-card {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+.field-state {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
 }
 
-.api-diagnostic-card.needs-attention {
-    border-color: color-mix(in srgb, var(--warning) 36%, var(--border));
-    background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+.field-state.is-saved {
+    color: var(--success);
 }
 
-.api-history-panel {
-    margin-top: 12px;
+.field-help {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
 }
 
 .api-model-suggestions {
-    align-self: end;
+    margin-top: 2px;
 }
 
-.api-profile-card .secondary-button {
-    width: fit-content;
+/* 上下文长度输入框和「填入模型上限」按钮同一行 */
+.api-context-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
-/* ===== 上下文长度与用量提示（A1）===== */
-
-/* 同一行里相邻字段带着错误或说明变高时，输入框不跟着被拉高 */
-.api-limit-field {
-    align-content: start;
+.api-context-input .text-input {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-/* 「上限 N；提示词预算 = 上下文 − Max Tokens」说明：预留两行高度，切换来源 / 模型时文字长短变化不会让下面的保存按钮跳动 */
+.api-context-input .compact-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 上下文长度下方的说明：模型上限和提示词预算，超出时变成警告色 */
 .api-context-hint {
-    min-height: 2.8em;
+    margin: 2px 0 0;
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 500;
@@ -88,12 +79,6 @@
 
 .api-context-hint.is-warning {
     color: var(--warning);
-}
-
-/* 「解锁上限」复选框与左边输入框对齐：上方的小标题与输入框标题同一行高 */
-.api-context-unlock .checkbox-card {
-    align-self: start;
-    font-weight: 500;
 }
 
 /* 聊天输入框下方的「上次发送 X / 预算 Y token」标签（components/chat-usage-label.js），靠右排在连接标签之后 */
@@ -188,7 +173,7 @@
     margin: 0;
 }
 
-/* 切换结果：已应用的项和跳过的项（带原因）。聊天弹层和 API 页共用 */
+/* 切换结果：已应用的项和跳过的项（带原因）。聊天弹层和设置中心的模型连接共用 */
 .connection-result {
     display: grid;
     gap: 6px;

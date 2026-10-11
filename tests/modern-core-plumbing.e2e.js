@@ -170,14 +170,22 @@ test.describe('Modern settings and the context drawer', () => {
 
         await gotoModern(page, 'settings', '设置中心');
         const inspector = page.locator('#inspector');
+        const preference = page.locator('[data-modern-inspector-open]');
+        const saveStatus = page.locator('[data-settings-save-status]');
+        await page.locator('.settings-tabs [data-settings-section="preferences"]').click();
         await expect(inspector).not.toHaveClass(/open/);
-        await expect(page.locator('[data-modern-inspector-open]')).toBeChecked();
+        await expect(preference).toBeChecked();
+        await expect(page.locator('[data-save-modern-preferences]')).toHaveCount(0);
 
-        await page.locator('[data-save-modern-preferences]').click();
-        await expect(page.locator('.toast', { hasText: '界面偏好已保存' })).toContainText('浅色 / 角色');
+        // The preference saves as soon as it changes, without a toast; switching it off and on again re-declares it
+        await preference.uncheck();
+        await expect(saveStatus).toContainText('上下文抽屉默认状态已保存');
+        expect(await readStorage(page, 'st-modern-inspector-open')).toBe('false');
+        await preference.check();
         expect(await readStorage(page, 'st-modern-inspector-state')).toBeNull();
         expect(await readStorage(page, 'st-modern-inspector-open')).toBe('true');
         await expect(inspector).not.toHaveClass(/open/);
+        await expect(page.locator('.toast')).toHaveCount(0);
 
         // Only the saving click is exempt: the next click outside the open drawer still closes it
         await page.locator('.topbar [data-toggle-inspector]').click();
@@ -189,7 +197,8 @@ test.describe('Modern settings and the context drawer', () => {
         // Saving with the drawer open keeps it open and lets the preference decide the next load
         await page.locator('.topbar [data-toggle-inspector]').click();
         await expect(inspector).toHaveClass(/open/);
-        await page.locator('[data-save-modern-preferences]').click();
+        await preference.uncheck();
+        await preference.check();
         await expect(inspector).toHaveClass(/open/);
         expect(await readStorage(page, 'st-modern-inspector-state')).toBeNull();
         await page.reload();

@@ -41,6 +41,7 @@ export function createSettingsActions({
                 : [];
             state.settingsSnapshots.items = snapshots;
             state.settingsSnapshots.loaded = true;
+            state.settingsSnapshots.error = '';
             return snapshots;
         } finally {
             state.settingsSnapshots.loading = false;
@@ -167,31 +168,43 @@ export function createSettingsActions({
         return state.settingsBundle.request_compression || {};
     }
 
-    function saveModernPreferencesFromForm() {
-        const theme = elements.content.querySelector('[data-modern-theme]')?.value === 'dark' ? 'dark' : 'light';
-        const chatMode = elements.content.querySelector('[data-modern-chat-mode]')?.value === 'group' ? 'group' : 'character';
-        const chatSidebarOpen = Boolean(elements.content.querySelector('[data-modern-chat-sidebar-open]')?.checked);
-        const inspectorOpen = Boolean(elements.content.querySelector('[data-modern-inspector-open]')?.checked);
-
-        setTheme(theme);
-        state.chatMode = chatMode;
-        localStorage.setItem('st-modern-chat-mode', chatMode);
-        localStorage.setItem('st-modern-chat-sidebar-open', String(chatSidebarOpen));
-        localStorage.setItem('st-modern-inspector-open', String(inspectorOpen));
-        // Saving re-declares the drawer default: forget where the drawer was last left (the runtime state that
-        // shell/inspector.js records on every open and close) so the saved preference decides the next load.
-        // The drawer stays as it is in this view; the revision tells the inspector this click is not an outside click.
-        localStorage.removeItem('st-modern-inspector-state');
-        state.inspectorPreferenceRevision = (state.inspectorPreferenceRevision || 0) + 1;
-        showToast('界面偏好已保存', `${theme === 'dark' ? '深色' : '浅色'} / ${getChatModeLabel()}`);
-        render();
+    /**
+     * 界面偏好改动即保存（只存在浏览器本地）。不是界面偏好控件时返回空字符串。
+     * @param {EventTarget | null} target 发生改动的控件
+     * @returns {string} 保存的偏好名称
+     */
+    function saveModernPreferenceField(target) {
+        if (target instanceof HTMLSelectElement && target.matches('[data-modern-theme]')) {
+            setTheme(target.value === 'dark' ? 'dark' : 'light');
+            return '主题';
+        }
+        if (target instanceof HTMLSelectElement && target.matches('[data-modern-chat-mode]')) {
+            const chatMode = target.value === 'group' ? 'group' : 'character';
+            state.chatMode = chatMode;
+            localStorage.setItem('st-modern-chat-mode', chatMode);
+            return '默认聊天类型';
+        }
+        if (target instanceof HTMLInputElement && target.matches('[data-modern-chat-sidebar-open]')) {
+            localStorage.setItem('st-modern-chat-sidebar-open', String(target.checked));
+            return '聊天列表默认状态';
+        }
+        if (target instanceof HTMLInputElement && target.matches('[data-modern-inspector-open]')) {
+            localStorage.setItem('st-modern-inspector-open', String(target.checked));
+            // Saving re-declares the drawer default: forget where the drawer was last left (the runtime state that
+            // shell/inspector.js records on every open and close) so the saved preference decides the next load.
+            // The drawer stays as it is in this view; the revision tells the inspector this change is not an outside click.
+            localStorage.removeItem('st-modern-inspector-state');
+            state.inspectorPreferenceRevision = (state.inspectorPreferenceRevision || 0) + 1;
+            return '上下文抽屉默认状态';
+        }
+        return '';
     }
 
     return {
         getRequestCompressionSettings,
         loadSettingsSnapshots,
         createSettingsSnapshot,
-        saveModernPreferencesFromForm,
+        saveModernPreferenceField,
         previewSettingsSnapshot,
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,

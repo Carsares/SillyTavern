@@ -1,13 +1,41 @@
-import { getSettingsOptionalTabs } from './settings-optional-tabs.js';
+// 设置中心：模型连接、界面、聊天工具、数据与备份、系统信息五个标签。
+// 能改的字段都是改动即保存（actions/settings-autosave.js），页头的状态标签显示最近一次保存的结果。
+import { renderSettingsSaveStatus } from '../actions/settings-autosave.js';
+import { settingsSectionAliases } from '../core/constants.js';
+import { createApiComponents } from './api.js';
+import { getSettingsOptionalParts } from './settings-optional-tabs.js';
 import { createSettingsPreferenceComponents } from './settings-preferences.js';
 import { createSettingsSnapshotComponents } from './settings-snapshots.js';
 import { createSettingsStatusComponents } from './settings-status.js';
 
+export const BUILT_IN_SETTINGS_TABS = Object.freeze([
+    Object.freeze({ id: 'connection', icon: 'fa-plug', label: '模型连接' }),
+    Object.freeze({ id: 'preferences', icon: 'fa-palette', label: '界面' }),
+    Object.freeze({ id: 'data', icon: 'fa-database', label: '数据与备份' }),
+    Object.freeze({ id: 'system', icon: 'fa-circle-info', label: '系统信息' }),
+]);
+
+/**
+ * @param {string} section 标签 id，可能是旧版的
+ * @returns {string} 合并后的标签 id
+ */
+export function normalizeSettingsSection(section) {
+    return settingsSectionAliases[section] || section;
+}
+
+/**
+ * 当前可用的标签，按标签条顺序。
+ * @param {ReturnType<typeof getSettingsOptionalParts>} optionalParts 可选部分
+ * @returns {{ id: string, icon: string, label: string }[]} 标签
+ */
+export function getSettingsTabs(optionalParts) {
+    const optionalTabs = optionalParts.tabs.filter(tab => tab.isAvailable());
+    return BUILT_IN_SETTINGS_TABS.flatMap(tab => [tab, ...optionalTabs.filter(optional => optional.after === tab.id)]);
+}
+
 export function createSettingsComponents(ctx) {
     const {
         state,
-        formatNumber,
-        metricCard,
         pageHead,
         escapeHtml,
         getRequestCompressionSettings,
@@ -16,83 +44,57 @@ export function createSettingsComponents(ctx) {
         render,
     } = ctx;
     let settingsSnapshotAutoLoadPending = false;
-    // A failed automatic read is not retried on every render; the「设置快照」button reads again
+    // A failed automatic read is not retried on every render; the「刷新」button reads again
     let settingsSnapshotAutoLoadFailed = false;
-    const {
-        renderSettingsSnapshots,
-    } = createSettingsSnapshotComponents(ctx);
-    const {
-        renderSettingsPreferencesSection,
-    } = createSettingsPreferenceComponents(ctx);
-    const {
-        renderSettingsStatusSection,
-        renderSettingsDiagnosticsSection,
-    } = createSettingsStatusComponents(ctx);
-    // 「聊天工具」「数据维护」两个标签：对应面板报告可用时才出现，见 settings-optional-tabs.js
-    const optionalTabs = getSettingsOptionalTabs(ctx);
+    const { renderConnectionTab } = createApiComponents(ctx);
+    const { renderSettingsSnapshots } = createSettingsSnapshotComponents(ctx);
+    const { renderSettingsPreferencesSection } = createSettingsPreferenceComponents(ctx);
+    const { renderSettingsSystemSection } = createSettingsStatusComponents(ctx);
+    // 「聊天工具」标签和数据维护分区：对应面板报告可用时才出现，见 settings-optional-tabs.js
+    const optionalParts = getSettingsOptionalParts(ctx);
 
     function renderSettings() {
-        const bundle = state.settingsBundle || {};
-        const requestCompression = getRequestCompressionSettings();
-        const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
-        const compressionEnabled = Boolean(requestCompression.enabled);
-        const dataStatus = state.errors.length ? '需要处理' : '正常';
-        const activeSection = getSettingsSection();
-        ensureSettingsSnapshotsLoaded();
+        const tabs = getSettingsTabs(optionalParts);
+        const activeSection = getSettingsSection(tabs);
+        // 每次渲染都问一遍数据维护是否可用：它借这个机会在离开「数据与备份」后作废没做完的清理报告（见 settings-maintenance.js）
+        const maintenanceAvailable = optionalParts.maintenance.isAvailable();
 
         return `
-        ${pageHead('设置中心', '账户、扩展、请求压缩和页面偏好。', `
-            <button class="primary-button" type="button" data-create-settings-snapshot ${state.settingsSnapshots.creating ? 'disabled' : ''}>
-                <i class="fa-solid ${state.settingsSnapshots.creating ? 'fa-circle-notch fa-spin' : 'fa-camera'}"></i>
-                创建快照
-            </button>
-            <button class="secondary-button" type="button" data-load-settings-snapshots ${state.settingsSnapshots.loading ? 'disabled' : ''}>
-                <i class="fa-solid ${state.settingsSnapshots.loading ? 'fa-circle-notch fa-spin' : 'fa-clock-rotate-left'}"></i>
-                设置快照
-            </button>
-        `)}
-        <div class="metrics-grid">
-            ${metricCard('数据状态', dataStatus, state.errors.length ? `${formatNumber(state.errors.length)} 个读取错误` : '读取正常', 'fa-heart-pulse')}
-            ${metricCard('扩展', formatNumber(state.extensions.length), bundle.enable_extensions ? '扩展系统开启' : '扩展系统关闭', 'fa-cubes')}
-            ${metricCard('安全密钥', formatNumber(savedSecrets), '仅显示保存状态', 'fa-key')}
-            ${metricCard('设置快照', getSettingsSnapshotMetricValue(), getSettingsSnapshotMetricDetail(), 'fa-clock-rotate-left')}
+        ${pageHead('设置中心', '模型连接、界面、聊天工具和数据备份都在这里，改动会自动保存。', renderSettingsSaveStatus(state.settingsAutosave, escapeHtml))}
+        ${renderSettingsTabs(tabs, activeSection)}
+        <div class="settings-tab-body" data-settings-panel="${escapeHtml(activeSection)}">
+            ${renderSection(activeSection, maintenanceAvailable)}
         </div>
-        ${renderSettingsTabs(activeSection)}
-        ${activeSection === 'preferences' ? renderSettingsPreferencesSection(requestCompression) : ''}
-        ${optionalTabs.map(tab => activeSection === tab.id ? tab.render() : '').join('')}
-        ${activeSection === 'status' ? renderSettingsStatusSection(bundle, savedSecrets, dataStatus, compressionEnabled, requestCompression) : ''}
-        ${activeSection === 'snapshots' ? renderSettingsSnapshots() : ''}
-        ${activeSection === 'raw' ? renderRawSettingsEditorSection() : ''}
-        ${activeSection === 'diagnostics' ? renderSettingsDiagnosticsSection(bundle, savedSecrets, dataStatus) : ''}
     `;
     }
 
-    function getVisibleOptionalTabs() {
-        return optionalTabs.filter(tab => tab.isAvailable());
+    function renderSection(section, maintenanceAvailable) {
+        if (section === 'connection') {
+            return renderConnectionTab();
+        }
+        if (section === 'preferences') {
+            return renderSettingsPreferencesSection();
+        }
+        if (section === 'data') {
+            return renderDataSection(maintenanceAvailable);
+        }
+        if (section === 'system') {
+            const savedSecrets = Object.values(state.secretState || {}).filter(value => Array.isArray(value) ? value.length > 0 : Boolean(value)).length;
+            return renderSettingsSystemSection(state.settingsBundle || {}, savedSecrets, getRequestCompressionSettings());
+        }
+        return optionalParts.tabs.find(tab => tab.id === section)?.render() || '';
     }
 
-    function getSettingsSection() {
-        const sectionIds = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics', ...getVisibleOptionalTabs().map(tab => tab.id)];
-        return sectionIds.includes(state.settingsSection) ? state.settingsSection : 'preferences';
+    function getSettingsSection(tabs) {
+        const section = normalizeSettingsSection(state.settingsSection);
+        return tabs.some(tab => tab.id === section) ? section : tabs[0].id;
     }
 
-    function renderSettingsTabs(activeSection) {
-        const builtInTabs = [
-            ['preferences', 'fa-sliders', '界面与请求'],
-            ['status', 'fa-gauge-high', '账户与资源'],
-            ['snapshots', 'fa-clock-rotate-left', '设置快照'],
-            ['raw', 'fa-file-code', '原始设置'],
-            ['diagnostics', 'fa-shield-halved', '安全诊断'],
-        ];
-        // 可选标签插在 after 指明的内置标签后面；对应面板不可用时整个标签不出现
-        const tabs = builtInTabs.flatMap(builtInTab => [
-            builtInTab,
-            ...getVisibleOptionalTabs().filter(tab => tab.after === builtInTab[0]).map(tab => [tab.id, tab.icon, tab.label]),
-        ]);
+    function renderSettingsTabs(tabs, activeSection) {
         return `
         <div class="segmented-control settings-tabs" role="tablist" aria-label="设置分区">
-            ${tabs.map(([id, icon, label]) => `
-                <button class="${activeSection === id ? 'active' : ''}" type="button" data-settings-section="${id}" aria-selected="${activeSection === id}">
+            ${tabs.map(({ id, icon, label }) => `
+                <button class="${activeSection === id ? 'active' : ''}" type="button" role="tab" data-settings-section="${id}" aria-selected="${activeSection === id}">
                     <i class="fa-solid ${icon}"></i>
                     ${label}
                 </button>
@@ -101,21 +103,18 @@ export function createSettingsComponents(ctx) {
     `;
     }
 
-    function getSettingsSnapshotMetricValue() {
-        if (state.settingsSnapshots.loaded) {
-            return formatNumber(state.settingsSnapshots.items.length);
-        }
-        return settingsSnapshotAutoLoadFailed && !state.settingsSnapshots.loading ? '未读取' : '…';
+    function renderDataSection(maintenanceAvailable) {
+        ensureSettingsSnapshotsLoaded();
+        return `
+        <div class="settings-data">
+            ${renderSettingsSnapshots(maintenanceAvailable ? optionalParts.maintenance : null)}
+            ${renderRawSettingsEditorSection()}
+            ${maintenanceAvailable ? optionalParts.maintenance.renderPanel() : ''}
+        </div>
+    `;
     }
 
-    function getSettingsSnapshotMetricDetail() {
-        if (state.settingsSnapshots.loaded) {
-            return '本地备份';
-        }
-        return settingsSnapshotAutoLoadFailed && !state.settingsSnapshots.loading ? '读取失败，点击上方「设置快照」重试' : '读取中';
-    }
-
-    // The snapshot count in the metrics row is read on route entry, whichever section is open
+    // 打开「数据与备份」时读取一次快照列表
     function ensureSettingsSnapshotsLoaded() {
         if (state.settingsSnapshots.loaded || state.settingsSnapshots.loading || settingsSnapshotAutoLoadPending || settingsSnapshotAutoLoadFailed) {
             return;
@@ -128,6 +127,7 @@ export function createSettingsComponents(ctx) {
                 render();
             } catch (error) {
                 settingsSnapshotAutoLoadFailed = true;
+                state.settingsSnapshots.error = error.message;
                 state.errors.push({ key: 'settings-snapshots', message: error.message });
                 showToast('设置快照读取失败', error.message);
                 render();
@@ -141,15 +141,15 @@ export function createSettingsComponents(ctx) {
         const editor = state.rawSettingsEditor;
         if (!editor.open) {
             return `
-        <section class="form-section">
-            <div>
-                <h3 class="form-section-title">原始设置编辑器</h3>
-                <p class="panel-subtitle">直接编辑完整 settings.json，覆盖现代界面尚未开放的高级设置。保存前会自动创建快照，可随时在设置快照页回滚。</p>
-            </div>
-            <div class="message-edit-actions">
-                <button class="primary-button" type="button" data-open-raw-settings>
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">原始设置</h2>
+                    <p class="panel-subtitle">直接编辑完整的 settings.json，用来修改界面上没有的高级设置。保存前会自动创建快照，改错了可以在上面恢复。</p>
+                </div>
+                <button class="secondary-button" type="button" data-open-raw-settings>
                     <i class="fa-solid fa-file-code"></i>
-                    打开原始设置编辑器
+                    打开编辑器
                 </button>
             </div>
         </section>
@@ -157,10 +157,12 @@ export function createSettingsComponents(ctx) {
         }
 
         return `
-        <section class="form-section">
-            <div>
-                <h3 class="form-section-title">原始设置编辑器</h3>
-                <p class="panel-subtitle">编辑完整 settings.json；保存前自动创建快照，写入后生成引擎会自动重载。</p>
+        <section class="panel section-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title">原始设置</h2>
+                    <p class="panel-subtitle">编辑完整的 settings.json。这里需要手动保存：保存前自动创建快照，写入后生成引擎会自动重载。</p>
+                </div>
             </div>
             ${editor.loading
         ? '<p class="panel-subtitle"><i class="fa-solid fa-circle-notch fa-spin"></i> 正在加载当前设置…</p>'
@@ -173,7 +175,7 @@ export function createSettingsComponents(ctx) {
                 </button>
                 <button class="secondary-button" type="button" data-cancel-raw-settings ${editor.saving ? 'disabled' : ''}>
                     <i class="fa-solid fa-xmark"></i>
-                    取消
+                    关闭
                 </button>
             </div>
         </section>

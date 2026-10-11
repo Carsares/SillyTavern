@@ -1,4 +1,4 @@
-import { characterFormDefaults, routeLabels } from './constants.js';
+import { characterFormDefaults, routeAliases, routeLabels, settingsSectionAliases } from './constants.js';
 
 const chatSidebarPreference = localStorage.getItem('st-modern-chat-sidebar-open');
 export const chatReadStateStorageKey = 'st-modern-chat-read-state:v1';
@@ -39,8 +39,23 @@ function loadChatReadState() {
     };
 }
 
+// 记住的设置标签可能是合并前的旧 id（例如 maintenance），启动时就换成新 id，别处直接比较 state.settingsSection 即可
+function normalizeRememberedSettingsSection(section) {
+    return settingsSectionAliases[section] || section || 'connection';
+}
+
 export function createModernState() {
-    const initialRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
+    const requestedRoute = new URLSearchParams(window.location.search).get('view') || 'dashboard';
+    const alias = routeAliases[requestedRoute];
+    const initialRoute = alias?.route || requestedRoute;
+    if (alias?.settingsSection) {
+        localStorage.setItem('st-modern-settings-section', alias.settingsSection);
+    }
+    if (alias) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', alias.route);
+        window.history.replaceState({}, '', url);
+    }
 
     return {
         route: routeLabels[initialRoute] ? initialRoute : 'dashboard',
@@ -323,7 +338,7 @@ export function createModernState() {
                 data: null,
             },
         },
-        settingsSection: localStorage.getItem('st-modern-settings-section') || 'preferences',
+        settingsSection: normalizeRememberedSettingsSection(localStorage.getItem('st-modern-settings-section')),
         activityFilter: '',
         activitySort: localStorage.getItem('st-modern-activity-sort') || 'recent',
         apiTest: {
@@ -332,7 +347,6 @@ export function createModernState() {
             detail: '尚未从现代界面发起连接测试。',
         },
         apiTestHistory: [],
-        apiMainDraft: '',
         hordeModels: { loaded: false, loading: false, items: [] },
         extensionOperation: {
             name: '',
@@ -406,6 +420,7 @@ export function createModernState() {
             previewName: '',
             previewText: '',
             restoreConfirm: '',
+            error: '',
         },
         rawSettingsEditor: {
             open: false,

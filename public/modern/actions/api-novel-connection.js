@@ -1,45 +1,21 @@
-import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
-import { saveSettingsSerialized } from '../core/keyed-queue.js';
-
 // NovelAI subscription tiers returned by /user/subscription, surfaced as the connection status
 const NAI_TIERS = { 0: 'Paper', 1: 'Tablet', 2: 'Scroll', 3: 'Opus' };
 
-// NovelAI connection: an API key (secret NOVEL) + a static model choice (settings.model_novel)
+// NovelAI connection test: an API key (secret NOVEL) + a static model choice. Both are saved by actions/api-autosave.js.
 export function createApiNovelConnectionActions({
     state,
-    elements,
     apiFetch,
-    loadData,
     render,
     showToast,
     recordApiTestResult,
-    reloadSettings = noEngineSync,
 }) {
-    function getNovelModelFromForm() {
-        return elements.content.querySelector('[data-novel-model]')?.value || state.settings.model_novel || 'clio-v1';
-    }
-
-    async function saveNovelConnectionFromForm() {
-        const model = getNovelModelFromForm();
-        const keyInput = elements.content.querySelector('[data-novel-api-key]');
-        const apiKey = keyInput?.value.trim() || '';
-
-        state.settings.main_api = 'novel';
-        state.settings.model_novel = model;
-
-        if (apiKey) {
-            await apiFetch('/api/secrets/write', { body: { key: 'api_key_novel', value: apiKey, label: 'novel modern' } });
-        }
-
-        await saveSettingsSerialized(apiFetch, state.settings);
-        const engineSync = await reloadSettings();
-        state.apiMainDraft = '';
-        await loadData({ silent: true });
-        showToast('NovelAI 连接已保存', `${model}${describeReloadFailure(engineSync)}`);
+    // The engine reads the model from nai_settings when that object exists (script.js loadNovelSettings)
+    function getSavedNovelModel() {
+        return state.settings.nai_settings?.model_novel || state.settings.model_novel || 'clio-v1';
     }
 
     async function testNovelConnection() {
-        const model = getNovelModelFromForm();
+        const model = getSavedNovelModel();
         state.apiTest = { running: true, status: '测试中', detail: model };
         render();
 
@@ -63,7 +39,6 @@ export function createApiNovelConnectionActions({
     }
 
     return {
-        saveNovelConnectionFromForm,
         testNovelConnection,
     };
 }

@@ -110,27 +110,38 @@ test.describe('Modern shell feedback', () => {
 
         await page.goto('/modern/?view=api');
 
-        const diagnostics = page.locator('.api-diagnostic-list');
-        const card = label => diagnostics.locator('.api-diagnostic-card', { has: page.locator('strong', { hasText: new RegExp(`^${label}$`) }) });
-        await expect(card('连接测试').locator('.status-text')).toHaveText('未测试');
-        await expect(card('主 API').locator('.status-text')).toHaveText('已配置');
-        await expect(card('主 API')).toContainText('聊天补全（openai）');
-        await expect(card('模型').locator('.status-text')).toHaveText('已配置');
-        await expect(card('当前来源密钥').locator('.status-text')).toHaveText('已配置');
-        await expect(diagnostics.locator('.status-text.success')).toHaveCount(0);
+        // The 模型连接 tab shows what is configured; only the test badge speaks about whether it works
+        await expect(page.locator('.page-title')).toHaveText('设置中心');
+        const testStatus = page.locator('[data-api-test-status]');
+        const diagnostics = page.locator('#inspector .inspector-section', { hasText: '连接诊断' });
+        const diagnostic = label => diagnostics.locator('.kv-row', { has: page.locator('.kv-key', { hasText: new RegExp(`^${label}$`) }) }).locator('.kv-value');
+        await expect(testStatus).toHaveText('未测试');
+        await expect(testStatus).not.toHaveClass(/\b(active|danger)\b/);
+        await expect(page.locator('[data-api-test-detail]')).toHaveCount(0);
+        await expect(page.locator('[data-api-current-connection]')).toHaveText('Custom OpenAI-compatible · deepseek-v4-flash');
+        await expect(page.locator('[data-api-field="api-key"] [data-secret-state]')).toHaveText('已保存');
+        await expect(diagnostic('主 API')).toHaveText('聊天补全（openai）');
+        await expect(diagnostic('模型')).toHaveText('deepseek-v4-flash');
+        await expect(diagnostic('测试状态')).toHaveText('未测试');
+        await expect(diagnostics).not.toContainText('可用');
         await expect(diagnostics).not.toContainText('正常');
-        await expect(page.locator('.panel', { hasText: '当前连接' }).first().locator('.panel-header .badge')).toHaveText('Custom OpenAI-compatible');
 
         await page.locator('[data-test-api]').click();
-        await expect(card('连接测试').locator('.status-text')).toHaveText('可用');
-        await expect(card('连接测试').locator('.status-text')).toHaveClass(/success/);
-        await expect(card('主 API').locator('.status-text')).toHaveText('已配置');
+        await expect(testStatus).toHaveText('可用');
+        await expect(testStatus).toHaveClass(/\bactive\b/);
+        await expect(page.locator('[data-api-test-detail]')).toContainText('deepseek-v4-flash: OK');
+        await expect(diagnostic('测试状态')).toHaveText('可用');
+        await expect(diagnostic('主 API')).toHaveText('聊天补全（openai）');
 
         await page.locator('[data-test-api]').click();
-        await expect(card('连接测试').locator('.status-text')).toHaveText('失败');
-        await expect(card('连接测试').locator('.status-text')).toHaveClass(/danger/);
-        await expect(card('连接测试')).toHaveClass(/needs-attention/);
-        await expect(card('连接测试')).toContainText('Unauthorized');
+        await expect(testStatus).toHaveText('失败');
+        await expect(testStatus).toHaveClass(/\bdanger\b/);
+        await expect(page.locator('[data-api-test-detail]')).toHaveClass(/\bdanger\b/);
+        await expect(page.locator('[data-api-test-detail]')).toContainText('Unauthorized');
+        await expect(diagnostic('测试状态')).toHaveText('失败');
+        // A failed test does not turn the saved settings into missing ones
+        await expect(page.locator('[data-api-field="api-key"] [data-secret-state]')).toHaveText('已保存');
+        await expect(diagnostic('主 API')).toHaveText('聊天补全（openai）');
     });
 
     for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }]) {
@@ -173,10 +184,14 @@ test.describe('Modern shell feedback', () => {
     test('keeps toasts in the bottom corner on routes without bottom actions', async ({ page }) => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await mockShellWorkspace(page, customDeepSeekSettings);
+        await page.route('**/api/backends/chat-completions/generate', route => fulfillJson(route, {
+            choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+        }));
 
+        // Settings saves report in the page head; a connection test still answers with a toast
         await page.goto('/modern/?view=settings');
-        await page.locator('[data-save-modern-preferences]').click();
-        await expect(page.locator('.toast', { hasText: '界面偏好已保存' })).toBeVisible();
+        await page.locator('[data-test-api]').click();
+        await expect(page.locator('.toast', { hasText: '连接测试成功' })).toBeVisible();
 
         const stackBox = await page.locator('#toastStack').boundingBox();
         expect(Math.round(900 - (stackBox.y + stackBox.height))).toBe(18);

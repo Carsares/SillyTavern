@@ -1,4 +1,5 @@
 import { createAgentWorkspaceHost } from '../components/agent-workspace.js';
+import { capturePreservedInputs, restorePreservedInputs } from '../core/preserve-inputs.js';
 
 export function createRenderer({
     state,
@@ -27,6 +28,7 @@ export function createRenderer({
     };
     const globalLoadErrorKeys = ['me', 'settings'];
     let agentWorkspace;
+    let lastRenderedRoute = '';
 
     function getRouteLoadErrors() {
         const routeKeys = new Set([...globalLoadErrorKeys, ...(routeLoadErrorKeys[state.route] || [])]);
@@ -37,16 +39,22 @@ export function createRenderer({
         if (state.route === 'agent' && routeRenderers.agent) {
             agentWorkspace ??= createAgentWorkspaceHost(elements.content);
             agentWorkspace.show(routeRenderers.agent());
+            lastRenderedRoute = 'agent';
             return;
         }
         agentWorkspace?.hide();
         if (state.loading && !state.loaded) {
             elements.content.innerHTML = renderLoading();
+            lastRenderedRoute = '';
             return;
         }
 
         const renderRoute = routeRenderers[state.route] || routeRenderers.dashboard;
+        // 同一页内重绘时保住设置表单里还没提交的输入和焦点（只处理 [data-preserve-inputs] 容器，见 core/preserve-inputs.js）
+        const preserved = lastRenderedRoute === state.route ? capturePreservedInputs(elements.content) : [];
         elements.content.innerHTML = `${renderRouteErrorBanner(getRouteLoadErrors())}${renderRoute()}`;
+        lastRenderedRoute = state.route;
+        restorePreservedInputs(elements.content, preserved);
     }
 
     function render() {

@@ -881,7 +881,6 @@ function createActionFixture({ settings = chatSettings(), secretState = claudeSe
         settings: structuredClone(settings),
         secretState: structuredClone(secretState),
         engine: { generating },
-        apiMainDraft: 'textgenerationwebui',
         connectionSwitcher: {},
     };
     const saved = [];
@@ -967,7 +966,6 @@ describe('applyConnectionProfile', () => {
         // 先保存，再通知引擎，页面数据在其后刷新
         expect(fixture.events.indexOf('save')).toBeLessThan(fixture.events.indexOf('reloadSettings'));
         expect(fixture.events.indexOf('reloadSettings')).toBeLessThan(fixture.events.indexOf('loadData'));
-        expect(fixture.state.apiMainDraft).toBe('');
         expect(fixture.state.connectionSwitcher.busy).toBe(false);
 
         expect(fixture.state.connectionSwitcher.lastResult).toMatchObject({

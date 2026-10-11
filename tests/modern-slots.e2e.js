@@ -3,7 +3,7 @@ import { createModernResourceFixture, mockModernWorkspace } from './modern-test-
 
 /* global document, window, localStorage */
 
-// 界面插槽（聊天工具抽屉、消息背景、连接标签、设置页聊天工具 / 数据维护标签）的机制测试。
+// 界面插槽（聊天工具抽屉、消息背景、连接标签、设置页聊天工具标签 / 数据与备份里的数据维护分区）的机制测试。
 // 页面里读取 window.__modernTestFlags（见 public/modern/core/test-flags.js）强制某个面板可用或不可用，
 // 所以这个文件不依赖各功能是否已经实现；功能落地后只会让真实面板多出内容，不会改变这里断言的插槽行为。
 
@@ -78,7 +78,11 @@ async function mockSettings(page) {
         settingsBundle: { enable_extensions: true, enable_accounts: true },
     });
     await mockModernWorkspace(page, fixture);
-    await page.route('**/api/settings/get-snapshots', route => fulfillJson(route, []));
+    // Two snapshots, so the older one would get a delete button when the maintenance part is available
+    await page.route('**/api/settings/get-snapshots', route => fulfillJson(route, [
+        { name: 'settings-newer.json', date: 1720000000000, size: 512 },
+        { name: 'settings-older.json', date: 1710000000000, size: 256 },
+    ]));
 }
 
 async function openSettings(page) {
@@ -277,16 +281,24 @@ test.describe('Chat backdrop and connection chip slots', () => {
 test.describe('Settings tab slots', () => {
     test.use({ viewport: desktopViewport });
 
-    test('adds no tabs while nothing is available', async ({ page }) => {
+    test('adds no tabs and no maintenance part while nothing is available', async ({ page }) => {
         await setTestFlags(page, allSettingsSlotsOff);
         await mockSettings(page);
         await openSettings(page);
 
-        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveCount(5);
+        const tabs = page.locator('.settings-tabs [data-settings-section]');
+        await expect(tabs).toHaveText([/模型连接/, /界面/, /数据与备份/, /系统信息/]);
         await expect(page.locator('[data-settings-section="chat-tools"]')).toHaveCount(0);
-        await expect(page.locator('[data-settings-section="maintenance"]')).toHaveCount(0);
-        await expect(page.getByRole('button', { name: '聊天工具' })).toHaveCount(0);
-        await expect(page.getByRole('button', { name: '数据维护' })).toHaveCount(0);
+        await expect(page.getByRole('tab', { name: '聊天工具' })).toHaveCount(0);
+
+        // The data tab keeps the snapshot list but has no maintenance panel, snapshot delete or prune
+        await page.locator('[data-settings-section="data"]').click();
+        await expect(page.locator('[data-settings-section="data"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-settings-snapshots] .backup-row')).toHaveCount(2);
+        await expect(page.locator('[data-settings-maintenance]')).toHaveCount(0);
+        await expect(page.locator('[data-maintenance-section]')).toHaveCount(0);
+        await expect(page.locator('[data-maintenance-snapshot-delete]')).toHaveCount(0);
+        await expect(page.locator('[data-maintenance-snapshot-keep]')).toHaveCount(0);
     });
 
     test('shows the chat tools tab as soon as one section is available', async ({ page }) => {
@@ -298,27 +310,27 @@ test.describe('Settings tab slots', () => {
         await openSettings(page);
 
         const tabs = page.locator('.settings-tabs [data-settings-section]');
-        await expect(tabs).toHaveText([/界面与请求/, /聊天工具/, /账户与资源/, /设置快照/, /原始设置/, /安全诊断/]);
-        await expect(page.locator('[data-settings-section="maintenance"]')).toHaveCount(0);
+        await expect(tabs).toHaveText([/模型连接/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
 
         const chatToolsTab = page.locator('[data-settings-section="chat-tools"]');
+        await expect(page.getByRole('tab', { name: '聊天工具' })).toHaveCount(1);
         await chatToolsTab.click();
         await expect(chatToolsTab).toHaveAttribute('aria-selected', 'true');
         await expect(page.locator('[data-settings-section="preferences"]')).toHaveAttribute('aria-selected', 'false');
-        await expect(page.locator('[data-settings-chat-tools]')).toBeVisible();
+        await expect(page.locator('[data-settings-panel="chat-tools"] [data-settings-chat-tools]')).toBeVisible();
         await expect(page.locator('[data-settings-tool-section="translate"]')).toBeAttached();
         // 未开启的分区不渲染
         await expect(page.locator('[data-settings-tool-section="summary"]')).toHaveCount(0);
         await expect(page.locator('[data-settings-tool-section="reasoning"]')).toHaveCount(0);
 
         // 切到别的标签再回来
-        await page.locator('[data-settings-section="status"]').click();
+        await page.locator('[data-settings-section="system"]').click();
         await expect(page.locator('[data-settings-chat-tools]')).toHaveCount(0);
         await chatToolsTab.click();
         await expect(page.locator('[data-settings-chat-tools]')).toBeVisible();
     });
 
-    test('shows the maintenance tab when its panel is available', async ({ page }) => {
+    test('shows the maintenance part inside the data tab when its panel is available', async ({ page }) => {
         await setTestFlags(page, {
             settingsToolSections: { translate: false, summary: false, reasoning: false },
             settingsTabs: { 'chat-tools': false, maintenance: true },
@@ -327,22 +339,29 @@ test.describe('Settings tab slots', () => {
         await openSettings(page);
 
         const tabs = page.locator('.settings-tabs [data-settings-section]');
-        await expect(tabs).toHaveText([/界面与请求/, /账户与资源/, /设置快照/, /数据维护/, /原始设置/, /安全诊断/]);
-        await page.locator('[data-settings-section="maintenance"]').click();
-        await expect(page.locator('[data-settings-section="maintenance"]')).toHaveAttribute('aria-selected', 'true');
-        await expect(page.locator('[data-settings-maintenance]')).toBeAttached();
+        await expect(tabs).toHaveText([/模型连接/, /界面/, /数据与备份/, /系统信息/]);
+        await expect(page.locator('[data-settings-maintenance]')).toHaveCount(0);
+
+        await page.locator('[data-settings-section="data"]').click();
+        await expect(page.locator('[data-settings-section="data"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-settings-panel="data"] [data-settings-maintenance]')).toBeAttached();
+        // The snapshot list gains delete (not on the newest) and prune controls
+        await expect(page.locator('[data-maintenance-snapshot-delete="settings-older.json"]')).toBeVisible();
+        await expect(page.locator('[data-maintenance-snapshot-row="settings-newer.json"] [data-maintenance-snapshot-delete]')).toHaveCount(0);
+        await expect(page.locator('[data-maintenance-snapshot-keep]')).toBeVisible();
     });
 
     test('falls back to the first tab when the remembered tab is gone, and keeps global shortcuts', async ({ page }) => {
         await page.addInitScript(() => {
-            localStorage.setItem('st-modern-settings-section', 'maintenance');
+            localStorage.setItem('st-modern-settings-section', 'chat-tools');
         });
         await setTestFlags(page, allSettingsSlotsOff);
         await mockSettings(page);
         await openSettings(page);
 
-        await expect(page.locator('[data-settings-section="preferences"]')).toHaveAttribute('aria-selected', 'true');
-        await expect(page.locator('[data-settings-maintenance]')).toHaveCount(0);
+        await expect(page.locator('[data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-settings-panel="connection"]')).toBeAttached();
+        await expect(page.locator('[data-settings-chat-tools]')).toHaveCount(0);
 
         // 设置页新加的 keydown 处理在没人认领时必须放行全局快捷键
         await page.keyboard.press('ControlOrMeta+k');

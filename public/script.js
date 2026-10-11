@@ -6517,6 +6517,12 @@ async function handleModernBridgeReloadSettings() {
     loadHordeSettings(settings);
     await loadPowerUserSettings(settings, data);
     applyPowerUserSettings();
+    // loadPowerUserSettings → switchMaxContextSize 按隐藏页面上旧滑块的值钳制，并通过 input 事件改写 max_context / amount_gen
+    // （例如上次是 8192、这次保存成 4096，钳制后又变回 8192）。这里以刚读到的设置为准重新赋值。
+    amount_gen = settings.amount_gen;
+    if (settings.max_context !== undefined) {
+        max_context = parseInt(settings.max_context);
+    }
     // 刻意不调 setWorldInfoSettings：它每次都注册 CHAT_CHANGED 等 eventSource 监听且无 .off()，随 reload 次数无界累积。
     // 世界书的全局参数和全局启用列表改走只赋值的 applyModernBridgeWorldInfoSettings。
     applyModernBridgeWorldInfoSettings(settings.world_info_settings);

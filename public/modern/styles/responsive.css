@@ -207,8 +207,7 @@
         justify-content: center;
     }
 
-    .list-toolbar,
-    .settings-edit-grid {
+    .list-toolbar {
         grid-template-columns: 1fr;
     }
 
@@ -228,10 +227,6 @@
 
 @media (max-width: 560px) {
     .metrics-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .api-current {
         grid-template-columns: 1fr;
     }
 

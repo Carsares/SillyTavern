@@ -220,7 +220,7 @@ test.describe('Chat connection chip', () => {
         await expect(currentModel).toContainText('当前');
         await expect(popover(page)).toContainText('Custom OpenAI-compatible');
         await expect(page.locator('[data-connection-create-open]')).toContainText('从当前连接创建档案');
-        await expect(popover(page).locator('[data-route="api"]')).toContainText('打开 API 页');
+        await expect(popover(page).locator('[data-route="api"]')).toContainText('打开模型连接');
         // 与旧版的差异写在界面上
         await expect(popover(page)).toContainText('精确匹配');
     });
@@ -323,8 +323,11 @@ test.describe('Chat connection chip', () => {
         await openChat(page);
         await openPopover(page);
 
+        // 「打开模型连接」 opens the 模型连接 tab of the settings center, which replaced the API page
         await popover(page).locator('[data-route="api"]').click();
-        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'api');
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
+        await expect(page).toHaveURL(/\/modern\/\?view=settings(&|$)/);
+        await expect(page.locator('.settings-tabs [data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
         await page.locator('.nav [data-route="chat"], nav [data-route="chat"]').first().click();
         await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'chat');
         await expect(chip(page)).toBeVisible();

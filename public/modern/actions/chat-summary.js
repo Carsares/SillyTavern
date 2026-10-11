@@ -424,12 +424,16 @@ export function createChatSummaryActions({ state, apiFetch, render, showToast, b
         return reloadSettings();
     }
 
-    async function commitSettings(section, patch, doneText, title) {
+    // quiet：设置页改动即保存时不弹成功提示也不写成功横幅（页头的保存状态已经说明），引擎没同步时仍然提示。
+    // quiet 时开始保存不重绘：保存由失焦触发，正发生在按下鼠标的瞬间，这时重绘会把用户正要点的按钮换掉，点击就丢了
+    async function commitSettings(section, patch, doneText, title, { quiet = false } = {}) {
         section.saving = true;
         section.error = '';
         section.notice = '';
         section.warning = '';
-        render();
+        if (!quiet) {
+            render();
+        }
         try {
             const reload = await persistMemorySettings(patch);
             const saved = readSummarySettings(state.settings);
@@ -440,7 +444,7 @@ export function createChatSummaryActions({ state, apiFetch, render, showToast, b
             if (failure) {
                 section.warning = `${doneText}${failure}`;
                 showToast(title, failure);
-            } else {
+            } else if (!quiet) {
                 section.notice = `${doneText}，生成引擎已同步，下一次生成起生效。`;
                 showToast(title, '生成引擎已同步。');
             }
@@ -454,27 +458,38 @@ export function createChatSummaryActions({ state, apiFetch, render, showToast, b
         }
     }
 
-    async function saveSummarySettings() {
+    /**
+     * 校验草稿并保存。
+     * @param {{ quiet?: boolean }} [options] quiet 见 commitSettings
+     * @returns {Promise<{ ok: boolean, invalid?: boolean, error?: string }>} 结果；invalid 表示草稿没通过校验、没有保存
+     */
+    async function saveSummarySettings({ quiet = false } = {}) {
         const section = ensureSettingsSection();
         if (section.saving) {
-            return;
+            return { ok: true };
         }
 
-        const parsed = parseSummarySettingsDraft(section.draft, section.baseline);
+        const savedDraft = { ...section.draft };
+        const parsed = parseSummarySettingsDraft(savedDraft, section.baseline);
         section.errors = parsed.errors;
         section.error = '';
         section.notice = '';
         section.warning = '';
         if (!parsed.ok) {
-            render();
-            return;
+            if (!quiet) {
+                render();
+            }
+            return { ok: false, invalid: true, error: Object.values(parsed.errors)[0] || '有字段没有通过校验' };
         }
 
-        const committed = await commitSettings(section, buildSummarySettingsPatch(parsed.values), '摘要设置已保存', '摘要设置已保存');
+        const committed = await commitSettings(section, buildSummarySettingsPatch(parsed.values), '摘要设置已保存', '摘要设置已保存', { quiet });
         if (committed) {
-            section.draft = { ...section.baselineDraft };
+            // 保存期间又改过的字段保留新值（调用方会再保存一轮），其余对齐到刚保存的值
+            const editedSince = Object.fromEntries(Object.entries(section.draft).filter(([key, value]) => value !== savedDraft[key]));
+            section.draft = { ...section.baselineDraft, ...editedSince };
         }
         render();
+        return committed ? { ok: true } : { ok: false, error: section.error };
     }
 
     // 「切换为主模型」：只改来源这一项并立即保存，其余设置和未保存的草稿都不动。每次摘要会多一次主模型调用，横幅里已说明。

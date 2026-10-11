@@ -142,7 +142,7 @@ export function createPresetDetailComponents(ctx) {
             <div class="panel-header">
                 <div>
                     <h3 class="form-section-title">从当前 API 配置保存</h3>
-                    <p class="panel-subtitle">保存现代 API 页可编辑的模型、端点和采样参数；高级字段保留在原预设中。</p>
+                    <p class="panel-subtitle">保存「模型连接」里可编辑的模型、端点和采样参数；高级字段保留在原预设中。</p>
                 </div>
                 <span class="badge">${escapeHtml(currentPreset || '未选择')}</span>
             </div>

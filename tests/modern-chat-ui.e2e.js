@@ -528,7 +528,7 @@ test.describe('Modern chat message hints and management', () => {
         // Only the reply with reasoning but no text gets the hint; an empty reply without reasoning does not.
         const hint = page.locator('[data-empty-reply-hint]');
         await expect(hint).toHaveCount(1);
-        await expect(hint).toContainText('回复正文为空：推理内容可能用完了 Max Tokens（当前 300）。可在 API 页调高后重生成。');
+        await expect(hint).toContainText('回复正文为空：推理内容可能用完了 Max Tokens（当前 300）。可在设置中心的「模型连接」里调高回复长度后重生成。');
         const hintedMessage = page.locator('.message-list > .message', { has: hint });
         await expect(hintedMessage.locator('.message-body').first()).toHaveText('[空消息]');
         await expect(hintedMessage.locator('.message-reasoning summary')).toHaveText('推理内容');
@@ -540,8 +540,11 @@ test.describe('Modern chat message hints and management', () => {
         await expect(preview).toHaveText('[空消息]');
         await expect(page.locator('.chat-browser')).not.toContainText('The message is empty');
 
+        await expect(hint.locator('[data-route="api"]')).toContainText('打开模型连接');
         await hint.locator('[data-route="api"]').click();
-        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'api');
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
+        await expect(page.locator('.settings-tabs [data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
+        await expect(page.locator('[data-api-max-tokens]')).toHaveValue('300');
     });
 
     test('separates editing from deleting and confirms a delete inline', async ({ page }) => {

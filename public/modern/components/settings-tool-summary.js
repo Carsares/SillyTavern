@@ -162,15 +162,7 @@ export function createSettingsToolSummary(ctx) {
                         <p class="chat-summary-message success" role="status" data-ss-message="notice" ${view.notice ? '' : 'hidden'}>${escapeHtml(view.notice || '')}</p>
                     </div>
                     <div class="chat-summary-actions">
-                        <span class="badge" data-ss-dirty ${view.dirty ? '' : 'hidden'}>有未保存的修改</span>
-                        <button class="secondary-button" type="button" data-ss-reset ${view.saving ? 'disabled' : ''}>
-                            <i class="fa-solid fa-rotate-left"></i>
-                            还原
-                        </button>
-                        <button class="primary-button" type="button" data-ss-save ${view.saving ? 'disabled' : ''}>
-                            <i class="fa-solid ${view.saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}"></i>
-                            ${view.saving ? '保存中' : '保存摘要设置'}
-                        </button>
+                        <span class="badge" data-ss-dirty ${view.dirty ? '' : 'hidden'}>编辑中，离开输入框后保存</span>
                     </div>
                 </div>
             </section>

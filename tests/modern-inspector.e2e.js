@@ -167,7 +167,9 @@ test.describe('Modern inspector', () => {
         await expect(chatSection).toContainText('existing-chat.jsonl');
         await expect(chatSection).toContainText('2 条');
 
+        // The API page is now the 模型连接 tab of the settings center; the drawer keeps its connection diagnostics
         await page.goto('/modern/?view=api');
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'settings');
         const apiSection = page.locator('.inspector-section', { hasText: '连接诊断' });
         await expect(apiSection).toContainText('siliconflow');
         await expect(apiSection).toContainText('deepseek-ai/DeepSeek-V3');
@@ -208,10 +210,17 @@ test.describe('Modern inspector', () => {
         await openInspectorFromTopbar(page);
         await expect(assetSection).toContainText('theme.mp3');
 
+        // Other settings tabs describe the settings center itself
         await page.goto('/modern/?view=settings');
+        await expect(apiSection).toContainText('deepseek-ai/DeepSeek-V3');
+        await closeInspectorIfOpen(page);
+        await page.locator('.settings-tabs [data-settings-section="system"]').click();
         const settingsSection = page.locator('.inspector-section', { hasText: '设置状态' });
-        await expect(settingsSection).toContainText('请求压缩');
-        await expect(settingsSection).toContainText('已开启');
+        const settingsRow = label => settingsSection.locator('.kv-row', { has: page.locator('.kv-key', { hasText: new RegExp(`^${label}$`) }) }).locator('.kv-value');
+        await expect(settingsRow('当前分区')).toHaveText('system');
+        await expect(settingsRow('上下文抽屉')).toHaveText('收起');
+        await expect(settingsRow('保存状态')).toHaveText('改动会自动保存');
+        await expect(apiSection).toHaveCount(0);
 
         await page.goto('/modern/?view=characters');
         const characterSection = page.locator('.inspector-section', { hasText: '角色状态' });
@@ -354,25 +363,25 @@ test.describe('Modern inspector', () => {
         await page.goto('/modern/?view=settings');
         const inspector = page.locator('#inspector');
         const preference = page.locator('[data-modern-inspector-open]');
-        const save = page.locator('[data-save-modern-preferences]');
+        const saveStatus = page.locator('[data-settings-save-status]');
         await expect(inspector).not.toHaveClass(/open/);
+        await page.locator('.settings-tabs [data-settings-section="preferences"]').click();
 
-        // Checking the box counts as an outside click and closes the drawer; saving still makes the
-        // preference decide the next load
+        // Changing the box saves the preference at once. The saving click is not an outside click: the drawer stays
+        // as it is in this view, and the saved preference decides the next load
         await openInspectorFromTopbar(page);
         await preference.check();
-        await expect(inspector).not.toHaveClass(/open/);
-        await save.click();
+        await expect(saveStatus).toContainText('上下文抽屉默认状态已保存');
+        await expect(inspector).toHaveClass(/open/);
         expect(await readStorage(page, 'st-modern-inspector-open')).toBe('true');
         expect(await readStorage(page, 'st-modern-inspector-state')).toBeNull();
         await page.reload();
         await expect(inspector).toHaveClass(/open/);
 
-        // Saving with the drawer open does not count as an outside click
+        // The settings center reopens on the same tab
         await expect(preference).toBeChecked();
         await preference.uncheck();
-        await openInspectorFromTopbar(page);
-        await save.click();
+        await expect(saveStatus).toContainText('上下文抽屉默认状态已保存');
         await expect(inspector).toHaveClass(/open/);
         expect(await readStorage(page, 'st-modern-inspector-open')).toBe('false');
         expect(await readStorage(page, 'st-modern-inspector-state')).toBeNull();

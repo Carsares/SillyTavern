@@ -16,7 +16,7 @@ const CODE_MESSAGES = {
 };
 
 const EXACT_FIELDS = {
-    main_api: '当前 API 类型不是对话补全（Chat Completion）。Agent 只支持对话补全类连接，请在 API 页面切换后重试',
+    main_api: '当前 API 类型不是对话补全（Chat Completion）。Agent 只支持对话补全类连接，请在设置中心的「模型连接」里切换后重试',
     oai_settings: '对话补全设置缺失或格式无效',
     'oai_settings.chat_completion_source': 'Agent 只支持 Custom（OpenAI 兼容）、OpenAI 和 DeepSeek 三种对话补全来源',
     'oai_settings.custom_model': '未选择模型',

@@ -1,21 +1,12 @@
-import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
-import { saveSettingsSerialized } from '../core/keyed-queue.js';
-
-// AI Horde connection: an optional key (secret HORDE) + a multi-select of live models (settings.horde_settings.models)
+// AI Horde connection: an optional key (secret HORDE) + a multi-select of live models (settings.horde_settings.models).
+// Both are saved by actions/api-autosave.js; this file loads the live model list and tests the key.
 export function createApiHordeConnectionActions({
     state,
-    elements,
     apiFetch,
-    loadData,
     render,
     showToast,
     recordApiTestResult,
-    reloadSettings = noEngineSync,
 }) {
-    function getHordeSettings() {
-        return state.settings.horde_settings || {};
-    }
-
     async function loadHordeModels({ force = false } = {}) {
         if (!force && (state.hordeModels.loaded || state.hordeModels.loading)) {
             return;
@@ -35,42 +26,8 @@ export function createApiHordeConnectionActions({
     }
 
     async function refreshHordeModels() {
-        // Persist the user's current (unsaved) selection in memory so the refresh re-render keeps it selected
-        const hordeSettings = state.settings.horde_settings || {};
-        state.settings.horde_settings = hordeSettings;
-        hordeSettings.models = getSelectedHordeModels();
         await loadHordeModels({ force: true });
         showToast('AI Horde 模型已刷新', `${state.hordeModels.items.length} 个可用模型`);
-    }
-
-    function getSelectedHordeModels() {
-        const select = elements.content.querySelector('[data-horde-model]');
-        if (!select) {
-            const models = getHordeSettings().models;
-            return Array.isArray(models) ? models : [];
-        }
-        return Array.from(select.selectedOptions).map(option => option.value);
-    }
-
-    async function saveHordeConnectionFromForm() {
-        const models = getSelectedHordeModels();
-        const keyInput = elements.content.querySelector('[data-horde-api-key]');
-        const apiKey = keyInput?.value.trim() || '';
-        const hordeSettings = state.settings.horde_settings || {};
-
-        state.settings.horde_settings = hordeSettings;
-        state.settings.main_api = 'koboldhorde';
-        hordeSettings.models = models;
-
-        if (apiKey) {
-            await apiFetch('/api/secrets/write', { body: { key: 'api_key_horde', value: apiKey, label: 'horde modern' } });
-        }
-
-        await saveSettingsSerialized(apiFetch, state.settings);
-        const engineSync = await reloadSettings();
-        state.apiMainDraft = '';
-        await loadData({ silent: true });
-        showToast('AI Horde 连接已保存', `${models.length ? `${models.length} 个模型` : '未选择模型，无法生成，请至少选择一个'}${describeReloadFailure(engineSync)}`);
     }
 
     async function testHordeConnection() {
@@ -106,7 +63,6 @@ export function createApiHordeConnectionActions({
     return {
         loadHordeModels,
         refreshHordeModels,
-        saveHordeConnectionFromForm,
         testHordeConnection,
     };
 }

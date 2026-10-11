@@ -21,7 +21,7 @@ export function createChatMessageContentComponents({
             || (Array.isArray(message.extra?.files) && message.extra.files.length > 0);
     }
 
-    // Modern 的 API 页只为聊天补全提供 Max Tokens（oai_settings.openai_max_tokens），其他主 API 不显示当前值。
+    // 这里只读聊天补全的 Max Tokens（oai_settings.openai_max_tokens），其他主 API 不显示当前值。
     function getReplyTokenLimit() {
         const settings = state.settings || {};
         if (settings.main_api && settings.main_api !== 'openai') {
@@ -45,10 +45,10 @@ export function createChatMessageContentComponents({
         return `
         <div class="message-empty-hint" role="note" data-empty-reply-hint>
             <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-            <span>回复正文为空：推理内容可能用完了 Max Tokens${escapeHtml(limitText)}。可在 API 页调高后重生成。</span>
+            <span>回复正文为空：推理内容可能用完了 Max Tokens${escapeHtml(limitText)}。可在设置中心的「模型连接」里调高回复长度后重生成。</span>
             <button class="secondary-button compact-button" type="button" data-route="api">
                 <i class="fa-solid fa-sliders"></i>
-                打开 API 设置
+                打开模型连接
             </button>
         </div>
     `;

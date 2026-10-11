@@ -344,16 +344,24 @@ export function getChatCompletionContextLimits({ source, model = '', unlocked = 
 }
 
 /**
- * 保存前校验用的范围。依赖远端模型列表的来源，页面并不知道模型真实的上限，所以只拦截 2,000,000 以上的值，
- * 参考上限在提示文字里说明，旧版引擎载入设置时会按实际模型再收紧。
- * @param {ChatCompletionContextLimits} limits getChatCompletionContextLimits 的结果
- * @returns {{ min: number, max: number }} 允许输入的范围
+ * 现代页允许填写的聊天补全上下文长度：所有来源都是 512 到 2,000,000，不要求先勾选「解锁上限」。
+ * 超过该来源按模型的上限时只提示，保存时由 resolveChatContextUnlock 替引擎打开解锁标记。
  */
-export function getChatCompletionContextRange(limits) {
-    return {
-        min: limits.min,
-        max: limits.dynamic ? CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX : limits.max,
-    };
+export const CHAT_COMPLETION_CONTEXT_INPUT_RANGE = Object.freeze({ min: CHAT_COMPLETION_CONTEXT_MIN, max: CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX });
+
+/**
+ * 保存上下文长度时 oai_settings.max_context_unlocked 应取的值。
+ * 旧版引擎载入设置时，未解锁就把上下文钳到该来源按模型的上限（onModelChange），所以超过上限时必须打开解锁，填的值才会生效。
+ * 「解锁上限」对该来源不起作用（custom、minimax）时返回 null，表示不改这个字段。
+ * @param {{ source: string, model?: string, context: number }} options 来源、模型和要保存的上下文长度
+ * @returns {boolean | null} 解锁标记
+ */
+export function resolveChatContextUnlock({ source, model = '', context }) {
+    const limits = getChatCompletionContextLimits({ source, model, unlocked: false });
+    if (!limits.unlockApplies) {
+        return null;
+    }
+    return Number(context) > limits.max;
 }
 
 /**
@@ -372,72 +380,106 @@ export function getPromptBudget(context, responseTokens) {
 }
 
 /**
- * 说明文字末尾的「当前预算」。预算不大于 0 时不写负数，直接说明放不下提示词。
- * @param {number} budget 提示词预算，不是有效数字时为 NaN
- * @returns {string} 括号里的文字，没有可显示内容时为空字符串
+ * @typedef {{ text: string, level: 'info' | 'warning' }} LimitHint
  */
-function budgetHint(budget) {
+
+/**
+ * 说明文字末尾的提示词预算。预算不大于 0 时给出警告，不写负数。
+ * @param {number} context 上下文长度
+ * @param {number} response 回复长度
+ * @returns {LimitHint | null} 没有可显示内容时为 null
+ */
+function describeBudget(context, response) {
+    const budget = getPromptBudget(context, response);
     if (!Number.isFinite(budget)) {
-        return '';
+        return null;
     }
-    return budget > 0 ? `（当前 ${formatNumber(budget)}）` : '（当前没有空间放提示词）';
+    if (budget <= 0) {
+        return { text: '回复长度不小于上下文长度，没有空间放提示词', level: 'warning' };
+    }
+    return { text: `提示词预算 ${formatNumber(budget)}（上下文 − 回复长度）`, level: 'info' };
 }
 
 /**
- * API 页「上下文长度」字段下方的说明文字。
- * 固定上限的来源写「上限 N」；依赖远端模型列表的来源写「参考上限 N」并提示生成时可能再收紧；
- * 最后一句固定说明提示词预算怎么算，上下文和 Max Tokens 都是有效数字时补上当前预算。
- * @param {{ limits: ChatCompletionContextLimits, context?: number | string, maxTokens?: number | string }} options 范围与当前输入
- * @returns {string} 说明文字
+ * @param {Array<LimitHint | null>} parts 各段说明
+ * @returns {LimitHint} 合并后的说明，任一段是警告整体就是警告
  */
-export function describeChatCompletionContextHint({ limits, context, maxTokens }) {
-    let limitText;
-    if (limits.dynamic) {
-        limitText = `参考上限 ${formatNumber(limits.max)}（该来源的实际上限取决于远端模型列表，生成时可能按实际模型再收紧）`;
-    } else if (!limits.unlockApplies) {
-        limitText = `上限 ${formatNumber(limits.max)}（该来源固定，不受“解锁上限”影响）`;
-    } else if (limits.unlocked) {
-        limitText = `已解锁，上限 ${formatNumber(limits.max)}`;
-    } else {
-        limitText = `上限 ${formatNumber(limits.max)}`;
-    }
-
-    const budget = getPromptBudget(toFiniteNumber(context), toFiniteNumber(maxTokens));
-    const budgetText = budgetHint(budget);
-    return `${limitText}；提示词预算 = 上下文 − Max Tokens${budgetText}`;
-}
-
-/**
- * 文本补全（KoboldAI、AI Horde、NovelAI 共用的 max_context / amount_gen）的取值范围。
- * @param {{ unlocked?: boolean }} [options] 是否勾选「解锁」（power_user.max_context_unlocked）
- * @returns {{ unlocked: boolean, context: { min: number, max: number }, response: { min: number, max: number } }} 范围
- */
-export function getTextCompletionLimits({ unlocked = false } = {}) {
+function joinHints(parts) {
+    const present = /** @type {LimitHint[]} */ (parts.filter(Boolean));
     return {
-        unlocked: Boolean(unlocked),
-        context: {
-            min: TEXT_COMPLETION_CONTEXT_MIN,
-            max: unlocked ? TEXT_COMPLETION_CONTEXT_UNLOCKED_MAX : TEXT_COMPLETION_CONTEXT_DEFAULT_MAX,
-        },
-        response: {
-            min: TEXT_COMPLETION_RESPONSE_MIN,
-            max: unlocked ? TEXT_COMPLETION_RESPONSE_UNLOCKED_MAX : TEXT_COMPLETION_RESPONSE_DEFAULT_MAX,
-        },
+        text: present.map(part => part.text).join('；'),
+        level: present.some(part => part.level === 'warning') ? 'warning' : 'info',
     };
 }
 
 /**
- * 文本补全「上下文长度 / 回复长度」下方的说明文字。
- * @param {{ limits: ReturnType<typeof getTextCompletionLimits>, context?: number | string, response?: number | string }} options 范围与当前输入
- * @returns {string} 说明文字
+ * 聊天补全「上下文长度」下方的说明：该来源和模型的上限（超过时警告，不拦截），以及提示词预算。
+ * @param {{ source: string, model?: string, context?: number | string, maxTokens?: number | string }} options 来源、模型和当前输入
+ * @returns {LimitHint} 说明
  */
-export function describeTextCompletionLimitHint({ limits, context, response }) {
-    const unlockText = limits.unlocked
-        ? '已解锁'
-        : `勾选“解锁上限”后上下文可到 ${formatNumber(TEXT_COMPLETION_CONTEXT_UNLOCKED_MAX)}、回复可到 ${formatNumber(TEXT_COMPLETION_RESPONSE_UNLOCKED_MAX)}`;
-    const budget = getPromptBudget(toFiniteNumber(context), toFiniteNumber(response));
-    const budgetText = budgetHint(budget);
-    return `上下文 ${formatNumber(limits.context.min)} 到 ${formatNumber(limits.context.max)}，回复 ${formatNumber(limits.response.min)} 到 ${formatNumber(limits.response.max)}（${unlockText}）；提示词预算 = 上下文 − 回复长度${budgetText}`;
+export function describeChatCompletionContext({ source, model = '', context, maxTokens }) {
+    const limits = getChatCompletionContextLimits({ source, model, unlocked: false });
+    const contextValue = toFiniteNumber(context);
+    /** @type {LimitHint} */
+    let limitHint;
+    if (!limits.unlockApplies && limits.max >= CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX) {
+        limitHint = { text: '该来源不限制上下文长度，按模型实际支持的长度填写', level: 'info' };
+    } else if (limits.dynamic) {
+        limitHint = { text: `参考上限 ${formatNumber(limits.max)}，实际以该来源的模型列表为准`, level: 'info' };
+    } else if (Number.isFinite(contextValue) && contextValue > limits.max) {
+        limitHint = { text: `超过当前模型已知上限 ${formatNumber(limits.max)}，请求可能被服务拒绝`, level: 'warning' };
+    } else {
+        limitHint = { text: `当前模型已知上限 ${formatNumber(limits.max)}`, level: 'info' };
+    }
+    return joinHints([limitHint, describeBudget(contextValue, toFiniteNumber(maxTokens))]);
+}
+
+/**
+ * 「填入模型上限」按钮能填的值。依赖模型列表或不限制长度的来源没有确定的上限，返回 null。
+ * @param {{ source: string, model?: string }} options 来源和模型
+ * @returns {number | null} 上限
+ */
+export function getChatCompletionSuggestedContext({ source, model = '' }) {
+    const limits = getChatCompletionContextLimits({ source, model, unlocked: false });
+    if (limits.dynamic || (!limits.unlockApplies && limits.max >= CHAT_COMPLETION_CONTEXT_UNLOCKED_MAX)) {
+        return null;
+    }
+    return limits.max;
+}
+
+/**
+ * 文本补全（以及 KoboldAI、NovelAI、AI Horde 共用的 max_context / amount_gen）允许填写的范围，
+ * 即旧版勾选「解锁」后的范围（power-user.js:83-86）。
+ */
+export const TEXT_COMPLETION_INPUT_RANGE = Object.freeze({
+    context: Object.freeze({ min: TEXT_COMPLETION_CONTEXT_MIN, max: TEXT_COMPLETION_CONTEXT_UNLOCKED_MAX }),
+    response: Object.freeze({ min: TEXT_COMPLETION_RESPONSE_MIN, max: TEXT_COMPLETION_RESPONSE_UNLOCKED_MAX }),
+});
+
+/**
+ * 保存上下文 / 回复长度时 power_user.max_context_unlocked 应取的值：任一项超过旧版未解锁的上限（8,192 / 2,048）就打开，
+ * 否则引擎载入设置时会把值钳回上限（power-user.js switchMaxContextSize）。
+ * @param {{ context: number, response: number }} options 要保存的上下文长度和回复长度
+ * @returns {boolean} 解锁标记
+ */
+export function resolveTextContextUnlock({ context, response }) {
+    return Number(context) > TEXT_COMPLETION_CONTEXT_DEFAULT_MAX || Number(response) > TEXT_COMPLETION_RESPONSE_DEFAULT_MAX;
+}
+
+// 引擎对 NovelAI 的 Clio / Kayra / Erato 固定只用 8,192（public/script.js getMaxContextTokens）
+const NOVEL_CONTEXT_CAP = 8192;
+
+/**
+ * 文本补全类「上下文长度 / 回复长度」下方的说明：NovelAI 的引擎上限，以及提示词预算。
+ * @param {{ mainApi?: string, context?: number | string, response?: number | string }} options 主 API 和当前输入
+ * @returns {LimitHint} 说明
+ */
+export function describeTextCompletionContext({ mainApi = '', context, response }) {
+    const contextValue = toFiniteNumber(context);
+    const novelHint = mainApi === 'novel' && Number.isFinite(contextValue) && contextValue > NOVEL_CONTEXT_CAP
+        ? { text: `引擎对 NovelAI 最多使用 ${formatNumber(NOVEL_CONTEXT_CAP)}，超出的部分不会生效`, level: /** @type {const} */ ('warning') }
+        : null;
+    return joinHints([novelHint, describeBudget(contextValue, toFiniteNumber(response))]);
 }
 
 /**

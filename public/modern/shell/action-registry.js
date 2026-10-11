@@ -45,7 +45,6 @@ export function createActionRegistry({
 }) {
     const apiConnectionActions = createApiConnectionActions({
         state,
-        elements,
         apiFetch,
         loadData,
         render,
@@ -53,7 +52,6 @@ export function createActionRegistry({
         apiModelSuggestions,
         chatCompletionModelFields,
         secretKeyByChatSource,
-        numberInput,
         uniqueValues,
         reloadSettings: bridgeReload.reloadSettings,
     });

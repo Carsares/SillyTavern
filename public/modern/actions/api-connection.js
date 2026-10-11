@@ -1,14 +1,15 @@
-import { createApiChatCompletionConnectionActions, refreshChatCompletionContextUi } from './api-chat-completion-connection.js';
+import { createApiChatCompletionConnectionActions } from './api-chat-completion-connection.js';
 import { createApiTextCompletionConnectionActions } from './api-text-completion-connection.js';
 import { createApiKoboldConnectionActions } from './api-kobold-connection.js';
 import { createApiNovelConnectionActions } from './api-novel-connection.js';
 import { createApiHordeConnectionActions } from './api-horde-connection.js';
 import { createApiOAuthActions } from './api-oauth.js';
+import { createConnectionFieldAutosave } from './api-autosave.js';
+import { createSettingsAutosave } from './settings-autosave.js';
 import { noEngineSync } from '../core/bridge-reload.js';
 
 export function createApiConnectionActions({
     state,
-    elements,
     apiFetch,
     loadData,
     render,
@@ -16,17 +17,20 @@ export function createApiConnectionActions({
     apiModelSuggestions,
     chatCompletionModelFields,
     secretKeyByChatSource,
-    numberInput,
     uniqueValues,
     // 保存后通知隐藏的生成引擎重载设置（core/bridge-reload.js 的 reloadSettings，等引擎确认；永不 reject）
     reloadSettings = noEngineSync,
 }) {
+    // 设置中心共用的「改动即保存」：模型连接、界面偏好和聊天工具都从这里写入并显示保存状态
+    const settingsAutosave = createSettingsAutosave({ state, apiFetch, showToast, reloadSettings });
+    const connectionFieldAutosave = createConnectionFieldAutosave({ state, render, autosave: settingsAutosave });
+
     function getOaiSettings() {
         return state.settings.oai_settings || {};
     }
 
     function getSelectedApiMain() {
-        return state.apiMainDraft || state.settings.main_api || 'openai';
+        return state.settings.main_api || 'openai';
     }
 
     function getChatCompletionModel(settings, source) {
@@ -39,16 +43,6 @@ export function createApiConnectionActions({
             currentModel,
             ...(apiModelSuggestions[source] || []),
         ]).slice(0, 8);
-    }
-
-    function setApiModelSuggestion(model) {
-        const input = elements.content.querySelector('[data-api-model]');
-        if (input) {
-            input.value = model;
-            input.focus();
-            // 程序改值不会触发 change：模型换了，上下文长度的上限和说明也要跟着更新
-            refreshChatCompletionContextUi(elements.content);
-        }
     }
 
     function recordApiTestResult(status, detail, settings) {
@@ -76,7 +70,7 @@ export function createApiConnectionActions({
         const hasReverseProxy = Boolean(settings.reverse_proxy);
         return {
             hasSecretMapping: Boolean(secretKeyByChatSource[source]),
-            secretKey: secretKeyByChatSource[source] || '当前来源没有密钥映射',
+            secretKey: secretKeyByChatSource[source] || '',
             secretSaved: secretState.length > 0,
             showEndpoint: source === 'siliconflow',
             showCustomUrl: source === 'custom',
@@ -84,109 +78,20 @@ export function createApiConnectionActions({
         };
     }
 
-    function updateApiSourceFields(source) {
-        const uiState = getApiSourceUiState(source);
-        const settings = getOaiSettings();
-        const modelInput = elements.content.querySelector('[data-api-model]');
-
-        if (modelInput) {
-            modelInput.value = getChatCompletionModel(settings, source);
-        }
-
-        elements.content.querySelectorAll('[data-api-field]').forEach(field => {
-            const fieldName = field.dataset.apiField;
-            const isVisible = (
-                fieldName === 'siliconflow-endpoint' && uiState.showEndpoint
-                || fieldName === 'custom-url' && uiState.showCustomUrl
-                || fieldName === 'reverse-proxy' && uiState.showReverseProxy
-                || fieldName === 'api-key' && uiState.hasSecretMapping
-                || fieldName === 'openrouter-auth' && source === 'openrouter'
-            );
-            field.hidden = !isVisible;
-        });
-
-        const keyInput = elements.content.querySelector('[data-api-key]');
-        if (keyInput) {
-            keyInput.placeholder = uiState.secretSaved ? '密钥已保存；留空不修改' : '输入后保存到 secrets';
-            keyInput.value = '';
-        }
-
-        const secretBadge = elements.content.querySelector('[data-api-secret-status]');
-        if (secretBadge) {
-            secretBadge.textContent = uiState.secretSaved ? '密钥已保存' : (uiState.hasSecretMapping ? '未保存密钥' : '无密钥字段');
-        }
-
-        const secretKey = elements.content.querySelector('[data-api-secret-key]');
-        if (secretKey) {
-            secretKey.textContent = uiState.secretKey;
-        }
-
-        // 换来源后上下文长度的上限（旧版按来源钳制）和说明文字一起更新
-        refreshChatCompletionContextUi(elements.content);
-    }
-
     function getNumberSetting(settings, key, fallback) {
         const value = Number(settings[key]);
         return Number.isFinite(value) ? value : fallback;
     }
 
-    const {
-        saveTextCompletionConnectionFromForm,
-        testTextCompletionConnection,
-        updateTextCompletionTypeFields,
-    } = createApiTextCompletionConnectionActions({
-        state,
-        elements,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        numberInput,
-        getNumberSetting,
-        recordApiTestResult,
-        reloadSettings,
-    });
-    const {
-        saveKoboldConnectionFromForm,
-        testKoboldConnection,
-    } = createApiKoboldConnectionActions({
-        state,
-        elements,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        recordApiTestResult,
-        reloadSettings,
-    });
-    const {
-        saveNovelConnectionFromForm,
-        testNovelConnection,
-    } = createApiNovelConnectionActions({
-        state,
-        elements,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        recordApiTestResult,
-        reloadSettings,
-    });
+    const testDependencies = { state, apiFetch, render, showToast, recordApiTestResult };
+    const { testTextCompletionConnection } = createApiTextCompletionConnectionActions(testDependencies);
+    const { testKoboldConnection } = createApiKoboldConnectionActions(testDependencies);
+    const { testNovelConnection } = createApiNovelConnectionActions(testDependencies);
     const {
         loadHordeModels,
         refreshHordeModels,
-        saveHordeConnectionFromForm,
         testHordeConnection,
-    } = createApiHordeConnectionActions({
-        state,
-        elements,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        recordApiTestResult,
-        reloadSettings,
-    });
+    } = createApiHordeConnectionActions(testDependencies);
     const {
         startOpenRouterAuth,
         completeOpenRouterAuthFromUrl,
@@ -197,37 +102,30 @@ export function createApiConnectionActions({
         render,
         showToast,
     });
-    const {
-        saveApiConnectionFromForm,
-        testApiConnection,
-    } = createApiChatCompletionConnectionActions({
-        state,
-        elements,
-        apiFetch,
-        loadData,
-        render,
-        showToast,
-        chatCompletionModelFields,
-        secretKeyByChatSource,
-        numberInput,
-        getApiSourceUiState,
+    const { testApiConnection: runConnectionTest } = createApiChatCompletionConnectionActions({
+        ...testDependencies,
         getChatCompletionModel,
         getNumberSetting,
         getOaiSettings,
         getSelectedApiMain,
-        recordApiTestResult,
-        reloadSettings,
-        saveTextCompletionConnectionFromForm,
         testTextCompletionConnection,
-        saveKoboldConnectionFromForm,
         testKoboldConnection,
-        saveNovelConnectionFromForm,
         testNovelConnection,
-        saveHordeConnectionFromForm,
         testHordeConnection,
     });
 
+    // 测试用已保存的设置：先等刚改的字段保存完；还有填错没保存的字段时不测，免得测的不是页面上看到的值
+    async function testApiConnection() {
+        await settingsAutosave.flush();
+        const pendingError = connectionFieldAutosave.getPendingFieldError();
+        if (pendingError) {
+            throw new Error(`有字段没有保存：${pendingError}`);
+        }
+        await runConnectionTest();
+    }
+
     return {
+        settingsAutosave,
         getOaiSettings,
         getSelectedApiMain,
         getChatCompletionModel,
@@ -236,10 +134,9 @@ export function createApiConnectionActions({
         getNumberSetting,
         getSecretStateForSource,
         testApiConnection,
-        setApiModelSuggestion,
-        saveApiConnectionFromForm,
-        updateApiSourceFields,
-        updateTextCompletionTypeFields,
+        saveConnectionField: connectionFieldAutosave.saveConnectionField,
+        fillSuggestedContext: connectionFieldAutosave.fillSuggestedContext,
+        applyModelSuggestion: connectionFieldAutosave.applyModelSuggestion,
         loadHordeModels,
         refreshHordeModels,
         startOpenRouterAuth,

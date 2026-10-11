@@ -1,6 +1,8 @@
 // 设置页「聊天工具」标签里聊天摘要设置分区（A6）的事件绑定，约定见 settings-chat-tools-events.js 顶部注释。
-// 输入框 / 下拉 / 复选框的改动只写进草稿（updateSummarySettingsDraft），再按返回的视图就地更新联动，不重新渲染，输入焦点因此不会丢。
-// 点击类动作（保存、还原、恢复默认提示词、切换为主模型）由 actions/chat-summary.js 完成并重新渲染。
+// 输入时只写进草稿（updateSummarySettingsDraft）并就地更新联动；失焦或选择（change）后校验整份草稿并保存，
+// 连续改动合并执行。「恢复默认提示词」改完也立即保存；「切换为主模型」由 actions/chat-summary.js 直接保存。
+import { createCoalescedRunner } from '../actions/settings-autosave.js';
+
 
 function setHidden(element, hidden) {
     if (element) {
@@ -35,30 +37,50 @@ export function bindSettingsToolSummaryEvents(ctx) {
         showToast,
         render,
         state,
-        resetSummarySettingsDraft,
+        settingsAutosave,
         restoreDefaultSummaryPrompt,
         saveSummarySettings,
         switchSummarySourceToMain,
         updateSummarySettingsDraft,
     } = ctx;
 
+    const saveDraft = createCoalescedRunner(async () => {
+        const result = await saveSummarySettings({ quiet: true });
+        // 保存不重绘时就地对齐未保存标记和字段错误
+        syncSummarySettingsDom(ctx.getSummarySettingsView());
+        if (result?.ok) {
+            settingsAutosave.markSaved('摘要设置');
+        } else if (result?.invalid) {
+            settingsAutosave.markInvalid(result.error || '摘要设置有字段没有通过校验');
+        } else if (result) {
+            settingsAutosave.markFailed('摘要设置', result.error || '');
+        }
+    });
+
+    // 点击类动作先等失焦触发的那次保存结束，否则会因为「正在保存」被忽略
+    /** @type {Array<[string, () => Promise<void>]>} */
     const clickActions = [
-        ['[data-ss-save]', saveSummarySettings],
-        ['[data-ss-reset]', resetSummarySettingsDraft],
-        ['[data-ss-restore-prompt]', restoreDefaultSummaryPrompt],
-        ['[data-ss-switch-main]', switchSummarySourceToMain],
+        ['[data-ss-restore-prompt]', async () => {
+            await saveDraft.idle();
+            restoreDefaultSummaryPrompt();
+            await saveDraft();
+        }],
+        ['[data-ss-switch-main]', async () => {
+            await saveDraft.idle();
+            await switchSummarySourceToMain();
+        }],
     ];
 
-    // input 和 change 都走这里：同一个值写两次没有副作用，文本框、下拉、复选框各自触发哪个事件都能接住
+    // 输入时只更新草稿和就地联动
     function applyFieldEvent(event) {
         const field = /** @type {HTMLInputElement | null} */ (event.target instanceof Element ? event.target.closest('[data-ss-field]') : null);
         if (!field) {
-            return false;
+            return null;
         }
 
         const value = field.type === 'checkbox' ? (field.checked ? '1' : '') : field.value;
         syncSummarySettingsDom(updateSummarySettingsDraft(field.dataset.ssField, value));
-        return true;
+        return field;
     }
 
     async function handleClick(event) {
@@ -88,9 +110,22 @@ export function bindSettingsToolSummaryEvents(ctx) {
         return false;
     }
 
+    function handleInput(event) {
+        return Boolean(applyFieldEvent(event));
+    }
+
+    // change（失焦或选择）：先同步草稿，再保存
+    async function handleChange(event) {
+        if (!applyFieldEvent(event)) {
+            return false;
+        }
+        await saveDraft();
+        return true;
+    }
+
     return {
         handleClick,
-        handleInput: applyFieldEvent,
-        handleChange: applyFieldEvent,
+        handleInput,
+        handleChange,
     };
 }

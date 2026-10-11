@@ -9,13 +9,28 @@ export const routes = [
     { id: 'personas', label: '用户人设', icon: 'fa-user-gear' },
     { id: 'assets', label: '素材', icon: 'fa-folder-tree' },
     { id: 'remoteResources', label: '远程资源', icon: 'fa-cloud-arrow-down' },
-    { id: 'api', label: 'API', icon: 'fa-plug' },
     { id: 'extensions', label: '扩展', icon: 'fa-cubes' },
     { id: 'activity', label: '活动', icon: 'fa-chart-line' },
     { id: 'settings', label: '设置', icon: 'fa-gear' },
 ];
 
 export const routeLabels = Object.fromEntries(routes.map(route => [route.id, route.label]));
+
+// 旧版设置页的标签 id（可能还留在 localStorage 里）对应到合并后的设置中心标签
+export const settingsSectionAliases = Object.freeze({
+    status: 'system',
+    diagnostics: 'system',
+    snapshots: 'data',
+    raw: 'data',
+    maintenance: 'data',
+});
+
+// 指向设置中心某个标签的路由别名：?view=api 和 data-route="api"（原 API 页已并入设置中心）打开「模型连接」，
+// settings-data 打开「数据与备份」
+export const routeAliases = Object.freeze({
+    api: Object.freeze({ route: 'settings', settingsSection: 'connection' }),
+    'settings-data': Object.freeze({ route: 'settings', settingsSection: 'data' }),
+});
 
 export const chatCompletionModelFields = {
     openai: 'openai_model',

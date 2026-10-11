@@ -1,4 +1,4 @@
-import { routeLabels } from '../core/constants.js';
+import { routeAliases, routeLabels } from '../core/constants.js';
 import { getScrollTop, restoreScrollTop } from '../core/scroll-state.js';
 
 const chatResourceListSelector = '.chat-browser .chat-browser-panel:first-child .resource-list';
@@ -32,9 +32,15 @@ export function createRouter({
     getBackgroundFilename,
     runChatGlobalSearch,
 }) {
-    async function setRoute(routeId) {
+    async function setRoute(requestedRouteId) {
+        const alias = routeAliases[requestedRouteId];
+        const routeId = alias?.route || requestedRouteId;
         if (!routeLabels[routeId]) {
             return;
+        }
+        if (alias?.settingsSection) {
+            state.settingsSection = alias.settingsSection;
+            localStorage.setItem('st-modern-settings-section', alias.settingsSection);
         }
 
         state.route = routeId;

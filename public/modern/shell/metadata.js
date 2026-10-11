@@ -28,15 +28,16 @@ export function createShellMetadata({
         const bundle = state.settingsBundle || {};
         const api = settings.main_api || '未选择';
         const oaiSettings = settings.oai_settings || {};
-        // KoboldAI Classic has no completion source; its connection is the server URL
+        // KoboldAI Classic has no completion source; its connection is the server URL. The engine reads
+        // kai_settings.api_server first and the NovelAI model from nai_settings when those objects exist.
         const chatSource = api === 'kobold'
-            ? (settings.api_server || '')
+            ? (settings.kai_settings?.api_server || settings.api_server || '')
             : (settings.chat_completion_source || oaiSettings.chat_completion_source || '');
         // Only a chat-completion main API uses the chat-completion model; a lingering chat_completion_source
-        // must not shadow the novel/horde/textgen model fields below (mirrors api-state.js getApiProfiles)
+        // must not shadow the novel/horde/textgen model fields below
         const chatModel = (api === 'openai' && chatSource) ? getChatCompletionModel(oaiSettings, chatSource) : '';
         const model = chatModel
-            || (api === 'novel' ? settings.model_novel : '')
+            || (api === 'novel' ? (settings.nai_settings?.model_novel || settings.model_novel) : '')
             || (api === 'koboldhorde' ? (settings.horde_settings?.models || []).join('、') : '')
             || settings.textgenerationwebui_settings?.openrouter_model
             || settings.textgenerationwebui_settings?.custom_model

@@ -1,10 +1,13 @@
 // 设置页「聊天工具」标签里翻译设置分区（B3）的事件绑定，别的功能不要改这个文件。
 // 返回的处理函数约定见 settings-chat-tools-events.js 顶部注释；事件在设置页任何标签下都会转发，所以都用 data- 属性判断。
 //
-// 表单是未受控的输入框：点「保存翻译设置」时才读取取值。切换翻译服务只显示 / 隐藏对应的密钥和地址行，
-// 不重绘页面，所以已经输入还没保存的内容不会丢。
+// 改动即保存：服务、目标语言、DeepL 接口、密钥和地址任一项改动（失焦或选择）后，读取整张表单保存一次。
+// 连续改动合并执行，保证最后一次改动一定会保存。「清除」按钮删除对应的已保存密钥。
+import { createCoalescedRunner } from '../actions/settings-autosave.js';
 import { renderTranslateTestResult } from '../components/settings-tool-translate.js';
 import { describeTranslatePrivacy, getTranslateProvider } from '../core/translation.js';
+
+const AUTOSAVE_SELECTOR = '[data-translate-provider], [data-translate-target-language], [data-translate-deepl-endpoint], input[data-translate-secret]';
 
 function closest(event, selector) {
     return event.target instanceof Element ? event.target.closest(selector) : null;
@@ -66,12 +69,27 @@ export function readTranslateSettingsForm(root) {
  * @returns {{
  *   handleClick?: (event: Event) => any,
  *   handleChange?: (event: Event) => any,
+ *   handleKeydown?: (event: KeyboardEvent) => boolean,
  * }} 可选的事件处理函数
  */
 export function bindSettingsToolTranslateEvents(ctx) {
-    const { state, render, showToast, escapeHtml } = ctx;
+    const { state, render, showToast, escapeHtml, settingsAutosave } = ctx;
+    /** @type {Set<string>} */
+    const pendingClear = new Set();
 
-    // 动作抛出的错误（校验不通过、请求失败）统一用提示告知，不让它变成未处理的异常
+    // 每次都读当前页面上的表单（保存后页面会重绘），把等着删除的密钥一起交给保存动作
+    const saveTranslateForm = createCoalescedRunner(async () => {
+        const root = document.querySelector('[data-translate-settings]');
+        if (!root) {
+            return;
+        }
+        const values = readTranslateSettingsForm(root);
+        values.clear = [...new Set([...values.clear, ...pendingClear])];
+        pendingClear.clear();
+        await settingsAutosave.runTask('翻译设置', () => ctx.saveTranslateSettings(values, { quiet: true }));
+    });
+
+    // 动作抛出的错误（请求失败）统一用提示告知，不让它变成未处理的异常
     async function run(title, action) {
         try {
             await action();
@@ -96,35 +114,11 @@ export function bindSettingsToolTranslateEvents(ctx) {
         }
     }
 
-    function handleClick(event) {
-        if (closest(event, '[data-translate-save]')) {
-            const root = closest(event, '[data-translate-settings]');
-            if (!root) {
-                return false;
-            }
-            return run('翻译设置保存失败', () => ctx.saveTranslateSettings(readTranslateSettingsForm(root)));
-        }
-
-        if (closest(event, '[data-translate-disable-auto-mode]')) {
-            return run('关闭自动翻译失败', () => ctx.disableTranslateAutoMode());
-        }
-
-        if (closest(event, '[data-translate-test]')) {
-            return run('测试翻译失败', () => ctx.testTranslateProvider({ refresh: refreshTestResult }));
-        }
-
-        return false;
-    }
-
-    function handleChange(event) {
-        if (!(event.target instanceof HTMLSelectElement) || !event.target.matches('[data-translate-provider]')) {
-            return false;
-        }
-
-        const root = event.target.closest('[data-translate-settings]');
-        const provider = getTranslateProvider(event.target.value);
-        if (!root || !provider) {
-            return true;
+    // 切换翻译服务时先就地显示 / 隐藏对应的密钥和地址行，保存完成后页面会按新服务重绘
+    function showProviderRows(root, providerId) {
+        const provider = getTranslateProvider(providerId);
+        if (!provider) {
+            return;
         }
         root.querySelectorAll('[data-translate-for]').forEach(row => {
             /** @type {HTMLElement} */ (row).hidden = /** @type {HTMLElement} */ (row).dataset.translateFor !== provider.id;
@@ -138,11 +132,60 @@ export function bindSettingsToolTranslateEvents(ctx) {
         if (privacy) {
             privacy.textContent = describeTranslatePrivacy(provider, urlConfigured);
         }
+    }
+
+    async function handleClick(event) {
+        const clearButton = closest(event, '[data-translate-clear-secret]');
+        if (clearButton instanceof HTMLElement) {
+            pendingClear.add(clearButton.dataset.translateClearSecret || '');
+            await saveTranslateForm();
+            return true;
+        }
+
+        if (closest(event, '[data-translate-disable-auto-mode]')) {
+            return run('关闭自动翻译失败', () => ctx.disableTranslateAutoMode());
+        }
+
+        if (closest(event, '[data-translate-test]')) {
+            // 测试用已保存的设置：先等刚改的字段保存完
+            await settingsAutosave.flush();
+            return run('测试翻译失败', () => ctx.testTranslateProvider({ refresh: refreshTestResult }));
+        }
+
+        return false;
+    }
+
+    async function handleChange(event) {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement) || !target.matches(AUTOSAVE_SELECTOR)) {
+            return false;
+        }
+        const root = target.closest('[data-translate-settings]');
+        if (!root) {
+            return false;
+        }
+        if (target.matches('[data-translate-provider]')) {
+            showProviderRows(root, target.value);
+        }
+        await saveTranslateForm();
+        return true;
+    }
+
+    // 密钥和地址框里按回车 = 离开输入框：失焦触发 change 后保存；保存后的重绘会清空不再有焦点的密钥框，
+    // 不会把明文留在框里、下一次保存时再写一遍
+    function handleKeydown(event) {
+        const target = event.target;
+        if (event.key !== 'Enter' || event.isComposing || !(target instanceof HTMLInputElement) || !target.matches('input[data-translate-secret]')) {
+            return false;
+        }
+        event.preventDefault();
+        target.blur();
         return true;
     }
 
     return {
         handleClick,
         handleChange,
+        handleKeydown,
     };
 }

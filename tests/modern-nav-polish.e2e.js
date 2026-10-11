@@ -87,7 +87,11 @@ test.describe('Modern navigation badges', () => {
         await expect(navButton(page, 'remoteResources').locator('.nav-count')).toHaveCount(0);
         await expect(navButton(page, 'extensions').locator('.nav-count')).toHaveCount(0);
         // A badge-only read failure is not reported as a workspace data error; the extensions failure is
-        await expect(page.locator('.metric-card', { hasText: '数据状态' })).toContainText('1 个读取错误');
+        // (the settings center lists read errors on its 系统信息 tab)
+        await page.locator('.settings-tabs [data-settings-section="system"]').click();
+        const readErrors = page.locator('.settings-tab-body .section-panel', { hasText: '读取错误' }).locator('.resource-row');
+        await expect(readErrors).toHaveCount(1);
+        await expect(readErrors.locator('.row-title')).toHaveText('extensions');
     });
 
     test('updates the remote resources count once the route loads its records', async ({ page }) => {

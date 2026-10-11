@@ -1,4 +1,6 @@
-import { getSettingsOptionalTabs } from '../components/settings-optional-tabs.js';
+import { getSettingsTabs, normalizeSettingsSection } from '../components/settings.js';
+import { getSettingsOptionalParts } from '../components/settings-optional-tabs.js';
+import { createApiEvents } from './api-events.js';
 import { bindSettingsChatToolsEvents } from './settings-chat-tools-events.js';
 import { bindSettingsMaintenanceEvents } from './settings-maintenance-events.js';
 
@@ -7,9 +9,10 @@ export function createSettingsEvents(ctx) {
         state,
         render,
         showToast,
+        settingsAutosave,
         loadSettingsSnapshots,
         createSettingsSnapshot,
-        saveModernPreferencesFromForm,
+        saveModernPreferenceField,
         previewSettingsSnapshot,
         beginSettingsSnapshotRestore,
         cancelSettingsSnapshotRestore,
@@ -19,42 +22,46 @@ export function createSettingsEvents(ctx) {
         closeRawSettingsEditor,
         saveRawSettingsFromEditor,
     } = ctx;
-    const optionalTabs = getSettingsOptionalTabs(ctx);
-    // 「聊天工具」「数据维护」两个标签里的控件事件，各自的约定见对应文件顶部注释
+    const optionalParts = getSettingsOptionalParts(ctx);
+    // 「模型连接」标签的事件只在这个标签打开时处理
+    const connectionEvents = createApiEvents(ctx);
+    // 「聊天工具」标签和数据维护分区里的控件事件，各自的约定见对应文件顶部注释
     const slotHandlers = [
         bindSettingsChatToolsEvents(ctx),
         bindSettingsMaintenanceEvents(ctx),
     ].map(handlers => handlers || {});
 
-    async function setSettingsSection(section, { loadSnapshots = true } = {}) {
-        const sectionIds = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics', ...optionalTabs.filter(tab => tab.isAvailable()).map(tab => tab.id)];
-        state.settingsSection = sectionIds.includes(section) ? section : 'preferences';
+    function getActiveSection() {
+        const tabs = getSettingsTabs(optionalParts);
+        const section = normalizeSettingsSection(state.settingsSection);
+        return tabs.some(tab => tab.id === section) ? section : tabs[0].id;
+    }
+
+    function setSettingsSection(section) {
+        const tabs = getSettingsTabs(optionalParts);
+        const normalized = normalizeSettingsSection(section);
+        state.settingsSection = tabs.some(tab => tab.id === normalized) ? normalized : tabs[0].id;
         localStorage.setItem('st-modern-settings-section', state.settingsSection);
-        if (loadSnapshots && state.settingsSection === 'snapshots' && !state.settingsSnapshots.loaded && !state.settingsSnapshots.loading) {
-            await loadSettingsSnapshots();
-        }
     }
 
     async function handleSettingsClick(event) {
         const settingsSectionButton = event.target.closest('[data-settings-section]');
         if (settingsSectionButton) {
-            try {
-                await setSettingsSection(settingsSectionButton.dataset.settingsSection);
-                render();
-            } catch (error) {
-                state.errors.push({ key: 'settings-snapshots', message: error.message });
-                showToast('设置快照读取失败', error.message);
-                render();
-            }
+            setSettingsSection(settingsSectionButton.dataset.settingsSection);
+            render();
+            return true;
+        }
+
+        if (getActiveSection() === 'connection' && await connectionEvents.handleApiClick(event)) {
             return true;
         }
 
         if (event.target.closest('[data-load-settings-snapshots]')) {
             try {
-                await setSettingsSection('snapshots', { loadSnapshots: false });
                 await loadSettingsSnapshots({ force: true });
                 render();
             } catch (error) {
+                state.settingsSnapshots.error = error.message;
                 state.errors.push({ key: 'settings-snapshots', message: error.message });
                 showToast('设置快照读取失败', error.message);
                 render();
@@ -64,18 +71,12 @@ export function createSettingsEvents(ctx) {
 
         if (event.target.closest('[data-create-settings-snapshot]')) {
             try {
-                await setSettingsSection('snapshots', { loadSnapshots: false });
                 await createSettingsSnapshot();
             } catch (error) {
                 state.errors.push({ key: 'settings-snapshot-create', message: error.message });
                 showToast('设置快照创建失败', error.message);
                 render();
             }
-            return true;
-        }
-
-        if (event.target.closest('[data-save-modern-preferences]')) {
-            saveModernPreferencesFromForm();
             return true;
         }
 
@@ -150,6 +151,16 @@ export function createSettingsEvents(ctx) {
     }
 
     async function handleSettingsChange(event) {
+        if (getActiveSection() === 'connection' && await connectionEvents.handleApiChange(event)) {
+            return true;
+        }
+
+        const preference = saveModernPreferenceField(event.target);
+        if (preference) {
+            settingsAutosave.markSaved(preference);
+            return true;
+        }
+
         for (const handlers of slotHandlers) {
             if (handlers.handleChange && await handlers.handleChange(event)) {
                 return true;
@@ -158,12 +169,23 @@ export function createSettingsEvents(ctx) {
         return false;
     }
 
+    async function handleSettingsSubmit(event) {
+        return getActiveSection() === 'connection' && connectionEvents.handleApiSubmit(event);
+    }
+
     // 必须在没处理时返回 false：shell/events.js 对 keydown 的返回值不是 false 就不再走全局快捷键
     function handleSettingsKeydown(event) {
+        if (getActiveSection() === 'connection' && connectionEvents.handleApiKeydown(event)) {
+            return true;
+        }
         return slotHandlers.some(handlers => handlers.handleKeydown?.(event));
     }
 
     function handleSettingsInput(event) {
+        if (getActiveSection() === 'connection' && connectionEvents.handleApiInput(event)) {
+            return true;
+        }
+
         if (slotHandlers.some(handlers => handlers.handleInput?.(event))) {
             return true;
         }
@@ -194,5 +216,6 @@ export function createSettingsEvents(ctx) {
         handleSettingsClick,
         handleSettingsInput,
         handleSettingsKeydown,
+        handleSettingsSubmit,
     };
 }

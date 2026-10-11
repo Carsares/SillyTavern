@@ -1,17 +1,21 @@
+import { createApiFieldComponents } from './api-fields.js';
+
 export function createApiKoboldComponents(ctx) {
     const {
         state,
         escapeHtml,
     } = ctx;
+    const { renderTextLengthSection } = createApiFieldComponents(ctx);
 
-    // KoboldAI Classic editor: main API select + a single server URL, reusing the shared save/test controls
+    // KoboldAI Classic editor: main API select + a single server URL, plus the shared length fields. Fields save on change.
     function renderKoboldEditor(mainApi, renderApiMainSelect) {
-        const apiServer = state.settings.api_server || '';
+        // The engine reads kai_settings.api_server first (kai-settings.js loadKoboldSettings)
+        const apiServer = state.settings.kai_settings?.api_server || state.settings.api_server || '';
         return `
-        <form class="settings-form" data-api-connection-form>
+        <form class="settings-form" data-api-connection-form autocomplete="off" novalidate>
             <section class="form-section">
                 <div>
-                    <h3 class="form-section-title">KoboldAI Classic 连接</h3>
+                    <h3 class="form-section-title">连接</h3>
                     <p class="panel-subtitle">连接本地或远程 KoboldAI 服务，只需填写服务地址。</p>
                 </div>
                 <div class="form-grid two-columns">
@@ -21,13 +25,8 @@ export function createApiKoboldComponents(ctx) {
                         <input class="text-input" type="url" data-kobold-api-url value="${escapeHtml(apiServer)}" placeholder="http://127.0.0.1:5000/api">
                     </label>
                 </div>
-                <div class="message-edit-actions">
-                    <button class="primary-button" type="submit" data-save-api-connection>
-                        <i class="fa-solid fa-check"></i>
-                        保存连接
-                    </button>
-                </div>
             </section>
+            ${renderTextLengthSection(mainApi)}
         </form>
     `;
     }

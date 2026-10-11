@@ -608,6 +608,9 @@ async function openTranslateSettings(page) {
     await expect(page.locator('[data-translate-settings]')).toBeVisible();
 }
 
+// The settings center reports every automatic save in the save-status pill of its page head
+const saveStatus = page => page.locator('[data-settings-save-status]');
+
 test.describe('Translation settings', () => {
     test.use({ viewport: desktopViewport });
 
@@ -635,37 +638,61 @@ test.describe('Translation settings', () => {
         await expect(page.locator('[data-translate-provider-description]')).toContainText('免密钥');
         await expect(page.locator('[data-translate-for="deepl"]').first()).toBeHidden();
 
-        // picking DeepL shows its key and endpoint rows and its own description, without redrawing
+        // picking DeepL shows its key and endpoint rows and its own description right away, and saves the provider
         await page.locator('[data-translate-provider]').selectOption('deepl');
         await expect(page.locator('[data-translate-provider-description]')).toContainText('DeepL API Key');
         await expect(page.locator('[data-translate-secret="deepl"]')).toBeVisible();
         await expect(page.locator('[data-translate-deepl-endpoint]')).toBeVisible();
         await expect(page.locator('[data-translate-secret="deeplx_url"]')).toBeHidden();
+        await expect(saveStatus(page)).toContainText('翻译设置已保存');
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        expect(fixture.requests.settingsSave[0].extension_settings.translate.provider).toBe('deepl');
+        // the engine was told after the file was written
+        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(1);
+        expect(savesWhenReloaded).toBe(1);
+
+        // a key is saved (trimmed) once the box is left, then the box is emptied and the key shown as saved without being echoed
         await page.locator('[data-translate-secret="deepl"]').fill('  secret-key-999 ');
+        await page.locator('[data-translate-secret="deepl"]').blur();
+        await expect(page.locator('[data-translate-secret-state="deepl"]')).toContainText('已保存（*******999）');
+        await expect(page.locator('[data-translate-secret="deepl"]')).toHaveValue('');
         await page.locator('[data-translate-deepl-endpoint]').selectOption('pro');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1).extension_settings.translate.deepl_endpoint).toBe('pro');
         await page.locator('[data-translate-target-language]').selectOption('ja');
-        // switching away and back keeps what was typed
-        await page.locator('[data-translate-provider]').selectOption('libre');
-        await expect(page.locator('[data-translate-secret="libre_url"]')).toBeVisible();
-        await page.locator('[data-translate-provider]').selectOption('deepl');
-        await expect(page.locator('[data-translate-secret="deepl"]')).toHaveValue('  secret-key-999 ');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1).extension_settings.translate.target_language).toBe('ja');
+        await expect(saveStatus(page)).toContainText('翻译设置已保存');
 
-        await page.locator('[data-translate-save]').click();
-        await expect(page.locator('.toast-stack')).toContainText('翻译设置已保存');
-
+        // the key was written once, although every later save read the whole form again
         expect(fixture.secretWrites).toEqual([{ key: 'deepl', value: 'secret-key-999', label: 'translate modern' }]);
-        expect(fixture.requests.settingsSave).toHaveLength(1);
-        const saved = fixture.requests.settingsSave[0];
+        const saved = fixture.requests.settingsSave.at(-1);
         // the translate block changed, the legacy-only fields and everything else stayed
         expect(saved.extension_settings.translate).toEqual({ provider: 'deepl', target_language: 'ja', deepl_endpoint: 'pro', internal_language: 'en', auto_mode: 'none' });
         expect(saved.extension_settings.note).toEqual({ default: 'kept' });
-        // the engine was told after the file was written, and the key is shown as saved without being echoed
-        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(1);
-        expect(savesWhenReloaded).toBe(1);
-        await expect(page.locator('[data-translate-secret-state="deepl"]')).toContainText('已保存（*******999）');
-        await expect(page.locator('[data-translate-secret="deepl"]')).toHaveValue('');
+        // the status pill reports the saves; there is no save button and no success toast
+        await expect(page.locator('[data-translate-save]')).toHaveCount(0);
+        await expect(page.locator('.toast-stack')).not.toContainText('翻译设置已保存');
         await expect(page.locator('[data-translate-provider]')).toHaveValue('deepl');
+        await expect(page.locator('[data-translate-target-language]')).toHaveValue('ja');
         await expect(page.locator('[data-translate-default-hint]')).toHaveCount(0);
+    });
+
+    test('saves an API key on Enter once and empties the box like leaving it does', async ({ page }) => {
+        const fixture = createSettingsFixture({ translate: { target_language: 'en', internal_language: 'en', provider: 'deepl', auto_mode: 'none', deepl_endpoint: 'free' } });
+        await mockSettingsRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openTranslateSettings(page);
+
+        const key = page.locator('[data-translate-secret="deepl"]');
+        await key.fill('secret-key-999');
+        await key.press('Enter');
+        await expect(page.locator('[data-translate-secret-state="deepl"]')).toContainText('已保存（*******999）');
+        await expect(saveStatus(page)).toContainText('翻译设置已保存');
+        // the key is not kept in the box after it was saved
+        await expect(key).toHaveValue('');
+        // a later change saves the form again without writing the same key a second time
+        await page.locator('[data-translate-target-language]').selectOption('ja');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.target_language).toBe('ja');
+        expect(fixture.secretWrites).toEqual([{ key: 'deepl', value: 'secret-key-999', label: 'translate modern' }]);
     });
 
     test('rejects a service URL that is not an http(s) address before writing anything', async ({ page }) => {
@@ -674,12 +701,19 @@ test.describe('Translation settings', () => {
         await mockBridgeFrame(page);
         await openTranslateSettings(page);
 
+        // picking LibreTranslate saves the provider by itself
         await page.locator('[data-translate-provider]').selectOption('libre');
+        await expect(saveStatus(page)).toContainText('翻译设置已保存');
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+
         await page.locator('[data-translate-secret="libre_url"]').fill('ftp://libre.example');
-        await page.locator('[data-translate-save]').click();
-        await expect(page.locator('.toast-stack')).toContainText('http://');
+        await page.locator('[data-translate-secret="libre_url"]').press('Enter');
+        await expect(saveStatus(page)).toContainText('翻译设置保存失败');
+        await expect(page.locator('.toast', { hasText: '翻译设置保存失败' })).toContainText('http://');
+        // nothing was written for the rejected address, and the typed value stays for correcting
         expect(fixture.secretWrites).toHaveLength(0);
-        expect(fixture.requests.settingsSave).toHaveLength(0);
+        expect(fixture.requests.settingsSave).toHaveLength(1);
+        await expect(page.locator('[data-translate-secret="libre_url"]')).toHaveValue('ftp://libre.example');
     });
 
     test('shows an active auto mode read-only with an explanation and a button that turns it off', async ({ page }) => {

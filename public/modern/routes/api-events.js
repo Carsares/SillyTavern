@@ -1,20 +1,25 @@
-import { refreshChatCompletionContextUi, refreshChatCompletionFieldError } from '../actions/api-chat-completion-connection.js';
-import { handleTextCompletionLimitChange } from '../actions/api-text-completion-connection.js';
+// 设置中心「模型连接」标签的事件：字段改动即保存（actions/api-autosave.js），连接测试，连接档案。
+// 由 routes/settings-events.js 在这个标签打开时转发；处理过返回 true。
+import { refreshConnectionHints } from '../actions/api-autosave.js';
 import { getSwitcherState } from '../actions/connection-profiles.js';
 import { createApiProfileComponents } from '../components/api-profiles.js';
+
+const LIVE_HINT_SELECTOR = '[data-api-model], [data-api-max-context], [data-api-max-tokens], [data-textgen-max-context], [data-textgen-amount-gen]';
+const ENTER_SAVE_SELECTOR = '[data-api-connection-form] input:not([type="checkbox"]):not([type="radio"])';
 
 export function createApiEvents(ctx) {
     const {
         state,
         render,
         showToast,
+        settingsAutosave,
         testApiConnection,
-        setApiModelSuggestion,
-        saveApiConnectionFromForm,
-        updateApiSourceFields,
-        updateTextCompletionTypeFields,
+        saveConnectionField,
+        fillSuggestedContext,
+        applyModelSuggestion,
         refreshHordeModels,
         startOpenRouterAuth,
+        useOpenAiPreset,
         applyConnectionProfile,
         createProfileFromCurrentConnection,
         deleteConnectionProfile,
@@ -23,7 +28,7 @@ export function createApiEvents(ctx) {
     const { renderConnectionProfilesSection } = createApiProfileComponents(ctx);
 
     /**
-     * 只替换页面上的「连接档案」区，不重绘整页，上方连接表单里未保存的输入不会丢。找不到这一区时才整页重绘。
+     * 只替换页面上的「连接档案」区，不重绘整页。找不到这一区时才整页重绘。
      */
     function replaceProfilesSection() {
         const host = document.querySelector('[data-connection-profiles]');
@@ -83,6 +88,8 @@ export function createApiEvents(ctx) {
         const applyButton = target.closest('[data-api-connection-profile-apply]');
         if (applyButton instanceof HTMLElement) {
             const id = applyButton.dataset.apiConnectionProfileApply || '';
+            // 先等刚改的字段保存完，档案在已保存的设置上应用
+            await settingsAutosave.flush();
             await applyConnectionProfile(id);
             focusProfileElement(`[data-api-connection-profile-apply="${escapeAttribute(id)}"]`);
             return true;
@@ -135,30 +142,15 @@ export function createApiEvents(ctx) {
             return true;
         }
 
-        const apiProfileButton = event.target.closest('[data-api-profile-main]');
-        if (apiProfileButton) {
-            state.apiMainDraft = apiProfileButton.dataset.apiProfileMain;
-            render();
-            // render() replaces #content and drops focus to <body>; move it onto the editor the button revealed
-            /** @type {HTMLElement | null} */ (document.querySelector('[data-api-main]'))?.focus?.();
+        const suggestionButton = event.target.closest('[data-api-model-suggestion]');
+        if (suggestionButton instanceof HTMLElement) {
+            await applyModelSuggestion(suggestionButton.dataset.apiModelSuggestion || '');
             return true;
         }
 
-        const apiModelSuggestionButton = event.target.closest('[data-api-model-suggestion]');
-        if (apiModelSuggestionButton) {
-            setApiModelSuggestion(apiModelSuggestionButton.dataset.apiModelSuggestion);
-            return true;
-        }
-
-        if (event.target.closest('[data-save-api-connection]')) {
-            event.preventDefault();
-            try {
-                await saveApiConnectionFromForm();
-            } catch (error) {
-                state.errors.push({ key: 'api-save', message: error.message });
-                showToast('连接配置保存失败', error.message);
-                render();
-            }
+        const fillButton = event.target.closest('[data-api-context-fill]');
+        if (fillButton instanceof HTMLElement) {
+            await fillSuggestedContext(fillButton);
             return true;
         }
 
@@ -187,48 +179,45 @@ export function createApiEvents(ctx) {
         return false;
     }
 
-    function handleApiChange(event) {
+    async function handleApiChange(event) {
+        const target = event.target;
         // 创建档案的名称框失焦后记住输入，之后只替换档案区时不会丢
-        if (event.target instanceof HTMLInputElement && event.target.matches('[data-api-connection-create-name]')) {
-            getSwitcherState(state).createName = event.target.value;
+        if (target instanceof HTMLInputElement && target.matches('[data-api-connection-create-name]')) {
+            getSwitcherState(state).createName = target.value;
             return true;
         }
 
-        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-main]')) {
-            state.apiMainDraft = event.target.value;
+        // 选择聊天补全预设 = 应用预设：采样参数和长度一起换成预设里的值
+        if (target instanceof HTMLSelectElement && target.matches('[data-api-preset]')) {
+            if (target.value) {
+                await settingsAutosave.runTask('预设', () => useOpenAiPreset(target.value));
+            }
             render();
             return true;
         }
 
-        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-api-source]')) {
-            updateApiSourceFields(event.target.value);
+        return saveConnectionField(target);
+    }
+
+    // 输入时只更新说明文字（提示词预算、模型上限），真正保存在失焦（change）时
+    function handleApiInput(event) {
+        const target = event.target;
+        if (target instanceof HTMLInputElement && target.matches(LIVE_HINT_SELECTOR)) {
+            refreshConnectionHints(state.settings || {}, target.closest('form'));
             return true;
         }
-
-        if (event.target instanceof HTMLSelectElement && event.target.matches('[data-textgen-type]')) {
-            updateTextCompletionTypeFields(event.target.value);
-            return true;
-        }
-
-        // 模型、「解锁上限」、上下文长度、Max Tokens 变化：更新上下文长度的 min / max 和「上限 N；提示词预算 …」说明，
-        // 同时重新判断已显示的上下文长度 / Max Tokens 错误
-        if (event.target instanceof HTMLInputElement
-            && event.target.matches('[data-api-model], [data-api-max-context-unlocked], [data-api-max-context], [data-api-max-tokens]')) {
-            refreshChatCompletionContextUi(event.target.closest('form'));
-            return true;
-        }
-
-        // 文本补全的上下文长度 / 回复长度 / 解锁勾选：同样只更新说明文字和已显示的错误
-        if (handleTextCompletionLimitChange(event.target)) {
-            return true;
-        }
-
-        // 已标红的数值参数改动后同步刷新提示：改对即隐藏，仍越界则更新文案。
-        if (refreshChatCompletionFieldError(event.target)) {
-            return true;
-        }
-
         return false;
+    }
+
+    // 文本框里按回车立即保存这一项（表单没有提交按钮）
+    function handleApiKeydown(event) {
+        const target = event.target;
+        if (event.key !== 'Enter' || event.isComposing || !(target instanceof HTMLInputElement) || !target.matches(ENTER_SAVE_SELECTOR)) {
+            return false;
+        }
+        event.preventDefault();
+        void saveConnectionField(target);
+        return true;
     }
 
     async function handleApiSubmit(event) {
@@ -239,6 +228,7 @@ export function createApiEvents(ctx) {
             if (input instanceof HTMLInputElement) {
                 switcher.createName = input.value;
             }
+            await settingsAutosave.flush();
             const result = await createProfileFromCurrentConnection(switcher.createName);
             if (!result?.ok) {
                 replaceProfilesSection();
@@ -247,24 +237,19 @@ export function createApiEvents(ctx) {
             return true;
         }
 
-        if (!(event.target instanceof HTMLFormElement) || !event.target.matches('[data-api-connection-form]')) {
-            return false;
+        if (event.target instanceof HTMLFormElement && event.target.matches('[data-api-connection-form]')) {
+            event.preventDefault();
+            return true;
         }
 
-        event.preventDefault();
-        try {
-            await saveApiConnectionFromForm();
-        } catch (error) {
-            state.errors.push({ key: 'api-save', message: error.message });
-            showToast('连接配置保存失败', error.message);
-            render();
-        }
-        return true;
+        return false;
     }
 
     return {
         handleApiClick,
         handleApiChange,
+        handleApiInput,
+        handleApiKeydown,
         handleApiSubmit,
     };
 }

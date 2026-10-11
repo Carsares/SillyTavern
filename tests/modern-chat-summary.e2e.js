@@ -752,6 +752,8 @@ test.describe('Summary settings', () => {
 
     const field = (page, name) => page.locator(`[data-settings-summary] [data-ss-field="${name}"]`);
     const message = (page, kind) => page.locator(`[data-ss-message="${kind}"]`);
+    // The settings center reports every automatic save in the save-status pill of its page head
+    const saveStatus = page => page.locator('[data-settings-save-status]');
 
     test('warns about the Extras source and switches to the main model with one click, changing nothing else', async ({ page }) => {
         const fixture = createSummaryFixture({ memory: { ...baseMemory, source: 'extras', promptInterval: 7 } });
@@ -783,13 +785,37 @@ test.describe('Summary settings', () => {
         await mockBridgeFrame(page);
         await openSettings(page);
 
-        await field(page, 'promptInterval').fill('20');
+        // fields save when the box is left; a value that does not pass stays an unsaved edit
+        await field(page, 'promptInterval').fill('251');
+        await field(page, 'promptInterval').blur();
+        await expect(page.locator('[data-ss-error="promptInterval"]')).toContainText('0 到 250');
+        await expect(saveStatus(page)).toContainText('有字段未保存');
+        expect(fixture.requests.settingsSave).toHaveLength(0);
+
         await page.locator('[data-ss-switch-main]').click();
         await expect(message(page, 'notice')).toBeVisible();
+        expect(fixture.requests.settingsSave).toHaveLength(1);
         expect(fixture.requests.settingsSave[0].extension_settings.memory.promptInterval).toBe(4);
         expect(fixture.requests.settingsSave[0].extension_settings.memory.source).toBe('main');
-        await expect(field(page, 'promptInterval')).toHaveValue('20');
+        await expect(field(page, 'promptInterval')).toHaveValue('251');
         await expect(page.locator('[data-ss-dirty]')).toBeVisible();
+    });
+
+    test('a click right after typing still lands: the field saves on the way and the source switch follows', async ({ page }) => {
+        const fixture = createSummaryFixture({ memory: { ...baseMemory, source: 'extras' } });
+        await mockSummaryChatRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openSettings(page);
+
+        // 不先离开输入框就直接点按钮：按下鼠标时的失焦保存不能把按钮换掉，否则这次点击会丢
+        await field(page, 'promptInterval').fill('20');
+        await page.locator('[data-ss-switch-main]').click();
+
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(2);
+        expect(fixture.requests.settingsSave[0].extension_settings.memory).toMatchObject({ promptInterval: 20, source: 'extras' });
+        expect(fixture.requests.settingsSave[1].extension_settings.memory).toMatchObject({ promptInterval: 20, source: 'main' });
+        await expect(page.locator('[data-ss-extras-banner]')).toHaveCount(0);
+        await expect(field(page, 'source')).toHaveValue('main');
     });
 
     test('saves every field with the right type, keeps unrelated keys, and asks the engine to reload the settings', async ({ page }) => {
@@ -803,8 +829,12 @@ test.describe('Summary settings', () => {
         await expect(page.locator('[data-ss-extras-banner]')).toHaveCount(0);
         await expect(field(page, 'source')).toHaveValue('main');
         await expect(page.locator('[data-ss-depth-group]')).toBeHidden();
+        await expect(page.locator('[data-ss-save], [data-ss-reset]')).toHaveCount(0);
 
+        // every change saves the whole form on its own; the first one waits for the engine below
         await field(page, 'source').selectOption('webllm');
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(1);
         await field(page, 'prompt_builder').selectOption('2');
         await field(page, 'promptInterval').fill('12');
         await field(page, 'promptForceWords').fill('3000');
@@ -821,19 +851,20 @@ test.describe('Summary settings', () => {
         await field(page, 'role').selectOption('2');
         await field(page, 'scan').check();
         await expect(page.locator('[data-ss-dirty]')).toBeVisible();
-
-        await page.locator('[data-ss-save]').click();
-        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
-        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(1);
-        // saved, the engine has not confirmed yet
-        await expect(page.locator('[data-ss-save]')).toContainText('保存中');
+        // saved, the engine has not confirmed yet: nothing reports the settings as saved, and the later edits wait
+        await expect(saveStatus(page)).not.toContainText('摘要设置已保存');
         await expect(message(page, 'notice')).toBeHidden();
+        expect(fixture.requests.settingsSave).toHaveLength(1);
 
         reloadGate.resolve({ ok: true });
-        await expect(message(page, 'notice')).toContainText('摘要设置已保存，生成引擎已同步');
+        // the edits made meanwhile are saved together once the engine answered; quiet saves show no notice
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(2);
+        await expect(saveStatus(page)).toContainText('摘要设置已保存');
         await expect(page.locator('[data-ss-dirty]')).toBeHidden();
+        await expect(message(page, 'notice')).toBeHidden();
+        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(2);
 
-        const extensionSettings = fixture.requests.settingsSave[0].extension_settings;
+        const extensionSettings = fixture.requests.settingsSave.at(-1).extension_settings;
         expect(extensionSettings.memory).toEqual({
             ...baseMemory,
             source: 'webllm',
@@ -869,22 +900,27 @@ test.describe('Summary settings', () => {
         await field(page, 'overrideResponseLength').fill('-5');
         await field(page, 'prompt').fill('   ');
         await field(page, 'template').fill('no macro');
-        await page.locator('[data-ss-save]').click();
+        await field(page, 'template').blur();
 
         await expect(page.locator('[data-ss-error="promptInterval"]')).toContainText('0 到 250');
         await expect(page.locator('[data-ss-error="promptWords"]')).toContainText('25 到 1000');
         await expect(page.locator('[data-ss-error="overrideResponseLength"]')).toContainText('0 到 4096');
         await expect(page.locator('[data-ss-error="prompt"]')).toContainText('不能为空');
         await expect(page.locator('[data-ss-error="template"]')).toContainText('{{summary}}');
+        await expect(saveStatus(page)).toContainText('有字段未保存');
         expect(fixture.requests.settingsSave).toHaveLength(0);
         expect(calls.map(call => call.action)).not.toContain('reloadSettings');
 
         // fixing a field clears its message right away
         await field(page, 'promptInterval').fill('250');
         await expect(page.locator('[data-ss-error="promptInterval"]')).toBeHidden();
+        await field(page, 'promptInterval').blur();
         await page.locator('[data-ss-restore-prompt]').click();
         await expect(field(page, 'prompt')).toHaveValue(/Ignore previous instructions/);
         await expect(page.locator('[data-ss-error="prompt"]')).toBeHidden();
+        // restoring the prompt saves at once, but the other invalid fields still hold everything back
+        await expect(page.locator('[data-ss-error="promptWords"]')).toContainText('25 到 1000');
+        expect(fixture.requests.settingsSave).toHaveLength(0);
         // the other fields kept their unsaved values across the re-render
         await expect(field(page, 'promptInterval')).toHaveValue('250');
         await expect(field(page, 'template')).toHaveValue('no macro');
@@ -897,9 +933,10 @@ test.describe('Summary settings', () => {
         await openSettings(page);
 
         await field(page, 'promptInterval').fill('9');
-        await page.locator('[data-ss-save]').click();
+        await field(page, 'promptInterval').blur();
         await expect(message(page, 'warning')).toContainText('摘要设置已保存');
         await expect(message(page, 'warning')).toContainText('engine offline');
+        await expect(page.locator('.toast', { hasText: '摘要设置已保存' })).toContainText('engine offline');
         await expect(message(page, 'notice')).toBeHidden();
         expect(fixture.settings.extension_settings.memory.promptInterval).toBe(9);
         await expect(field(page, 'promptInterval')).toHaveValue('9');
@@ -913,14 +950,18 @@ test.describe('Summary settings', () => {
         await openSettings(page);
 
         await field(page, 'promptInterval').fill('9');
-        await page.locator('[data-ss-save]').click();
+        await field(page, 'promptInterval').blur();
         await expect(message(page, 'error')).toContainText('保存失败');
+        await expect(saveStatus(page)).toContainText('摘要设置保存失败');
         await expect(field(page, 'promptInterval')).toHaveValue('9');
         await expect(page.locator('[data-ss-dirty]')).toBeVisible();
         expect(calls.map(call => call.action)).not.toContain('reloadSettings');
-        // the reset button goes back to what is actually saved (4), not to the failed value
-        await page.locator('[data-ss-reset]').click();
-        await expect(field(page, 'promptInterval')).toHaveValue('4');
+        // what the chat page reads is what is actually saved (4), not the failed value
+        await page.locator('.nav-button[data-route="chat"]').click();
+        await expect(page.locator('#modernApp')).toHaveAttribute('data-current-route', 'chat');
+        await expect(page.locator('[data-delete-chat]')).toBeVisible();
+        await openSummary(page);
+        await expect(page.locator('[data-cs-auto-text]')).toContainText('间隔 4 条');
     });
 
     test('a disabled extension is explained at the top', async ({ page }) => {

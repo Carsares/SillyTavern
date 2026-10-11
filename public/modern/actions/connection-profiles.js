@@ -267,7 +267,7 @@ export function applyModelToSettings(settings, model) {
     }
     const target = getCurrentModelTarget(settings);
     if (!target) {
-        throw new Error('当前 API 暂不支持在聊天里切换模型，请到 API 页修改。');
+        throw new Error('当前 API 暂不支持在聊天里切换模型，请到设置中心的「模型连接」修改。');
     }
     const nextSettings = structuredClone(settings);
     const section = target.mainApi === 'openai' ? ensureObject(nextSettings, 'oai_settings') : ensureObject(nextSettings, 'textgenerationwebui_settings');
@@ -444,7 +444,7 @@ export function buildProfileApplication({ settings, profile, presetGroups = [], 
             }
             const { mainApi } = current();
             if (mainApi === 'textgenerationwebui') {
-                markSkipped('preset', '文本补全预设的采样参数暂不套用，请在 API 页选择预设');
+                markSkipped('preset', '文本补全预设的采样参数暂不套用，只记录了预设名称');
                 return;
             }
             if (mainApi !== 'openai') {
@@ -463,7 +463,7 @@ export function buildProfileApplication({ settings, profile, presetGroups = [], 
             }
             const oai = oaiSettings();
             // 旧版 /preset 在目标预设已经是当前预设时什么也不做（presetCommandCallback 里 currentPreset !== exactMatch 才会套用），
-            // 所以用户在 API 页调过的采样参数、上下文长度不会因为切换到同一个预设的档案而被预设里的旧值覆盖
+            // 所以用户在模型连接里调过的采样参数、上下文长度不会因为切换到同一个预设的档案而被预设里的旧值覆盖
             if (oai.preset_settings_openai === value) {
                 markApplied('preset', `${value}（已是当前预设，参数保持不变）`);
                 return;
@@ -922,7 +922,7 @@ export function recordRecentModel(mainApi, source, model, storage = getDefaultSt
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// 界面状态与视图数据（聊天输入框旁的连接标签和 API 页的档案区共用）
+// 界面状态与视图数据（聊天输入框旁的连接标签和设置中心模型连接的档案区共用）
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
@@ -1150,7 +1150,6 @@ export function createConnectionProfileActions({
                         rotationError = `密钥切换请求失败：${error.message}`;
                     }
                 }
-                state.apiMainDraft = '';
                 const [engineSync, refreshError] = await Promise.all([engineSyncPromise, refreshPageData()]);
 
                 // /api/secrets/rotate 对不存在的 id 也回 204，所以用重新读到的密钥状态核对
@@ -1202,7 +1201,7 @@ export function createConnectionProfileActions({
         }
         const profile = buildProfileFromCurrentConnection(state.settings, { name: checked.name, secretState: state.secretState });
         if (!profile.api) {
-            const error = '当前连接无法识别，不能创建档案。请先在 API 页保存一个连接。';
+            const error = '当前连接无法识别，不能创建档案。请先在设置中心的「模型连接」里配好连接。';
             switcher.error = error;
             return { ok: false, error };
         }
@@ -1307,7 +1306,6 @@ export function createConnectionProfileActions({
             try {
                 await persistSettings(change.nextSettings);
                 const engineSyncPromise = reloadSettings();
-                state.apiMainDraft = '';
                 const [engineSync, refreshError] = await Promise.all([engineSyncPromise, refreshPageData()]);
                 recordRecentModel(change.target.mainApi, change.target.source, wanted, storage);
                 const applied = [{ field: 'model', label: PROFILE_FIELD_LABELS.model, value: wanted }];

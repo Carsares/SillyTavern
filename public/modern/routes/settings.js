@@ -8,6 +8,7 @@ export function createSettingsRoute(ctx) {
         handleSettingsClick,
         handleSettingsInput,
         handleSettingsKeydown,
+        handleSettingsSubmit,
     } = createSettingsEvents(ctx);
 
     async function handleClick(event) {
@@ -22,6 +23,10 @@ export function createSettingsRoute(ctx) {
         return handleSettingsChange(event);
     }
 
+    async function handleSubmit(event) {
+        return handleSettingsSubmit(event);
+    }
+
     function handleKeydown(event) {
         return handleSettingsKeydown(event);
     }
@@ -31,6 +36,7 @@ export function createSettingsRoute(ctx) {
         handleClick,
         handleInput,
         handleChange,
+        handleSubmit,
         handleKeydown,
     };
 }
