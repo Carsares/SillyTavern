@@ -48,6 +48,11 @@ function historyMessage(message) {
 export function compileContext(snapshot, options = {}) {
     const { draft, type = 'send', countTokens, capabilities = {}, seed = 0, tools = [] } = options;
     if (!TURN_TYPES.includes(type)) throw new ProtocolError('invalid-request', 'Unknown generation type');
+    if (['regenerate', 'continue'].includes(type)) {
+        const position = snapshot.messages.findIndex(message => message.id === options.targetMessageId && message.role === 'assistant' && !message.deletedAt);
+        if (position < 0) throw new ProtocolError('invalid-target', 'Generation requires a current assistant target');
+        snapshot = { ...snapshot, messages: snapshot.messages.slice(0, position + (type === 'continue' ? 1 : 0)) };
+    }
     if (capabilities.supported === false || capabilities.enabled === false) throw new ProtocolError('unsupported-capability', 'Connection is disabled');
     if (capabilities.types && !capabilities.types.includes(type)) throw new ProtocolError('unsupported-capability', 'Generation type is unsupported');
     if (tools.length && capabilities.tools === false) throw new ProtocolError('unsupported-capability', 'Tools are unsupported');
@@ -73,6 +78,13 @@ export function compileContext(snapshot, options = {}) {
         blocks.push(block);
     };
     if (preset.system) add({ id: 'preset:system', layer: 'L1', placement: { type: 'prefix' }, content: preset.system });
+    const generationInstructions = {
+        regenerate: 'Generate a new alternative assistant reply to the latest user message.',
+        continue: 'Continue the last assistant message exactly where it ends. Do not repeat its existing text.',
+        impersonate: 'Draft the next message as the user persona, not as the assistant. Return only the proposed user message.',
+        auxiliary: 'Perform the requested auxiliary task. This output is a separate draft, not a new conversation reply.',
+    };
+    if (generationInstructions[type]) add({ id: 'runtime:generation-type', layer: 'L5', placement: { type: 'tail' }, content: preset.generationInstructions?.[type] ?? generationInstructions[type] });
     for (const resource of [character, persona].filter(Boolean)) {
         for (const field of ['description', 'personality', 'scenario']) if (resource.data[field]) {
             add({ id: `${resource.kind}:${resource.id}:${field}`, layer: 'L1', placement: { type: 'prefix' }, content: resource.data[field] });
@@ -127,17 +139,18 @@ export function compileContext(snapshot, options = {}) {
     for (const item of [...(snapshot.summaries ?? []).filter(item => !selectedSummaries.has(item.id)), ...(snapshot.memories ?? []), ...(snapshot.retrieval ?? [])]) {
         const refs = resolveSources(item, snapshot);
         const id = `derived:${item.id}`;
+        const memory = (snapshot.memories ?? []).includes(item);
         if (!refs) omitted.push({ id, reason: 'stale-source' });
-        else if (refs.length && overlaps(refs, represented)) omitted.push({ id, reason: 'duplicate-source' });
+        else if (!memory && refs.length && overlaps(refs, represented)) omitted.push({ id, reason: 'duplicate-source' });
         else {
             add({ id, layer: (snapshot.retrieval ?? []).includes(item) ? 'L3' : 'L2', placement: { type: 'prefix' },
-                required: item.required === true || item.locked === true, priority: item.priority ?? item.score ?? 0, content: item.content, sourceRefs: refs, template: false });
-            refs.forEach(ref => represented.add(sourceKey(ref)));
+                required: item.required === true || item.locked === true, priority: item.priority ?? item.score ?? 0, content: item.content, sourceRefs: refs, evidenceOnly: memory, template: false });
+            if (!memory) refs.forEach(ref => represented.add(sourceKey(ref)));
         }
     }
-    if (draft !== undefined && draft !== '') {
-        if (typeof draft !== 'string') throw new ProtocolError('invalid-request', 'draft must be a string');
-        add({ id: 'draft', layer: 'L5', role: 'user', content: draft, history: true, groupId: 'draft', message: { role: 'user', content: draft } });
+    if ((draft !== undefined && draft !== '') || options.media?.length) {
+        if (draft !== undefined && typeof draft !== 'string') throw new ProtocolError('invalid-request', 'draft must be a string');
+        add({ id: 'draft', layer: 'L5', role: 'user', content: draft ?? '', history: true, groupId: 'draft', message: historyMessage({ role: 'user', content: draft ?? '', media: options.media }) });
         historyGroups.push({ id: 'draft', messages: [] });
     }
     const books = (settings.worldbookIds ?? []).map(id => {
@@ -201,7 +214,7 @@ export function compileContext(snapshot, options = {}) {
         .flatMap(block => block.sourceRefs.map(sourceKey)));
     const candidates = blocks.filter(block => {
         if (block.history || block.id.startsWith('summary:')) return true;
-        if (overlaps(block.sourceRefs, occupied)) {
+        if (!block.evidenceOnly && overlaps(block.sourceRefs, occupied)) {
             if (block.required) throw new ProtocolError('duplicate-source', `Required block ${block.id} duplicates represented history`);
             omitted.push({ id: block.id, reason: 'duplicate-source' });
             return false;
@@ -211,6 +224,7 @@ export function compileContext(snapshot, options = {}) {
     const required = candidates.filter(block => block.required);
     const requiredSources = new Set();
     for (const block of required) {
+        if (block.evidenceOnly) continue;
         if (overlaps(block.sourceRefs, requiredSources)) throw new ProtocolError('duplicate-source', `Required block ${block.id} duplicates another required block`);
         block.sourceRefs.forEach(ref => requiredSources.add(sourceKey(ref)));
     }
@@ -223,20 +237,20 @@ export function compileContext(snapshot, options = {}) {
                 blocks: result.blocks.map(block => ({ id: block.id, layer: block.layer, sourceRefs: block.sourceRefs })) });
     }
     for (const block of candidates.filter(block => !block.required).sort(stable)) {
-        if (overlaps(block.sourceRefs, requiredSources)) {
+        if (!block.evidenceOnly && overlaps(block.sourceRefs, requiredSources)) {
             omitted.push({ id: block.id, reason: 'duplicate-source' });
             continue;
         }
         const next = render([...selected, block]);
         if (next.tokenCount.tokens <= budget.workingBudget) {
             selected.push(block); result = next;
-            block.sourceRefs.forEach(ref => requiredSources.add(sourceKey(ref)));
+            if (!block.evidenceOnly) block.sourceRefs.forEach(ref => requiredSources.add(sourceKey(ref)));
         }
         else omitted.push({ id: block.id, reason: 'budget', sourceRefs: block.sourceRefs });
     }
     const fixed = result.blocks.filter(block => block.layer === 'L1').map(block => block.message);
     const fixedTokens = countRequest({ mode: 'chat', messages: fixed, tools: structuredClone(tools) }, { countTokens, mediaTokenCost: capabilities.mediaTokenCost });
-    return { ...result, estimatedTokens: result.tokenCount.tokens, budget, omitted,
+    return { ...result, type, estimatedTokens: result.tokenCount.tokens, budget, omitted,
         sourceRefs: uniqueSources(result.blocks.flatMap(block => block.sourceRefs)),
         warnings: fixedTokens.tokens > budget.workingBudget * 0.25 ? [{ code: 'fixed-context-over-quarter', estimatedTokens: fixedTokens.tokens }] : [] };
 }

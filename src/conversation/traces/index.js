@@ -37,5 +37,12 @@ export function createTraceService({ store, now = () => new Date().toISOString()
             save(record);
             pending.delete(traceId);
         },
+        fail(traceId, error) {
+            const record = pending.get(traceId);
+            if (!record) return;
+            Object.assign(record, { status: 'failed', error: { code: error.code ?? 'generation-failed', message: error.message }, finishedAt: now() });
+            save(record);
+            pending.delete(traceId);
+        },
     };
 }

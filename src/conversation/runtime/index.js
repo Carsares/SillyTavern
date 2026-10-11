@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ProtocolError, invariant, TERMINAL_STATES, TOOL_LIMITS, validateTurnRequest } from '../../../public/shared/conversation/schemas/index.js';
+import { applyRegex } from '../../../public/shared/conversation/regex/index.js';
 
 /** Owns business turns, not the SDK's model/tool loop. All dependencies are injected. */
 export function createRuntime({ store, executor, compile, memory, retrieval, tools, trace, groups, capabilities }) {
@@ -22,6 +23,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         const capability = capabilities(connection);
         invariant(capability.supported !== false, 'unsupported-connection', capability.reason || 'Connection is not supported', 422);
         invariant(!capability.types || capability.types.includes(request.type), 'unsupported-type', 'Connection does not support this generation type', 422);
+        for (const media of request.media ?? []) invariant(capability.media?.includes(media.type), 'unsupported-media', `Connection does not support ${media.type}`, 422);
         const chosen = typeof executor === 'function' ? executor(connection) : executor;
         chosen.preflight?.({ snapshot, request, connection });
         invariant(Number.isFinite(connection.contextWindow) && connection.contextWindow > 0, 'model-capability-required', 'Configure the model context window', 422);
@@ -40,13 +42,18 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         let preparedSnapshot = snapshot;
         const definitions = tools?.definitions({ type: request.type, enabled: snapshot.settings.tools }) ?? [];
         const enabledTools = capability.tools === false ? [] : definitions;
+        const query = snapshot.messages.filter(message => message.role === 'user' && !message.deletedAt).at(-1)?.content;
+        if (retrieval && snapshot.settings.retrieval !== false && typeof query === 'string' && query.trim()) {
+            const matches = await retrieval.search(turn.conversationId, query.slice(0, 4096), { snapshot, signal });
+            preparedSnapshot = { ...snapshot, retrieval: matches.map((item, index) => ({ ...item, id: `retrieved-${index}` })) };
+        }
         let requestPlan;
         let lastCompression;
         for (let attempt = 0; attempt < 3; attempt++) {
             signal.throwIfAborted();
             try {
                 requestPlan = compile(preparedSnapshot, {
-                    type: request.type, capabilities: { ...capability, ...connection },
+                    type: request.type, targetMessageId: request.targetMessageId, capabilities: { ...capability, ...connection },
                     workingBudget: connection.workingBudget, tools: enabledTools,
                     variables: snapshot.settings.variables ?? {}, seed: turn.id,
                 });
@@ -63,12 +70,19 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         }
         signal.throwIfAborted();
         phase(turn, 'generating');
+        tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan });
         const traceId = trace?.begin?.({ conversationId: turn.conversationId, turnId: turn.id, memberRunId: member?.id, requestPlan, connection });
         let callNumber = 0;
         const memoryProposals = [];
         const toolDefinitions = enabledTools.map(definition => ({ ...definition,
             execute: async (toolCallId, args, toolSignal) => {
                 signal.throwIfAborted();
+                const task = active.get(turn.id);
+                if (task && task.toolStep !== task.modelStep) {
+                    task.toolStep = task.modelStep;
+                    task.toolRound = (task.toolRound ?? 0) + 1;
+                    tools.beginRound?.({ turnId: turn.id, conversationId: turn.conversationId, round: task.toolRound });
+                }
                 phase(turn, 'tool_running');
                 const result = await tools.execute({ turnId: turn.id, conversationId: turn.conversationId, memberRunId: member?.id, toolCallId, name: definition.name, args, signal: toolSignal ?? signal });
                 if (result?.memoryProposal) memoryProposals.push(result.memoryProposal);
@@ -76,7 +90,8 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 return result;
             },
         }));
-        const result = await chosen.runTurn({
+        let result;
+        try { result = await chosen.runTurn({
             snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions,
             limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
             beforeRequest: async context => {
@@ -84,12 +99,15 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 const current = store.getTurn(turn.id);
                 invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
                 callNumber++;
+                const task = active.get(turn.id);
+                if (task) task.modelStep = Symbol('model-step');
                 // The SDK calls this for every step, including tool continuations.
                 const messages = context?.messages ?? context?.context?.messages;
                 if (messages) {
                     const safety = Math.max(256, Math.ceil(Math.min(connection.contextWindow, connection.inputLimit ?? connection.contextWindow) * 0.02));
                     const limit = Math.min(connection.workingBudget ?? 65536, Math.min(connection.inputLimit ?? connection.contextWindow, connection.contextWindow - connection.maxOutputTokens) - safety);
-                    const estimated = Buffer.byteLength(JSON.stringify(messages), 'utf8');
+                    const estimated = Number.isSafeInteger(context.estimatedTokens) && context.estimatedTokens >= 0
+                        ? context.estimatedTokens : Buffer.byteLength(JSON.stringify(messages), 'utf8');
                     invariant(estimated <= limit, 'budget-blocked', 'Actual model context exceeds the conservative input budget', 422, { estimatedTokens: estimated, workingBudget: limit });
                 }
                 trace?.record?.(traceId, { type: 'model.prepare', callNumber });
@@ -101,10 +119,12 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
                 trace?.record?.(traceId, event);
             },
-        });
+        }); } catch (error) { trace?.fail?.(traceId, error); throw error; }
         signal.throwIfAborted();
         invariant(!['error', 'aborted'].includes(result.finishReason), 'model-failed', 'Model did not finish successfully', 502);
         trace?.finish?.(traceId, result);
+        const preset = preparedSnapshot.resources.find(resource => resource.id === preparedSnapshot.settings.presetId && resource.kind === 'preset');
+        result.content = applyRegex(result.content ?? '', preset?.data?.regex ?? [], { stage: 'output', role: request.type === 'impersonate' ? 'user' : 'assistant' });
         return { ...result, effects: requestPlan.effects, memoryProposals };
     }
 
@@ -136,6 +156,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 }
                 result = { content: '', reasoning: '', usage: { members: usages }, effects, memoryProposals: proposals };
             } else result = await runMember(turn, snapshot, request, controller.signal);
+            if (tools?.memoryProposals) result.memoryProposals = tools.memoryProposals(turn.id);
             phase(turn, 'finalizing');
             store.finishTurn(turn.id, { status: 'completed', ...result }, turn.attemptEpoch);
             // Do not keep a DB transaction open across any background model work.
@@ -161,6 +182,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             }
         } finally {
             clearTimeout(timer);
+            tools?.release?.(turn.id);
             active.delete(turn.id);
         }
     }
@@ -202,6 +224,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             invariant(memory, 'memory-unavailable', 'Memory service is unavailable', 422);
             const snapshot = store.getConversation(conversationId);
             invariant(!snapshot.conversation.activeTurnId, 'conversation-busy', 'Stop the active turn before compacting', 409);
+            invariant(options.expectedContentRevision === snapshot.conversation.contentRevision, 'revision-conflict', 'Conversation changed before compression', 409);
             return memory.compact(snapshot, { ...options, signal: options.signal ?? new AbortController().signal });
         },
         setAutomatic(conversationId, { enabled, intervalMs = 30000, content = 'Continue the group conversation.' }) {
