@@ -1,4 +1,5 @@
 // Native text SSE/NDJSON codecs. Horde/classic Kobold remain bounded JSON operations.
+import { textUsage } from './usage.js';
 import { readSSE } from '../chat/stream.js';
 import { fail } from '../core/index.js';
 import { textResult, usage } from '../chat/http.js';
@@ -23,21 +24,21 @@ export async function decodeTextStream(api, response, { signal, onEvent } = {}) 
     let content = '', tokens = usage(), complete = false, finishReason = 'stop', received = false;
     const frames = api === 'ollama-generate' ? readLines(response, signal) : readSSE(response, signal);
     for await (const frame of frames) {
-        if (frame.data === '[DONE]') { complete = true; break; }
+        if (frame.data === '[DONE]') { if (!received || api !== 'openai-text') throw fail('provider-response-invalid', 'Unexpected text stream terminator'); complete = true; break; }
         let item; try { item = JSON.parse(frame.data); } catch { throw fail('provider-response-invalid', 'Invalid text stream JSON'); }
         if (item.error) throw fail('provider-stream-error', 'Text provider returned an error');
         let text = '';
         if (api === 'openai-text') {
             text = item.choices?.[0]?.text ?? '';
             if (item.choices?.[0]?.finish_reason) { finishReason = item.choices[0].finish_reason; complete = true; }
-            if (item.usage) tokens = usage(item.usage.prompt_tokens, item.usage.completion_tokens);
+            if (item.usage) tokens = textUsage(api, item);
         } else if (api === 'ollama-generate') {
-            text = item.response ?? ''; if (item.done) { complete = true; finishReason = item.done_reason ?? 'stop'; tokens = usage(item.prompt_eval_count, item.eval_count); }
+            text = item.response ?? ''; if (item.done) { complete = true; finishReason = item.done_reason ?? 'stop'; tokens = textUsage(api, item); }
         } else if (api === 'llamacpp') {
-            text = item.content ?? ''; if (item.stop) { complete = true; finishReason = item.stopped_limit ? 'length' : 'stop'; tokens = usage(item.tokens_evaluated, item.tokens_predicted); }
+            text = item.content ?? ''; if (item.stop) { complete = true; finishReason = item.stopped_limit ? 'length' : 'stop'; tokens = textUsage(api, item); }
         } else if (api === 'huggingface-tgi') {
             text = item.token?.special ? '' : item.token?.text ?? '';
-            if (item.generated_text !== undefined) { complete = true; tokens = usage(undefined, item.details?.generated_tokens); finishReason = item.details?.finish_reason ?? 'stop'; }
+            if (item.generated_text !== undefined) { complete = true; tokens = textUsage(api, item); finishReason = item.details?.finish_reason ?? 'stop'; }
         } else {
             text = item.token ?? '';
             if (item.final || item.done || frame.event === 'done') complete = true;

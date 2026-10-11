@@ -25,6 +25,7 @@ export function createChatAdapter(connection, options = {}) {
             const body = encodeChat(c, capability, { messages, tools, maxOutputTokens: outputLimit(c, maxOutputTokens) }, sampling);
             applyReasoning(body, c, capability.api, outputLimit(c, maxOutputTokens));
             if (!capability.api.startsWith('google')) body.stream = stream;
+            if (stream && c.provider === 'openai') body.stream_options = { include_usage: true };
             let path = capability.path;
             const headers = {};
             if (capability.api === 'anthropic-messages') Object.assign(headers, { authorization: null, 'x-api-key': c.apiKey ?? '', 'anthropic-version': '2023-06-01' });

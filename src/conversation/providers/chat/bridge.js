@@ -1,16 +1,16 @@
 // Pi 1.0.2 AssistantMessageEventStream adapter. Pi alone owns the model/tool loop.
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { createProviderAdapter } from './index.js';
-import { getChatCapabilities } from '../../capabilities/chat/index.js';
+import { getChatCapabilities, reasoningMode } from '../../capabilities/chat/index.js';
 import { getTextCapabilities } from '../../capabilities/text/index.js';
 import { fail } from '../core/index.js';
 
-export const providerCapabilities = connection => (connection.type === 'text' ? getTextCapabilities : getChatCapabilities)(connection);
-export function createProviderModel(connection) {
-    const capability = providerCapabilities(connection);
+export const providerCapabilities = (connection, dependencies = {}) => (connection.type === 'text' ? getTextCapabilities : getChatCapabilities)(connection, dependencies);
+export function createProviderModel(connection, dependencies = {}) {
+    const capability = providerCapabilities(connection, dependencies);
     return { id: connection.model, name: connection.model, api: capability.api, provider: connection.provider,
         baseUrl: capability.baseUrl, contextWindow: connection.contextWindow, maxTokens: connection.maxOutputTokens,
-        reasoning: Boolean(connection.reasoning && connection.reasoning !== 'off'), input: capability.media,
+        reasoning: Boolean(reasoningMode(connection) && reasoningMode(connection) !== 'off'), input: capability.media.filter(type => ['text', 'image'].includes(type)), providerMedia: capability.media,
         cost: { input: NaN, output: NaN, cacheRead: NaN, cacheWrite: NaN } };
 }
 
@@ -21,29 +21,34 @@ export function fromPiContext(context, api) {
     if (context.systemPrompt) messages.push({ role: 'system', content: context.systemPrompt });
     let conversationStarted = false;
     const sections = new Map();
+    let sectionMessage;
     for (const native of context.messages) {
         if (native.role === 'system') {
             for (const tool of native.toolsAdded ?? []) tools.set(tool.name, { name: tool.name, description: tool.description, parameters: tool.parameters });
             for (const tool of native.toolsRemoved ?? []) tools.delete(tool.name);
             if (native.sections && conversationStarted) throw fail('unsupported-system-sections', 'Mid-history named section replacement needs a provider-aware compiler');
-            let content = typeof native.content === 'string' ? native.content : native.content.map(part => part.text).join('');
+            const content = typeof native.content === 'string' ? native.content : (native.content ?? []).map(part => part.text).join('');
+            if (content) messages.push({ role: 'system', content });
             if (native.sections) {
                 for (const [key, value] of Object.entries(native.sections)) { if (value === null) sections.delete(key); else sections.set(key, value); }
-                content += [...sections.values()].join('');
+                if (!sectionMessage) { sectionMessage = { role: 'system', content: '' }; messages.push(sectionMessage); }
+                sectionMessage.content = [...sections.values()].join('');
             }
-            if (content) messages.push({ role: 'system', content });
             continue;
         }
         conversationStarted = true;
-        if (native.role === 'user') { messages.push({ role: 'user', content: structuredClone(native.content) }); continue; }
+        if (native.providerParts !== undefined && !Array.isArray(native.providerParts)) throw fail('invalid-content', 'providerParts must be the complete typed block array');
+        if (native.role === 'user') { messages.push({ role: 'user', content: structuredClone(native.providerParts ?? native.content) }); continue; }
         if (native.role === 'toolResult') {
-            messages.push({ role: 'tool', toolCallId: native.toolCallId, name: native.toolName, content: structuredClone(native.content) }); continue;
+            messages.push({ role: 'tool', toolCallId: native.toolCallId, name: native.toolName, isError: native.isError === true, content: structuredClone(native.providerParts ?? native.content) }); continue;
         }
         if (native.role !== 'assistant') throw fail('unsupported-role', 'Unknown Pi message role');
+        if (!Array.isArray(native.content) || native.content.some(part => !['text', 'thinking', 'toolCall'].includes(part.type))) throw fail('unsupported-media', 'Unsupported assistant content cannot be discarded');
         const content = native.content.filter(part => part.type === 'text').map(part => part.text).join('');
         const thinking = native.content.filter(part => part.type === 'thinking');
         const toolCalls = native.content.filter(part => part.type === 'toolCall').map(part => ({ id: part.id, name: part.name, args: part.arguments, ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}) }));
         const message = { role: 'assistant', content, toolCalls, ...(thinking.length ? { reasoning: thinking.map(part => part.thinking).join('') } : {}) };
+        if (api === 'openai-chat' && native.providerContent) message.providerContent = structuredClone(native.providerContent);
         if (api === 'anthropic-messages') message.providerContent = native.content.map(part => {
             if (part.type === 'thinking') {
                 if (!part.thinkingSignature) throw fail('unsupported-reasoning-replay', 'Anthropic thinking requires its signature');
@@ -60,13 +65,13 @@ export function fromPiContext(context, api) {
         });
         messages.push(message);
     }
-    return { messages, tools: [...tools.values()] };
+    return { messages: messages.filter(message => message !== sectionMessage || message.content), tools: [...tools.values()] };
 }
 
 function piUsage(value) {
     // Pi's numeric fields use NaN for unavailable counts/prices; never claim unknown means zero.
     const input = value?.inputTokens ?? NaN, output = value?.outputTokens ?? NaN;
-    return { input, output, cacheRead: value?.cacheReadTokens ?? 0, cacheWrite: value?.cacheWriteTokens ?? 0,
+    return { input, output, cacheRead: value?.cacheReadTokens ?? NaN, cacheWrite: value?.cacheWriteTokens ?? NaN,
         totalTokens: value?.totalTokens ?? NaN, ...(value?.reasoningTokens != null ? { reasoning: value.reasoningTokens } : {}),
         cost: { input: NaN, output: NaN, cacheRead: NaN, cacheWrite: NaN, total: NaN } };
 }
@@ -76,7 +81,7 @@ function finalContent(result) {
             : part.type === 'redacted_thinking' ? { type: 'thinking', thinking: '', thinkingSignature: part.data, redacted: true }
                 : part.type === 'tool_use' ? { type: 'toolCall', id: part.id, name: part.name, arguments: part.input } : { type: 'text', text: part.text });
     }
-    if (result.providerContent?.some(part => part.text !== undefined || part.functionCall)) {
+    if (result.providerContent?.some(part => !part.type && (part.text !== undefined || part.functionCall))) {
         let callIndex = 0;
         return result.providerContent.filter(part => part.text !== undefined || part.functionCall).map(part => {
             if (part.functionCall) { const call = result.toolCalls[callIndex++]; return { type: 'toolCall', id: call.id, name: call.name, arguments: call.args, ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}) }; }
@@ -154,6 +159,7 @@ export function createProviderStream(connection, deps = {}) {
                 partial.content = finalContent(result);
                 if (result.providerContent) partial.providerContent = structuredClone(result.providerContent);
                 partial.usage = piUsage(result.usage);
+                partial.providerUsage = structuredClone(result.usage);
                 partial.stopReason = ['length', 'toolUse'].includes(result.finishReason) ? result.finishReason : 'stop';
                 stream.push({ type: 'done', reason: partial.stopReason, message: partial });
             } catch (error) {

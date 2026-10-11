@@ -24,6 +24,9 @@ Object.assign(profiles, {
     ai21: { api: 'ai21-jamba', baseUrl: 'https://api.ai21.com/studio/v1', path: 'chat/completions', tools: true, media: ['text'], parameters: ['temperature', 'top_p', 'stop', 'frequency_penalty', 'presence_penalty'], systemPlacement: 'any' },
     azure_openai: { api: 'azure-chat', baseUrl: null, path: 'openai/deployments/{deployment}/chat/completions', tools: true, media: ['text', 'image'], parameters: common, systemPlacement: 'any' },
 });
+for (const id of ['openai', 'openai-compatible', 'openai_compatible', 'custom', 'openrouter']) profiles[id].media = ['text', 'image', 'audio', 'document'];
+profiles.anthropic.media = ['text', 'image', 'document'];
+profiles.google.media = profiles.vertexai.media = ['text', 'image', 'audio', 'video', 'document'];
 profiles.claude = profiles.anthropic;
 profiles.makersuite = profiles.google;
 for (const profile of Object.values(profiles)) {
@@ -33,6 +36,10 @@ for (const profile of Object.values(profiles)) {
             : profile.api === 'cohere-v2' ? ['off', 'budget', 'on']
                 : profile.api === 'ai21-jamba' ? [] : ['off', 'minimal', 'low', 'medium', 'high'];
 }
+profiles.openrouter.reasoning = ['off', 'on', 'budget', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+profiles.deepseek.reasoning = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+profiles.deepseek.reasoningMapping = { minimal: 'low', low: 'low', medium: 'high', high: 'high', xhigh: 'high', max: 'max', ultra: 'max' };
+export const reasoningMode = c => c.reasoningEnabled === false ? 'off' : c.effort ?? (typeof c.reasoning === 'string' ? c.reasoning : c.reasoning?.effort);
 export const CHAT_PROVIDERS = deepFreeze(profiles);
 
 export function describeCapability(connection, registry, type) {
@@ -42,15 +49,15 @@ export function describeCapability(connection, registry, type) {
     let reason;
     const baseUrl = c.baseUrl ?? p.baseUrl;
     try { const u = new URL(baseUrl); if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash) reason = 'Invalid baseUrl'; } catch { reason = 'Explicit baseUrl required'; }
-    if (!c.model || typeof c.model !== 'string') reason = 'Explicit model required';
+    if (typeof c.model !== 'string' || !c.model.trim()) reason = 'Explicit model required';
     if (type !== 'auxiliary' && ![c.contextWindow, c.maxOutputTokens].every(value => Number.isSafeInteger(value) && value > 0)) reason = 'Finite contextWindow and maxOutputTokens required';
     if (c.provider === 'azure_openai' && (!c.deployment || !c.apiVersion)) reason = 'Azure deployment and apiVersion required';
-    if (c.reasoning && c.reasoning !== 'off' && !(p.reasoning ?? []).includes(c.reasoning)) reason = 'Unsupported reasoning control for this API';
+    if (reasoningMode(c) && reasoningMode(c) !== 'off' && !(p.reasoning ?? []).includes(reasoningMode(c))) reason = 'Unsupported reasoning control for this API';
     const controls = c.parameters ?? {};
     if (!controls || typeof controls !== 'object' || Array.isArray(controls) || Object.keys(controls).some(key => !p.parameters.includes(key))) reason = 'Unsupported parameter';
     return { ...p, provider: c.provider, baseUrl, type, supported: !reason, reason,
         types: reason ? [] : [...GENERATION_TYPES], tools: !reason && p.tools,
-        protocolMedia: [...p.media], media: p.media.filter(item => item === 'text' || Number.isSafeInteger((c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[item])),
+        protocolMedia: [...p.media], media: p.media.filter(item => item === 'text' || (Number.isSafeInteger((c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)?.[item]) && (c.mediaTokenCost ?? c.capabilities?.mediaTokenCost)[item] > 0)),
         mediaTokenCost: c.mediaTokenCost ?? c.capabilities?.mediaTokenCost,
         verified: c.capabilities?.verified === true,
         reasoningEnabled: c.capabilities?.reasoningEnabled === true,

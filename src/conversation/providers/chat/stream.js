@@ -1,4 +1,5 @@
 // Native SSE framing and deltas. No provider/model loop. EOF without a terminal event fails.
+import { mergeReasoningDetails, reasoningText } from './openrouter.js';
 import { randomUUID } from 'node:crypto';
 import { fail } from '../core/index.js';
 import { decodeChat } from './protocol.js';
@@ -7,7 +8,7 @@ export async function* readSSE(response, signal) {
     if (!response.body) throw fail('provider-response-invalid', 'Missing stream body');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', data = [], event = '';
+    let buffer = '', data = [], event = '', frameSize = 0;
     const aborted = () => { void reader.cancel().catch(() => {}); };
     signal?.addEventListener('abort', aborted, { once: true });
     try {
@@ -23,8 +24,12 @@ export async function* readSSE(response, signal) {
                 const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1);
                 if (!line) {
                     if (data.length) yield { event, data: data.join('\n') };
-                    data = []; event = '';
-                } else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+                    data = []; event = ''; frameSize = 0;
+                } else if (line.startsWith('data:')) {
+                    frameSize += line.length;
+                    if (frameSize > 8 * 1024 * 1024) throw fail('provider-response-invalid', 'Oversized stream frame');
+                    data.push(line.slice(5).replace(/^ /, ''));
+                }
                 else if (line.startsWith('event:')) event = line.slice(6).trim();
             }
             if (chunk.done) { if (data.length) yield { event, data: data.join('\n') }; break; }
@@ -38,9 +43,10 @@ export async function decodeChatStream(api, response, { signal, onEvent } = {}) 
             : api === 'cohere-v2' ? { message: { content: [], tool_calls: [] }, usage: {} }
                 : { choices: [{ message: { content: '', reasoning_content: '', tool_calls: [] } }], usage: {} };
     const jsonBuffers = new Map();
-    let terminal = false;
+    let terminal = false, sawResponse = false;
     const delta = async (type, text, extra = {}) => { if (text) await onEvent?.({ type, text, ...extra }); };
     const mergeCall = async (calls, index, call) => {
+        if (!Number.isSafeInteger(index) || index < 0 || index > 4096) throw fail('provider-response-invalid', 'Invalid streamed tool index');
         const current = calls[index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } };
         if (call.id) current.id = call.id;
         if (call.function?.name) current.function.name += call.function.name;
@@ -50,10 +56,15 @@ export async function decodeChatStream(api, response, { signal, onEvent } = {}) 
         }
     };
     for await (const frame of readSSE(response, signal)) {
-        if (frame.data === '[DONE]') { terminal = true; break; }
+        if (frame.data === '[DONE]') {
+            if (!sawResponse || ['anthropic-messages', 'cohere-v2', 'google-generate-content', 'google-vertex'].includes(api)) throw fail('provider-response-invalid', 'Unexpected stream terminator');
+            terminal = true; break;
+        }
         let item;
         try { item = JSON.parse(frame.data); } catch { throw fail('provider-response-invalid', 'Invalid JSON stream frame'); }
         if (item.error || item.type === 'error') throw fail('provider-stream-error', 'Provider reported a stream error');
+        if (item.index !== undefined && (!Number.isSafeInteger(item.index) || item.index < 0 || item.index > 4096)) throw fail('provider-response-invalid', 'Invalid content block index');
+        if (item.choices?.length || item.candidates?.length || item.type === 'message_start' || item.type === 'message-start' || item.type === 'content-start') sawResponse = true;
         if (api === 'anthropic-messages') {
             if (item.type === 'message_start') Object.assign(state, item.message);
             else if (item.type === 'content_block_start') state.content[item.index] = { ...item.content_block };
@@ -94,14 +105,15 @@ export async function decodeChatStream(api, response, { signal, onEvent } = {}) 
             const target = state.choices[0];
             const d = choice?.delta ?? {};
             if (d.content) { target.message.content += d.content; await delta('text.delta', d.content); }
-            const thinking = d.reasoning_content ?? d.reasoning;
+            if (d.reasoning_details) mergeReasoningDetails(target.message.reasoning_details ??= [], d.reasoning_details);
+            const thinking = d.reasoning_content ?? d.reasoning ?? (d.reasoning_details ? reasoningText(d.reasoning_details) : '');
             if (thinking) { target.message.reasoning_content += thinking; await delta('reasoning.delta', thinking); }
             for (const call of d.tool_calls ?? []) await mergeCall(target.message.tool_calls, call.index, call);
             if (choice?.finish_reason) { target.finish_reason = choice.finish_reason; terminal = true; }
             if (item.usage) state.usage = item.usage;
         }
     }
-    if (!terminal) throw fail('provider-stream-truncated', 'Stream ended before a terminal event');
+    if (!terminal || !sawResponse) throw fail('provider-stream-truncated', 'Stream ended before a complete response');
     for (const [index, json] of jsonBuffers) {
         try { state.content[index].input = JSON.parse(json); } catch { throw fail('provider-response-invalid', 'Incomplete tool argument JSON'); }
     }

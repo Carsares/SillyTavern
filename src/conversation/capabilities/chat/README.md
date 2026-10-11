@@ -40,3 +40,17 @@ Generation types: send, regenerate, continue, impersonate, auxiliary, group. Aux
 API contracts, reasoning modes, model-specific limits, source references and composition: ../../providers/chat/README.md. This index exports its registry plus getCapabilities (alias getChatCapabilities). It does not modify capabilities/core.
 
 verified is accepted only from explicit connection.capabilities. liveVerified stays false. Core-owned validation still checks trusted media costs, finite budgets and verified reasoning effort declarations. Native budget/adaptive/on modes are distinct from Pi effort levels; supply connection.effort when required by core.
+
+Extended native input: Google/Vertex audio/video/document; Anthropic PDF;
+OpenAI/explicit compatible/OpenRouter audio/PDF. All remain model-dependent and
+require positive mediaTokenCost per type. `protocolMedia` describes the codec;
+`media` is the enabled budgetable subset. Pi model metadata exposes that subset as
+`providerMedia`, keeping SDK `input` restricted to its legal text/image enum.
+
+DeepSeek has its own reasoningMapping and explicit disabled/enabled switch; its
+canonical wire efforts are low/high/max, with documented aliases mapped before
+sending. This is distinct from the generic compatible reasoning_effort control.
+
+OpenRouter now exposes off/on/budget/minimal/low/medium/high/xhigh/max native controls.
+Its unified reasoning object and signed detail replay are implemented by the chat
+codec. OpenAI streamed usage is explicitly requested for the named OpenAI source.

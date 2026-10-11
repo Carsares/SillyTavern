@@ -164,3 +164,78 @@ Primary protocol references read during implementation:
 AI21 documentation and the NovelAI/Kobold Swagger endpoints were unavailable to
 the documentation reader during this run. Their wire fixtures require live
 verification; no documentation-read failure is represented as a successful check.
+
+## Extended media input and composition contract
+
+`generate({messages})` accepts content blocks `{type:'image'|'audio'|'video'|'document',
+mimeType, data?:base64, url?:string, filename?:string}`. Exactly one byte/URL source
+is accepted. Google/Vertex use `inlineData`/`fileData` (HTTP or gs URI); Anthropic
+uses PDF document/image sources; OpenAI, explicit compatible profiles and OpenRouter
+use inline WAV/MP3 `input_audio` and inline PDF `file`. Other compatible profiles do
+not claim these extra modalities. MIME must match the block type. No file download,
+implicit transcription or text extraction is performed. Unsupported combinations
+fail before fetch. Live model support is unverified; explicit positive
+`mediaTokenCost` for every selected modality is mandatory.
+
+Pi 1.0.2 extension for Linnaeus/executor/composition owners:
+
+- A user/tool message may carry `providerParts`, the **entire ordered content array**,
+  including text and media. It replaces, rather than appends to, Pi `content` on
+  provider conversion. Preserve this field through history and context conversion;
+  budget the same full array on every call. Direct typed `content` also works.
+- `createProviderModel` keeps Pi `input` limited to text/image, and adds
+  `providerMedia` with the effective full media list. Capability checks must consult
+  provider capabilities rather than infer media support from Pi's narrower type.
+- Final Pi assistant messages carry `providerUsage` with normalized counts plus
+  `raw`. `onProviderStreamEvent({usage})` exposes the same complete normalized/raw
+  object before completion. Do not re-add cache/reasoning subsets to total counts.
+- Image/audio text-provider side channels also need their explicit budget. Guidance
+  `negative_prompt` is a separate context: budget it with the output reserve as
+  well as the positive prompt; do not concatenate it into user text.
+- Tool-result media is currently native only for Anthropic; other tool-result codecs
+  reject it. User media is supported as above. System media is rejected.
+
+Protocol references (codec tests, no live calls):
+[Google content parts](https://ai.google.dev/api/generate-content),
+[Anthropic PDF](https://platform.claude.com/docs/en/build-with-claude/pdf-support),
+[OpenAI chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+
+## Named DeepSeek thinking and usage
+
+For `provider:'deepseek'`, the configured model is preserved verbatim (including
+`deepseek-v4-flash`). `reasoning:'off'`, `reasoningEnabled:false`, or no configured
+effort explicitly sends `thinking:{type:'disabled'}`. Enabled efforts send
+`thinking:{type:'enabled'}` and `reasoning_effort`. Official mappings: minimal/low
+→ low, medium/high/xhigh → high, max/ultra → max. `effort` and
+`reasoning:{effort}` are also accepted; reasoningEnabled:false takes precedence.
+This named mapping does not change other compatible providers' off semantics.
+
+Thinking-mode temperature/presence_penalty/frequency_penalty and ineffective top_p
+values fail before fetch instead of pretending ignored sampling controls apply.
+Reasoning content survives Pi replay, including tool calls and results.
+
+`usage.raw` preserves DeepSeek's complete usage object. Normalized input includes
+cache hits; cache misses are retained separately. Output includes reasoning.
+Reported total_tokens is retained; neither cache nor reasoning is added again.
+See [DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/) and
+[usage fields](https://api-docs.deepseek.com/api/create-chat-completion/).
+Fake-fetch JSON and stream tests pass. No local credentials were read; authorized
+live validation is deferred to the final integration stage.
+
+## OpenRouter reasoning and OpenAI streamed usage
+
+Named `openrouter` sends `reasoning:{enabled:false}` for off/unconfigured mode.
+Enabled modes use `{enabled:true,effort}`; `on` uses `{enabled:true}`; `budget` uses
+`{enabled:true,max_tokens:reasoningBudget}` with the budget below maxOutputTokens.
+JSON `reasoning` and streamed reasoning/details are decoded. Signed/encrypted
+`reasoning_details` are retained in result/Pi assistant `providerContent` and replayed
+as `reasoning_details` on the next OpenRouter request. Preserve providerContent when
+persisting or rebuilding assistant history. Opaque blocks are never displayed as
+ordinary thinking text. Stream fragments concatenate by index (or stable ID).
+The provider may reject off for a model whose reasoning is mandatory; no silent
+fallback is made. See [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+
+Named `openai` streaming requests opt into `stream_options:{include_usage:true}`.
+Non-stream requests omit this field; other compatible platforms are not assumed to
+accept the option. A final usage-only chunk is decoded without needing a choice.
+Missing/aborted usage remains unknown.
