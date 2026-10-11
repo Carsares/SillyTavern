@@ -63,3 +63,15 @@ test('other attachments stay files regardless of document-like names or MIME fam
         assert.throws(() => assertMediaCapability({ supported: true, media: ['document'] }, [part]), /不支持 file/);
     }
 });
+
+test('input-mode labels respect supported native default chat and explicit capability modes', () => {
+    for (const executor of ['pi', 'native']) {
+        assert.equal(historyModeDescription({ supported: true, executor, provider: 'openai' }), '输入模式：原生聊天消息。');
+    }
+    assert.equal(historyModeDescription({ supported: true, type: 'chat' }), '输入模式：原生聊天消息。');
+    assert.match(historyModeDescription({ supported: true, type: 'text' }), /文本补全/);
+    assert.match(historyModeDescription({ supported: false, executor: 'pi' }), /尚未/);
+    assert.match(historyModeDescription({ supported: true, executor: 'codex' }), /尚未/);
+    assert.match(historyModeDescription({ supported: true, executor: 'pi', historyMode: 'structured-transcript' }), /结构化转录/);
+    assert.match(historyModeDescription({ supported: true, executor: 'pi', type: 'image' }), /尚未/);
+});
