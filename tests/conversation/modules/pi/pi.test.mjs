@@ -171,3 +171,79 @@ test('native alias preserves capability identity and uses the same SDK executor'
     assert.deepEqual(actual.map(message => message.role), plan.messages.map(message => message.role));
     assert.deepEqual(actual.map(message => message.content.map(part => part.text).join('')), plan.messages.map(message => message.content));
 });
+
+test('verified image costs enable inline image conversion and model vision', async () => {
+    const c = { ...connection, capabilities: { verified: true, media: ['text', 'image'], mediaTokenCost: { image: 100 } } };
+    assert.equal(getCapabilities(c).supported, true);
+    for (const profile of [{ media: ['text', 'image'], mediaTokenCost: { image: 100 } }, { verified: true, media: ['text', 'image'] }, { verified: true, media: ['text', 'image'], mediaTokenCost: { image: Infinity } }]) assert.equal(getCapabilities({ ...connection, capabilities: profile }).supported, false);
+    let body, actual;
+    const result = await run(createPiExecutor({ fetch: async request => { body = await request.json(); return response({ content: 'Picture' }); } }), {
+        connection: c, requestPlan: { messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }] }] },
+        beforeRequest: context => { actual = context; },
+    });
+    assert.equal(result.content, 'Picture');
+    assert.equal(body.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=');
+    assert.equal(actual.messages[0].content[1].data, 'aGVsbG8=');
+    assert.equal(actual.mediaTokenCost.image, 100);
+    assert.equal(actual.mediaTokenCostVerified, true);
+});
+
+test('reasoning is forwarded only for verified explicitly supported effort levels', async () => {
+    const c = { ...connection, reasoningEnabled: true, effort: 'low', capabilities: { verified: true, reasoningEnabled: true, reasoningEfforts: ['low', 'high'] } };
+    assert.equal(getCapabilities(c).supported, true);
+    assert.equal(getCapabilities({ ...c, effort: 'max' }).supported, false);
+    assert.equal(getCapabilities({ ...c, capabilities: { ...c.capabilities, verified: false } }).supported, false);
+    let body;
+    await run(createPiExecutor({ fetch: async request => { body = await request.json(); return response({ content: 'Reasoned' }); } }), { connection: c });
+    assert.equal(body.reasoning_effort, 'low');
+});
+
+test('provider-owned capability and model factories accept custom native/text APIs', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    const c = { ...connection, provider: 'custom-text', executor: 'native', type: 'text' };
+    const capabilityResolver = value => ({ ...getCapabilities(connection), provider: value.provider, executor: value.executor, types: ['send'], tools: false });
+    let input;
+    const executor = createPiExecutor({ capabilityResolver, modelFactory: value => ({ ...createPrimaryModel(value), api: 'native-text' }), streamFn: createPiStreamBridge({ generate: async request => { input = request; return { content: 'Native text', usage: { inputTokens: 8, outputTokens: 2 }, finishReason: 'stop' }; } }) });
+    const result = await run(executor, { connection: c });
+    assert.equal(result.content, 'Native text');
+    assert.equal(result.usage.complete, true);
+    assert.equal(input.model.api, 'native-text');
+    assert.deepEqual(input.messages.map(m => m.role), plan.messages.map(m => m.role));
+    await assert.rejects(run(executor, { connection: c, tools: [tool] }), { code: 'unsupported-tools' });
+});
+
+test('generate bridge preserves signed provider replay and SDK tools without duplicate deltas', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    let calls = 0, executions = 0;
+    const streamFn = createPiStreamBridge({ generate: async input => {
+        if (++calls === 1) return { content: '', reasoning: 'thought', toolCalls: [{ id: 'bridge-call', name: 'lookup', args: { query: 'hello' }, thoughtSignature: 'signed' }], providerContent: [{ type: 'thinking', signature: 'signed', thinking: 'thought' }], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: 'toolUse' };
+        const assistant = input.messages.find(m => m.toolCalls?.length);
+        assert.equal(assistant.toolCalls[0].thoughtSignature, 'signed');
+        assert.equal(assistant.providerContent[0].signature, 'signed');
+        assert.equal(input.messages.at(-1).role, 'tool');
+        await input.onEvent({ type: 'text.delta', text: 'Final' });
+        return { content: 'Final', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' };
+    } });
+    const events = [];
+    const result = await run(createPiExecutor({ streamFn }), { tools: [{ ...tool, execute: async () => { executions++; return 'ok'; } }], onEvent: async event => { await new Promise(r => setImmediate(r)); events.push(event); } });
+    assert.equal(calls, 2); assert.equal(executions, 1);
+    assert.equal(result.content, 'Final'); assert.equal(result.reasoning, 'thought');
+    assert.equal(events.filter(e => e.type === 'text.delta').length, 1);
+    assert.equal(result.usage.inputTokens, 8);
+});
+
+test('generate bridge abort closes SDK stream even if provider ignores signal', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    const controller = new AbortController();
+    const streamFn = createPiStreamBridge({ generate: async () => { controller.abort(); return new Promise(() => {}); } });
+    await assert.rejects(run(createPiExecutor({ streamFn }), { signal: controller.signal }), { code: 'aborted' });
+});
+
+test('bridge rejects duplicate tool calls before any side effect', async () => {
+    const { createPiStreamBridge } = await import('../../../../src/conversation/executors/pi/index.js');
+    let executed = 0;
+    const call = { id: 'duplicate', name: 'lookup', args: { query: 'hello' } };
+    const streamFn = createPiStreamBridge({ generate: async () => ({ content: '', toolCalls: [call, call], finishReason: 'toolUse' }) });
+    await assert.rejects(run(createPiExecutor({ streamFn }), { tools: [{ ...tool, execute: async () => { executed++; } }] }), { code: 'provider-error' });
+    assert.equal(executed, 0);
+});

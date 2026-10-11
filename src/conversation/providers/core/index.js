@@ -41,3 +41,16 @@ export function createCapturedFetch({ fetchImpl = globalThis.fetch, onRequest, r
 
 /** Upper-bound byte estimate, not a tokenizer or provider-reported usage. */
 export function estimateContext(messages) { return Buffer.byteLength(JSON.stringify(messages), 'utf8') + 64; }
+
+/** Replace image bytes with verified token costs for the fallback estimate. */
+export function estimatePiContext(messages, capabilities) {
+    let imageTokens = 0;
+    const stripped = messages.map(message => ({ ...message, content: Array.isArray(message.content) ? message.content.map(part => {
+        if (part.type !== 'image') return part;
+        const cost = capabilities?.mediaTokenCost?.image;
+        if (!capabilities?.verified || !Number.isSafeInteger(cost) || cost <= 0) throw fail('unsupported-media', 'Image token cost must be verified');
+        imageTokens += cost;
+        return { type: 'image' };
+    }) : message.content }));
+    return estimateContext(stripped) + imageTokens;
+}

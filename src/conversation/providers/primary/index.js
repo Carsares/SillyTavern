@@ -2,10 +2,11 @@ import { createModels, createProvider } from '@earendil-works/pi-ai';
 import * as completions from '@earendil-works/pi-ai/api/openai-completions';
 import { fail } from '../core/index.js';
 
-export function createPrimaryModel(connection) {
+export function createPrimaryModel(connection, capabilities = {}) {
     return {
         id: connection.model, name: connection.model, api: 'openai-completions', provider: 'conversation-primary',
-        baseUrl: connection.baseUrl, reasoning: false, input: ['text'],
+        baseUrl: connection.baseUrl, reasoning: capabilities.reasoningEnabled === true, input: capabilities.media ?? ['text'],
+        thinkingLevelMap: capabilities.reasoningEnabled ? Object.fromEntries(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(level => [level, capabilities.reasoningEfforts.includes(level) ? level : null])) : undefined,
         contextWindow: connection.contextWindow, maxTokens: connection.maxOutputTokens,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         // Preserve system messages, including those interleaved with user/assistant history.

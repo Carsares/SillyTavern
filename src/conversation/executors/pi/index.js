@@ -1,19 +1,20 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
 import { TOOL_LIMITS } from '../../../../public/shared/conversation/schemas/index.js';
-import { getCapabilities } from '../../capabilities/core/index.js';
-import { createCapturedFetch, createRedactor, estimateContext, fail } from '../../providers/core/index.js';
+import { getCapabilities, validateCapabilities, reasoningEffort } from '../../capabilities/core/index.js';
+import { createCapturedFetch, createRedactor, estimateContext, estimatePiContext, fail } from '../../providers/core/index.js';
 import { createPrimaryModel, createPrimaryStream, samplingParameters } from '../../providers/primary/index.js';
-import { toPiMessages } from './messages.js';
+import { toPiMessages, toPiContent } from './messages.js';
 
 export { getCapabilities };
+export { createPiStreamBridge } from './bridge.js';
 
 /** Uses pi 1.0.2's Agent loop; stream/model injection changes transport, never scheduling. */
-export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fetch: fetchImpl } = {}) {
+export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fetch: fetchImpl, capabilityResolver = getCapabilities, modelFactory = createPrimaryModel } = {}) {
     return {
         async runTurn({ requestPlan, connection, tools = [], limits = {}, signal, beforeRequest, onEvent }) {
             const c = connection?.data ?? connection;
-            const capabilities = getCapabilities(c);
+            const capabilities = validateCapabilities(c, capabilityResolver(c));
             if (!capabilities.supported) throw fail('unsupported-capability', capabilities.reason);
             const type = requestPlan?.type ?? 'send';
             if (!capabilities.types.includes(type)) throw fail('unsupported-type', 'Unsupported generation type');
@@ -24,10 +25,13 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
             const outputLimit = bounds.maxOutputTokens ?? c.maxOutputTokens;
             if (!Number.isSafeInteger(outputLimit) || outputLimit <= 0 || outputLimit > c.maxOutputTokens || outputLimit > capabilities.outputLimit) throw fail('invalid-limits', 'Invalid output token limit');
             const inputBudget = Math.min(capabilities.inputLimit, c.contextWindow - outputLimit, c.workingBudget);
-            const model = injectedModel ?? createPrimaryModel(c);
-            if (model.api !== 'openai-completions' || model.id !== c.model) throw fail('unsupported-model', 'Injected model must match the selected connection');
-            const messages = toPiMessages(requestPlan?.messages, model);
-            const parameters = samplingParameters(c.parameters);
+            const model = injectedModel ?? modelFactory(c, capabilities);
+            if (!model || typeof model.api !== 'string' || !model.api || model.id !== c.model) throw fail('unsupported-model', 'Injected model must match the selected connection');
+            if (!streamFn && model.api !== 'openai-completions') throw fail('unsupported-model', 'A custom model API requires an injected streamFn');
+            if (tools.length && !capabilities.tools) throw fail('unsupported-tools', 'This provider does not support tools');
+            const messages = toPiMessages(requestPlan?.messages, model, capabilities);
+            if (!capabilities.tools && messages.some(m => m.role === 'toolResult' || Array.isArray(m.content) && m.content.some(p => p.type === 'toolCall'))) throw fail('unsupported-tools', 'Tool history is unsupported');
+            const parameters = streamFn ? undefined : samplingParameters(c.parameters);
             const redact = createRedactor(c);
             const controller = new AbortController();
             const effectiveSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -65,8 +69,9 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                                 const error = fail('tool-result-limit', 'Tool result exceeds the configured byte limit'); stop(error); throw error;
                             }
                             if (result && Array.isArray(result.content)) {
-                                if (result.content.some(p => p.type !== 'text' || typeof p.text !== 'string')) throw fail('unsupported-media', 'Tool results must contain text');
-                                return { ...result, details: result.details ?? null };
+                                const resultContent = toPiContent(result.content, capabilities);
+                                if (resultContent.some(p => !['text', 'image'].includes(p.type))) throw fail('unsupported-content', 'Invalid tool result blocks');
+                                return { ...result, content: resultContent, details: result.details ?? null };
                             }
                             return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) ?? 'null' }], details: result ?? null };
                         } catch (error) {
@@ -91,7 +96,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                 timer = setTimeout(() => stop(fail('turn-timeout', 'Turn deadline exceeded')), bounds.turnTimeoutMs);
                 check();
                 agent = new Agent({
-                    initialState: { model, messages: [], tools: sdkTools, thinkingLevel: 'off' },
+                    initialState: { model, messages: [], tools: sdkTools, thinkingLevel: reasoningEffort(c) },
                     toolExecution: 'sequential',
                     async prepareRequest({ context }) {
                         try {
@@ -99,10 +104,10 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                             if (++requests > bounds.rounds + 1) throw fail('request-limit', 'Model request limit exceeded');
                             calls = 0;
                             // The callback sees a copy of SDK history, including tool results/declarations.
-                            const actual = { ...requestPlan, messages: structuredClone(context.messages), estimatedTokens: estimateContext(context.messages), estimationMethod: 'utf8-byte-upper-bound', budget: { hardInputBudget: Math.min(capabilities.inputLimit, c.contextWindow - outputLimit), workingBudget: inputBudget }, requestIndex: requests, signal: effectiveSignal };
+                            const actual = { ...requestPlan, messages: structuredClone(context.messages), estimatedTokens: estimatePiContext(context.messages, capabilities), estimationMethod: 'utf8-byte-upper-bound-with-verified-media', mediaTokenCost: capabilities.mediaTokenCost, mediaTokenCostVerified: capabilities.verified === true, budget: { hardInputBudget: Math.min(capabilities.inputLimit, c.contextWindow - outputLimit), workingBudget: inputBudget }, requestIndex: requests, signal: effectiveSignal };
                             await beforeRequest?.(actual);
                             check();
-                            if (estimateContext(context.messages) > inputBudget) throw fail('budget-blocked', 'Actual SDK context exceeds the input budget');
+                            if (!beforeRequest && estimatePiContext(context.messages, capabilities) > inputBudget) throw fail('budget-blocked', 'Actual SDK context exceeds the input budget');
                         } catch (error) {
                             stop(effectiveSignal.aborted ? fail('aborted', 'Turn aborted') : error?.name === 'ProtocolError' ? fail(error.code, redact(error.message)) : fail('before-request-failed', 'Before-request validation failed'));
                             throw fatal;
@@ -113,7 +118,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                         return stream(activeModel, context, { ...options, maxTokens: outputLimit, maxRetries: 0, timeoutMs: bounds.turnTimeoutMs, transport: 'sse', samplingParams: parameters, fetch: capturedFetch,
                             async onPayload(payload) {
                                 check();
-                                if (estimateContext(payload) > inputBudget) { stop(fail('budget-blocked', 'Serialized provider payload exceeds the input budget')); throw fatal; }
+                                if (!beforeRequest && !capabilities.media.includes('image') && estimateContext(payload) > inputBudget) { stop(fail('budget-blocked', 'Serialized provider payload exceeds the input budget')); throw fatal; }
                             },
                             async onProviderStreamEvent(raw) {
                                 check();
@@ -157,7 +162,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                         usage.inputTokens += u?.input ?? 0; usage.outputTokens += u?.output ?? 0;
                         usage.cacheReadTokens += u?.cacheRead ?? 0; usage.cacheWriteTokens += u?.cacheWrite ?? 0; usage.totalTokens += u?.totalTokens ?? 0;
                         usage.reasoningTokens += u?.reasoning ?? 0; usage.cacheWrite1hTokens += u?.cacheWrite1h ?? 0;
-                        usage.complete = usage.requests.every(r => Number.isFinite(r.raw?.prompt_tokens) && Number.isFinite(r.raw?.completion_tokens));
+                        usage.complete = usage.requests.every(r => (Number.isFinite(r.raw?.prompt_tokens) && Number.isFinite(r.raw?.completion_tokens)) || (Number.isFinite(r.raw?.inputTokens) && Number.isFinite(r.raw?.outputTokens)) || (Number.isFinite(r.raw?.input_tokens) && Number.isFinite(r.raw?.output_tokens)));
                         await emit({ type: 'usage.updated', usage: structuredClone(usage) });
                     }
                 });
