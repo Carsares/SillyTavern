@@ -13,11 +13,20 @@ export function summarizeUsage(traces) {
     const turns = new Map(), consumed = new Set();
     const requests = traces.filter(trace => trace.kind === 'outbound-request');
     const records = traces.filter(trace => trace.requestPlan || ['embedding-usage', 'image-usage'].includes(trace.kind));
+    const groups = new Map();
     for (const trace of records) {
+        const id = trace.providerJob?.resumed && trace.providerJob.originalTraceId || trace.id;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(trace);
+    }
+    for (const [id, group] of groups) {
+        const trace = group.find(item => item.id === id) ?? group[0];
         const category = trace.kind === 'memory' ? 'memory' : trace.kind?.startsWith('embedding') ? 'embedding' : trace.kind?.startsWith('image') ? 'image' : 'generation';
-        const bound = requests.filter(request => request.parentTraceId === trace.id);
+        const ids = new Set(group.map(item => item.id));
+        const bound = requests.filter(request => ids.has(request.parentTraceId));
         bound.forEach(request => consumed.add(request.id));
-        const usage = trace.usage ?? trace.events?.filter(event => event.type === 'usage.updated' && event.usage).at(-1)?.usage;
+        const usage = group.map(item => item.usage ?? item.events?.filter(event => event.type === 'usage.updated' && event.usage).at(-1)?.usage)
+            .filter(Boolean).at(-1);
         const calls = Math.max(bound.length, usage?.requests?.length ?? (usage ? 1 : 0));
         if (!calls) continue;
         const count = { calls, complete: usage?.complete === true && (!usage.requests || usage.requests.length >= calls) };

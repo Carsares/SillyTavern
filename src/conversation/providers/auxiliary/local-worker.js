@@ -13,7 +13,6 @@ try {
     env.backends.onnx.wasm.wasmPaths = join(dirname(require.resolve('sillytavern-transformers/package.json')), 'dist') + '/';
     const extractor = await pipeline('feature-extraction', basename(workerData.modelPath), { local_files_only: true });
     let embeddings;
-    try { const tensor = await extractor(workerData.texts, { pooling: 'mean', normalize: true }); embeddings = tensor.tolist(); }
-    finally { await extractor.dispose(); }
+    try { const tensor = await extractor(workerData.texts, { pooling: 'mean', normalize: true }); embeddings = tensor.tolist(); } finally { await extractor.dispose(); }
     parentPort.postMessage({ embeddings });
 } catch { parentPort.postMessage({ error: true }); }

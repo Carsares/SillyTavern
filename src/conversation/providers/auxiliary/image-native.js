@@ -1,5 +1,5 @@
 import { fail } from '../core/index.js';
-import { usage } from '../chat/http.js';
+import { auxiliaryUsage } from './usage.js';
 import { binaryImage, imageList, modelPath, integer, fields } from './common.js';
 import { runJob, decodeJob, relativeJobUrl } from './jobs.js';
 
@@ -56,7 +56,7 @@ export async function generateNativeImage(c, cap, send, input, options = {}) {
         if (api === 'bfl-image') {
             const ultra = c.model.endsWith('-ultra');
             if (input.outputFormat === 'webp') throw fail('unsupported-parameters', 'BFL output format must be png or jpeg');
-            if ((ultra && ['width','height','steps','scale','promptUpsampling'].some(k => input[k] !== undefined)) || (c.model === 'flux-pro-1.1' && ['steps','scale','aspectRatio'].some(k => input[k] !== undefined))) throw fail('unsupported-parameters', 'Selected BFL model does not implement these controls');
+            if ((ultra && ['width', 'height', 'steps', 'scale', 'promptUpsampling'].some(k => input[k] !== undefined)) || (c.model === 'flux-pro-1.1' && ['steps', 'scale', 'aspectRatio'].some(k => input[k] !== undefined))) throw fail('unsupported-parameters', 'Selected BFL model does not implement these controls');
             if (!ultra && input.aspectRatio !== undefined) throw fail('unsupported-parameters', 'This BFL codec requires explicit pixel dimensions for non-ultra models');
             body = { prompt, ...(ultra ? { aspect_ratio: input.aspectRatio ?? '1:1' } : defaultSize), ...values(input, { seed: 'seed', steps: 'steps', scale: 'guidance', promptUpsampling: 'prompt_upsampling', outputFormat: 'output_format' }) };
             submitPath = modelPath(c.model);
@@ -95,7 +95,7 @@ export async function generateNativeImage(c, cap, send, input, options = {}) {
                     const data = await send(job.paths.poll ?? `get_result?id=${id}`, { method: 'GET', signal, headers });
                     if (['Pending', 'Processing'].includes(data.status)) return null;
                     if (data.status !== 'Ready') throw fail('provider-job-failed', 'BFL job failed or was rejected');
-                    return { images: imageList([{ url: data.result?.sample }]) };
+                    return { images: imageList([{ url: data.result?.sample }]), usage: data.usage ?? data.result?.usage };
                 }
                 const path = job.paths.poll ?? `${job.submitPath}/requests/${id}/status`;
                 const data = await send(path, { method: 'GET', signal, headers });
@@ -103,10 +103,10 @@ export async function generateNativeImage(c, cap, send, input, options = {}) {
                 if (data.status !== 'COMPLETED' || data.error) throw fail('provider-job-failed', 'FAL job failed');
                 const resultPath = data.response_url ? relativeJobUrl(data.response_url, cap.baseUrl) : job.paths.result ?? `${job.submitPath}/requests/${id}`;
                 const result = await send(resultPath, { method: 'GET', signal, headers });
-                return { images: imageList(result.images?.map(i => ({ url: i.url }))) };
+                return { images: imageList(result.images?.map(i => ({ url: i.url }))), usage: result.usage };
             },
         });
-        images = result.images; jobId = result.jobId;
+        images = result.images; jobId = result.jobId; response = result;
     } else if (api === 'together-image') {
         response = await send('images/generations', { signal, body: { model: c.model, ...native, ...defaultSize, n: input.count ?? 1, ...values(input, { steps: 'steps' }) } }); images = openaiImages(response.data);
     } else if (api === 'xai-image') {
@@ -118,7 +118,7 @@ export async function generateNativeImage(c, cap, send, input, options = {}) {
     } else if (api === 'sdcpp-image') {
         response = await send('sdapi/v1/txt2img', { signal, body: { model: c.model, ...native, ...defaultSize, batch_size: input.count ?? 1, ...values(input, { steps: 'steps', scale: 'cfg_scale', sampler: 'sampler_name', scheduler: 'scheduler' }) } }); images = response.images?.map(data => ({ data, mimeType: 'image/png' }));
     } else if (api === 'pollinations-image') {
-        const params = new URLSearchParams(Object.entries({ model: c.model, ...defaultSize, ...values(input, { seed: 'seed', enhance: 'enhance', negativePrompt: 'negative_prompt' }) }).map(([k,v]) => [k,String(v)]));
+        const params = new URLSearchParams(Object.entries({ model: c.model, ...defaultSize, ...values(input, { seed: 'seed', enhance: 'enhance', negativePrompt: 'negative_prompt' }) }).map(([k, v]) => [k, String(v)]));
         images = [await binaryImage(await send(`image/${encodeURIComponent(prompt)}?${params}`, { signal, method: 'GET', raw: true }), signal)];
     } else if (api === 'huggingface-image') {
         const parameters = { ...values(input, { negativePrompt: 'negative_prompt', width: 'width', height: 'height', steps: 'num_inference_steps', scale: 'guidance_scale', seed: 'seed' }) };
@@ -145,14 +145,13 @@ export async function generateNativeImage(c, cap, send, input, options = {}) {
     } else if (api === 'workers-image') {
         const body = { ...native, ...values(input, { width: 'width', height: 'height', steps: 'num_steps', scale: 'guidance' }) };
         let encoded = body;
-        if (/flux-2/.test(c.model)) { encoded = new FormData(); for (const [k,v] of Object.entries(body)) encoded.set(k, String(v)); }
+        if (/flux-2/.test(c.model)) { encoded = new FormData(); for (const [k, v] of Object.entries(body)) encoded.set(k, String(v)); }
         const raw = await send(`accounts/${encodeURIComponent(c.accountId)}/ai/run/${modelPath(c.model)}`, { signal, body: encoded, raw: true });
-        if ((raw.headers.get('content-type') ?? '').includes('application/json')) { response = await raw.json(); if (response.success === false) throw fail('provider-job-failed', 'Workers image generation failed'); images = [{ data: response.result?.image ?? response.image, mimeType: 'image/png' }]; }
-        else images = [await binaryImage(raw, signal)];
+        if ((raw.headers.get('content-type') ?? '').includes('application/json')) { response = await raw.json(); if (response.success === false) throw fail('provider-job-failed', 'Workers image generation failed'); images = [{ data: response.result?.image ?? response.image, mimeType: 'image/png' }]; } else images = [await binaryImage(raw, signal)];
     } else throw fail('unsupported-operation', 'Missing image codec');
     imageList(images); signal?.throwIfAborted();
     await input.onEvent?.({ type: 'image.completed', count: images.length });
-    return { images, usage: usage(response?.usage?.input_tokens, response?.usage?.output_tokens), ...(jobId ? { jobId } : {}) };
+    return { images, usage: auxiliaryUsage(api, response, { completed: true }), ...(jobId ? { jobId } : {}) };
 }
 
 export async function cancelNativeJob(c, cap, send, jobId, { signal, onJob } = {}) {

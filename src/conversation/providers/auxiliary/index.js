@@ -1,8 +1,9 @@
+import { auxiliaryUsage } from './usage.js';
 // Concrete embedding/image codecs; no auto-retry of chargeable image submissions; live-unverified.
 import { unzipSync } from 'fflate';
 import { getAuxiliaryCapabilities } from '../../capabilities/auxiliary/index.js';
 import { fail } from '../core/index.js';
-import { createTransport, requireCapability, usage, pollHorde } from '../chat/http.js';
+import { createTransport, requireCapability, pollHorde } from '../chat/http.js';
 import { encodeNovelImage } from './novelai.js';
 import { embedTexts } from './embedding.js';
 import { generateNativeImage, validateImageOptions, cancelNativeJob } from './image-native.js';
@@ -55,13 +56,12 @@ export function createAuxiliaryAdapter(connection, options = {}) {
             if (typeof prompt !== 'string' || !prompt.trim()) throw fail('invalid-input', 'Image prompt required');
             positive(width, 'width', 4096); positive(height, 'height', 4096); positive(count, 'count', 4); positive(steps, 'steps', 150);
             if (!Number.isSafeInteger(seed) || seed < 0) throw fail('invalid-image-options', 'Invalid seed');
-            let images, response, tokens = usage();
+            let images, response;
             const api = capability.imageApi;
             if (api === 'openai-auxiliary') {
                 if (negativePrompt) throw fail('unsupported-parameters', 'OpenAI images do not support a separate negative prompt');
                 response = await send('images/generations', { signal, body: { model: c.model, prompt, size: `${width}x${height}`, n: count, ...(input.quality !== undefined ? { quality: input.quality } : {}), ...(input.style !== undefined ? { style: input.style } : {}), ...(input.outputFormat !== undefined ? { output_format: input.outputFormat } : {}) } });
                 images = response.data?.map(item => item.b64_json ? { data: item.b64_json, mimeType: `image/${input.outputFormat ?? 'png'}` } : { url: item.url });
-                tokens = usage(response.usage?.input_tokens, response.usage?.output_tokens);
             } else if (api === 'sd-webui-image') {
                 response = await send('sdapi/v1/txt2img', { signal, body: { prompt, negative_prompt: negativePrompt, width, height,
                     batch_size: count, n_iter: 1, steps, seed, ...(input.scale !== undefined ? { cfg_scale: input.scale } : {}), ...(input.sampler !== undefined ? { sampler_name: input.sampler } : {}), override_settings: { sd_model_checkpoint: c.model }, override_settings_restore_afterwards: true } });
@@ -99,14 +99,13 @@ export function createAuxiliaryAdapter(connection, options = {}) {
             }
             imageList(images);
             signal?.throwIfAborted();
-            const result = { images, usage: tokens, ...(response?.jobId ? { jobId: response.jobId } : {}) };
+            const result = { images, usage: auxiliaryUsage(api, response, { completed: true }), ...(response?.jobId ? { jobId: response.jobId } : {}) };
             await onEvent?.({ type: 'image.completed', count: images.length });
             return result;
         },
     };
     return { ...adapter, async generateImage(input) {
-        try { return await adapter.generateImage(input); }
-        catch (error) {
+        try { return await adapter.generateImage(input); } catch (error) {
             const failure = error instanceof Error ? error : fail('provider-image-failed', 'Image generation failed');
             if (!['invalid-input', 'invalid-image-options', 'invalid-workflow', 'invalid-job', 'unsupported-operation', 'unsupported-parameters'].includes(failure.code)) {
                 failure.details = { ...failure.details, outcome: failure.details?.outcome ?? 'unknown', resubmit: false };

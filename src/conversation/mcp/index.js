@@ -37,8 +37,7 @@ export function createMcpServer({ registry, store, now = Date.now, ttlMs = 12000
     }
     async function handle({ token, message, signal }) {
         let auth;
-        try { auth = authorize(token); }
-        catch { return { status: 401, body: rpcError(message?.id, -32001, 'Unauthorized') }; }
+        try { auth = authorize(token); } catch { return { status: 401, body: rpcError(message?.id, -32001, 'Unauthorized') }; }
         if (!message || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string' || (message.id !== undefined && typeof message.id !== 'string' && !Number.isSafeInteger(message.id)))
             return { status: 400, body: rpcError(null, -32600, 'Invalid request') };
         const { grant, allowed } = auth;
@@ -86,8 +85,7 @@ export function createMcpServer({ registry, store, now = Date.now, ttlMs = 12000
             } else if (Buffer.byteLength(JSON.stringify(message)) > 65536) { res.statusCode = 413; res.end(); return; }
             const result = await handle({ token: match?.[1], message, signal: controller.signal });
             res.statusCode = result.status;
-            if (result.body !== null) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result.body)); }
-            else res.end();
+            if (result.body !== null) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result.body)); } else res.end();
         } catch {
             res.statusCode = 400; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(rpcError(null, -32700, 'Parse error')));
         } finally { req.off?.('aborted', abort); }

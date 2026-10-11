@@ -1,0 +1,73 @@
+{
+  "allowPaid": false,
+  "cacheModes": [
+    "uncontrolled"
+  ],
+  "batchSize": 50,
+  "budget": {
+    "maxCostUsd": 1,
+    "maxRequests": 10,
+    "maxInputTokens": 1000000,
+    "maxOutputTokens": 20000,
+    "deadlineMs": 60000
+  },
+  "executors": {
+    "pi": {
+      "modelVersion": "REPLACE_WITH_MODEL_VERSION",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "openai-compatible",
+        "baseUrl": "https://your-provider.example/v1/",
+        "model": "REPLACE_WITH_MODEL_ID",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 200000,
+        "workingBudget": 190000,
+        "maxOutputTokens": 8192,
+        "pricing": {
+          "inputUsdPerMillionUpper": null,
+          "outputUsdPerMillionUpper": null,
+          "perRequestUsdUpper": null,
+          "source": "REPLACE_WITH_VERIFIED_RATE_SOURCE_AND_DATE"
+        }
+      }
+    },
+    "claude": {
+      "modelVersion": "REPLACE_WITH_MODEL_VERSION",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "anthropic",
+        "baseUrl": "https://your-provider.example/anthropic",
+        "model": "REPLACE_WITH_MODEL_ID",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 200000,
+        "workingBudget": 190000,
+        "maxOutputTokens": 8192,
+        "pricing": {
+          "inputUsdPerMillionUpper": null,
+          "outputUsdPerMillionUpper": null,
+          "perRequestUsdUpper": null,
+          "source": "REPLACE_WITH_VERIFIED_RATE_SOURCE_AND_DATE"
+        }
+      }
+    },
+    "codex": {
+      "modelVersion": "REPLACE_WITH_MODEL_VERSION",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "openai-compatible",
+        "baseUrl": "https://your-provider.example/v1/",
+        "model": "REPLACE_WITH_MODEL_ID",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 200000,
+        "workingBudget": 190000,
+        "maxOutputTokens": 8192,
+        "pricing": {
+          "inputUsdPerMillionUpper": null,
+          "outputUsdPerMillionUpper": null,
+          "perRequestUsdUpper": null,
+          "source": "REPLACE_WITH_VERIFIED_RATE_SOURCE_AND_DATE"
+        }
+      }
+    }
+  }
+}

@@ -22,9 +22,18 @@ Additional trusted orchestration methods:
   calls. Direct execute also returns `result.memoryProposal` (singular). Pass
   proposals to `finishTurn` only when status is completed. No direct memory write
   is performed by tools. Do not collect the same proposal through both paths.
+- `toolArtifacts(turnId, memberRunId?)`: collect a deduplicated list of registered
+  `{type:'image',attachmentId,mimeType,name,size}` from completed generate_image
+  records. Optional memberRunId selects only that member; omission aggregates the
+  whole turn. Runtime must collect before release and pass to `result.media` or
+  that member's `commitMember`. Image-only successful replies still need a message.
+  Every collection rechecks store.getAttachment; external URLs, missing records,
+  non-images, unknown/failed calls and late output are excluded. Metadata comes
+  from the registered attachment, never provider-supplied paths/bytes. Completed
+  replays restore the collector without repeating the paid call.
 - `release(turnId)`: release in-process counters/proposals after turn completion.
 
-Image injection: `image({prompt,conversationId,turnId,idempotencyKey,signal})`.
+Image injection: `image({prompt,conversationId,turnId,idempotencyKey,recordId,memberRunId,snapshot,signal})`.
 Return a JSON-serializable result, including `usage` when known. Credentials must
 not appear in returned media/result data. Provider rejection errors can set
 `definitive:true`; otherwise an invoked image call failing/timing out/aborting

@@ -24,6 +24,20 @@ test('unreported or failed attempted requests make totals unknown instead of zer
     assert.equal(result.totals.costUsd, null); assert.equal(result.totals.complete, false);
 });
 
+test('resuming a provider job attributes its recovered usage to the original single request', () => {
+    const usage = { complete: true, inputTokens: 4, outputTokens: 2, totalTokens: 6, requests: [{}] };
+    const result = summarizeUsage([
+        { id: 'original', turnId: 'first-turn', requestPlan: {}, status: 'failed' },
+        { id: 'post', parentTraceId: 'original', kind: 'outbound-request' },
+        { id: 'retry', turnId: 'retry-turn', requestPlan: {}, providerJob: { resumed: true, originalTraceId: 'original' }, usage },
+        { id: 'poll', parentTraceId: 'retry', kind: 'outbound-poll' },
+    ]);
+    assert.equal(result.totals.calls, 1);
+    assert.equal(result.totals.totalTokens, 6);
+    assert.equal(result.totals.complete, true);
+    assert.deepEqual(result.turns.map(turn => turn.turnId), ['first-turn']);
+});
+
 test('partial cumulative usage is counted once and a later unreported request marks incomplete', () => {
     const usage = { complete: true, inputTokens: 4, outputTokens: 2, totalTokens: 6, requests: [{}] };
     const result = summarizeUsage([{ id: 'a', requestPlan: {}, events: [{ type: 'usage.updated', usage }, { type: 'usage.updated', usage }] },

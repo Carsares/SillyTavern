@@ -175,3 +175,61 @@ test('pending call is bounded by remaining configured turn timeout after group r
     t.mock.timers.tick(4); assert.equal(signal.aborted, false);
     t.mock.timers.tick(1); await assert.rejects(pending, { code: 'tool-timeout' });
 });
+
+test('toolArtifacts collects only registered images using authoritative safe metadata', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+    const registered = new Map([['image-1', { id: 'image-1', mime: 'image/png', name: 'safe.png', size: 4, path: 'private-file' }], ['audio-1', { id: 'audio-1', mime: 'audio/wav', name: 'audio', size: 4 }]]);
+    store.getAttachment = id => registered.get(id);
+    const registry = createToolRegistry({ store, image: async input => {
+        assert.equal(input.recordId, input.idempotencyKey); assert.equal(input.snapshot.conversationId, 'c');
+        return { images: [{ id: 'image-1', mime: 'wrong', name: 'wrong', size: 999 }, { attachmentId: 'image-1' }, { id: 'missing' }, { id: 'audio-1' },
+            { url: 'https://external.invalid/image' }, { externalURL: 'https://external.invalid/image', id: 'image-1' }] };
+    } });
+    assert.deepEqual(registry.toolArtifacts('active'), []);
+    await registry.execute(call('generate_image', { prompt: 'x' }));
+    const expected = [{ type: 'image', attachmentId: 'image-1', mimeType: 'image/png', name: 'safe.png', size: 4 }];
+    assert.deepEqual(registry.toolArtifacts('active'), expected);
+    registry.toolArtifacts('active')[0].name = 'mutated'; assert.deepEqual(registry.toolArtifacts('active'), expected);
+    registered.delete('image-1'); assert.deepEqual(registry.toolArtifacts('active'), []);
+});
+
+test('group artifacts filter by member while replay and rebind retain completed references', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+    store.turns.get('active').type = 'group';
+    store.getAttachment = id => ({ id, mime: 'image/png', name: id, size: 1 });
+    let calls = 0;
+    const registry = createToolRegistry({ store, image: async input => { calls++; return { images: [{ id: `image-${input.memberRunId}` }] }; } });
+    for (const memberRunId of ['a', 'b']) {
+        registry.bindTurn({ turnId: 'active', snapshot: store.getConversation() });
+        await registry.execute({ ...call('generate_image', { prompt: 'x' }), memberRunId });
+        assert.deepEqual(registry.toolArtifacts('active', memberRunId).map(x => x.attachmentId), [`image-${memberRunId}`]);
+    }
+    assert.equal(registry.toolArtifacts('active').length, 2);
+    assert.deepEqual(registry.toolArtifacts('active', 'missing'), []);
+    await registry.execute({ ...call('generate_image', { prompt: 'x' }), memberRunId: 'b' }); assert.equal(calls, 2);
+    const recovered = createToolRegistry({ store, image: () => assert.fail('never regenerate completed artifact') });
+    await recovered.execute({ ...call('generate_image', { prompt: 'x' }), memberRunId: 'a' });
+    assert.equal(recovered.toolArtifacts('active', 'a')[0].attachmentId, 'image-a');
+    assert.deepEqual(recovered.toolArtifacts('active', 'b'), []);
+    registry.release('active'); assert.deepEqual(registry.toolArtifacts('active'), []);
+});
+
+test('unknown or late image output never becomes an assistant artifact and is not retried', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+    store.getAttachment = id => ({ id, mime: 'image/png', name: id, size: 1 });
+    let resolve, calls = 0;
+    const registry = createToolRegistry({ store, image: () => { calls++; return new Promise(yes => { resolve = yes; }); } });
+    const controller = new AbortController(), promise = registry.execute({ ...call('generate_image', { prompt: 'x' }), signal: controller.signal });
+    controller.abort(); await assert.rejects(promise, { code: 'tool-result-unknown' });
+    resolve({ images: [{ id: 'late-image' }] }); await Promise.resolve();
+    assert.deepEqual(registry.toolArtifacts('active'), []);
+    await assert.rejects(registry.execute(call('generate_image', { prompt: 'x' })), { code: 'tool-result-unknown' }); assert.equal(calls, 1);
+});
+
+test('oversized image result still exposes registered artifacts from the full durable record', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'], toolLimits: { resultBytes: 160 } } });
+    store.getAttachment = id => ({ id, mime: 'image/webp', name: 'only-image', size: 1 });
+    const registry = createToolRegistry({ store, image: async () => ({ images: [{ id: 'generated' }], detail: 'x'.repeat(1000) }) });
+    const result = await registry.execute(call('generate_image', { prompt: 'x' })); assert.equal(result.truncated, true);
+    assert.deepEqual(registry.toolArtifacts('active').map(x => x.attachmentId), ['generated']);
+});

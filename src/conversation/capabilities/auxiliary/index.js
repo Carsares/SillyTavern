@@ -86,8 +86,7 @@ export function getAuxiliaryCapabilities(connection) {
     result.modelSelection = c.provider === 'extras' ? 'server-configured' : 'request';
     if (profile?.imageApi === 'google-image') result.operationParameters.generateImage = /^(imagen-|imagegeneration)/.test(c.model ?? '') ? ['prompt', 'aspectRatio', 'count'] : ['prompt', 'aspectRatio', 'imageSize', 'count'];
     for (const key of ['embeddingBaseUrl', 'imageBaseUrl']) if (c[key] !== undefined) {
-        try { const u = new URL(c[key]); if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash) throw 0; }
-        catch { Object.assign(result, { supported: false, reason: `Invalid ${key}` }); }
+        try { const u = new URL(c[key]); if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash) throw 0; } catch { Object.assign(result, { supported: false, reason: `Invalid ${key}` }); }
     }
     if (local) result.baseUrl = null;
     if (profile?.embedApi === 'workers-embed' && (typeof c.accountId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(c.accountId))) Object.assign(result, { supported: false, reason: 'Workers accountId required' });

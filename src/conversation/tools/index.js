@@ -56,7 +56,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         let state = sessions.get(turnId);
         if (!state) {
             const input = structuredClone(frozenSnapshot ?? (store.getSnapshot ? store.getSnapshot(turn.snapshotId) : snapshot));
-            state = { epoch: turn.attemptEpoch, snapshot: input, limits: sessionLimits(input.settings), startedAt: now(), round: 1, calls: new Map(), total: 0, proposals: new Map() };
+            state = { epoch: turn.attemptEpoch, snapshot: input, limits: sessionLimits(input.settings), startedAt: now(), round: 1, calls: new Map(), total: 0, proposals: new Map(), artifacts: new Map() };
             sessions.set(turnId, state);
         }
         invariant(state.epoch === turn.attemptEpoch, 'turn-inactive', 'Tool attempt changed', 409);
@@ -76,6 +76,31 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         let preview = text.slice(0, limits.resultBytes / 4);
         while (Buffer.byteLength(JSON.stringify({ truncated: true, preview, resultRef: record.id })) > limits.resultBytes) preview = preview.slice(0, Math.floor(preview.length * 0.8));
         return { truncated: true, preview, resultRef: record.id };
+    }
+    function rememberArtifacts(state, record) {
+        if (record.name === 'generate_image' && record.status === 'completed') state.artifacts.set(record.id, record.memberRunId ?? null);
+    }
+    function toolArtifacts(turnId, memberRunId) {
+        const state = sessions.get(turnId);
+        if (!state || store.getTurn(turnId)?.attemptEpoch !== state.epoch) return [];
+        const refs = new Map();
+        for (const [recordId, member] of state.artifacts) {
+            if (memberRunId !== undefined && member !== memberRunId) continue;
+            const record = store.getTool(recordId);
+            if (record?.status !== 'completed' || record.name !== 'generate_image' || record.turnId !== turnId || (record.memberRunId ?? null) !== member) continue;
+            for (const image of Array.isArray(record.result?.images) ? record.result.images : []) {
+                if (!image || image.external || image.url || image.externalURL || image.externalUrl) continue;
+                const id = image.attachmentId ?? image.id;
+                if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(id) || typeof store.getAttachment !== 'function') continue;
+                let registered;
+                try { registered = store.getAttachment(id); } catch { continue; }
+                // Only authoritative registered metadata crosses into assistant media.
+                if (registered?.id !== id || typeof registered.mime !== 'string' || !registered.mime.startsWith('image/')
+                    || typeof registered.name !== 'string' || !Number.isSafeInteger(registered.size) || registered.size < 0) continue;
+                refs.set(id, { type: 'image', attachmentId: id, mimeType: registered.mime, name: registered.name, size: registered.size });
+            }
+        }
+        return structuredClone([...refs.values()]);
     }
     async function perform(name, args, context) {
         const { state, turnId, conversationId, signal, record } = context;
@@ -112,7 +137,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
             case 'generate_image':
                 invariant(typeof image === 'function', 'tool-unavailable', 'Image provider is not configured', 503);
                 context.externalStarted = true;
-                return await image({ prompt: args.prompt, conversationId, turnId, idempotencyKey: record.id, signal });
+                return await image({ prompt: args.prompt, conversationId, turnId, idempotencyKey: record.id, recordId: record.id, memberRunId: record.memberRunId, snapshot: structuredClone(snapshot), signal });
             default: throw new ProtocolError('unknown-tool', 'Tool is not registered');
         }
     }
@@ -130,6 +155,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
             if (inFlight.has(record.id)) return inFlight.get(record.id);
             if (record.status === 'completed') {
                 if (record.result?.memoryProposal) state.proposals.set(record.id, [record.result.memoryProposal]);
+                rememberArtifacts(state, record);
                 return bounded(record.result, record, state.limits);
             }
             if (record.status === 'failed') throw new ProtocolError(record.error?.code ?? 'tool-failed', 'Previous tool call failed', 409);
@@ -162,6 +188,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
                 active(turnId, conversationId, state.epoch);
                 store.finishTool(record.id, { status: 'completed', result, usage: result?.usage ?? (name === 'generate_image' ? { cost: null, complete: false } : undefined) });
                 if (result?.memoryProposal) state.proposals.set(record.id, [result.memoryProposal]);
+                rememberArtifacts(state, store.getTool(record.id));
                 return bounded(result, record, state.limits);
             } catch (error) {
                 const status = name === 'generate_image' && context.externalStarted && error.definitive !== true ? 'unknown' : 'failed';
@@ -169,8 +196,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
                 const persisted = store.getTool(record.id);
                 if (persisted.status === 'completed' && error.code === 'tool-result-limit') throw error;
                 if (['intent', 'running'].includes(persisted.status)) {
-                    try { store.finishTool(record.id, { status, error: { code: status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed') }, ...(status === 'unknown' ? { usage: { cost: null, complete: false } } : {}) }); }
-                    catch (persistenceError) { throw new ProtocolError('tool-persistence-failed', 'Tool outcome could not be persisted; do not replay', 500, { outcome: status, code: persistenceError.code }); }
+                    try { store.finishTool(record.id, { status, error: { code: status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed') }, ...(status === 'unknown' ? { usage: { cost: null, complete: false } } : {}) }); } catch (persistenceError) { throw new ProtocolError('tool-persistence-failed', 'Tool outcome could not be persisted; do not replay', 500, { outcome: status, code: persistenceError.code }); }
                 }
                 throw new ProtocolError(status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed'), status === 'unknown' ? 'Paid tool outcome is unknown; do not replay' : 'Tool execution failed', 409);
             } finally {
@@ -181,7 +207,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         inFlight.set(record.id, operation);
         try { return await operation; } finally { inFlight.delete(record.id); }
     }
-    return { definitions, execute, beginRound,
+    return { definitions, execute, beginRound, toolArtifacts,
         bindTurn({ turnId, snapshot, requestPlan }) {
             const conversationId = snapshot.conversationId ?? snapshot.conversation.id;
             const { state } = session(turnId, conversationId, snapshot);

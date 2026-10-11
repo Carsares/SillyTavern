@@ -183,3 +183,32 @@ unknown-parameter/media rejection, durable resume without second submission,
 persistence failure, abort, per-job cancellation, regional URLs and local worker
 shutdown. No HTTP server, real provider, model download, inference engine or saved
 credential was used. Final network/composition/UI integration remains separate.
+
+### Usage normalization
+
+`usage.raw` preserves the original usage envelope (including modality/cost details),
+Cohere `meta`, Ollama counters, or Vertex per-request embedding statistics. It never
+contains generated media, embedding vectors or prompts. Vertex also exposes
+`usage.requests`; an unknown member count keeps its aggregate unknown.
+
+The six standard token counts use `null` for absent/invalid values, including
+embedding output counts that the server did not report. `totalTokens` preserves
+an explicit provider total; otherwise it is computed only from known input and
+output. Cohere billed units are not substituted for actual token counts.
+
+OpenAI/OpenRouter cache and reasoning counts are included in their input/output
+totals, as recorded by `cacheReadIncludedInInput`, `cacheWriteIncludedInInput`
+and `reasoningIncludedInOutput`. Unknown inclusion semantics remain `null`.
+Google output is candidates plus thoughts; if either is missing the inclusive
+output is unknown, while an explicitly reported total remains available. Cached
+prompt tokens are a subset of Google input and are not added again.
+
+Protocol references: https://ai.google.dev/gemini-api/docs/generate-content/tokens
+and https://openrouter.ai/docs/guides/best-practices/prompt-caching .
+Usage regression tests: `tests/conversation/modules/providers/auxiliary-usage.test.mjs`.
+
+`usage.complete` is true only after successful request completion and known,
+explicitly reported input/output/total counts (Google output combines explicitly
+reported candidates and thoughts). A derived total alone does not establish
+completeness. Partial/missing usage stays false; no missing counter is replaced
+with zero. Multi-request completeness requires every request to be complete.
