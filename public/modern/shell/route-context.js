@@ -9,6 +9,7 @@ import {
     createChatMessageRouteContext,
     createComponentRouteContext,
     createExtensionRouteContext,
+    createFeatureSlotRouteContext,
     createGroupRouteContext,
     createPersonaRouteContext,
     createPresetRouteContext,
@@ -30,6 +31,7 @@ export function createRouteContext({
     components,
     constants,
     extensions,
+    featureSlots = {},
     groups,
     personas,
     presets,
@@ -39,7 +41,7 @@ export function createRouteContext({
     utils,
     worldbooks,
 }) {
-    return {
+    const context = {
         state,
         ...utils,
         ...createComponentRouteContext(components),
@@ -61,4 +63,14 @@ export function createRouteContext({
         ...createSettingsRouteContext(settings),
         ...createWorldbookRouteContext(worldbooks),
     };
+
+    // 界面插槽的动作最后并入，并保证不覆盖上面已有的任何名字
+    const slotContext = createFeatureSlotRouteContext(featureSlots);
+    for (const name of Object.keys(slotContext)) {
+        if (Object.hasOwn(context, name)) {
+            throw new Error(`Feature slot action "${name}" collides with an existing route context entry.`);
+        }
+    }
+
+    return { ...context, ...slotContext };
 }

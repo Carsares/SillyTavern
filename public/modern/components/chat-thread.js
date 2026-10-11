@@ -1,6 +1,9 @@
 import { formatCharacterCreator } from '../actions/character-data.js';
+import { resolveSlotHtml } from '../core/test-flags.js';
+import { createChatBackdropComponent } from './chat-backdrop.js';
 import { createChatComposerComponents } from './chat-composer.js';
 import { createChatMessageComponents } from './chat-message.js';
+import { createChatToolsComponents } from './chat-tools.js';
 
 export function createChatThreadComponents(ctx) {
     const {
@@ -23,6 +26,17 @@ export function createChatThreadComponents(ctx) {
     } = ctx;
     const { renderChatComposer } = createChatComposerComponents(ctx);
     const { renderMessageList } = createChatMessageComponents(ctx);
+    const { renderChatToolsButton } = createChatToolsComponents(ctx);
+    const { renderChatBackdrop } = createChatBackdropComponent(ctx);
+
+    // .message-list-frame 的外壳在 chat-message.js 里，这里把背景插槽的内容插到它的第一个子节点位置。
+    // 背景为空时原样返回，找不到外壳时也不插入，两种情况下页面都与没有插槽时一致。
+    function withChatBackdrop(messageListHtml) {
+        const backdropHtml = resolveSlotHtml('chatBackdrop', renderChatBackdrop());
+        return backdropHtml
+            ? messageListHtml.replace(/<div class="message-list-frame[^"]*"[^>]*>/, frameOpenTag => frameOpenTag + backdropHtml)
+            : messageListHtml;
+    }
 
     function renderChatThread(entity, options = {}) {
         const avatar = getChatEntityAvatarUrl(entity);
@@ -68,6 +82,7 @@ export function createChatThreadComponents(ctx) {
             </div>
             ${selectedChat ? `
                 <div class="page-actions detail-actions">
+                    ${renderChatToolsButton()}
                     <button class="secondary-button" type="button" data-delete-chat ${isDeleting ? 'disabled' : ''}>
                         <i class="fa-solid fa-ellipsis"></i>
                         管理聊天
@@ -78,7 +93,7 @@ export function createChatThreadComponents(ctx) {
         ${renderGenerationEnginePanel(entity, selectedChat)}
         ${isRenaming ? renderChatRenamePanel() : ''}
         ${isDeleting ? renderChatManagePanel() : ''}
-        ${messages.length ? renderMessageList(messages) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
+        ${messages.length ? withChatBackdrop(renderMessageList(messages)) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         ${renderChatComposer(messages)}
     `;
     }

@@ -8,6 +8,12 @@
     margin: 0 0 14px;
 }
 
+/* 「聊天工具」标签（components/settings-chat-tools.js）：各功能的设置分区自上而下排列，每个分区自己是一个 .form-section */
+.settings-tool-sections {
+    display: grid;
+    gap: 12px;
+}
+
 /* Startup config shown for reference: a dashed frame and a lock badge set it apart from the editable form */
 .settings-readonly-section {
     border-style: dashed;

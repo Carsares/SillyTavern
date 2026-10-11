@@ -90,6 +90,17 @@ export function createModernState() {
             deleting: false,
             restoring: '',
         },
+        // 聊天工具抽屉（components/chat-tools.js）：open 为抽屉开关，tab 为当前工具 id（只存内存，刷新后回到第一个可用工具）
+        chatTools: { open: false, tab: '' },
+        // 以下几个对象是各功能的状态骨架，只由对应功能自己扩展字段，不改别人的
+        chatAuthorsNote: {}, // 作者注释（A5）
+        chatSummary: {}, // 聊天摘要（A6）
+        chatBackground: {}, // 聊天背景（B5）
+        connectionSwitcher: {}, // 输入框旁的连接档案切换（B1）
+        chatGlobalSearch: {}, // 跨角色聊天搜索（B2）
+        maintenance: {}, // 设置页「数据维护」（B4）
+        chatTranslation: {}, // 聊天消息翻译（B3）
+        characterTranslation: {}, // 角色卡翻译（B3）
         chatEditing: {
             key: '',
             index: -1,

@@ -1,3 +1,7 @@
+import { getSettingsOptionalTabs } from '../components/settings-optional-tabs.js';
+import { bindSettingsChatToolsEvents } from './settings-chat-tools-events.js';
+import { bindSettingsMaintenanceEvents } from './settings-maintenance-events.js';
+
 export function createSettingsEvents(ctx) {
     const {
         state,
@@ -15,9 +19,16 @@ export function createSettingsEvents(ctx) {
         closeRawSettingsEditor,
         saveRawSettingsFromEditor,
     } = ctx;
+    const optionalTabs = getSettingsOptionalTabs(ctx);
+    // 「聊天工具」「数据维护」两个标签里的控件事件，各自的约定见对应文件顶部注释
+    const slotHandlers = [
+        bindSettingsChatToolsEvents(ctx),
+        bindSettingsMaintenanceEvents(ctx),
+    ].map(handlers => handlers || {});
 
     async function setSettingsSection(section, { loadSnapshots = true } = {}) {
-        state.settingsSection = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics'].includes(section) ? section : 'preferences';
+        const sectionIds = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics', ...optionalTabs.filter(tab => tab.isAvailable()).map(tab => tab.id)];
+        state.settingsSection = sectionIds.includes(section) ? section : 'preferences';
         localStorage.setItem('st-modern-settings-section', state.settingsSection);
         if (loadSnapshots && state.settingsSection === 'snapshots' && !state.settingsSnapshots.loaded && !state.settingsSnapshots.loading) {
             await loadSettingsSnapshots();
@@ -129,10 +140,34 @@ export function createSettingsEvents(ctx) {
             return true;
         }
 
+        for (const handlers of slotHandlers) {
+            if (handlers.handleClick && await handlers.handleClick(event)) {
+                return true;
+            }
+        }
+
         return false;
     }
 
+    async function handleSettingsChange(event) {
+        for (const handlers of slotHandlers) {
+            if (handlers.handleChange && await handlers.handleChange(event)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 必须在没处理时返回 false：shell/events.js 对 keydown 的返回值不是 false 就不再走全局快捷键
+    function handleSettingsKeydown(event) {
+        return slotHandlers.some(handlers => handlers.handleKeydown?.(event));
+    }
+
     function handleSettingsInput(event) {
+        if (slotHandlers.some(handlers => handlers.handleInput?.(event))) {
+            return true;
+        }
+
         // 原始设置编辑器：仅同步 value，不触发重渲染以保留光标位置。
         if (event.target instanceof HTMLTextAreaElement && event.target.matches('[data-raw-settings-input]')) {
             updateRawSettingsEditorValue(event.target.value);
@@ -155,7 +190,9 @@ export function createSettingsEvents(ctx) {
     }
 
     return {
+        handleSettingsChange,
         handleSettingsClick,
         handleSettingsInput,
+        handleSettingsKeydown,
     };
 }

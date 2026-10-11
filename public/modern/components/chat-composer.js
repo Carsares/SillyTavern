@@ -1,3 +1,6 @@
+import { resolveSlotHtml } from '../core/test-flags.js';
+import { createChatConnectionChipComponent } from './chat-connection-chip.js';
+
 // 只在发送受阻或正在生成时显示状态行；空草稿的提示已由输入框占位符说明，不再常驻一行。
 function getComposerStatusText(state, hasTarget) {
     if (!hasTarget) {
@@ -9,12 +12,15 @@ function getComposerStatusText(state, hasTarget) {
     return '';
 }
 
-export function createChatComposerComponents({
-    state,
-    escapeHtml,
-    getCurrentDraft,
-    getSelectedChatEntity,
-}) {
+export function createChatComposerComponents(ctx) {
+    const {
+        state,
+        escapeHtml,
+        getCurrentDraft,
+        getSelectedChatEntity,
+    } = ctx;
+    const { renderChatConnectionChip } = createChatConnectionChipComponent(ctx);
+
     function renderChatComposer(messages) {
         const draft = getCurrentDraft();
         const draftLength = draft.trim().length;
@@ -22,6 +28,8 @@ export function createChatComposerComponents({
         const hasTarget = Boolean(entity);
         const canSend = !state.engine.generating && hasTarget && draftLength > 0;
         const statusText = getComposerStatusText(state, hasTarget);
+        // 输入框下方的元信息行（B1 连接标签等）；插槽返回空字符串时不渲染这一行
+        const metaHtml = resolveSlotHtml('chatConnectionChip', renderChatConnectionChip());
 
         // Manual group activation (strategy 2): let the user pick which enabled member speaks next
         const manualSpeakers = !state.engine.generating && entity && String(entity.activation_strategy) === '2' && Array.isArray(entity.members)
@@ -52,6 +60,7 @@ export function createChatComposerComponents({
                     停止
                 </button>
             ` : ''}
+            ${metaHtml ? `<div class="composer-meta" data-composer-meta>${metaHtml}</div>` : ''}
             ${manualSpeakers.length ? `
                 <div class="composer-manual-speakers">
                     <span class="composer-manual-label">手动发言：</span>

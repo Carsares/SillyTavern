@@ -3,7 +3,12 @@ import { createSettingsEvents } from './settings-events.js';
 
 export function createSettingsRoute(ctx) {
     const { renderSettings } = createSettingsComponents(ctx);
-    const { handleSettingsClick, handleSettingsInput } = createSettingsEvents(ctx);
+    const {
+        handleSettingsChange,
+        handleSettingsClick,
+        handleSettingsInput,
+        handleSettingsKeydown,
+    } = createSettingsEvents(ctx);
 
     async function handleClick(event) {
         return handleSettingsClick(event);
@@ -13,9 +18,19 @@ export function createSettingsRoute(ctx) {
         return handleSettingsInput(event);
     }
 
+    async function handleChange(event) {
+        return handleSettingsChange(event);
+    }
+
+    function handleKeydown(event) {
+        return handleSettingsKeydown(event);
+    }
+
     return {
         render: renderSettings,
         handleClick,
         handleInput,
+        handleChange,
+        handleKeydown,
     };
 }

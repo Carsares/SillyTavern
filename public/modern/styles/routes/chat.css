@@ -121,6 +121,26 @@
     background: linear-gradient(180deg, color-mix(in srgb, var(--surface-muted) 88%, var(--surface)), var(--surface-muted));
 }
 
+/*
+ * 消息列表背景插槽（components/chat-backdrop.js）：铺满 .message-list-frame，压在消息下面，不接收鼠标事件。
+ * 插槽返回空字符串时这个元素根本不会渲染，所以不影响现有外观；有背景时消息列表自己改为透明并抬到背景之上。
+ */
+.chat-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-muted) 88%, var(--surface)), var(--surface-muted));
+    pointer-events: none;
+}
+
+.chat-backdrop + .message-list {
+    position: relative;
+    z-index: 1;
+    background: transparent;
+}
+
 .message-jump-latest {
     position: absolute;
     right: 18px;
@@ -502,6 +522,23 @@
     min-width: 0;
 }
 
+/* 聊天工具抽屉（components/chat-tools.js）：外壳复用上面的 .chat-tools-drawer / .chat-tool-panel，这里只补标签条和可滚动的内容区 */
+.chat-tools-tabs {
+    grid-auto-columns: minmax(0, 1fr);
+    margin: 0 0 12px;
+}
+
+.chat-tools-tabs button {
+    min-width: 0;
+}
+
+.chat-tool-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    scrollbar-gutter: stable;
+}
+
 .backup-toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -686,6 +723,16 @@
 .icon-button:disabled {
     cursor: not-allowed;
     opacity: 0.62;
+}
+
+/* 输入框下方的元信息行（components/chat-connection-chip.js 等插槽），没有内容时不渲染 */
+.composer-meta {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
 }
 
 /* Manual group activation: per-member speak buttons in the composer */

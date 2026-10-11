@@ -2,6 +2,7 @@ import { withDisplayCreator } from '../actions/character-data.js';
 import { createChatBackupComponents } from './chat-backups.js';
 import { createChatSidebarComponents } from './chat-sidebar.js';
 import { createChatThreadComponents } from './chat-thread.js';
+import { createChatToolsComponents } from './chat-tools.js';
 
 export function createChatLayoutComponents(ctx) {
     const {
@@ -25,6 +26,7 @@ export function createChatLayoutComponents(ctx) {
     const { renderChatBackupsPanel } = createChatBackupComponents(ctx);
     const { renderChatSidebar } = createChatSidebarComponents(ctx);
     const { renderChatThread } = createChatThreadComponents(ctx);
+    const { renderChatToolsDrawer } = createChatToolsComponents(ctx);
 
     function renderChat() {
         const characters = state.characters.filter(character => matchesQuery(character.name, character.avatar, character.data?.creator));
@@ -89,6 +91,7 @@ export function createChatLayoutComponents(ctx) {
                 ${renderChatBackupsPanel()}
             </aside>
         ` : ''}
+        ${selected ? renderChatToolsDrawer() : ''}
     `;
     }
 

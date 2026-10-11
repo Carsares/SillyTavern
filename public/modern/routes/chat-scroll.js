@@ -6,7 +6,7 @@ const nearBottomPx = 80;
 const messageListSelector = '[data-message-list]';
 const jumpButtonSelector = '[data-scroll-to-latest]';
 // Other chat-route scroll containers rebuilt by render whose position should survive it.
-const preservedScrollSelectors = ['[data-chat-backup-list]', '.backup-preview textarea'];
+const preservedScrollSelectors = ['[data-chat-backup-list]', '.backup-preview textarea', '[data-chat-tools-body]'];
 // Sidebar lists (rendered by components/chat-sidebar.js). The reader's positions are also remembered
 // while the chat route is not shown, and the attribute value names the list content (chat mode /
 // owner) so a position is only restored onto the same list.

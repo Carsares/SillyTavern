@@ -16,6 +16,7 @@ import { chatFileListSelector, chatResourceListSelector } from './routes/chat-co
 import { createCommonComponents } from './components/common.js';
 import { createActionRegistry } from './shell/action-registry.js';
 import { createDataLoader } from './shell/data-loader.js';
+import { createFeatureSlotActions } from './shell/feature-slot-actions.js';
 import { createShellElements } from './shell/elements.js';
 import { bindShellEvents } from './shell/events.js';
 import { createInspector } from './shell/inspector.js';
@@ -74,6 +75,20 @@ const { setTheme } = createTheme({
     root: document.documentElement,
 });
 
+const actionRegistry = createActionRegistry({
+    state,
+    elements,
+    apiFetch,
+    apiFetchResponse,
+    loadData,
+    render,
+    showToast,
+    setTheme,
+    matchesQuery,
+    callLegacyBridge,
+    subscribeProgress,
+    bridgeReload,
+});
 const {
     activityActions,
     apiConnectionActions,
@@ -128,20 +143,7 @@ const {
     selectLatestUnreadChatTarget,
     selectPreset,
     toggleChatSidebar,
-} = createActionRegistry({
-    state,
-    elements,
-    apiFetch,
-    apiFetchResponse,
-    loadData,
-    render,
-    showToast,
-    setTheme,
-    matchesQuery,
-    callLegacyBridge,
-    subscribeProgress,
-    bridgeReload,
-});
+} = actionRegistry;
 
 const commonComponents = createCommonComponents({
     state,
@@ -208,6 +210,20 @@ const { closePalette, openPalette, renderPalette } = createPalette({
     renderInlineEmpty,
 });
 
+// 聊天工具、设置页工具、输入框连接标签等界面插槽的业务动作，见 shell/feature-slot-actions.js
+const featureSlotActions = createFeatureSlotActions({
+    state,
+    apiFetch,
+    apiFetchResponse,
+    loadData,
+    render,
+    showToast,
+    callLegacyBridge,
+    subscribeProgress,
+    bridgeReload,
+    actionRegistry,
+});
+
 const routeContext = createRouteContext({
     state,
     utils: {
@@ -245,6 +261,7 @@ const routeContext = createRouteContext({
     chatGeneration: chatGenerationActions,
     chatMessages: chatMessageActions,
     extensions: extensionActions,
+    featureSlots: featureSlotActions,
     groups: groupActions,
     personas: personaActions,
     presets: presetActions,

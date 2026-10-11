@@ -18,5 +18,6 @@ export {
     createChatFileRouteContext,
     createChatGenerationRouteContext,
     createChatMessageRouteContext,
+    createFeatureSlotRouteContext,
 } from './route-context-chat.js';
 export { createWorldbookRouteContext } from './route-context-worldbooks.js';

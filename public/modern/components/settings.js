@@ -1,3 +1,4 @@
+import { getSettingsOptionalTabs } from './settings-optional-tabs.js';
 import { createSettingsPreferenceComponents } from './settings-preferences.js';
 import { createSettingsSnapshotComponents } from './settings-snapshots.js';
 import { createSettingsStatusComponents } from './settings-status.js';
@@ -27,6 +28,8 @@ export function createSettingsComponents(ctx) {
         renderSettingsStatusSection,
         renderSettingsDiagnosticsSection,
     } = createSettingsStatusComponents(ctx);
+    // 「聊天工具」「数据维护」两个标签：对应面板报告可用时才出现，见 settings-optional-tabs.js
+    const optionalTabs = getSettingsOptionalTabs(ctx);
 
     function renderSettings() {
         const bundle = state.settingsBundle || {};
@@ -56,6 +59,7 @@ export function createSettingsComponents(ctx) {
         </div>
         ${renderSettingsTabs(activeSection)}
         ${activeSection === 'preferences' ? renderSettingsPreferencesSection(requestCompression) : ''}
+        ${optionalTabs.map(tab => activeSection === tab.id ? tab.render() : '').join('')}
         ${activeSection === 'status' ? renderSettingsStatusSection(bundle, savedSecrets, dataStatus, compressionEnabled, requestCompression) : ''}
         ${activeSection === 'snapshots' ? renderSettingsSnapshots() : ''}
         ${activeSection === 'raw' ? renderRawSettingsEditorSection() : ''}
@@ -63,20 +67,28 @@ export function createSettingsComponents(ctx) {
     `;
     }
 
+    function getVisibleOptionalTabs() {
+        return optionalTabs.filter(tab => tab.isAvailable());
+    }
+
     function getSettingsSection() {
-        return ['preferences', 'status', 'snapshots', 'raw', 'diagnostics'].includes(state.settingsSection)
-            ? state.settingsSection
-            : 'preferences';
+        const sectionIds = ['preferences', 'status', 'snapshots', 'raw', 'diagnostics', ...getVisibleOptionalTabs().map(tab => tab.id)];
+        return sectionIds.includes(state.settingsSection) ? state.settingsSection : 'preferences';
     }
 
     function renderSettingsTabs(activeSection) {
-        const tabs = [
+        const builtInTabs = [
             ['preferences', 'fa-sliders', '界面与请求'],
             ['status', 'fa-gauge-high', '账户与资源'],
             ['snapshots', 'fa-clock-rotate-left', '设置快照'],
             ['raw', 'fa-file-code', '原始设置'],
             ['diagnostics', 'fa-shield-halved', '安全诊断'],
         ];
+        // 可选标签插在 after 指明的内置标签后面；对应面板不可用时整个标签不出现
+        const tabs = builtInTabs.flatMap(builtInTab => [
+            builtInTab,
+            ...getVisibleOptionalTabs().filter(tab => tab.after === builtInTab[0]).map(tab => [tab.id, tab.icon, tab.label]),
+        ]);
         return `
         <div class="segmented-control settings-tabs" role="tablist" aria-label="设置分区">
             ${tabs.map(([id, icon, label]) => `
