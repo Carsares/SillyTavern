@@ -181,7 +181,9 @@ test.describe('Chat connection chip', () => {
         await openChat(page);
 
         const meta = page.locator('.composer [data-composer-meta]');
-        await expect(meta.locator('> :first-child')).toHaveAttribute('data-connection-switcher', '');
+        // 生图的「文本 / 图片」切换排在最前，连接标签其次
+        await expect(meta.locator('> :first-child')).toHaveAttribute('data-chat-image-mode-toggle', '');
+        await expect(meta.locator('> :nth-child(2)')).toHaveAttribute('data-connection-switcher', '');
         await expect(chip(page)).toContainText('Custom OpenAI-compatible · deepseek-v4-flash');
         await expect(chip(page)).toHaveAttribute('aria-expanded', 'false');
         await expect(chip(page)).toBeEnabled();
@@ -191,7 +193,7 @@ test.describe('Chat connection chip', () => {
         await page.locator('[data-chat-input]').fill('draft stays');
         await page.locator('.inspector-section [data-refresh-itemized-prompt]').click();
         await expect(meta.locator('[data-chat-usage-label]')).toContainText('上次发送');
-        await expect(meta.locator('> :nth-child(2)')).toHaveAttribute('data-chat-usage-label', '');
+        await expect(meta.locator('> :nth-child(3)')).toHaveAttribute('data-chat-usage-label', '');
         await expect(chip(page)).toContainText('deepseek-v4-flash');
         await expect(page.locator('[data-chat-input]')).toHaveValue('draft stays');
     });
@@ -343,7 +345,8 @@ test.describe('Chat connection chip', () => {
         await openChat(page);
 
         await expect(page.locator('[data-connection-switcher]')).toHaveCount(0);
-        await expect(page.locator('[data-composer-meta]')).toHaveCount(0);
+        // 元信息行里只剩生图的「文本 / 图片」切换
+        await expect(page.locator('[data-composer-meta] > :not([data-chat-image-mode-toggle])')).toHaveCount(0);
     });
 });
 

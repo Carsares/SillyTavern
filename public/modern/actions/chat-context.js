@@ -9,6 +9,24 @@ import { readChatSelectionFromUrl, syncChatSelectionToUrl } from '../core/chat-u
 // 避免未读标记把用户带到一份从没用过的聊天（例如旧引擎自动生成、只含开场白的文件）。
 const lastUsedChatStorageKey = 'st-modern-chat-last-used:v1';
 
+const CHAT_INTEGRITY_CONFLICT_MESSAGE = '聊天文件已被其他会话修改，请刷新后重试。';
+
+/**
+ * apiFetch 抛出的错误是否是聊天保存的完整性冲突（HTTP 400，响应体 JSON 的 error 为 'integrity'）。
+ * @param {any} error apiFetch 抛出的错误，带 status 和 body（响应体前 2000 字）
+ * @returns {boolean} 是完整性冲突时为 true
+ */
+function isChatIntegrityConflictError(error) {
+    if (error?.status !== 400 || typeof error.body !== 'string') {
+        return false;
+    }
+    try {
+        return JSON.parse(error.body)?.error === 'integrity';
+    } catch {
+        return false;
+    }
+}
+
 function loadLastUsedChats() {
     try {
         const value = JSON.parse(localStorage.getItem(lastUsedChatStorageKey) || '{}');
@@ -552,19 +570,32 @@ export function createChatContextActions({
             { chat_metadata: metadata, user_name: 'unused', character_name: 'unused' },
             ...messages,
         ];
-        const result = groupMode
-            ? await apiFetch('/api/chats/group/save', { body: { id: chatId, chat } })
-            : await apiFetch('/api/chats/save', {
-                body: {
-                    ch_name: getCharacterName(entity),
-                    file_name: chatId,
-                    avatar_url: entity.avatar,
-                    chat,
-                },
-            });
+        let result;
+        try {
+            result = groupMode
+                ? await apiFetch('/api/chats/group/save', { body: { id: chatId, chat } })
+                : await apiFetch('/api/chats/save', {
+                    body: {
+                        ch_name: getCharacterName(entity),
+                        file_name: chatId,
+                        avatar_url: entity.avatar,
+                        chat,
+                    },
+                });
+        } catch (error) {
+            // 服务端拒绝过期 integrity 时回 HTTP 400 + {"error":"integrity"}（src/endpoints/chats.js 的 /save 与 /group/save），
+            // apiFetch 把它当普通 400 抛出；换成友好提示，status / body 照旧带上，按状态码判断的调用方行为不变
+            if (isChatIntegrityConflictError(error)) {
+                const conflict = /** @type {Error & { status?: number, body?: string }} */ (new Error(CHAT_INTEGRITY_CONFLICT_MESSAGE, { cause: error }));
+                conflict.status = error.status;
+                conflict.body = error.body;
+                throw conflict;
+            }
+            throw error;
+        }
 
         if (result?.error) {
-            throw new Error(result.error === 'integrity' ? '聊天文件已被其他会话修改，请刷新后重试。' : String(result.error));
+            throw new Error(result.error === 'integrity' ? CHAT_INTEGRITY_CONFLICT_MESSAGE : String(result.error));
         }
         // 服务端每次保存都会签发新的 integrity：必须记下，否则下一次保存（含引擎的生成保存）会因旧 integrity 冲突失败
         if (typeof result?.integrity === 'string' && result.integrity) {

@@ -1,0 +1,270 @@
+/* 从消息生成的勾选模式（WP5，components/chat-image-selection.js）。 */
+
+/* 消息列表顶部的提示条：.message-list 是滚动容器（内边距 12px），提示条抵消内边距后贴顶 sticky */
+.chat-image-select-banner {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: -12px -12px 0;
+    padding: 8px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+    border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+    background: color-mix(in srgb, var(--accent-soft) 92%, var(--surface));
+    color: var(--accent-strong);
+    font-size: 13px;
+}
+
+.chat-image-select-banner .secondary-button {
+    margin-left: auto;
+}
+
+/* 可勾选 / 已勾选 / 不可勾选的消息 */
+.message.message-selectable {
+    cursor: pointer;
+    transition: border-color 140ms, box-shadow 140ms;
+}
+
+.message.message-selectable:hover {
+    border-color: var(--border-strong);
+}
+
+.message.message-selected,
+.message.message-selected:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.message.message-unselectable {
+    opacity: 0.55;
+}
+
+/* 勾选模式下消息上的按钮点了也只是切换勾选，干脆收起来，只留时间 */
+.message-selectable .message-actions > button {
+    display: none;
+}
+
+/* 复选框紧跟在名字前面：消息头是 space-between，名字吃掉剩余空间，复选框和名字就挨在左边 */
+.message-select-checkbox {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0 -6px 0 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.message-selectable .message-meta > strong {
+    margin-right: auto;
+}
+
+.message-selectable .message-meta > strong:has(+ .message-summary-marker) {
+    margin-right: 0;
+}
+
+/* 输入框里的步骤条和各步骤内容（由 components/chat-image-composer.js 放进图片模式的输入框） */
+.chat-image-prompt-steps {
+    display: grid;
+    gap: 8px;
+}
+
+.chat-image-stepper {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 2px 0;
+}
+
+.chat-image-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.chat-image-step-num {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--surface);
+    font-size: 11px;
+}
+
+.chat-image-step.is-active {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.chat-image-step.is-active .chat-image-step-num {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+
+.chat-image-step.is-done {
+    color: var(--accent-strong);
+}
+
+.chat-image-step.is-done .chat-image-step-num {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.chat-image-step-line {
+    flex: 0 0 26px;
+    height: 1px;
+    background: var(--border-strong);
+}
+
+.chat-image-select-box {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
+}
+
+.chat-image-select-main {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.chat-image-select-summary {
+    font-size: 13px;
+}
+
+.chat-image-select-summary strong {
+    color: var(--accent-strong);
+    font-size: 15px;
+}
+
+.chat-image-select-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-image-select-hint {
+    margin: 0;
+    color: var(--warning);
+    font-size: 12px;
+}
+
+.chat-image-prompt-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    color: var(--danger);
+    font-size: 12px;
+}
+
+/* 「附带角色外貌」开关：原生复选框藏起来，旁边画一个滑块 */
+.chat-image-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 10px;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat-image-switch input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.chat-image-switch-knob {
+    position: relative;
+    flex: none;
+    width: 28px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    transition: background 140ms;
+}
+
+.chat-image-switch-knob::after {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    content: '';
+    transition: left 140ms;
+}
+
+.chat-image-switch input:checked + .chat-image-switch-knob {
+    background: var(--accent);
+}
+
+.chat-image-switch input:checked + .chat-image-switch-knob::after {
+    left: 14px;
+}
+
+.chat-image-switch input:focus-visible + .chat-image-switch-knob {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.chat-image-prompt-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    font-size: 13px;
+}
+
+.chat-image-prompt-progress .secondary-button {
+    margin-left: auto;
+}
+
+.chat-image-prompt-source {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-image-prompt-source-tag {
+    min-height: 22px;
+    padding: 1px 8px;
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .message.message-selectable,
+    .chat-image-switch-knob,
+    .chat-image-switch-knob::after {
+        transition: none;
+    }
+}

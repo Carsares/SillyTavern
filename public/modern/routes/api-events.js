@@ -3,6 +3,7 @@
 import { refreshConnectionHints } from '../actions/api-autosave.js';
 import { getSwitcherState } from '../actions/connection-profiles.js';
 import { createApiProfileComponents } from '../components/api-profiles.js';
+import { createImageModelEvents } from './image-model-events.js';
 
 const LIVE_HINT_SELECTOR = '[data-api-model], [data-api-max-context], [data-api-max-tokens], [data-textgen-max-context], [data-textgen-amount-gen]';
 const ENTER_SAVE_SELECTOR = '[data-api-connection-form] input:not([type="checkbox"]):not([type="radio"])';
@@ -26,6 +27,8 @@ export function createApiEvents(ctx) {
         suggestConnectionProfileName,
     } = ctx;
     const { renderConnectionProfilesSection } = createApiProfileComponents(ctx);
+    // 「文本模型 / 图片模型」切换和图片模型表单（[data-image-model-form]）的事件，先于文本连接的处理
+    const imageModelEvents = createImageModelEvents(ctx);
 
     /**
      * 只替换页面上的「连接档案」区，不重绘整页。找不到这一区时才整页重绘。
@@ -127,6 +130,9 @@ export function createApiEvents(ctx) {
     }
 
     async function handleApiClick(event) {
+        if (imageModelEvents.owns(event) && await imageModelEvents.handleClick(event)) {
+            return true;
+        }
         if (await handleProfileClick(event)) {
             return true;
         }
@@ -181,6 +187,9 @@ export function createApiEvents(ctx) {
 
     async function handleApiChange(event) {
         const target = event.target;
+        if (imageModelEvents.owns(event) && await imageModelEvents.handleChange(event)) {
+            return true;
+        }
         // 创建档案的名称框失焦后记住输入，之后只替换档案区时不会丢
         if (target instanceof HTMLInputElement && target.matches('[data-api-connection-create-name]')) {
             getSwitcherState(state).createName = target.value;
@@ -212,6 +221,9 @@ export function createApiEvents(ctx) {
     // 文本框里按回车立即保存这一项（表单没有提交按钮）
     function handleApiKeydown(event) {
         const target = event.target;
+        if (imageModelEvents.handleKeydown(event)) {
+            return true;
+        }
         if (event.key !== 'Enter' || event.isComposing || !(target instanceof HTMLInputElement) || !target.matches(ENTER_SAVE_SELECTOR)) {
             return false;
         }

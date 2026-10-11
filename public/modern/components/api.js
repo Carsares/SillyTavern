@@ -7,6 +7,7 @@ import { createApiTextCompletionComponents } from './api-text-completion.js';
 import { createApiKoboldComponents } from './api-kobold-editor.js';
 import { createApiNovelComponents } from './api-novel-editor.js';
 import { createApiHordeComponents } from './api-horde-editor.js';
+import { createSettingsImageModelComponents, renderSettingsConnectionViewSwitch } from './settings-image-model.js';
 
 const TESTABLE_MAIN_APIS = ['openai', 'textgenerationwebui', 'kobold', 'novel', 'koboldhorde'];
 
@@ -24,6 +25,8 @@ export function createApiComponents(ctx) {
     const { renderKoboldEditor } = createApiKoboldComponents(ctx);
     const { renderNovelEditor } = createApiNovelComponents(ctx);
     const { renderHordeEditor } = createApiHordeComponents(ctx);
+    // 顶部「文本模型 / 图片模型」切换的图片一侧（components/settings-image-model.js，状态 state.settingsConnectionView）
+    const { renderImageModelSettings } = createSettingsImageModelComponents(ctx);
 
     function getTestBadgeClass(status) {
         if (status === '失败') {
@@ -39,12 +42,21 @@ export function createApiComponents(ctx) {
     }
 
     function renderConnectionTab() {
+        if (state.settingsConnectionView === 'image') {
+            return `
+        <div class="settings-connection" data-preserve-inputs>
+            ${renderSettingsConnectionViewSwitch('image', escapeHtml)}
+            ${renderImageModelSettings()}
+        </div>
+    `;
+        }
         const canTest = TESTABLE_MAIN_APIS.includes(getSelectedApiMain());
         const test = state.apiTest;
         const tested = test.status && test.status !== '未测试';
 
         return `
         <div class="settings-connection" data-preserve-inputs>
+            ${renderSettingsConnectionViewSwitch('text', escapeHtml)}
             <section class="panel section-panel connection-editor">
                 <div class="panel-header">
                     <div>

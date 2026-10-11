@@ -23,6 +23,10 @@ import { createMaintenanceActions } from '../actions/maintenance.js';
 import { createChatTranslationActions } from '../actions/chat-translation.js';
 import { createPromptEstimateActions } from '../actions/prompt-estimate.js';
 import { createCharacterTranslationActions } from '../actions/character-translation.js';
+import { createChatImageGenerationActions } from '../actions/chat-image-generation.js';
+import { createChatImageViewActions } from '../actions/chat-image-view.js';
+import { createChatImagePromptActions } from '../actions/chat-image-prompt.js';
+import { createImageModelSettingsActions } from '../actions/image-model-settings.js';
 
 /**
  * @typedef {object} FeatureSlotDeps
@@ -55,6 +59,10 @@ export function createFeatureSlotActions(deps) {
         chatTranslation: createChatTranslationActions(deps), // 聊天消息翻译和翻译设置（B3）
         characterTranslation: createCharacterTranslationActions(deps), // 角色卡翻译（B3）
         promptEstimate: createPromptEstimateActions(deps), // 预估下次发送的提示词用量（A1 第二阶段）
+        imageModelSettings: createImageModelSettingsActions(deps), // 设置中心「模型连接」→「图片模型」
+        chatImageGeneration: createChatImageGenerationActions(deps), // 会话内生图：输入框图片模式、生成、写入聊天
+        chatImageView: createChatImageViewActions(deps), // 图片消息：版本切换、大图
+        chatImagePrompt: createChatImagePromptActions(deps), // 从消息生成提示词
         // 备用开场白（A4）：面板外的消息区按钮「载入备用开场白」，逻辑在 chat-generation.js 的 loadAlternateGreetings
         greetings: { loadAlternateGreetings: (...args) => deps.actionRegistry.chatGenerationActions.loadAlternateGreetings(...args) },
     };

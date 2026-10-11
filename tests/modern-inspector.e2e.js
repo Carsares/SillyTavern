@@ -560,9 +560,10 @@ test.describe('Modern inspector prompt usage', () => {
         await page.locator('.inspector-section [data-refresh-itemized-prompt]').click();
         const label = meta.locator('[data-chat-usage-label]');
         await expect(label).toHaveText('上次发送 1,000 / 预算 31,700 token');
-        // The chip stays first, the usage label comes after it
-        await expect(meta.locator('> :first-child')).toHaveAttribute('data-test-chip', '');
-        await expect(meta.locator('> :nth-child(2)')).toHaveAttribute('data-chat-usage-label', '');
+        // The image-generation toggle comes first, then the chip, then the usage label
+        await expect(meta.locator('> :first-child')).toHaveAttribute('data-chat-image-mode-toggle', '');
+        await expect(meta.locator('> :nth-child(2)')).toHaveAttribute('data-test-chip', '');
+        await expect(meta.locator('> :nth-child(3)')).toHaveAttribute('data-chat-usage-label', '');
 
         await page.locator('.inspector-section [data-refresh-itemized-prompt]').click();
         await expect(label).toHaveText('上次发送 2,000 / 预算 31,700 token');
@@ -577,7 +578,7 @@ test.describe('Modern inspector prompt usage', () => {
         await section.locator('[data-refresh-itemized-prompt]').click();
         await expect(section).toContainText('暂无最近生成的提示词分解数据');
         await expect(page.locator('[data-chat-usage-label]')).toHaveCount(0);
-        // The connection chip (B1) now fills the row; without a usage snapshot it is the only thing in it
-        await expect(page.locator('[data-composer-meta] > :not([data-connection-switcher])')).toHaveCount(0);
+        // Without a usage snapshot the row holds only the image-generation toggle and the connection chip (B1)
+        await expect(page.locator('[data-composer-meta] > :not([data-connection-switcher]):not([data-chat-image-mode-toggle])')).toHaveCount(0);
     });
 });

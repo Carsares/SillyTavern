@@ -131,6 +131,8 @@ export function createModernState() {
         },
         maintenance: {}, // 设置页「数据维护」（B4）
         chatTranslation: {}, // 聊天消息翻译（B3）
+        chatImageGeneration: {}, // 会话内生图：输入框图片模式、勾选、进行中任务、大图（core/chat-image-state.js）
+        imageModelSettings: {}, // 设置中心「图片模型」：能力缓存、检查与试生成结果（core/image-generation-capabilities.js）
         characterTranslation: {}, // 角色卡翻译（B3）
         chatEditing: {
             key: '',
@@ -308,6 +310,8 @@ export function createModernState() {
             // 在途的引擎同步（reloadChat/Character/Settings/WorldInfo）个数，由 core/bridge-reload.js 维护；
             // 生成 / 候选切换发出前通过 bridgeReload.waitForPendingReloads() 等它归零。
             settingsSyncPending: 0,
+            // 占用 generating 的来源：'' 为文本生成 / Agent，'image' 为会话内生图（停止按钮据此调用 /api/image-generation/cancel）
+            activity: '',
         },
         chatMode: localStorage.getItem('st-modern-chat-mode') === 'group' ? 'group' : 'character',
         chatSidebarOpen: getInitialChatSidebarOpen(),
@@ -339,6 +343,8 @@ export function createModernState() {
             },
         },
         settingsSection: normalizeRememberedSettingsSection(localStorage.getItem('st-modern-settings-section')),
+        // 「模型连接」标签页里的「文本模型 / 图片模型」切换
+        settingsConnectionView: localStorage.getItem('st-modern-settings-connection-view') === 'image' ? 'image' : 'text',
         activityFilter: '',
         activitySort: localStorage.getItem('st-modern-activity-sort') || 'recent',
         apiTest: {

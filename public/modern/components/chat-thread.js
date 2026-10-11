@@ -3,6 +3,7 @@ import { resolveSlotHtml } from '../core/test-flags.js';
 import { createChatBackdropComponent } from './chat-backdrop.js';
 import { createChatComposerComponents } from './chat-composer.js';
 import { createChatMessageComponents } from './chat-message.js';
+import { createChatImageMessageComponents } from './chat-image-message.js';
 import { createChatToolsComponents } from './chat-tools.js';
 import { createChatAgentComponents } from './chat-agent.js';
 import { getChatAgentSession } from '../core/chat-agent-state.js';
@@ -29,6 +30,8 @@ export function createChatThreadComponents(ctx) {
     const { renderChatComposer } = createChatComposerComponents(ctx);
     const { renderChatAgent, renderChatAgentToggle } = createChatAgentComponents(ctx);
     const { renderMessageList } = createChatMessageComponents(ctx);
+    // 会话内生图：空聊天里有生图任务时仍渲染消息列表（任务卡片在列表末尾），大图浮层挂在页面最后
+    const { hasVisibleImageJob, renderImageLightbox } = createChatImageMessageComponents(ctx);
     const { renderChatToolsButton } = createChatToolsComponents(ctx);
     const { renderChatBackdrop } = createChatBackdropComponent(ctx);
 
@@ -102,8 +105,9 @@ export function createChatThreadComponents(ctx) {
         ${renderGenerationEnginePanel(entity, selectedChat)}
         ${isRenaming ? renderChatRenamePanel() : ''}
         ${isDeleting ? renderChatManagePanel() : ''}
-        ${messages.length ? withChatBackdrop(renderMessageList(messages)) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
+        ${messages.length || hasVisibleImageJob() ? withChatBackdrop(renderMessageList(messages)) : renderEmptyState('fa-comments', chats.length ? '聊天文件为空' : '暂无聊天记录', chats.length ? '这个聊天文件没有可显示消息。' : '历史消息会在这里显示。')}
         ${renderChatComposer(messages)}
+        ${renderImageLightbox()}
         `}
     `;
     }

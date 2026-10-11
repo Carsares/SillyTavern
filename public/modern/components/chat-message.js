@@ -9,6 +9,9 @@ import {
     getTranslateProvider,
     resolveTranslateSettings,
 } from '../core/translation.js';
+import { isImageMessage } from '../core/image-message.js';
+import { createChatImageMessageComponents } from './chat-image-message.js';
+import { createChatImageSelectionComponents } from './chat-image-selection.js';
 import { createChatMessageContentComponents } from './chat-message-content.js';
 
 // extra.api values that mark where a message came from rather than which API produced it: greetings the
@@ -25,20 +28,24 @@ function getMessageSourceLabel(extra) {
     return internalMessageSources.has(api) ? '' : api;
 }
 
-export function createChatMessageComponents({
-    state,
-    escapeHtml,
-    formatBytes,
-    formatDate,
-    formatNumber,
-    getCurrentMessageLimit,
-    getCurrentDraftKey,
-    getSelectedChatEntity,
-    getSelectedChatMessages,
-    isGroupChatMode,
-    // 翻译（B3）：当前翻译服务的隐私提示，由 actions/chat-translation.js 提供
-    getChatTranslationNotice = () => ({ text: '', providerLabel: '', targetLabel: '' }),
-}) {
+export function createChatMessageComponents(ctx) {
+    const {
+        state,
+        escapeHtml,
+        formatBytes,
+        formatDate,
+        formatNumber,
+        getCurrentMessageLimit,
+        getCurrentDraftKey,
+        getSelectedChatEntity,
+        getSelectedChatMessages,
+        isGroupChatMode,
+        // 翻译（B3）：当前翻译服务的隐私提示，由 actions/chat-translation.js 提供
+        getChatTranslationNotice = () => ({ text: '', providerLabel: '', targetLabel: '' }),
+    } = ctx;
+    // 会话内生图：图片消息与任务卡片（components/chat-image-message.js）、从消息生成的勾选（components/chat-image-selection.js）
+    const { renderImageMessage, renderImageJobCard } = createChatImageMessageComponents(ctx);
+    const { getMessageSelection, renderSelectionBanner } = createChatImageSelectionComponents(ctx);
     const {
         renderEmptyReplyHint,
         renderMessageAttachments,
@@ -64,6 +71,7 @@ export function createChatMessageComponents({
         return `
         <div class="message-list-frame">
             <div class="message-list" data-message-list data-chat-key="${escapeHtml(getCurrentDraftKey())}" data-first-index="${startIndex}">
+                ${renderSelectionBanner()}
                 ${hiddenCount ? `
                     <button class="secondary-button load-earlier-button" type="button" data-load-earlier-messages>
                         <i class="fa-solid fa-clock-rotate-left"></i>
@@ -72,6 +80,7 @@ export function createChatMessageComponents({
                 ` : ''}
                 ${messages.slice(startIndex).map((message, index) => renderMessage(message, startIndex + index, summaryIndex)).join('')}
                 ${renderStreamingBubble()}
+                ${renderImageJobCard()}
             </div>
             <button class="secondary-button compact-button message-jump-latest" type="button" data-scroll-to-latest hidden>
                 <i class="fa-solid fa-arrow-down"></i>
@@ -99,6 +108,15 @@ export function createChatMessageComponents({
     }
 
     function renderMessage(message, messageIndex, summaryIndex = -1) {
+        const selection = getMessageSelection(message, messageIndex);
+        if (isImageMessage(message)) {
+            const deleting = state.chatMessageDeleteConfirm.key === getCurrentDraftKey() && state.chatMessageDeleteConfirm.index === messageIndex;
+            return renderImageMessage(message, messageIndex, {
+                isDeleting: deleting,
+                managePanelHtml: deleting ? renderMessageManagePanel(message, messageIndex) : '',
+                selection,
+            });
+        }
         const name = message.name || (message.is_user ? 'You' : 'Character');
         const translationKey = getMessageUiKey(getCurrentDraftKey(), messageIndex);
         // 译文（extra.display_text）只用于显示；「原文 / 译文」开关只在界面状态里，过期的译文默认显示原文
@@ -124,8 +142,9 @@ export function createChatMessageComponents({
         }) ? getSelectedChatEntity() : null;
 
         return `
-        <article class="message ${message.is_user ? 'user' : ''}">
+        <article class="message ${message.is_user ? 'user' : ''} ${selection.className}" ${selection.attrs}>
             <header class="message-meta">
+                ${selection.controlHtml}
                 <strong>${escapeHtml(name)}</strong>
                 ${messageIndex === summaryIndex ? '<span class="badge message-summary-marker" title="这条消息上挂着聊天摘要">摘要</span>' : ''}
                 <span class="message-actions">

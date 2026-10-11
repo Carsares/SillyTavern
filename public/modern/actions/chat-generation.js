@@ -773,6 +773,9 @@ export function createChatGenerationActions({
     }
 
     async function stopModernGeneration() {
+        // 会话内生图占着生成锁时，「停止」改为请后端取消（/api/image-generation/cancel），不向隐藏引擎发 STOP。
+        // 取消动作由 actions/chat-image-generation.js 创建时挂在 state.chatImageGeneration.cancelJob 上（这里拿不到功能插槽的动作）
+        if (state.engine.activity === 'image') return state.chatImageGeneration?.cancelJob?.();
         if (agent.isChatAgentActive()) return agent.stopChatAgent();
         if (!state.engine.generating) {
             return;

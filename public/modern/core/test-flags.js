@@ -21,8 +21,8 @@ export function resolveSlotAvailability(group, id, fallback) {
 }
 
 /**
- * 测试里顶替渲染插槽（chatBackdrop、chatConnectionChip）的输出，用来验证插槽的位置和样式；没有开关时原样返回 fallback。
- * @param {'chatBackdrop' | 'chatConnectionChip'} name 插槽名。
+ * 测试里顶替渲染插槽（chatBackdrop、chatConnectionChip、chatImageModeToggle）的输出，用来验证插槽的位置和样式；没有开关时原样返回 fallback。
+ * @param {'chatBackdrop' | 'chatConnectionChip' | 'chatImageModeToggle'} name 插槽名。
  * @param {string} fallback 插槽自己渲染出的 HTML。
  * @returns {string}
  */

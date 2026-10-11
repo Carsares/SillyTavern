@@ -1,0 +1,372 @@
+/* 图片消息、生图任务卡片、大图浮层（WP3，components/chat-image-message.js）。 */
+
+/* ---------- 图片消息 ---------- */
+.message.image-message {
+    max-width: min(78%, 520px);
+}
+
+.image-message-heading {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.image-message-tag {
+    gap: 4px;
+    min-height: 20px;
+    padding: 1px 7px;
+    font-size: 11px;
+}
+
+.image-message-tag.is-accent {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.image-message-versions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+.image-message-frame {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    vertical-align: top;
+}
+
+.image-message-open {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    cursor: zoom-in;
+}
+
+.image-message-image {
+    display: block;
+    max-width: 100%;
+    max-height: 360px;
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.image-message-missing {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 18px 14px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.image-message-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 10px;
+    padding: 12px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface) 58%, transparent);
+    backdrop-filter: blur(2px);
+    color: var(--text);
+    font-size: 13px;
+    text-align: center;
+}
+
+.image-message-overlay-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.image-message-prompt {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.image-message-prompt > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    list-style: none;
+    cursor: pointer;
+}
+
+.image-message-prompt > summary::-webkit-details-marker {
+    display: none;
+}
+
+.image-message-prompt-chevron {
+    font-size: 10px;
+    transition: transform 140ms ease;
+}
+
+.image-message-prompt[open] .image-message-prompt-chevron {
+    transform: rotate(90deg);
+}
+
+.image-message-prompt-text {
+    padding: 0 10px 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.image-message-muted {
+    color: var(--text-muted);
+}
+
+.image-message-info {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.image-message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+}
+
+/* 图片消息没有可编辑的文字：两步删除面板里只留「删除消息」 */
+.image-message .message-manage-panel [data-edit-message] {
+    display: none;
+}
+
+/* ---------- 生成中 / 失败 / 结果未知 卡片 ---------- */
+.image-job-skeleton {
+    display: grid;
+    place-items: center;
+    width: min(340px, 100%);
+    max-height: 360px;
+    border-radius: var(--radius);
+    background: linear-gradient(90deg, var(--surface-muted) 0%, var(--surface-strong) 50%, var(--surface-muted) 100%);
+    background-size: 200% 100%;
+    animation: image-job-shimmer 1.4s linear infinite;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+}
+
+.image-job-skeleton-text {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.image-job-skeleton-text > i {
+    font-size: 22px;
+}
+
+.image-job-params,
+.image-job-note {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+@keyframes image-job-shimmer {
+    from {
+        background-position: 200% 0;
+    }
+
+    to {
+        background-position: -200% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .image-job-skeleton {
+        animation: none;
+    }
+}
+
+.image-job-card.is-failed {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+    background: color-mix(in srgb, var(--danger) 5%, var(--surface));
+}
+
+.image-job-card.is-unknown {
+    border-color: color-mix(in srgb, var(--warning) 50%, var(--border));
+    background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+}
+
+.image-job-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.image-job-card.is-failed .image-job-title {
+    color: var(--danger);
+}
+
+.image-job-card.is-unknown .image-job-title {
+    color: var(--warning);
+}
+
+.image-job-text,
+.image-job-detail {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.image-job-detail {
+    margin-top: 4px;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.image-job-text code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--surface-muted);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+/* ---------- 大图浮层 ---------- */
+.image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) min(360px, 42vw);
+    background: rgba(8, 12, 18, 0.82);
+}
+
+.image-lightbox-stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    padding: 32px;
+}
+
+.image-lightbox-image {
+    max-width: 100%;
+    max-height: calc(100vh - 64px);
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.image-lightbox-missing {
+    color: #f3f4f6;
+}
+
+.image-lightbox-nav {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(8, 12, 18, 0.6);
+    color: #f3f4f6;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    transform: translateX(-50%);
+}
+
+.image-lightbox-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    padding: 20px;
+    overflow: auto;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.image-lightbox-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.image-lightbox-head h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.image-lightbox-section {
+    display: grid;
+    gap: 6px;
+}
+
+.image-lightbox-text {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.image-lightbox-meta {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px 12px;
+    margin: 0;
+    font-size: 13px;
+}
+
+.image-lightbox-meta dt {
+    color: var(--text-muted);
+}
+
+.image-lightbox-meta dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.image-lightbox-path {
+    font-family: var(--mono);
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.image-lightbox-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+}

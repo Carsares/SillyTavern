@@ -1,0 +1,264 @@
+/* 设置中心「模型连接」→「图片模型」（WP1，components/settings-image-model.js）。 */
+
+/* 「文本模型 / 图片模型」切换：靠左、按内容宽度 */
+.settings-connection-switch {
+    justify-self: start;
+    width: fit-content;
+}
+
+.settings-connection-switch button {
+    padding: 0 14px;
+}
+
+.image-model-settings {
+    display: grid;
+    gap: 16px;
+}
+
+.image-model-settings > .section-panel {
+    margin-top: 0;
+}
+
+.image-model-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.image-model-readiness-hint {
+    margin: -4px 0 12px;
+    color: var(--warning);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+/* 当前配置摘要 */
+.image-model-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.image-model-tile {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface));
+}
+
+.image-model-tile span {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.image-model-tile strong {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.image-model-form-body {
+    display: grid;
+    gap: 12px;
+}
+
+.image-model-full {
+    grid-column: 1 / -1;
+}
+
+.image-model-model-field {
+    display: grid;
+    gap: 6px;
+}
+
+.image-model-suggestions {
+    display: grid;
+    gap: 4px;
+}
+
+/* 多行文本框沿用 .text-input 的边框和焦点样式，补上下内边距 */
+.image-model-settings textarea.text-input {
+    min-height: 64px;
+    padding: 8px 11px;
+    line-height: 1.5;
+    resize: vertical;
+}
+
+.image-model-settings textarea.image-model-template {
+    min-height: 132px;
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+/* 当前供应商不支持的参数：置灰 */
+.image-model-settings .field-label.is-unsupported {
+    opacity: 0.62;
+}
+
+.image-model-settings .text-input:disabled,
+.image-model-settings .select-input:disabled {
+    background: var(--surface-muted);
+    cursor: not-allowed;
+}
+
+.image-model-unsupported {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* 密钥：已保存（打码值）+ 清除 */
+.image-model-secret-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+    padding-bottom: 6px;
+}
+
+.image-model-secret-state {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.image-model-secret-state.is-saved {
+    color: var(--success);
+}
+
+/* 诊断卡 */
+.image-model-diag-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.image-model-diag {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-muted) 70%, var(--surface));
+}
+
+.image-model-diag > i {
+    font-size: 15px;
+}
+
+.image-model-diag-text {
+    display: grid;
+    min-width: 0;
+}
+
+.image-model-diag-text strong {
+    font-size: 13px;
+}
+
+.image-model-diag-text small {
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.image-model-diag-state {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.image-model-diag.is-ok > i,
+.image-model-diag.is-ok .image-model-diag-state {
+    color: var(--success);
+}
+
+.image-model-diag.is-warn > i,
+.image-model-diag.is-warn .image-model-diag-state {
+    color: var(--warning);
+}
+
+.image-model-diag.is-error {
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.image-model-diag.is-error > i,
+.image-model-diag.is-error .image-model-diag-state {
+    color: var(--danger);
+}
+
+.image-model-diag.is-muted > i {
+    color: var(--text-muted);
+}
+
+.image-model-test-image {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+    margin: 12px 0 0;
+}
+
+.image-model-test-image img {
+    display: block;
+    max-width: min(100%, 220px);
+    max-height: 220px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    object-fit: contain;
+}
+
+.image-model-test-image figcaption {
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+/* 从消息生成提示词 */
+.image-model-prompt-body {
+    display: grid;
+    gap: 12px;
+}
+
+.image-model-text-model {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+}
+
+.image-model-text-model .tag {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.image-model-caption {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 680;
+}
+
+.image-model-warning {
+    color: var(--warning);
+    font-size: 12px;
+}
+
+.image-model-prompt-settings .checkbox-card {
+    min-height: 38px;
+    cursor: pointer;
+}
+
+@media (max-width: 860px) {
+    .image-model-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

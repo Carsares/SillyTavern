@@ -206,7 +206,8 @@ test.describe('Chat backdrop and connection chip slots', () => {
         await openChat(page);
 
         await expect(page.locator('.chat-backdrop')).toHaveCount(0);
-        await expect(page.locator('[data-composer-meta]')).toHaveCount(0);
+        // 连接标签插槽为空；元信息行里只有生图的「文本 / 图片」切换（插槽 chatImageModeToggle）
+        await expect(page.locator('[data-composer-meta] > :not([data-chat-image-mode-toggle])')).toHaveCount(0);
         // 消息列表仍是列表框的第一个子节点，布局与没有插槽时一致
         const firstChildIsList = await page.locator('.message-list-frame').evaluate(frame => frame.firstElementChild?.matches('[data-message-list]'));
         expect(firstChildIsList).toBe(true);

@@ -15,17 +15,24 @@ import { bindChatConnectionEvents } from './chat-connection-events.js';
 import { bindChatToolAuthorsNoteEvents } from './chat-tool-authors-note-events.js';
 import { bindChatToolBackgroundEvents } from './chat-tool-background-events.js';
 import { bindChatToolSummaryEvents } from './chat-tool-summary-events.js';
+import { bindChatImageEvents } from './chat-image-events.js';
+import { bindChatImageMessageEvents } from './chat-image-message-events.js';
+import { bindChatImagePromptEvents } from './chat-image-prompt-events.js';
 
 export function createChatToolsEvents(ctx) {
     const { state, render } = ctx;
     const registry = getChatToolsRegistry(ctx);
-    // 连接标签不属于抽屉，但和工具共用同一套转发约定，省得 routes/chat.js 再单独接一遍
+    // 连接标签和会话内生图不属于抽屉，但和工具共用同一套转发约定，省得 routes/chat.js 再单独接一遍。
+    // 生图的勾选事件排在最前：勾选模式下点消息要先于其他消息按钮处理
     /** @type {{ handleClick?: Function, handleInput?: Function, handleChange?: Function, handleKeydown?: Function, afterRender?: Function }[]} */
     const toolHandlers = [
         bindChatToolAuthorsNoteEvents(ctx),
         bindChatToolSummaryEvents(ctx),
         bindChatToolBackgroundEvents(ctx),
         bindChatConnectionEvents(ctx),
+        bindChatImagePromptEvents(ctx),
+        bindChatImageMessageEvents(ctx),
+        bindChatImageEvents(ctx),
     ].map(handlers => handlers || {});
 
     function openDrawer() {

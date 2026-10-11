@@ -1,0 +1,279 @@
+/* 聊天输入框的图片模式（WP2，components/chat-image-composer.js）。
+ * .composer 在 chat.css 里是四列网格，并给 textarea / button 设了 grid-column、grid-row（窄屏时 responsive.css 也设）；
+ * 图片模式只有一列，主体内部用 flex 排版，不受那些网格规则影响。 */
+
+.composer.composer-image-mode {
+    grid-template-columns: minmax(0, 1fr);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.chat-image-composer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+/* 元信息行最前面的「文本 / 图片」切换 */
+.chat-image-mode-toggle,
+.chat-image-sub-switch {
+    padding: 2px;
+}
+
+.chat-image-mode-toggle button,
+.chat-image-sub-switch button {
+    gap: 5px;
+    min-height: 24px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+
+.chat-image-mode-toggle button:disabled,
+.chat-image-sub-switch button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.chat-image-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.chat-image-hint {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* 提示词框和按钮同一行，按钮靠下对齐 */
+.chat-image-prompt-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.composer .chat-image-prompt-row textarea {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.chat-image-buttons {
+    display: flex;
+    flex: none;
+    gap: 8px;
+    align-items: flex-end;
+}
+
+.composer .chat-image-composer button,
+.composer .chat-image-model button {
+    grid-row: auto;
+    grid-column: auto;
+    align-self: auto;
+}
+
+/* 参数标签：只列出供应商支持的参数 */
+.chat-image-param-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-image-param {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 0 4px 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-image-param select {
+    padding: 3px 2px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat-image-param select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.chat-image-param select:disabled {
+    cursor: not-allowed;
+}
+
+.chat-image-advanced-toggle.compact-button {
+    min-height: 28px;
+    padding: 2px 10px;
+}
+
+.chat-image-param-note {
+    margin-left: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.chat-image-param-note.is-warning,
+.chat-image-status {
+    color: var(--warning);
+}
+
+.chat-image-status {
+    font-size: 12px;
+}
+
+.chat-image-advanced {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px 120px;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.composer .chat-image-advanced textarea {
+    min-height: 38px;
+    max-height: 120px;
+    padding: 8px 11px;
+}
+
+/* 没有配置图片模型时的空状态 */
+.chat-image-empty {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 14px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.chat-image-empty-icon {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.chat-image-empty-text p {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* 图片模式下代替连接标签的图片模型标签；外观沿用 .connection-chip（chat.css） */
+.chat-image-model {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.connection-chip.chat-image-model-chip {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.connection-chip.chat-image-model-chip.is-unconfigured {
+    border-color: var(--border);
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    cursor: default;
+}
+
+.chat-image-model.is-open .connection-chip-caret {
+    transform: rotate(180deg);
+}
+
+/* 弹层相对 .composer 定位，从输入框上沿向上展开 */
+.chat-image-model-popover {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 8px;
+    z-index: 40;
+    display: grid;
+    gap: 10px;
+    width: min(360px, calc(100vw - 32px));
+    padding: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.chat-image-model-popover-head,
+.chat-image-model-popover-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.chat-image-model-popover-foot {
+    justify-content: flex-end;
+}
+
+.chat-image-model-summary {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 6px 10px;
+    margin: 0;
+    font-size: 13px;
+}
+
+.chat-image-model-summary dt {
+    color: var(--text-muted);
+}
+
+.chat-image-model-summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.chat-image-model-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+@media (max-width: 860px) {
+    .chat-image-model {
+        position: relative;
+    }
+
+    .chat-image-model-popover {
+        left: 0;
+        width: min(360px, calc(100vw - 48px));
+    }
+
+    .chat-image-prompt-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .chat-image-buttons {
+        justify-content: flex-end;
+    }
+
+    .chat-image-advanced,
+    .chat-image-empty {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

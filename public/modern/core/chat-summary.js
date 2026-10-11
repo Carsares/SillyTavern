@@ -3,6 +3,7 @@
 //   - 摘要存在消息的 extra.memory 里；读取时跳过最后一条消息（getLatestMemoryFromChat / getIndexOfLatestChatSummary）；
 //   - 触发判断是 getSummaryPromptForNow：间隔为 0 = 整个自动摘要关闭（连按字数触发也一起关）；聊天消息数小于间隔不触发；
 //     「距上次摘要的消息数」从最后一条往前数到第一条带 extra.memory 的消息为止（这次数包含最后一条消息，与读取摘要时的跳过规则不同，旧版如此）；
+//     Modern 与旧版的一处差别：is_system 消息（图片消息、隐藏的消息）不计入条数和字数（见 countSinceLastSummary）；
 //     消息数 >= 间隔，或字数 >= 强制字数（非 0 时）才到点；
 //   - 字数用 extractAllWords：正则 /\b\w+\b/ 只认 ASCII 字母数字下划线，中文几乎数不出字，所以中文聊天按「间隔」触发才可靠。
 // 旧版这几处改动时，需要同步修改这里和 tests/modern-chat-summary.test.js。
@@ -160,6 +161,10 @@ export function countSummaryWords(value) {
 
 /**
  * 旧版 getSummaryPromptForNow 里的计数循环：从最后一条往前数到第一条带摘要的消息为止（该消息本身不计，最后一条消息带摘要时为 0）。
+ * 与旧版不同：is_system 消息（图片消息、旧版隐藏的消息）不计条数也不计字数。它们不进提示词（public/script.js 组提示词时过滤
+ * is_system），摘要扩展收集待摘要消息时也跳过它们（memory/index.js 的 summarizeChatRaw / summarizeChatExtras），
+ * 算进来会让自动摘要在没有新对话时提前到点。带摘要的 is_system 消息照样是计数的终点。
+ * 在 Modern 里自动摘要是否请求由这里决定（引擎桥接模式下不自己触发），引擎的计数包含 is_system，只会更早到点，不会拒绝这里认为到点的请求。
  * @param {object[]} [messages] 聊天消息
  * @returns {{ messagesSince: number, wordsSince: number }} 距上次摘要的消息数和字数
  */
@@ -174,6 +179,9 @@ export function countSinceLastSummary(messages) {
         if (messages[index]?.extra?.memory) {
             break;
         }
+        if (!isConversationMessage(messages[index])) {
+            continue;
+        }
         messagesSince++;
         wordsSince += countSummaryWords(messages[index]?.mes);
     }
@@ -182,16 +190,27 @@ export function countSinceLastSummary(messages) {
 }
 
 /**
+ * 自动摘要计数时算不算一条会话消息：is_system 的不算（见 countSinceLastSummary）。
+ * @param {object} [message] 消息
+ * @returns {boolean} 计入时为 true
+ */
+function isConversationMessage(message) {
+    return !message?.is_system;
+}
+
+/**
  * 自动摘要现在是否到点，以及显示用的进度。对照旧版 getSummaryPromptForNow（不含等待发送键、提示词为空的检查）。
+ * 「消息总数还没到间隔」与距上次摘要的计数一样不算 is_system 消息；聊天是否为空仍按全部消息判断。
  * @param {object[] | undefined} messages 聊天消息
  * @param {{ promptInterval: number, promptForceWords: number } | undefined} memory 摘要设置（readSummarySettings 的结果）
  * @returns {{ due: boolean, reason: 'off' | 'empty' | 'too-short' | 'interval' | 'words' | 'waiting', messagesSince: number, wordsSince: number, interval: number, forceWords: number, remainingMessages: number }} 进度；
- * reason：off = 间隔为 0，empty = 聊天为空，too-short = 消息总数还没到间隔，interval / words = 到点的原因，waiting = 还没到点
+ * reason：off = 间隔为 0，empty = 聊天为空，too-short = 会话消息总数还没到间隔，interval / words = 到点的原因，waiting = 还没到点
  */
 export function getSummaryProgress(messages, memory) {
     const interval = Math.max(0, Math.trunc(toNumberOr(memory?.promptInterval, 0)));
     const forceWords = Math.max(0, toNumberOr(memory?.promptForceWords, 0));
     const length = Array.isArray(messages) ? messages.length : 0;
+    const conversationLength = Array.isArray(messages) ? messages.filter(isConversationMessage).length : 0;
     const { messagesSince, wordsSince } = countSinceLastSummary(messages);
     const base = { messagesSince, wordsSince, interval, forceWords, remainingMessages: Math.max(0, interval - messagesSince) };
 
@@ -201,8 +220,8 @@ export function getSummaryProgress(messages, memory) {
     if (length === 0) {
         return { ...base, due: false, reason: 'empty' };
     }
-    if (length < interval) {
-        return { ...base, due: false, reason: 'too-short', remainingMessages: interval - length };
+    if (conversationLength < interval) {
+        return { ...base, due: false, reason: 'too-short', remainingMessages: interval - conversationLength };
     }
     if (messagesSince >= interval) {
         return { ...base, due: true, reason: 'interval' };
