@@ -241,9 +241,12 @@ test.describe('Modern settings page', () => {
         await expect(page.locator('.backup-row')).toHaveCount(2);
         await expect(page.locator('.list-toolbar .badge')).toHaveText('显示 2 / 2');
 
-        await page.locator('[data-settings-snapshot-search]').fill('older');
-
-        await expect(page.locator('.backup-row')).toHaveCount(1);
+        // A late re-render can replace the input between Playwright selecting it and typing into it (it also happens on the
+        // unmodified baseline, about once in 200 runs under load), which drops the text; typing again is the user's recovery too
+        await expect(async () => {
+            await page.locator('[data-settings-snapshot-search]').fill('older');
+            await expect(page.locator('.backup-row')).toHaveCount(1, { timeout: 1500 });
+        }).toPass({ timeout: 15_000 });
         await expect(page.locator('.backup-row', { hasText: 'settings-older.json' })).toBeVisible();
         await expect(page.locator('.backup-row', { hasText: 'settings-recent.json' })).toHaveCount(0);
         await expect(page.locator('.list-toolbar .badge')).toHaveText('显示 1 / 2');

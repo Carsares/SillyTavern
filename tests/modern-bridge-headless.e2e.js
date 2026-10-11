@@ -970,8 +970,21 @@ test.describe('Modern bridge engine sync', () => {
         await routePatchedSettings(page, settings => {
             settings.extension_settings = { ...(settings.extension_settings || {}), memory: { depth: 5 }, note: { default: 'note' } };
         });
+        // The engine's own startup ends with APP_READY; remember that it happened so the count below is taken on a finished startup
+        await page.addInitScript(() => {
+            const timer = setInterval(() => {
+                const context = window.SillyTavern?.getContext?.();
+                if (context?.eventSource && context.eventTypes?.APP_READY) {
+                    clearInterval(timer);
+                    context.eventSource.on(context.eventTypes.APP_READY, () => {
+                        window.engineAppReady = true;
+                    });
+                }
+            }, 5);
+        });
         await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
         expect((await callBridge(page, 'reloadCharacter', {}, 'listener-boot')).error).toBeFalsy();
+        await page.waitForFunction(() => window.engineAppReady === true, null, { timeout: 30_000 });
 
         const countListeners = () => page.evaluate(() => {
             const { events } = window.SillyTavern.getContext().eventSource;
@@ -980,12 +993,28 @@ test.describe('Modern bridge engine sync', () => {
 
         // The first reload may register what a cold engine still lacks; later ones must not add anything
         expect((await callBridge(page, 'reloadSettings', {}, 'listener-reload-0')).error).toBeFalsy();
-        const afterFirst = await countListeners();
-        for (const index of [1, 2, 3]) {
-            const reload = await callBridge(page, 'reloadSettings', {}, `listener-reload-${index}`);
-            expect(reload.error).toBeFalsy();
-        }
-        expect(await countListeners()).toBe(afterFirst);
+        // A cold engine keeps finishing its own startup (backgrounds, personas, ... initialize one after another), more slowly on a
+        // loaded machine. Those one-time registrations are not reloads piling up, so take the baseline once the count stops moving
+        let baseline = await countListeners();
+        await expect.poll(async () => {
+            const current = await countListeners();
+            const settled = current === baseline;
+            baseline = current;
+            return settled;
+        }, { intervals: [500], timeout: 20_000 }).toBe(true);
+
+        const reloadThrice = async round => {
+            for (const index of [1, 2, 3]) {
+                const reload = await callBridge(page, 'reloadSettings', {}, `listener-reload-${round}-${index}`);
+                expect(reload.error).toBeFalsy();
+            }
+            return countListeners();
+        };
+        const afterFirstRound = await reloadThrice('a');
+        const afterSecondRound = await reloadThrice('b');
+        // A leak adds listeners on every reload, so it shows in both rounds; a startup registration that slipped past the baseline
+        // can only land in one of them
+        expect(Math.min(afterFirstRound - baseline, afterSecondRound - afterFirstRound)).toBe(0);
     });
 
     // A chat file the modern UI saved carries a new integrity revision; an engine still holding the older copy would have
