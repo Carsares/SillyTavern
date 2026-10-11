@@ -1,0 +1,34 @@
+name: Conversation v1
+on:
+  pull_request:
+    paths:
+      - 'src/conversation/**'
+      - 'public/shared/conversation/**'
+      - 'public/modern/conversation/**'
+      - 'tests/conversation/**'
+      - 'server.js'
+      - 'package*.json'
+      - '.github/workflows/conversation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run lint:conversation
+      - run: npm run test:conversation:unit
+      - run: npm run test:conversation:integration
+      # Integration peers are deterministic local servers. No account secrets,
+      # existing user data or paid model credentials are provided to this job.

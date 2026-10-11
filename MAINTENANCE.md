@@ -1,3 +1,5 @@
+> 历史文档：当前默认入口已转向 Conversation v1。本文件描述旧系统，不作为新系统运行说明。请参阅 [新架构](docs/conversation/ARCHITECTURE.md)、[新运维说明](docs/conversation/OPERATIONS.md)和[验证状态](docs/conversation/IMPLEMENTATION.md)。
+
 # 维护手册（MAINTENANCE）
 
 > 本文件是这个 fork 长期存活的运维护栏：把"明文不做"的决策、冻结面、巡检节奏、已知债务文字化，防止未来的自己（或 AI 助手）重新掉进反目标。配合 [ROADMAP.md](ROADMAP.md) 使用——ROADMAP 定方向，本文件定边界与例行。

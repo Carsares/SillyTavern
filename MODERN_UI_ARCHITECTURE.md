@@ -1,3 +1,5 @@
+> 历史文档：当前默认入口已转向 Conversation v1。本文件描述旧系统，不作为新系统运行说明。请参阅 [新架构](docs/conversation/ARCHITECTURE.md)、[新运维说明](docs/conversation/OPERATIONS.md)和[验证状态](docs/conversation/IMPLEMENTATION.md)。
+
 # Modern UI Architecture
 
 ## Purpose
