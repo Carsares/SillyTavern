@@ -18,6 +18,103 @@ function request(store, cid, extra = {}) { return { schemaVersion: 1, clientRequ
 function complete(store, cid) { const { turn } = store.beginTurn(cid, request(store, cid)); store.finishTurn(turn.id, { status: 'completed', content: 'answer' }, 1); return store.getConversation(cid); }
 const code = expected => error => error.code === expected;
 
+test('subscriptions run only after commit, isolate listeners and preserve reentrant event order', async t => {
+    const { store, cid } = fixture(t); const seen = [];
+    const stopThrowing = store.subscribe(() => { throw Error('listener failed'); });
+    const stopRejecting = store.subscribe(async () => { throw Error('async listener failed'); });
+    const stopWriter = store.subscribe(event => {
+        if (event.type === 'test.first') store.appendEvent(cid, 'test.second', {});
+    });
+    const unsubscribe = store.subscribe(event => {
+        assert.equal(store.events(cid).some(saved => saved.eventId === event.eventId), true);
+        seen.push(event.type); event.payload.changed = true;
+    });
+    store.appendEvent(cid, 'test.first', {});
+    assert.deepEqual(seen, ['test.first', 'test.second']);
+    assert.equal(store.events(cid).at(-1).payload.changed, undefined);
+    const before = store.events(cid);
+    assert.throws(() => store.beginTurn(cid, request(store, cid), () => { throw Error('preflight rejected'); }), /preflight rejected/);
+    assert.deepEqual(store.events(cid), before); assert.equal(seen.length, 2);
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    const count = seen.length;
+    assert.throws(() => store.finishTurn(turn.id, { status: 'completed', content: 'discard', memoryProposals: { summaries: [{ id: 'rollback-summary', content: 'discard' }] }, effects: [{ type: 'variable.set', name: 'x', previous: 99, value: 1 }] }, 1), code('revision-conflict'));
+    assert.equal(seen.length, count); assert.equal(store.getConversation(cid).summaries.length, 0);
+    unsubscribe(); unsubscribe(); stopWriter(); stopThrowing(); stopRejecting();
+    store.appendEvent(cid, 'test.after-unsubscribe', {});
+    assert.equal(seen.length, count);
+    await new Promise(resolve => setImmediate(resolve));
+});
+
+test('listTools isolates conversation records and redacts returned copies', t => {
+    const { store, cid } = fixture(t); const other = store.createConversation({});
+    const { turn } = store.beginTurn(cid, request(store, cid));
+    const { record } = store.recordTool({ conversationId: cid, turnId: turn.id, toolCallId: 'list', requestHash: 'hash', name: 'test', args: { apiKey: 'private' } });
+    const records = store.listTools(cid);
+    assert.equal(records[0].id, record.id); assert.equal(records[0].args.apiKey, undefined);
+    records[0].status = 'completed'; assert.equal(store.listTools(cid)[0].status, 'intent');
+    assert.deepEqual(store.listTools(other.id), []);
+    assert.throws(() => store.listTools('missing'), code('not-found'));
+});
+
+test('proxy URL credentials remain private and are absent from public resources, snapshots and backup', t => {
+    const { store, cid } = fixture(t);
+    const proxy = { url: 'http://fixture-user:fixture-password@localhost:1234' };
+    const connection = store.createResource({ kind: 'connection', data: { proxy, nested: { proxy } } });
+    assert.equal(connection.data.proxy, undefined); assert.equal(connection.data.nested.proxy, undefined);
+    assert.deepEqual(store.getConnection(connection.id, 1).data.proxy, proxy);
+    assert.equal(store.getResource(connection.id).data.proxy, undefined);
+    assert.equal(store.listResources('connection')[0].data.proxy, undefined);
+    store.command(cid, { type: 'conversation.configure', settings: { connectionId: connection.id }, expectedContentRevision: 0 });
+    const accepted = store.beginTurn(cid, request(store, cid));
+    assert.equal(accepted.snapshot.resources[0].data.proxy, undefined);
+    assert.equal(store.getTurnSnapshot(accepted.turn.id).resources[0].data.proxy, undefined);
+    assert.equal(store.getConversation(cid).resources[0].data.proxy, undefined);
+    const backup = store.exportData();
+    assert.equal(backup.resources[connection.id].versions[1].data.proxy, undefined);
+    assert.equal(JSON.stringify(backup).includes('fixture-password'), false);
+    assert.deepEqual(store.getConnection(connection.id).data.proxy, proxy);
+});
+
+test('summary editing protects manual content and invalidates dependent summaries and folds', t => {
+    const { store, cid } = fixture(t); const snap = complete(store, cid); const sourceRefs = [sourceRef(snap.messages[0])];
+    store.commitDerived(cid, { summaries: [{ id: 'chapter', content: 'old', sourceRefs }, { id: 'rolling', content: 'old rolling', parentSummaryRefs: [{ id: 'chapter', revision: 1 }] }], folds: [{ id: 'fold', sourceRefs, summaryRef: { id: 'chapter', revision: 1 } }] });
+    const before = store.getConversation(cid);
+    store.command(cid, { type: 'summary.edit', summaryId: 'chapter', expectedBlockRevision: 1, content: 'manual correction' });
+    const view = store.getConversation(cid); const chapter = view.summaries.find(b => b.id === 'chapter');
+    assert.equal(chapter.origin, 'manual'); assert.equal(chapter.revision, 2); assert.equal(chapter.status, 'valid');
+    assert.equal(view.conversation.contentRevision, before.conversation.contentRevision);
+    assert.equal(view.summaries.find(b => b.id === 'rolling').status, 'stale'); assert.equal(view.folds[0].status, 'stale');
+    assert.throws(() => store.command(cid, { type: 'summary.edit', summaryId: 'chapter', expectedBlockRevision: 1, content: 'stale edit' }), code('revision-conflict'));
+    assert.throws(() => store.commitDerived(cid, { summaries: [{ id: 'chapter', expectedBlockRevision: 2, content: 'automatic replacement' }] }), code('memory-protected'));
+    store.command(cid, { type: 'message.hide', messageId: snap.messages[0].id, hidden: true, expectedContentRevision: view.conversation.contentRevision });
+    assert.equal(store.getConversation(cid).summaries.find(b => b.id === 'chapter').status, 'pending-confirm');
+    store.command(cid, { type: 'fold.expand', foldId: 'fold', expectedContentRevision: store.getConversation(cid).conversation.contentRevision });
+    assert.equal(store.getConversation(cid).messages[0].userHidden, true);
+    assert.equal(store.getMessageHistory(cid, snap.messages[0].id).versions.length, 1);
+});
+
+test('unknown tools block successful finish and explicit terminal recovery is idle, atomic and idempotent', t => {
+    const { store, cid } = fixture(t); const { turn } = store.beginTurn(cid, request(store, cid));
+    const { record } = store.recordTool({ conversationId: cid, turnId: turn.id, toolCallId: 'recovery', requestHash: 'hash', name: 'simulated', args: {} });
+    store.finishTool(record.id, { status: 'unknown' });
+    const before = store.exportData();
+    assert.throws(() => store.finishTurn(turn.id, { status: 'completed', content: 'must not commit' }, 1), code('tool-result-unknown'));
+    assert.deepEqual(store.exportData(), before);
+    store.finishTurn(turn.id, { status: 'failed' }, 1);
+    const oldTurn = store.getTurn(turn.id), oldMessages = store.getConversation(cid).messages;
+    const next = store.beginTurn(cid, request(store, cid)).turn;
+    assert.throws(() => store.recoverTool(record.id, { status: 'completed', result: { value: 'resolved' } }), code('conversation-busy'));
+    store.finishTurn(next.id, { status: 'failed' }, 1);
+    const result = { status: 'completed', result: { value: 'resolved' }, usage: { cost: 1 } };
+    assert.equal(store.recoverTool(record.id, result).replayed, false);
+    const recovered = store.exportData();
+    assert.equal(store.recoverTool(record.id, result).replayed, true); assert.deepEqual(store.exportData(), recovered);
+    assert.throws(() => store.recoverTool(record.id, { status: 'failed' }), code('idempotency-conflict'));
+    assert.deepEqual(store.getTurn(turn.id), oldTurn);
+    assert.deepEqual(store.getConversation(cid).messages.slice(0, oldMessages.length), oldMessages);
+    assert.equal(store.events(cid).filter(e => e.type === 'tool.recovered').length, 1);
+});
+
 test('recomputed job updates dependencies and fingerprint atomically before derived commit', t => {
     const { store, cid } = fixture(t); const snapshot = complete(store, cid);
     const message = snapshot.messages[0];

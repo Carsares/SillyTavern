@@ -11,6 +11,7 @@ export function createBudgetTransport({ connections, ceiling, fetch: fetchImpl, 
     if (!ceiling || !['maxRequests', 'maxInputTokens', 'maxOutputTokens'].every(k => Number.isSafeInteger(ceiling[k]) && ceiling[k] >= 0) || !Number.isFinite(ceiling.maxCostUsd) || ceiling.maxCostUsd < 0) throw blocked('invalid-transport-ceiling');
     const totals = { requests: 0, input: 0, output: 0, costUpper: 0 };
     for (const c of connections) {
+        if (c.proxy != null) throw blocked('evaluation-proxy-unsupported');
         const p = c.pricing;
         if (!p || ![p.inputUsdPerMillionUpper, p.outputUsdPerMillionUpper, p.perRequestUsdUpper].every(x => Number.isFinite(x) && x >= 0) || !p.source) throw blocked('price-upper-bound-required');
     }

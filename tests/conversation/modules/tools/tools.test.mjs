@@ -233,3 +233,100 @@ test('oversized image result still exposes registered artifacts from the full du
     const result = await registry.execute(call('generate_image', { prompt: 'x' })); assert.equal(result.truncated, true);
     assert.deepEqual(registry.toolArtifacts('active').map(x => x.attachmentId), ['generated']);
 });
+
+test('paid unknown is fatal, notifies runtime and blocks subsequent calls even with fresh IDs', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image', 'get_time'] } });
+    let notified, requests = 0;
+    const tools = createToolRegistry({ store, image: async () => { requests++; throw Error('uncertain'); } });
+    tools.bindTurn({ turnId: 'active', snapshot: store.getConversation(), onFatal: error => { notified = error; } });
+    await assert.rejects(tools.execute(call('generate_image', { prompt: 'x' })), { code: 'tool-result-unknown', fatal: true, retryable: false });
+    assert.equal(tools.fatalError('active'), notified);
+    await assert.rejects(tools.execute(call('get_time', {}, 'next')), { fatal: true });
+    assert.equal(requests, 1); assert.equal(store.tools.size, 1);
+});
+
+test('retry ancestor unknown matches original member identity and never resubmits', async () => {
+    for (const same of [true, false]) {
+        const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+        const current = store.turns.get('active');
+        current.request = { retryTurnId: 'older' }; current.plannedMembers = [{ id: 'new-member', characterId: 'alice' }];
+        store.turns.set('older', { id: 'older', conversationId: 'c', plannedMembers: [{ id: 'old-member', characterId: same ? 'alice' : 'bob' }] });
+        store.tools.set('old-image', { id: 'old-image', conversationId: 'c', turnId: 'older', memberRunId: 'old-member', name: 'generate_image', args: { prompt: 'x' }, status: 'unknown' });
+        let requests = 0;
+        const tools = createToolRegistry({ store, image: async () => { requests++; return { images: [] }; } });
+        const task = tools.execute({ ...call('generate_image', { prompt: 'x' }, 'fresh'), memberRunId: 'new-member' });
+        if (same) { await assert.rejects(task, { code: 'tool-result-unknown', fatal: true }); assert.equal(requests, 0); assert.equal(store.tools.size, 1); }
+        else { await task; assert.equal(requests, 1); }
+    }
+});
+
+test('image recovery exposes only durable job record and never permits missing-handle submission', () => {
+    const store = fakeStore();
+    store.tools.set('image', { id: 'image', conversationId: 'c', turnId: 'old', name: 'generate_image', status: 'unknown' });
+    const tools = createToolRegistry({ store });
+    assert.equal(tools.imageRecovery('c', 'image').blockedReason, 'provider-job-handle-missing');
+    store.jobs.set('job', { id: 'job', conversationId: 'c', kind: 'provider-request', dependencies: { origin: 'image' }, payload: { jobId: 'opaque-secret-provider-handle', state: 'unknown' } });
+    const recovery = tools.imageRecovery('c', 'image');
+    assert.equal(recovery.canResume, true); assert.equal(recovery.jobRecordId, 'job'); assert.equal(recovery.resubmitAllowed, false);
+    assert.ok(!JSON.stringify(recovery).includes('opaque-secret'));
+    assert.throws(() => tools.imageRecovery('different', 'image'), { code: 'invalid-tool' });
+});
+
+test('image retry fails closed without persisted history port before intent or provider call', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+    delete store.listTools;
+    store.turns.get('active').request = { retryTurnId: 'old' };
+    const tools = createToolRegistry({ store, image: () => assert.fail('must not submit') });
+    await assert.rejects(tools.execute(call('generate_image', { prompt: 'x' })), { code: 'tool-retry-history-unavailable', fatal: true });
+    assert.equal(store.tools.size, 0);
+});
+
+test('domain unknown remains fatal even when an injection incorrectly labels it definitive', async () => {
+    const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+    const tools = createToolRegistry({ store, image: async () => { throw Object.assign(Error(), { code: 'provider-job-unknown', definitive: true }); } });
+    await assert.rejects(tools.execute(call('generate_image', { prompt: 'x' })), { code: 'tool-result-unknown', fatal: true });
+    assert.equal([...store.tools.values()][0].status, 'unknown');
+});
+
+test('manually recovered ancestor image is reused across retry chain without new charge or old-message changes', async () => {
+    for (const group of [false, true]) {
+        const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+        const active = store.turns.get('active');
+        active.request = { retryTurnId: 'middle' };
+        if (group) active.plannedMembers = [{ id: 'new-member', characterId: 'alice' }];
+        store.turns.set('middle', { id: 'middle', conversationId: 'c', request: { retryTurnId: 'original' } });
+        store.turns.set('original', { id: 'original', conversationId: 'c', ...(group ? { plannedMembers: [{ id: 'old-member', characterId: 'alice' }] } : {}) });
+        const historical = { id: 'recovered', conversationId: 'c', turnId: 'original', ...(group ? { memberRunId: 'old-member' } : {}),
+            name: 'generate_image', args: { prompt: 'x' }, status: 'completed', result: { images: [{ id: 'img' }], usage: { cost: 5, complete: true } } };
+        store.tools.set(historical.id, structuredClone(historical));
+        store.getAttachment = id => ({ id, mime: 'image/png', name: 'restored.png', size: 8 });
+        const beforeMessages = structuredClone(store.snapshot.messages);
+        let paid = 0;
+        const registry = createToolRegistry({ store, image: () => { paid++; assert.fail('No new paid submission'); } });
+        const input = { ...call('generate_image', { prompt: 'x' }, 'retry-call'), ...(group ? { memberRunId: 'new-member' } : {}) };
+        const result = await registry.execute(input);
+        assert.equal(result.reusedFromToolId, 'recovered'); assert.deepEqual(result.usage, { cost: 0, complete: true });
+        assert.deepEqual(await registry.execute(input), result);
+        assert.equal(paid, 0); assert.equal(store.tools.size, 2);
+        assert.deepEqual(store.tools.get('recovered'), historical); assert.deepEqual(store.snapshot.messages, beforeMessages);
+        assert.equal(registry.toolArtifacts('active', group ? 'new-member' : undefined)[0].attachmentId, 'img');
+        if (group) assert.deepEqual(registry.toolArtifacts('active', 'other-member'), []);
+        registry.release('active');
+        const restarted = createToolRegistry({ store, image: () => assert.fail('Recovered replay must survive restart') });
+        assert.deepEqual(await restarted.execute(input), result);
+    }
+});
+
+test('completed retry image with missing cached result or uncertain member identity blocks instead of charging', async () => {
+    for (const missingResult of [false, true]) {
+        const store = fakeStore({ active: true, settings: { tools: ['generate_image'] } });
+        store.turns.get('active').request = { retryTurnId: 'original' };
+        store.turns.set('original', { id: 'original', conversationId: 'c' });
+        store.tools.set('completed', { id: 'completed', turnId: 'original', conversationId: 'c', name: 'generate_image', args: { prompt: 'x' }, status: 'completed',
+            ...(missingResult ? {} : { memberRunId: 'other-run', result: { images: [{ id: 'img' }] } }) });
+        const registry = createToolRegistry({ store, image: () => assert.fail('Must not charge') });
+        await assert.rejects(registry.execute({ ...call('generate_image', { prompt: 'x' }), ...(missingResult ? {} : { memberRunId: 'new-run' }) }),
+            { fatal: true, code: missingResult ? 'tool-result-unknown' : 'tool-retry-identity-unknown' });
+        assert.equal(store.tools.size, 1);
+    }
+});

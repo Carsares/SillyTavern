@@ -31,7 +31,7 @@ test('foreground excludes latest complete turn and submits epoch atomically', as
     const store = fakeStore({ active: true });
     const service = createMemoryService({ store, generate });
     await service.compact(store.getConversation(), { turnId: 'active', attemptEpoch: 1, budget: 1000 });
-    assert.equal(store.commits.length, 1); assert.equal(store.commits[0].sourceRefs.length, 4); assert.equal(store.commits[0].attemptEpoch, 1);
+    assert.equal(store.commits.length, 1); assert.equal(store.commits[0].sourceRefs.length, 1); assert.equal(store.commits[0].attemptEpoch, 1);
 });
 test('empty or overbudget summaries do not fold history', async () => {
     for (const output of [{ chapter: '' }, { chapter: 'long summary' }]) {
@@ -48,7 +48,7 @@ test('rolling summary preserves transitive source and parent refs', async () => 
     const store = fakeStore(); const ref = { messageId: 'm5', revision: 1, candidateId: 'a5', candidateRevision: 1 };
     store.snapshot.summaries.push({ id: 'parent', kind: 'chapter', revision: 2, status: 'valid', content: 'old', sourceRefs: [ref] });
     await createMemoryService({ store, generate }).compact(store.getConversation());
-    const rolling = store.commits[0].summaries[1]; assert.equal(rolling.sourceRefs.length, 5); assert.deepEqual(rolling.parentSummaryRefs[0], { id: 'parent', revision: 2 });
+    const rolling = store.commits[0].summaries[1]; assert.equal(rolling.sourceRefs.length, 2); assert.deepEqual(rolling.parentSummaryRefs[0], { id: 'parent', revision: 2 });
 });
 test('abort before generation or after generation prevents commits', async () => {
     const store = fakeStore(); const controller = new AbortController();
@@ -66,7 +66,7 @@ test('background never folds latest history; later foreground still has compress
     assert.equal(store.snapshot.folds.length, 0);
     await service.compact(store.getConversation());
     assert.equal(store.snapshot.folds.length, 1);
-    assert.equal(store.snapshot.folds[0].sourceRefs.length, 4);
+    assert.equal(store.snapshot.folds[0].sourceRefs.length, 1);
     assert.ok(store.snapshot.folds[0].sourceRefs.every(ref => ref.messageId !== 'm5'));
     assert.equal(store.commits[1].memories.length, 1, 'compression computes memories in the same atomic proposal');
 });

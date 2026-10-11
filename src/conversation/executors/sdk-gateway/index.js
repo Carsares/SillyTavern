@@ -99,9 +99,9 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
             const completed = async () => {
                 if (record.complete) return;
                 check(); callSignal.throwIfAborted(); inspector.assertComplete(); record.complete = true;
-                const usage = aggregateUsage(protocol, requests);
+                const usage = aggregateUsage(protocol, requests, { provider: connection.provider });
                 await emit({ type: 'usage.updated', requestIndex: index, rawUsage: record.rawUsage,
-                    ...normalizeUsage(protocol, record.rawUsage), complete: usage.requests.at(-1).usageComplete, usage });
+                    ...normalizeUsage(protocol, record.rawUsage, { provider: connection.provider }), complete: usage.requests.at(-1).usageComplete, usage });
             };
             if (!(upstream.headers.get('content-type') ?? '').includes('text/event-stream')) {
                 const text = await boundedBody(upstream, maxResponseBytes, callSignal);
@@ -195,7 +195,7 @@ export function createSdkGateway({ protocol, connection, tools = [], limits = {}
     }
     return { start, close, handle, token, stop, check,
         get signal() { return effective; },
-        result() { check(); return { content, reasoning, usage: aggregateUsage(protocol, requests), toolStates: domain.states() }; },
+        result() { check(); return { content, reasoning, usage: aggregateUsage(protocol, requests, { provider: connection.provider }), toolStates: domain.states() }; },
     };
 }
 

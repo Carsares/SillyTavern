@@ -1,3 +1,4 @@
+import { normalizeCost, aggregateCost } from '../core/cost.js';
 // Token counters only; never retain prompts, embeddings or generated media.
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const copy = value => structuredClone(value ?? null);
@@ -5,7 +6,7 @@ export function auxiliaryUsage(api, response = {}, { completed = false } = {}) {
     const u = response?.usageMetadata ?? response?.usage ?? response?.result?.usage;
     const result = { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null,
         reasoningTokens: null, totalTokens: null, cacheReadIncludedInInput: null,
-        cacheWriteIncludedInInput: null, reasoningIncludedInOutput: null, raw: copy(u), cost: null, complete: false };
+        cacheWriteIncludedInInput: null, reasoningIncludedInOutput: null, raw: copy(u), cost: null, ...normalizeCost(u, { provider: api === 'openrouter-image' ? 'openrouter' : undefined }), complete: false };
     if (api === 'cohere-embed') {
         result.raw = copy(response.meta);
         result.inputTokens = count(response.meta?.tokens?.input_tokens);
@@ -53,6 +54,7 @@ export function aggregateEmbeddingUsage(requests) {
     }
     result.raw = requests.map(r => copy(r.raw));
     result.requests = requests;
+    Object.assign(result, aggregateCost(requests));
     result.complete = requests.length > 0 && requests.every(r => r.complete === true)
         && [result.inputTokens, result.outputTokens, result.totalTokens].every(value => count(value) !== null);
     return result;

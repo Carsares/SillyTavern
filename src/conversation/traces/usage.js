@@ -1,10 +1,15 @@
 const FIELDS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd'];
 const known = value => Number.isFinite(value) && value >= 0;
-const empty = () => ({ calls: 0, ...Object.fromEntries(FIELDS.map(key => [key, 0])), complete: true });
+const empty = () => ({ calls: 0, ...Object.fromEntries(FIELDS.map(key => [key, 0])), costEstimated: false, costSource: null, complete: true });
 function merge(target, source) {
+    const previousCalls = target.calls;
     target.calls += source.calls;
     target.complete &&= source.complete;
     for (const key of FIELDS) target[key] = target[key] === null || source[key] === null ? null : target[key] + source[key];
+    if (target.costUsd === null) { target.costEstimated = null; target.costSource = null; } else {
+        target.costEstimated ||= source.costEstimated === true;
+        target.costSource = !previousCalls ? source.costSource : target.costSource === source.costSource ? target.costSource : 'mixed';
+    }
 }
 
 /** Sum independently reported counts. Cache/reasoning subcounts never inflate totalTokens. */
@@ -32,6 +37,8 @@ export function summarizeUsage(traces) {
         const count = { calls, complete: usage?.complete === true && (!usage.requests || usage.requests.length >= calls) };
         const missingRequests = usage?.requests && usage.requests.length < calls;
         for (const key of FIELDS) count[key] = !missingRequests && known(usage?.[key]) ? usage[key] : null;
+        count.costEstimated = count.costUsd === null ? null : usage.costEstimated === true;
+        count.costSource = count.costUsd === null ? null : usage.costSource ?? 'provider';
         merge(totals, count); merge(categories[category], count);
         if (trace.turnId) { if (!turns.has(trace.turnId)) turns.set(trace.turnId, { turnId: trace.turnId, ...empty() }); merge(turns.get(trace.turnId), count); }
     }
@@ -41,5 +48,5 @@ export function summarizeUsage(traces) {
         merge(totals, count); merge(categories[Object.hasOwn(categories, trace.category) ? trace.category : 'generation'], count);
         if (trace.turnId) { if (!turns.has(trace.turnId)) turns.set(trace.turnId, { turnId: trace.turnId, ...empty() }); merge(turns.get(trace.turnId), count); }
     }
-    return { totals, categories, turns: [...turns.values()], accounting: 'Reported totalTokens excludes separately adding cache/reasoning subcounts; null means unknown. Calls count attempted model requests.' };
+    return { totals, categories, turns: [...turns.values()], accounting: 'Reported totalTokens excludes separately adding cache/reasoning subcounts; null means unknown. Calls count attempted model requests. costEstimated identifies estimates; costSource distinguishes reported, SDK-estimated and mixed amounts.' };
 }

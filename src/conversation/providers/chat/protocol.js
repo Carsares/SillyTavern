@@ -1,3 +1,4 @@
+import { normalizeCost } from '../core/cost.js';
 // Native codecs for all CHAT_PROVIDERS APIs. Real remote model/platform behavior is unverified.
 import { fail } from '../core/index.js';
 import { randomUUID } from 'node:crypto';
@@ -89,7 +90,7 @@ function parseArgs(text) {
     if (typeof text === 'object' && text !== null) return text;
     try { return JSON.parse(text); } catch { throw fail('provider-response-invalid', 'Invalid tool arguments'); }
 }
-export function decodeChat(api, data) {
+export function decodeChat(api, data, { provider } = {}) {
     let content, reasoning = '', toolCalls = [], tokens, finishReason, providerContent;
     if (api === 'anthropic-messages') {
         if (!Array.isArray(data.content)) throw fail('provider-response-invalid', 'Missing Anthropic content');
@@ -132,5 +133,5 @@ export function decodeChat(api, data) {
     }
     if (['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'content_filter', 'ERROR', 'ERROR_TOXIC'].includes(finishReason)) throw fail('provider-content-blocked', 'Provider did not complete the requested output');
     if (typeof content !== 'string' || toolCalls.some(call => !call.id || !call.name || !call.args || typeof call.args !== 'object' || Array.isArray(call.args))) throw fail('provider-response-invalid', 'Invalid assistant content or tool calls');
-    return { content, reasoning, toolCalls, usage: { ...tokens, raw: structuredClone(data.usageMetadata ?? data.usage ?? null) }, finishReason: toolCalls.length ? 'toolUse' : ['length', 'MAX_TOKENS', 'max_tokens'].includes(finishReason) ? 'length' : 'stop', rawFinishReason: finishReason, ...(providerContent ? { providerContent } : {}) };
+    return { content, reasoning, toolCalls, usage: { ...tokens, ...normalizeCost(data.usageMetadata ?? data.usage, { provider }), raw: structuredClone(data.usageMetadata ?? data.usage ?? null) }, finishReason: toolCalls.length ? 'toolUse' : ['length', 'MAX_TOKENS', 'max_tokens'].includes(finishReason) ? 'length' : 'stop', rawFinishReason: finishReason, ...(providerContent ? { providerContent } : {}) };
 }

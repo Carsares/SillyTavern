@@ -194,8 +194,9 @@ remain visible integration work rather than a claim of full provider parity.
 
 ## Installed SDK integration evidence (2026-10-11, macOS arm64)
 
-`node --test tests/conversation/integration/installed-sdk.test.mjs tests/conversation/modules/sdk/*.test.mjs`
-exits 0: 55 tests, 55 pass, no skips (18 installed integration, 37 unit).
+`node --test tests/conversation/integration/installed-sdk.test.mjs` exits 0:
+22/22 pass. `node --test tests/conversation/modules/sdk/*.test.mjs` exits 0:
+49/49 pass. No skips in either run.
 Both Claude 0.3.289 and Codex 0.156.1 pass six actual SDK scenarios:
 text/native history, MCP domain-tool round trip, initial budget rejection,
 budget rejection after a tool result, in-flight abort, and rejection of a
@@ -285,3 +286,52 @@ Darwin release and date. Extra keys, changed text, duplicate or displaced blocks
 remain `unexpected-sdk-context` failures. No environment description is sent
 upstream. A future SDK template change (or date rollover during startup) fails
 closed and needs explicit compatibility validation.
+
+### Fatal unknown tool results and explicit proxy refusal
+
+The tool wrapper must throw a terminal error or return structured unknown state:
+`error.code: 'tool-result-unknown'`, `details.outcome: 'unknown'`,
+`outcome/status: 'unknown'`, or `tool-persistence-failed`.
+For MCP error wrappers, `isError: true` plus a text block containing the JSON
+error object is also recognized. Free-form error prose is not parsed for intent.
+Unknown outcomes stop the gateway immediately, abort the SDK and retain
+`error.details.outcome`, `toolCallId` and `toolStates` with state `unknown`.
+No completed result is emitted, further requests are blocked, and a consumed
+tool permit cannot be replayed. Definitive ordinary tool error results remain
+available to the model. Both actual SDKs have local unknown-result tests proving
+one model request, one execution and closed resources.
+
+Canonical `connection.proxy: {url}` uses shared HTTP/HTTPS validation.
+Without injected fetch, the SDK runtime owns a createConnectionFetch transport
+for the turn and closes it in finally on success/failure, including startup
+failure. This also avoids inherited environment proxy settings on direct calls.
+An injected fetch is a caller-owned, already connection-aware transport contract:
+composition supplies createConnectionFetch(connection).fetch and closes it at
+server shutdown. The SDK neither double-wraps nor closes that injected transport.
+Native global fetch is explicitly rejected when a proxy is configured because it
+cannot honor the Node proxy agent. Legacy proxyUrl/proxy_url/httpProxy/httpsProxy/
+socksProxy fields remain unsupported-proxy errors.
+
+Actual Claude/Codex installed tests use a separate authenticated local HTTP
+proxy forwarding only to an independently listening local model peer, with an
+unresolvable upstream .invalid hostname. They assert proxy authentication and the
+absolute request target, no proxy credentials at the model peer, and no credential
+leakage in gateway traces/events/results. These use the runtime-owned default
+transport, without injected fetch. HTTPS/TLS proxy behavior belongs to the shared transport test suite;
+it is not independently verified by these SDK tests. SDK sandbox networking
+continues to allow only its local gateway, not direct access to the proxy.
+
+### Shared cost normalization
+
+Per-request usage, usage.updated events and aggregate result.usage now expose
+costUsd, costSource and costEstimated through providers/core/cost.js, matching
+PI. Documented OpenRouter usage.cost is provider-reported USD; explicitly
+normalized costUsd is preserved. Explicit SDK estimates remain sdk-estimated,
+never provider charges. Mixed actual/estimated requests report mixed source and
+costEstimated=true. A missing cost in any request makes the aggregate cost null;
+known per-request costs and rawUsage are retained. Explicit zero remains zero.
+No pricing table is inferred, and aggregate SDK session estimates are not
+distributed across gateway requests. Token completeness is independent of cost
+availability. Latest cost-change SDK unit suite: 45/45, exit 0; no live rerun.
+Canonical connection.proxy is now wired through the shared transport; unsupported
+legacy proxy fields remain rejected independently.

@@ -132,10 +132,13 @@ test('factory wires runtime, tracks background work, reports first token and rem
 
 test('uncontrolled matrix is explicit and unknown billed cost stays null with enforced upper accounting', async () => {
     assert.equal(evaluationMatrix(['uncontrolled']).length, 36);
-    const adapter = { capabilities: { ...createEvaluationAdapter({ config }).capabilities }, quote: async () => pipelineQuote(priced(), 1),
+    const aliasConfig = { ...config, connection: { ...connection, provider: 'deepseek', model: 'deepseek-v4-flash' } };
+    const adapter = { capabilities: { ...createEvaluationAdapter({ config: aliasConfig }).capabilities }, quote: async () => pipelineQuote(priced(), 1),
         run: async r => ({ output: { answers: [] }, usage: { complete: true, providerRequests: 1, inputTokens: 1, outputTokens: 1, costUsd: null, costUpperBoundUsd: 0.001, costBasis: 'configured-price-upper-bound' }, cache: { mode: 'uncontrolled', sessionKey: r.condition.sessionKey, verified: false } }) };
     const result = await runEvaluation({ config: { allowPaid: true, cacheModes: ['uncontrolled'], batchSize: 200, budget: { maxCostUsd: 1000, maxRequests: 1, maxInputTokens: 10000000, maxOutputTokens: 100000, deadlineMs: 10000 } }, adapters: { pi: adapter }, dataset, evidence: 'mock' });
     assert.equal(result.measurements[0].status, 'completed'); assert.equal(result.measurements[0].usage.costUsd, null); assert.equal(result.ledger.actualCostUsd, null); assert.equal(result.quality, null);
+    assert.equal(result.measurements[0].modelResolution.versionPinned, false);
+    assert.equal(result.measurements[0].modelResolution.documentedResolvedModel, 'DeepSeek-V4.1-Flash');
 });
 
 test('swallowed background budget rejection still fails the final measurement', async () => {
@@ -183,4 +186,66 @@ test('default cold/warm remains blocked even for configured repository-native ad
         config: { allowPaid: true, budget: { maxCostUsd: 1, maxRequests: 1, maxInputTokens: 1, maxOutputTokens: 1, deadlineMs: 1000 } }, evidence: 'mock' });
     assert.equal(result.conditions.length, 72); assert.equal(result.conditions[0].reason, 'provider-cache-isolation-unverified');
     assert.equal(result.measurements.length, 0); assert.equal(result.quality, null);
+});
+
+test('DeepSeek native alias is supported and explicitly not a pinned model version', async () => {
+    const adapter = createEvaluationAdapter({ config: { ...config, connection: { ...connection, provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEnabled: false, reasoning: 'off' } } });
+    assert.equal(adapter.capabilities.runtimeWired, true);
+    assert.equal(adapter.capabilities.modelVersion, 'DeepSeek-V4.1-Flash');
+    assert.equal(adapter.capabilities.modelResolution.requestedModel, 'deepseek-v4-flash');
+    assert.equal(adapter.capabilities.modelResolution.versionPinned, false);
+    assert.equal(adapter.capabilities.modelResolution.responseVerified, false);
+    assert.equal((await adapter.quote(input())).hardUpperBound, true);
+});
+
+test('evaluation rejects proxy at top-level and every role before any work, including direct transport use', async () => {
+    let network = 0;
+    const proxy = { url: 'http://unit.invalid:1234' };
+    for (const patch of [{ proxy }, ...['connection', 'memoryConnection', 'embeddingConnection'].map(role => ({ [role]: { ...connection, proxy } }))]) {
+        const adapter = createEvaluationAdapter({ config: { ...config, ...patch }, dependencies: {
+            fetch: async () => { network++; assert.fail('No direct egress'); }, makeDirectory: () => assert.fail('No filesystem work'),
+        } });
+        await assert.rejects(adapter.quote(input()), { code: 'evaluation-proxy-unsupported' });
+        await assert.rejects(adapter.run(input()), { code: 'evaluation-proxy-unsupported' });
+    }
+    assert.throws(() => createBudgetTransport({ connections: [{ ...connection, proxy }], ceiling: pipelineQuote(priced(), 1), fetch: () => { network++; } }), { code: 'evaluation-proxy-unsupported' });
+    assert.equal(network, 0);
+});
+
+test('DeepSeek uses real native codec thinking disabled through bounded fake transport', async () => {
+    const { createChatAdapter } = await import('../../../src/conversation/providers/chat/index.js');
+    let captured;
+    const c = { ...connection, provider: 'deepseek', model: 'deepseek-v4-flash', executor: 'native', type: 'chat', reasoningEnabled: false, reasoning: 'off', stream: false };
+    const transport = createBudgetTransport({ connections: [c], ceiling: pipelineQuote([c], 1), fetch: async request => {
+        captured = await request.json();
+        return Response.json({ choices: [{ message: { content: 'unit only' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    } });
+    const output = await createChatAdapter(c, { fetch: transport.fetch }).generate({ messages: [{ role: 'user', content: 'unit' }], maxOutputTokens: 10, stream: false });
+    assert.equal(output.content, 'unit only'); assert.deepEqual(captured.thinking, { type: 'disabled' });
+    assert.equal(captured.model, 'deepseek-v4-flash');
+    assert.equal((await transport.finish()).providerRequests, 1);
+});
+
+test('DeepSeek example prepares all three protocols with mutable alias and keeps paid work disabled', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const example = JSON.parse(await readFile(new URL('./config.deepseek.example.json', import.meta.url), 'utf8'));
+    assert.deepEqual(Object.keys(example.executors), ['pi', 'claude', 'codex']);
+    assert.equal(example.allowPaid, false);
+    for (const key of ['maxCostUsd', 'maxRequests', 'maxInputTokens', 'maxOutputTokens']) assert.equal(example.budget[key], 0);
+    const expected = { pi: ['deepseek', 'https://api.deepseek.com'], claude: ['anthropic', 'https://api.deepseek.com/anthropic'], codex: ['openai-compatible', 'https://api.deepseek.com'] };
+    for (const [executor, config] of Object.entries(example.executors)) {
+        assert.deepEqual([config.connection.provider, config.connection.baseUrl], expected[executor]);
+        assert.equal(config.connection.model, 'deepseek-v4-flash');
+        assert.equal(config.connection.apiKeyEnv, 'EVALUATION_API_KEY');
+        const adapter = createEvaluationAdapter({ executor, config, env: { EVALUATION_API_KEY: 'offline-test-only' } });
+        assert.equal(adapter.capabilities.runtimeWired, true);
+        assert.equal(adapter.capabilities.modelResolution.versionPinned, false);
+        assert.equal(adapter.capabilities.modelResolution.documentedResolvedModel, 'DeepSeek-V4.1-Flash');
+        assert.equal((await adapter.quote({ ...input(), condition: { ...condition, executor } })).hardUpperBound, true);
+        if (executor !== 'pi') assert.equal(config.memoryConnection.provider, 'deepseek');
+    }
+    const result = await runEvaluation({ config: example, dataset });
+    assert.equal(result.reason, 'paid-authorization-required');
+    assert.equal(result.evaluationScope, 'uncontrolled-diagnostic');
+    assert.equal(result.fullG5, false); assert.equal(result.measurements.length, 0);
 });

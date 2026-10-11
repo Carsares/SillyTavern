@@ -418,3 +418,32 @@ test('real SDK cached usage is normalized to inclusive input before persistence'
     assert.deepEqual(result.usage.requests[0].raw, raw);
     assert.deepEqual(event.usage, result.usage);
 });
+
+test('unknown tool outcomes and failed outcome persistence stop the real PI loop', async () => {
+    for (const code of ['tool-result-unknown', 'tool-persistence-failed']) {
+        let network = 0, executions = 0;
+        const events = [];
+        const executor = createPiExecutor({ fetch: async () => { network++; return response(toolCall, 'tool_calls'); } });
+        await assert.rejects(run(executor, {
+            tools: [{ ...tool, execute: async () => { executions++; throw Object.assign(new Error('secret upstream detail'), { code }); } }],
+            onEvent: event => events.push(event),
+        }), error => error.code === code && !error.message.includes('secret'));
+        assert.equal(network, 1); assert.equal(executions, 1);
+        assert.equal(events.filter(event => event.type === 'tool.result').length, 0);
+    }
+});
+
+test('real PI loop emits provider costUsd from captured usage without estimating unknown prices', async () => {
+    const raw = { prompt_tokens: 11, completion_tokens: 3, total_tokens: 14, costUsd: 0.015 };
+    const result = await run(createPiExecutor({ fetch: async () => response({ content: 'done' }, 'stop', raw) }));
+    assert.equal(result.usage.costUsd, 0.015); assert.equal(result.usage.costEstimated, false);
+    const unknown = await run(createPiExecutor({ fetch: async () => response({ content: 'done' }) }));
+    assert.equal(unknown.usage.costUsd, null);
+});
+
+test('explicit SDK estimated pricing reaches final usage without claiming an actual charge', async () => {
+    const model = { ...createPrimaryModel(connection), costSource: 'sdk-estimated', cost: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1 } };
+    const result = await run(createPiExecutor({ model, fetch: async () => response({ content: 'done' }) }));
+    assert.ok(Math.abs(result.usage.costUsd - 0.000017) < 1e-12);
+    assert.equal(result.usage.costSource, 'sdk-estimated'); assert.equal(result.usage.costEstimated, true);
+});

@@ -49,7 +49,7 @@ export function compileContext(snapshot, options = {}) {
     const { draft, type = 'send', countTokens, capabilities = {}, seed = 0, tools = [] } = options;
     if (!TURN_TYPES.includes(type)) throw new ProtocolError('invalid-request', 'Unknown generation type');
     if (['regenerate', 'continue'].includes(type)) {
-        const position = snapshot.messages.findIndex(message => message.id === options.targetMessageId && message.role === 'assistant' && !message.deletedAt);
+        const position = snapshot.messages.findIndex(message => message.id === options.targetMessageId && message.role === 'assistant' && !message.deletedAt && !message.userHidden);
         if (position < 0) throw new ProtocolError('invalid-target', 'Generation requires a current assistant target');
         snapshot = { ...snapshot, messages: snapshot.messages.slice(0, position + (type === 'continue' ? 1 : 0)) };
     }
@@ -101,7 +101,7 @@ export function compileContext(snapshot, options = {}) {
         } else add(input);
     }
 
-    const messages = (snapshot.messages ?? []).filter(message => !message.deletedAt);
+    const messages = (snapshot.messages ?? []).filter(message => !message.deletedAt && !message.userHidden);
     const groups = groupHistory(messages);
     const protectedGroups = new Set(groups.filter(group => group.open));
     if (groups.length) protectedGroups.add(groups.at(-1));
@@ -128,8 +128,26 @@ export function compileContext(snapshot, options = {}) {
         selectedSummaries.add(summary.id);
         add({ id: `summary:${summary.id}`, layer: 'L2', placement: { type: 'prefix' }, content: summary.content, sourceRefs: summaryRefs, template: false });
     }
+    // Prefer the newest valid rolling summary only over already folded coverage.
+    // Never re-hide an expanded interval or absorb protected/recent raw history.
+    const rolling = (snapshot.summaries ?? []).findLast(item => item.kind === 'rolling' && resolveSources(item, snapshot));
+    if (rolling?.content && !selectedSummaries.has(rolling.id)) {
+        const refs = resolveSources(rolling, snapshot);
+        const keys = new Set(refs.map(sourceKey));
+        const chapters = blocks.filter(block => block.id.startsWith('summary:') && overlaps(block.sourceRefs, keys));
+        const replaced = new Set(chapters.flatMap(block => block.sourceRefs.map(sourceKey)));
+        if (refs.length && refs.every(ref => covered.has(sourceKey(ref))) && chapters.length
+            && replaced.size === keys.size && [...replaced].every(key => keys.has(key))) {
+            const removed = new Set(chapters);
+            for (let i = blocks.length - 1; i >= 0; i--) if (removed.has(blocks[i])) blocks.splice(i, 1);
+            selectedSummaries.add(rolling.id);
+            add({ id: `summary:${rolling.id}`, layer: 'L2', placement: { type: 'prefix' }, content: rolling.content, sourceRefs: refs, template: false });
+        }
+    }
     const historyGroups = groups.filter(group => !group.messages.every(message => covered.has(sourceKey(sourceRef(message)))));
     const represented = new Set(covered);
+    const rawSources = new Set(historyGroups.flatMap(group => group.messages.map(message => sourceKey(sourceRef(message)))));
+    const retrieved = new Set();
     for (const group of historyGroups) for (const message of group.messages) {
         const ref = sourceRef(message);
         represented.add(sourceKey(ref));
@@ -140,11 +158,19 @@ export function compileContext(snapshot, options = {}) {
         const refs = resolveSources(item, snapshot);
         const id = `derived:${item.id}`;
         const memory = (snapshot.memories ?? []).includes(item);
+        const retrieval = (snapshot.retrieval ?? []).includes(item);
+        // A folded summary does not replace the original detail returned by retrieval.
+        // Still omit any original already present verbatim in active raw history.
+        const recalledRaw = retrieval && item.kind === 'message';
+        const duplicate = recalledRaw ? refs && overlaps(refs, rawSources) : refs?.length && overlaps(refs, represented);
+        const retrievalKey = JSON.stringify([refs, item.content]);
         if (!refs) omitted.push({ id, reason: 'stale-source' });
-        else if (!memory && refs.length && overlaps(refs, represented)) omitted.push({ id, reason: 'duplicate-source' });
+        else if (retrieval && (retrieved.has(retrievalKey) || (snapshot.memories ?? []).some(block => item.key === `derived:${block.id}` && resolveSources(block, snapshot)))) omitted.push({ id, reason: 'duplicate-source' });
+        else if (!memory && duplicate) omitted.push({ id, reason: 'duplicate-source' });
         else {
             add({ id, layer: (snapshot.retrieval ?? []).includes(item) ? 'L3' : 'L2', placement: { type: 'prefix' },
-                required: item.required === true || item.locked === true, priority: item.priority ?? item.score ?? 0, content: item.content, sourceRefs: refs, evidenceOnly: memory, template: false });
+                required: item.required === true || item.locked === true, priority: item.priority ?? item.score ?? 0, content: item.content, sourceRefs: refs, evidenceOnly: memory || recalledRaw, template: false });
+            if (retrieval) retrieved.add(retrievalKey);
             if (!memory) refs.forEach(ref => represented.add(sourceKey(ref)));
         }
     }

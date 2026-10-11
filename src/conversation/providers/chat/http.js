@@ -65,7 +65,7 @@ export function createTransport(connection, capability, { fetch: fetchImpl = glo
 export function usage(input, output, extra = {}) {
     const valid = value => Number.isFinite(value) && value >= 0;
     return { inputTokens: valid(input) ? input : null, outputTokens: valid(output) ? output : null,
-        totalTokens: valid(input) && valid(output) ? input + output : null, source: 'provider', cost: null, raw: null, ...extra };
+        totalTokens: valid(input) && valid(output) ? input + output : null, source: 'provider', cost: null, costUsd: null, costSource: null, costEstimated: null, raw: null, ...extra };
 }
 export async function emitResult(result, onEvent, signal) {
     signal?.throwIfAborted();

@@ -1,3 +1,4 @@
+import { validateConnectionProxy } from '../../providers/core/proxy.js';
 import { ProtocolError } from '../../../../public/shared/conversation/schemas/index.js';
 import { reasoningControls, REASONING_LEVELS } from './reasoning.js';
 
@@ -25,6 +26,11 @@ export function metadata(executor) {
 export function preflight(executor, { connection, requestPlan, limits = {} } = {}) {
     const c = connection?.data ?? connection;
     if (!c || typeof c.model !== 'string' || !c.model.trim()) throw fail('invalid-connection', 'A model is required');
+    if (['proxyUrl', 'proxy_url', 'httpProxy', 'httpsProxy', 'socksProxy'].some(key =>
+        c[key] !== undefined && c[key] !== null && c[key] !== '' && c[key] !== false)) {
+        throw fail('unsupported-proxy', 'SDK upstream proxy transport has not been verified; refusing direct fallback', 422);
+    }
+    validateConnectionProxy(c);
     const historyMode = c.historyMode ?? HISTORY_MODE;
     if (!['native-transcript', 'structured-transcript'].includes(historyMode)) throw fail('unsupported-history-mode', 'Unknown SDK history mode', 422);
     const url = new URL(c.baseUrl);

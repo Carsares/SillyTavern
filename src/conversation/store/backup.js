@@ -89,6 +89,7 @@ export function validateBackup(input) {
         if (current) assert(!m.deletedAt && m.revision === ref.revision && m.candidateId === (ref.candidateId ?? null) && m.candidateRevision === (ref.candidateRevision ?? null), 'Valid block references stale message');
     };
     for (const m of Object.values(data.messages)) {
+        assert(m.userHidden === undefined || typeof m.userHidden === 'boolean', 'Invalid user hidden state');
         assert(Array.isArray(m.versions) && m.versions.length > 0 && integer(m.revision, 1), 'Invalid message history');
         const versions = new Set();
         for (const v of m.versions) { messageVersion(v, m.id, m.conversationId); assert(!versions.has(v.revision), 'Duplicate message revision'); versions.add(v.revision); }

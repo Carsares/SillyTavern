@@ -1,8 +1,9 @@
 // Preserve only the provider's usage envelope/counters, never prompt or response bodies.
 import { usage } from '../chat/http.js';
+import { normalizeCost } from '../core/cost.js';
 export function textUsage(api, response) {
     if (api === 'openai-text') return usage(response.usage?.prompt_tokens, response.usage?.completion_tokens, {
-        raw: structuredClone(response.usage ?? null), cacheReadTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? null,
+        ...normalizeCost(response.usage), raw: structuredClone(response.usage ?? null), cacheReadTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? null,
         reasoningTokens: response.usage?.completion_tokens_details?.reasoning_tokens ?? null,
         cacheReadIncludedInInput: true, reasoningIncludedInOutput: true,
     });

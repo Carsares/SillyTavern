@@ -4,8 +4,10 @@ export function fail(code, message) { return new ProtocolError(code, message); }
 
 /** Redact known credentials even when an upstream error echoes them in a string. */
 export function createRedactor(connection) {
-    const secrets = [connection.apiKey, ...Object.values(connection.headers ?? {})].filter(x => typeof x === 'string' && x.length);
-    const sensitive = /authorization|cookie|api[-_]?key|(?:^|[_-])(?:access[_-]?token|refresh[_-]?token|token)(?:$|[_-])|secret|password|credential/i;
+    let proxyUser, proxyPassword, normalizedProxy;
+    try { const url = new URL(connection.proxy?.url); normalizedProxy = url.href; proxyUser = decodeURIComponent(url.username); proxyPassword = decodeURIComponent(url.password); } catch { /* invalid proxy is rejected before dispatch */ }
+    const secrets = [connection.apiKey, normalizedProxy, connection.proxy?.url, proxyUser, proxyPassword, ...Object.values(connection.headers ?? {})].filter(x => typeof x === 'string' && x.length);
+    const sensitive = /authorization|cookie|api[-_]?key|(?:^|[_-])(?:access[_-]?token|refresh[_-]?token|token)(?:$|[_-])|secret|password|credential|^proxy$/i;
     function redact(value) {
         if (typeof value === 'string') {
             for (const secret of secrets) value = value.split(secret).join('[REDACTED]');

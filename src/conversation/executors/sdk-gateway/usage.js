@@ -1,3 +1,4 @@
+import { normalizeCost, aggregateCost } from '../../providers/core/cost.js';
 // Inclusive input/output totals: cache and reasoning are breakdowns, not additions.
 export const USAGE_FIELDS = Object.freeze(['inputTokens', 'outputTokens', 'cacheReadTokens',
     'cacheWriteTokens', 'reasoningTokens', 'totalTokens']);
@@ -5,7 +6,7 @@ const semantics = Object.freeze({ inputTokensIncludesCache: true, outputTokensIn
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const sum = values => values.length && values.every(v => v !== null) ? count(values.reduce((a, b) => a + b, 0)) : null;
 
-export function normalizeUsage(protocol, raw) {
+export function normalizeUsage(protocol, raw, costOptions = {}) {
     const u = raw ?? {};
     const anthropic = protocol === 'anthropic';
     const cacheReadTokens = count(anthropic ? u.cache_read_input_tokens : u.input_tokens_details?.cached_tokens);
@@ -16,7 +17,7 @@ export function normalizeUsage(protocol, raw) {
     // Only Responses defines total_tokens. Do not invent missing cache counts in Messages.
     const totalTokens = !anthropic && count(u.total_tokens) !== null ? count(u.total_tokens) : sum([inputTokens, outputTokens]);
     return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens,
-        ...semantics, rawInputTokensIncludesCache: !anthropic };
+        ...semantics, rawInputTokensIncludesCache: !anthropic, ...normalizeCost(u, costOptions) };
 }
 
 /** Streaming usage fields are cumulative snapshots, never additive deltas.
@@ -34,9 +35,9 @@ export function mergeUsage(previous, incoming) {
     return result;
 }
 
-export function aggregateUsage(protocol, records) {
+export function aggregateUsage(protocol, records, costOptions = {}) {
     const requests = records.map(record => {
-        const normalized = normalizeUsage(protocol, record.rawUsage);
+        const normalized = normalizeUsage(protocol, record.rawUsage, { ...costOptions, sdkUsage: record.sdkUsage, sdkEstimated: record.sdkEstimated === true });
         return { ...structuredClone(record), ...normalized,
             usageComplete: record.complete && normalized.inputTokens !== null && normalized.outputTokens !== null && normalized.totalTokens !== null,
             cost: null };
@@ -44,5 +45,5 @@ export function aggregateUsage(protocol, records) {
     const totals = Object.fromEntries(USAGE_FIELDS.map(field => [field, sum(requests.map(r => r[field]))]));
     return { ...totals, ...semantics, complete: requests.length > 0 && requests.every(r => r.usageComplete),
         breakdownComplete: requests.length > 0 && USAGE_FIELDS.every(field => totals[field] !== null),
-        requests, cost: null };
+        requests, cost: null, ...aggregateCost(requests) };
 }

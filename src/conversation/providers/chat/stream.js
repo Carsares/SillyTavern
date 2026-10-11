@@ -36,7 +36,7 @@ export async function* readSSE(response, signal) {
     } finally { signal?.removeEventListener('abort', aborted); await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
-export async function decodeChatStream(api, response, { signal, onEvent } = {}) {
+export async function decodeChatStream(api, response, { signal, onEvent, provider } = {}) {
     const state = api === 'anthropic-messages' ? { content: [], usage: {} }
         : api.startsWith('google') ? { responseId: randomUUID(), candidates: [{ content: { parts: [] } }], usageMetadata: {} }
             : api === 'cohere-v2' ? { message: { content: [], tool_calls: [] }, usage: {} }
@@ -113,7 +113,7 @@ export async function decodeChatStream(api, response, { signal, onEvent } = {}) 
     for (const [index, json] of jsonBuffers) {
         try { state.content[index].input = JSON.parse(json); } catch { throw fail('provider-response-invalid', 'Incomplete tool argument JSON'); }
     }
-    const result = decodeChat(api, state);
+    const result = decodeChat(api, state, { provider });
     for (const call of result.toolCalls) await onEvent?.({ type: 'tool.call', ...call });
     await onEvent?.({ type: 'usage', usage: result.usage });
     return result;

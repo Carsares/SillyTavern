@@ -6,7 +6,7 @@ export function uniqueRefs(refs) {
 
 export function sourcesValid(refs, snapshot) {
     return Array.isArray(refs) && refs.every(ref => snapshot.messages.some(message =>
-        !message.deletedAt && message.id === ref.messageId && canonicalJson(sourceRef(message)) === canonicalJson(ref)));
+        !message.deletedAt && !message.userHidden && message.id === ref.messageId && canonicalJson(sourceRef(message)) === canonicalJson(ref)));
 }
 
 export function resourceRefs(snapshot) {
@@ -33,7 +33,7 @@ export function derivedSources(block, snapshot, visiting = new Set()) {
 }
 
 export function searchableEntries(snapshot) {
-    const messages = snapshot.messages.filter(m => !m.deletedAt && (!m.status || m.status === 'completed'))
+    const messages = snapshot.messages.filter(m => !m.deletedAt && !m.userHidden && (!m.status || m.status === 'completed'))
         .map(m => ({ key: `message:${m.id}`, content: m.content, sourceRefs: [sourceRef(m)] }));
     const derived = [...(snapshot.summaries ?? []), ...(snapshot.memories ?? [])].flatMap(block => {
         const refs = derivedSources(block, snapshot);

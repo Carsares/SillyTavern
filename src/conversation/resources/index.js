@@ -1,4 +1,5 @@
 import { invariant, requireObject, requireString, RESOURCE_KINDS } from '../../../public/shared/conversation/schemas/index.js';
+import { validateConnectionProxy } from '../providers/core/proxy.js';
 
 const RESERVED_PARAMETERS = new Set(['messages', 'prompt', 'tools', 'tool_choice', 'model', 'stream', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'api_key', 'authorization']);
 export function validateResource({ kind, name, data }) {
@@ -6,6 +7,7 @@ export function validateResource({ kind, name, data }) {
     requireString(name, 'name', 256);
     requireObject(data, 'data');
     if (kind === 'connection') {
+        validateConnectionProxy(data);
         requireString(data.provider, 'provider', 80);
         invariant(['pi', 'native', 'claude', 'codex'].includes(data.executor ?? 'pi'), 'invalid-executor', 'Unknown executor');
         requireString(data.model, 'model', 256);
@@ -47,6 +49,7 @@ export function createResourceService({ store }) {
             const data = input.data ? { ...input.data } : previous.data;
             if (previous.kind === 'connection' && input.data && input.data.apiKey === undefined && previous.data.apiKey !== undefined) data.apiKey = previous.data.apiKey;
             if (previous.kind === 'connection' && input.data && input.data.headers === undefined && previous.data.headers !== undefined) data.headers = previous.data.headers;
+            if (previous.kind === 'connection' && input.data && input.data.proxy === undefined && previous.data.proxy !== undefined) data.proxy = previous.data.proxy;
             const value = { kind: previous.kind, name: input.name ?? previous.name, data };
             validateResource(value); checkReferences(value);
             return store.updateResource(id, { ...value, expectedRevision: input.expectedRevision });

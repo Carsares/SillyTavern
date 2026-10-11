@@ -49,7 +49,7 @@ export function combineProposals(proposals, initialSnapshot) {
         memories.set(block.id, { ...copy(block), sourceRefs: uniqueRefs([...(previous?.sourceRefs ?? []), ...block.sourceRefs]),
             resourceRefs: uniqueRefs([...(previous?.resourceRefs ?? []), ...(block.resourceRefs ?? [])]) });
     }
-    const merged = { summaries: proposals.flatMap(p => copy(p.summaries)), folds: proposals.flatMap(p => copy(p.folds)),
+    const merged = { compressionPolicies: proposals.flatMap(p => p.compressionPolicies ?? (p.compressionPolicy ? [copy(p.compressionPolicy)] : [])), summaries: proposals.flatMap(p => copy(p.summaries)), folds: proposals.flatMap(p => copy(p.folds)),
         memories: [...memories.values()].flatMap(block => {
             const original = initialSnapshot.memories.find(m => m.id === block.id);
             if (!original && block.op === 'delete') return [];

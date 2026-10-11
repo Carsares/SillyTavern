@@ -38,8 +38,8 @@ export function createChatAdapter(connection, options = {}) {
                 Object.assign(headers, { authorization: null, 'api-key': c.apiKey ?? '' });
             }
             const response = await send(path, { body, headers, signal, raw: stream });
-            if (stream) return decodeChatStream(capability.api, response, { signal, onEvent });
-            return emitResult(decodeChat(capability.api, response), onEvent, signal);
+            if (stream) return decodeChatStream(capability.api, response, { signal, onEvent, provider: c.provider });
+            return emitResult(decodeChat(capability.api, response, { provider: c.provider }), onEvent, signal);
         },
     };
 }

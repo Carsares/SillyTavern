@@ -167,3 +167,38 @@ test('Anthropic expansion sets compiled system, and streaming signed tool argume
     assert.deepEqual(gateway.result().toolStates, [{ id: 'a1', name: 'recall', state: 'pending' }]);
     assert.deepEqual(gateway.result().usage.requests[0].rawUsage, { input_tokens: 10, output_tokens: 2 });
 });
+
+for (const output of [
+    { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'tool-result-unknown' } }) }] },
+    { isError: true, details: { outcome: 'unknown' }, content: [{ type: 'text', text: 'lost result' }] },
+    { error: { code: 'tool-persistence-failed' } },
+]) test('returned unknown outcome aborts gateway and preserves tool state without continuation', async t => {
+    let executions = 0, requests = 0;
+    const h = setup({ tools: [{ name: 'draw', parameters: { type: 'object' }, execute: async () => { executions++; return output; } }],
+        fetch: async () => { requests++; return Response.json({ status: 'completed', output: [{ type: 'function_call', name: 'mcp__domain__draw', call_id: 'draw-unknown', arguments: '{}' }] }); } });
+    t.after(() => h.gateway.close());
+    assert.equal((await h.request()).status, 200);
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'draw', arguments: {} } };
+    assert.equal((await h.request(call, '/mcp')).status, 502);
+    assert.equal(h.gateway.signal.aborted, true);
+    assert.throws(() => h.gateway.check(), error => {
+        assert.equal(error.code, 'tool-result-unknown');
+        assert.equal(error.details.outcome, 'unknown');
+        assert.deepEqual(error.details.toolStates, [{ id: 'draw-unknown', name: 'draw', state: 'unknown' }]);
+        return true;
+    });
+    assert.equal((await h.request()).status, 502);
+    assert.equal((await h.request(call, '/mcp')).status, 502);
+    assert.equal(requests, 1); assert.equal(executions, 1);
+});
+
+test('definitive returned tool error remains a completed tool response', async t => {
+    const h = setup({ tools: [{ name: 'draw', parameters: { type: 'object' }, execute: async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid-size' } }) }] }) }],
+        fetch: async () => Response.json({ status: 'completed', output: [{ type: 'function_call', name: 'mcp__domain__draw', call_id: 'draw-failed', arguments: '{}' }] }) });
+    t.after(() => h.gateway.close());
+    await h.request();
+    const response = await h.request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'draw', arguments: {} } }, '/mcp');
+    assert.equal(response.status, 200);
+    assert.equal(h.gateway.signal.aborted, false);
+    assert.deepEqual(h.gateway.result().toolStates, [{ id: 'draw-failed', name: 'draw', state: 'completed' }]);
+});

@@ -45,3 +45,14 @@ test('partial cumulative usage is counted once and a later unreported request ma
     assert.equal(result.totals.calls, 2); assert.equal(result.totals.complete, false);
     assert.equal(result.totals.inputTokens, null);
 });
+
+test('reported and estimated money retain their distinction in totals', () => {
+    const rows = [{ id: 'a', requestPlan: {}, usage: { costUsd: 0.1, costSource: 'provider', costEstimated: false } },
+        { id: 'b', requestPlan: {}, usage: { costUsd: 0.2, costSource: 'sdk-estimated', costEstimated: true } }];
+    const mixed = summarizeUsage(rows).totals;
+    assert.ok(Math.abs(mixed.costUsd - 0.3) < 1e-10);
+    assert.equal(mixed.costEstimated, true); assert.equal(mixed.costSource, 'mixed');
+    rows.push({ id: 'unknown', requestPlan: {}, usage: { costUsd: null } });
+    const unknown = summarizeUsage(rows).totals;
+    assert.equal(unknown.costUsd, null); assert.equal(unknown.costEstimated, null); assert.equal(unknown.costSource, null);
+});

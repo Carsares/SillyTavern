@@ -9,6 +9,33 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
     const background = new Set();
     const backgroundController = new AbortController();
     let closing = false;
+    const indexing = new Map();
+    function scheduleRetrieval(conversationId) {
+        if (!retrieval || closing) return;
+        try { retrieval.invalidate?.(conversationId); } catch { /* The queued index reports configuration failures. */ }
+        const pending = indexing.get(conversationId);
+        if (pending) { pending.dirty = true; return pending.promise; }
+        const state = { dirty: true };
+        indexing.set(conversationId, state);
+        state.promise = Promise.resolve().then(async () => {
+            while (state.dirty && !closing) {
+                state.dirty = false;
+                // Accepted drafts are not final index inputs; terminal execution schedules again.
+                if (store.getConversation(conversationId).conversation.activeTurnId) break;
+                try { await retrieval.index(conversationId, { signal: backgroundController.signal }); } catch {
+                    if (!closing) store.appendEvent(conversationId, 'retrieval.updated', { status: 'error', semanticReady: false, count: 0,
+                        error: { code: 'index-failed', message: 'Semantic index unavailable; keyword retrieval remains available' } });
+                }
+            }
+        }).catch(() => { /* The conversation may have been deleted before the queued refresh. */ })
+            .finally(() => { indexing.delete(conversationId); background.delete(state.promise); });
+        background.add(state.promise);
+        return state.promise;
+    }
+    // Store delivers committed events only; callbacks enqueue work outside the transaction.
+    const unsubscribe = store.subscribe?.(event => {
+        if (['conversation.changed', 'memory.updated', 'resource.updated', 'resource.deleted', 'turn.completed', 'turn.failed', 'turn.stopped', 'turn.interrupted'].includes(event.type)) scheduleRetrieval(event.conversationId);
+    });
 
     function connectionFor(snapshot) {
         const ref = snapshot.resources.find(resource => resource.id === snapshot.settings.connectionId)
@@ -43,16 +70,24 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
     }
 
     async function runMember(turn, snapshot, request, signal, member) {
+        const fatalController = new AbortController();
+        signal = AbortSignal.any([signal, fatalController.signal]);
+        let fatalError;
+        function check() {
+            const failure = fatalError ?? tools?.fatalError?.(turn.id);
+            if (failure) throw failure;
+            signal.throwIfAborted();
+        }
         const { connection, capability, chosen } = preflight(snapshot, request);
         let preparedSnapshot = snapshot;
         const definitions = tools?.definitions({ type: request.type, enabled: snapshot.settings.tools }) ?? [];
         const enabledTools = capability.tools === false ? [] : definitions;
         const separateDraft = ['auxiliary', 'impersonate'].includes(request.type);
         const query = separateDraft && request.content?.trim() ? request.content
-            : snapshot.messages.filter(message => message.role === 'user' && !message.deletedAt).at(-1)?.content;
+            : snapshot.messages.filter(message => message.role === 'user' && !message.deletedAt && !message.userHidden).at(-1)?.content;
         if (retrieval && snapshot.settings.retrieval !== false && typeof query === 'string' && query.trim()) {
             const matches = await retrieval.search(turn.conversationId, query.slice(0, 4096), { snapshot, signal });
-            preparedSnapshot = { ...snapshot, retrieval: matches.map((item, index) => ({ ...item, id: `retrieved-${index}` })) };
+            preparedSnapshot = { ...snapshot, retrieval: matches.map((item, index) => ({ ...item, status: 'valid', id: `retrieved-${index}` })) };
         }
         let requestPlan;
         let lastCompression;
@@ -65,7 +100,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
             variables: snapshot.settings.variables ?? {}, seed: turn.id,
         };
         for (let attempt = 0; attempt < 3; attempt++) {
-            signal.throwIfAborted();
+            check();
             try {
                 requestPlan = compile(preparedSnapshot, compileOptions);
                 break;
@@ -80,23 +115,23 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 preparedSnapshot = prepared.snapshot;
             }
         }
-        signal.throwIfAborted();
+        check();
         if (proposals.length) {
             const proposal = memory.combineProposals(proposals, compressionBase);
             preparedSnapshot = memory.previewCompact(compressionBase, proposal);
             requestPlan = compile(preparedSnapshot, compileOptions);
-            signal.throwIfAborted();
+            check();
             const committed = store.commitDerived(turn.conversationId, proposal);
             invariant(committed !== false && committed?.accepted !== false && committed?.conflict !== true, 'revision-conflict', 'Prepared compression could not commit', 409);
         }
         phase(turn, 'generating');
-        tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan });
+        tools?.bindTurn?.({ turnId: turn.id, snapshot: preparedSnapshot, requestPlan, onFatal(error) { fatalError ??= error; fatalController.abort(fatalError); } });
         const traceId = trace?.begin?.({ conversationId: turn.conversationId, turnId: turn.id, memberRunId: member?.id, requestPlan, connection });
         let callNumber = 0;
         const memoryProposals = [];
         const toolDefinitions = enabledTools.map(definition => ({ ...definition,
             execute: async (toolCallId, args, toolSignal) => {
-                signal.throwIfAborted();
+                check();
                 const task = active.get(turn.id);
                 if (task && task.toolStep !== task.modelStep) {
                     task.toolStep = task.modelStep;
@@ -116,7 +151,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 snapshot: preparedSnapshot, requestPlan, connection, tools: toolDefinitions, traceId,
                 limits: { ...TOOL_LIMITS, ...snapshot.settings.toolLimits, maxOutputTokens: connection.maxOutputTokens }, signal,
                 beforeRequest: async context => {
-                    signal.throwIfAborted();
+                    check();
                     const current = store.getTurn(turn.id);
                     invariant(!TERMINAL_STATES.includes(current.status) && !current.cancelRequested && current.attemptEpoch === turn.attemptEpoch, 'late-callback', 'Turn no longer accepts model requests', 409);
                     callNumber++;
@@ -134,15 +169,15 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                     trace?.record?.(traceId, { type: 'model.prepare', callNumber });
                 },
                 onEvent: async event => {
-                    signal.throwIfAborted();
+                    check();
                     if (event.type === 'text.delta') store.appendDelta(turn.id, { text: event.text ?? '' }, turn.attemptEpoch);
                     else if (event.type === 'reasoning.delta') store.appendDelta(turn.id, { reasoning: event.text ?? '' }, turn.attemptEpoch);
                     else if (['tool.call', 'tool.result', 'usage.updated'].includes(event.type)) store.appendEvent(turn.conversationId, event.type, { ...event, memberRunId: member?.id }, turn.id);
                     trace?.record?.(traceId, event);
                 },
             });
-        } catch (error) { trace?.fail?.(traceId, error); throw error; }
-        signal.throwIfAborted();
+        } catch (error) { const failure = fatalError ?? tools?.fatalError?.(turn.id) ?? error; trace?.fail?.(traceId, failure); throw failure; }
+        check();
         invariant(!['error', 'aborted'].includes(result.finishReason), 'model-failed', 'Model did not finish successfully', 502);
         trace?.finish?.(traceId, result);
         const preset = preparedSnapshot.resources.find(resource => resource.id === preparedSnapshot.settings.presetId && resource.kind === 'preset');
@@ -179,6 +214,8 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 result = { content: '', reasoning: '', usage: { members: usages }, memoryProposals: proposals };
             } else result = await runMember(turn, snapshot, request, controller.signal);
             if (tools?.memoryProposals) result.memoryProposals = tools.memoryProposals(turn.id);
+            const toolFailure = tools?.fatalError?.(turn.id);
+            if (toolFailure) throw toolFailure;
             phase(turn, 'finalizing');
             store.finishTurn(turn.id, { status: 'completed', ...result }, turn.attemptEpoch);
             // Do not keep a DB transaction open across any background model work.
@@ -189,11 +226,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
                 background.add(task);
                 task.finally(() => background.delete(task)).catch(() => {});
             }
-            if (retrieval && !closing) {
-                const task = Promise.resolve().then(() => retrieval.index(turn.conversationId, { signal: backgroundController.signal })).catch(() => {});
-                background.add(task);
-                task.finally(() => background.delete(task)).catch(() => {});
-            }
+            scheduleRetrieval(turn.conversationId);
         } catch (error) {
             const automaticTimer = automatic.get(turn.conversationId);
             if (automaticTimer) {
@@ -216,6 +249,8 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
     }
 
     const runtime = {
+        scheduleRetrieval,
+        retrievalStatus(conversationId) { store.getConversation(conversationId); return retrieval?.status?.(conversationId) ?? { status: 'keyword-only', semanticReady: false, count: 0 }; },
         start(conversationId, request) {
             invariant(!closing, 'service-closing', 'Service is shutting down', 503);
             validateTurnRequest(request);
@@ -291,6 +326,7 @@ export function createRuntime({ store, executor, compile, memory, retrieval, too
         },
         async close() {
             closing = true;
+            unsubscribe?.();
             for (const timer of automatic.values()) clearTimeout(timer);
             automatic.clear();
             for (const task of active.values()) task.controller.abort();

@@ -261,7 +261,7 @@ test('large backup preserves real attachment bytes and references; malformed res
     const { turn } = source.store.beginTurn(source.conversation.id, source.request({ media: [one, two].map(record => ({ attachmentId: record.id, type: 'document', mimeType: record.mime })) }));
     source.store.finishTurn(turn.id, { status: 'completed', content: 'Files retained.' }, 1);
     const maintenance = createMaintenance({ store: source.store, directory: source.directory });
-    const backup = maintenance.export();
+    const backup = maintenance.backup();
     assert(Buffer.byteLength(JSON.stringify(backup)) > 20 * 1024 * 1024);
     assert.equal(backup.files.length, 2);
     const directory = await mkdtemp(join(tmpdir(), 'conversation-restore-consistency-'));

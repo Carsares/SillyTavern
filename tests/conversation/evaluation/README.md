@@ -212,3 +212,42 @@ been obtained. Real execution, full-context capacity and cache isolation remain 
 explicitly blocked. Native and both SDK adapter implementations are present. SDK
 egress policy tests invoke the real executor/gateway with fake SDKs and transport;
 no child process, real port or provider is exercised.
+
+### DeepSeek three-executor evaluation preparation (no paid authorization)
+
+`config.deepseek.example.json` contains pi, Claude and Codex entries sharing
+`deepseek-v4-flash` and `EVALUATION_API_KEY`. Pi uses provider `deepseek` at the
+origin; Claude uses provider `anthropic` at `/anthropic`; Codex uses provider
+`openai-compatible` at the origin. Both SDK entries explicitly use the native
+DeepSeek connection for memory generation. The native chat codec is configured with
+`reasoningEnabled:false` and `reasoning:"off"`; the actual outgoing request uses
+`thinking:{type:"disabled"}`. Use the same selected connection's base URL and an
+environment variable containing its key; credentials are never included in the
+example. This adds chat support, not a DeepSeek embedding endpoint. The example
+keeps `allowPaid:false` and zero global budget. Full quality evaluation still
+requires explicit budget approval; no paid result has been measured here.
+
+The official pricing page, checked 2026-10-11, documents `deepseek-v4-flash` as a
+legacy alias served by DeepSeek-V4.1-Flash, with a 1M context. The example uses a
+conservative 1,000,000-token context and peak upper rates of USD 0.3/M uncached
+input and USD 1.2/M output. Peak cached input is USD 0.006/M, but quotes do not
+assume hits or off-peak discounts. Source:
+https://api-docs.deepseek.com/quick_start/pricing/
+
+Capabilities, execution results, measurement rows and measurement intents carry
+`modelResolution` for the documented Flash aliases: requested alias, documented
+resolved model, `versionPinned:false`, `responseVerified:false`, documentation URL
+and check date. `modelVersion` is the documented model name, not a reproducibility
+pin or proof of a live response. Recheck the alias/rates before any approved run.
+Cold/warm cache isolation remains blocked; uncontrolled cache must be explicit.
+
+Evaluation currently rejects non-null `proxy` at the adapter top level or on any
+primary/memory/embedding connection with `evaluation-proxy-unsupported`. The
+budget transport rejects such connections too. Its injected fetch is not yet
+agent-aware; no proxy configuration is silently converted into direct egress.
+
+Uncontrolled runs are diagnostics, never full G5: reports explicitly carry
+`evaluationScope:"uncontrolled-diagnostic", fullG5:false`, even if every diagnostic
+condition succeeds. Any `quality` value applies only to those diagnostic conditions.
+All three protocol entries report the mutable alias as `versionPinned:false`;
+small live checks do not pin the model version or establish full-quality results.

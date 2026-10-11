@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-const SECRET = /authorization|api[-_]?key|password|secret|token|cookie|credential/i;
+const SECRET = /authorization|api[-_]?key|password|secret|token|cookie|credential|^proxy$/i;
 export function redact(value, key = '', seen = new WeakSet()) {
     if (SECRET.test(key) && !/tokens|tokenCount|tokenUsage/i.test(key)) return '[redacted]';
     if (typeof value === 'string') {

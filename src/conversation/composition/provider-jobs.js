@@ -53,7 +53,7 @@ export function prepareProviderJob({ store, conversationId, turnId, memberRunId,
             await patch({ jobId: value.jobId, state: value.state, kind: value.kind });
             await onJob?.({ ...value, provider: connection.provider, providerJobRecordId: job.id });
         },
-        finish: () => patch({ state: 'completed' }, 'completed'),
+        finish: result => patch({ state: 'completed', ...(result ? { result } : {}) }, 'completed'),
         fail: () => patch({ state: 'unknown' }, 'failed'),
     };
 }

@@ -14,8 +14,10 @@ const terminal = turn => TERMINAL_STATES.includes(turn.status);
 const redact = value => {
     if (Array.isArray(value)) return value.map(redact);
     if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(apiKey|api_key|authorization|password|secret|accessToken|refreshToken|token|headers)$/i.test(key)).map(([key, item]) => [key, redact(item)]));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(apiKey|api_key|authorization|password|secret|accessToken|refreshToken|token|headers|proxy)$/i.test(key)).map(([key, item]) => [key, redact(item)]));
 };
+const omitProxy = value => Array.isArray(value) ? value.map(omitProxy) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).filter(([key]) => !/^proxy$/i.test(key)).map(([key, item]) => [key, omitProxy(item)])) : value;
 
 /** Synchronous single-writer repository. Every state change and its events share one SQLite commit. */
 export function createStore({ directory, now = () => new Date().toISOString(), id = randomUUID }) {
@@ -44,18 +46,37 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     } catch (error) { db?.close(); unlinkSync(lock); throw error; }
     let closed = false;
     let busy = false;
+    const listeners = new Set();
+    const notifications = [];
+    let transactionEvents;
+    let notifying = false;
+    const notify = events => {
+        notifications.push(...events.map(event => ({ event, recipients: [...listeners] })));
+        if (notifying) return;
+        notifying = true;
+        try {
+            while (notifications.length) {
+                const { event, recipients } = notifications.shift();
+                for (const listener of recipients) if (listeners.has(listener)) {
+                    try { Promise.resolve(listener(copy(event))).catch(() => {}); } catch { /* Committed writes cannot fail because a subscriber failed. */ }
+                }
+            }
+        } finally { notifying = false; }
+    };
     const read = () => { invariant(!closed, 'store-closed', 'Store is closed'); return unitOfWork(db); };
     const tx = fn => {
         invariant(!closed && !busy, 'store-busy', 'Nested writes are not allowed', 409);
-        busy = true; let began = false;
-        try { db.exec('BEGIN IMMEDIATE'); began = true; const state = read(); const result = fn(state); state[UNIT].flush(); db.exec('COMMIT'); return copy(result); } catch (error) { if (began) db.exec('ROLLBACK'); throw error; } finally { busy = false; }
+        busy = true; let began = false; let result;
+        const events = []; transactionEvents = events;
+        try { db.exec('BEGIN IMMEDIATE'); began = true; const state = read(); result = copy(fn(state)); state[UNIT].flush(); db.exec('COMMIT'); began = false; } catch (error) { if (began) db.exec('ROLLBACK'); throw error; } finally { busy = false; transactionEvents = undefined; }
+        notify(events); return result;
     };
     const get = (map, key) => { invariant(Object.hasOwn(map, key), 'not-found', 'Entity not found', 404); return map[key]; };
     const conv = (s, key) => get(s.conversations, key);
     const check = (actualRevision, expected) => invariant(Number.isSafeInteger(expected) && actualRevision === expected, 'revision-conflict', 'Revision changed', 409, { currentRevision: actualRevision });
     const idle = c => invariant(!c.activeTurnId, 'conversation-busy', 'Conversation has an active turn', 409);
     const current = record => record.versions.find(v => v.revision === record.revision && v.candidateId === record.candidateId && v.candidateRevision === record.candidateRevision);
-    const messages = (s, cid) => s[UNIT].values('messages', cid).filter(m => !m.deletedAt).map(m => copy(current(m)));
+    const messages = (s, cid) => s[UNIT].values('messages', cid).filter(m => !m.deletedAt).map(m => ({ ...copy(current(m)), userHidden: m.userHidden ?? false }));
     const resource = (s, rid, revision) => { const r = get(s.resources, rid); invariant(revision || !r.deletedAt, 'not-found', 'Resource deleted', 404); return get(r.versions, revision ?? r.revision); };
     const refs = (s, c, strict = true) => {
         const ids = new Set((c.explicitResourceRefs ?? c.resourceRefs).map(r => r.id));
@@ -113,9 +134,9 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
     const event = (s, cid, type, payload, tid) => {
         const c = conv(s, cid);
         const e = redact({ schemaVersion: SCHEMA_VERSION, eventId: id(), seq: s[UNIT].nextSeq(cid), conversationId: cid, turnId: tid, type, payload, entityRevisions: { contentRevision: c.contentRevision, memoryRevision: c.memoryRevision } });
-        s[UNIT].appendEvent(e); return e;
+        s[UNIT].appendEvent(e); transactionEvents?.push(copy(e)); return e;
     };
-    const validSource = (s, cid, ref) => { const m = s.messages[ref.messageId]; return m && m.conversationId === cid && !m.deletedAt && canonicalJson(sourceRef(current(m))) === canonicalJson({ messageId: ref.messageId, revision: ref.revision, candidateId: ref.candidateId ?? null, candidateRevision: ref.candidateRevision ?? null }); };
+    const validSource = (s, cid, ref) => { const m = s.messages[ref.messageId]; return m && m.conversationId === cid && !m.deletedAt && !m.userHidden && canonicalJson(sourceRef(current(m))) === canonicalJson({ messageId: ref.messageId, revision: ref.revision, candidateId: ref.candidateId ?? null, candidateRevision: ref.candidateRevision ?? null }); };
     const validResources = (s, refs = []) => refs.every(r => s.resources[r.id] && !s.resources[r.id].deletedAt && s.resources[r.id].revision === r.revision);
     const frozenResourceRefs = (s, turn) => s.snapshots[turn.snapshotId].conversation.resourceRefs;
     const validFrozenResources = (s, turn, dependencies = []) => dependencies.every(ref => frozenResourceRefs(s, turn).some(r => r.id === ref.id && r.revision === ref.revision));
@@ -234,7 +255,15 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         for (const tool of Object.values(s.tools)) if (tool.turnId === tid && ['intent', 'running'].includes(tool.status)) tool.status = 'unknown';
         event(s, c.id, `turn.${t.status}`, { turnId: tid, status: t.status, recovery }, tid); return t;
     };
+    const attachmentReferenced = (s, aid) => {
+        const references = value => Array.isArray(value) ? value.some(references) : value && typeof value === 'object' ? value.attachmentId === aid || value.id === aid || Object.values(value).some(references) : false;
+        return ENTITY_TABLES.filter(table => table !== 'attachments').some(table => Object.values(s[table]).some(references)) || Object.values(s.events).some(references);
+    };
     const api = {
+        subscribe: listener => {
+            invariant(!closed && typeof listener === 'function', 'invalid-listener', 'An open store and listener function are required');
+            listeners.add(listener); return () => listeners.delete(listener);
+        },
         createConversation: ({ title = '', settings = {}, resourceRefs = [] } = {}) => tx(s => { const c = { id: id(), title, contentRevision: 0, memoryRevision: 0, activeTurnId: null, resourceRefs: copy(resourceRefs), explicitResourceRefs: copy(resourceRefs), settings: { ...copy(settings), worldInfo: { ...copy(settings.worldInfo ?? {}), turnIndex: 0 } }, createdAt: now() }; s.conversations[c.id] = c; c.resourceRefs = refs(s, c); event(s, c.id, 'conversation.changed', {}); return c; }),
         listConversations: () => redact(Object.values(read().conversations)),
         getConversation: cid => snapshot(read(), cid),
@@ -357,6 +386,12 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
                 const b = { id: id(), conversationId: cid, kind: cmd.kind, content: cmd.content, locked: cmd.locked ?? false, origin: 'manual', sourceRefs: [], revision: 1, status: 'valid' };
                 s.memories[b.id] = b; c.memoryRevision++;
                 event(s, cid, 'memory.updated', { id: b.id, type: cmd.type });
+            } else if (cmd.type === 'summary.edit') {
+                const b = get(s.summaries, cmd.summaryId); invariant(b.conversationId === cid, 'not-found', 'Summary not found', 404);
+                check(b.revision, cmd.expectedBlockRevision);
+                invariant(typeof cmd.content === 'string' && cmd.content.trim() && cmd.content.length <= 16000, 'invalid-summary', 'Summary must contain 1 to 16000 characters');
+                b.content = cmd.content; b.origin = 'manual'; b.revision++; c.memoryRevision++;
+                invalidate(s, cid); event(s, cid, 'memory.updated', { id: b.id, type: cmd.type });
             } else if (cmd.type.startsWith('memory.')) {
                 const b = get(s.memories, cmd.memoryId ?? cmd.blockId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Memory not found', 404); check(b.revision, cmd.expectedBlockRevision);
                 if (cmd.type === 'memory.edit') { b.content = cmd.content; b.origin = 'manual'; } else if (cmd.type === 'memory.lock') b.locked = cmd.locked ?? true;
@@ -367,7 +402,7 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
                 if (cmd.type === 'conversation.configure') { const turnIndex = c.settings.worldInfo?.turnIndex ?? 0; c.settings = { ...c.settings, ...copy(cmd.settings) }; c.settings.worldInfo = { ...c.settings.worldInfo, turnIndex }; if (cmd.title !== undefined) c.title = cmd.title; if (cmd.resourceRefs !== undefined) c.explicitResourceRefs = copy(cmd.resourceRefs); c.resourceRefs = refs(s, c); } else if (cmd.type === 'fold.expand') { const b = get(s.folds, cmd.foldId ?? cmd.id); invariant(b.conversationId === cid, 'not-found', 'Fold not found', 404); b.status = 'stale'; b.revision++; c.memoryRevision++; } else {
                     const m = get(s.messages, cmd.messageId); invariant(m.conversationId === cid && !m.deletedAt, 'not-found', 'Message not found', 404);
                     if (cmd.type === 'message.delete') m.deletedAt = now();
-                    else if (cmd.type === 'message.edit') { if (cmd.media !== undefined) validateMedia(s, cmd.media); const old = current(m); const v = { ...copy(old), content: cmd.content ?? old.content, media: copy(cmd.media ?? old.media), revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateRevision: old.candidateId ? Math.max(...m.versions.filter(v => v.candidateId === old.candidateId).map(v => v.candidateRevision)) + 1 : null }; m.versions.push(v); select(m, v); } else if (cmd.type === 'candidate.select') { const v = [...m.versions].reverse().find(v => v.candidateId === cmd.candidateId && (cmd.candidateRevision === undefined || v.candidateRevision === cmd.candidateRevision)); invariant(v, 'not-found', 'Candidate not found', 404); select(m, v); } else invariant(false, 'invalid-command', 'Unknown command');
+                    else if (cmd.type === 'message.hide') { invariant(typeof cmd.hidden === 'boolean', 'invalid-command', 'hidden must be boolean'); m.userHidden = cmd.hidden; } else if (cmd.type === 'message.edit') { if (cmd.media !== undefined) validateMedia(s, cmd.media); const old = current(m); const v = { ...copy(old), content: cmd.content ?? old.content, media: copy(cmd.media ?? old.media), revision: Math.max(...m.versions.map(v => v.revision)) + 1, candidateRevision: old.candidateId ? Math.max(...m.versions.filter(v => v.candidateId === old.candidateId).map(v => v.candidateRevision)) + 1 : null }; m.versions.push(v); select(m, v); } else if (cmd.type === 'candidate.select') { const v = [...m.versions].reverse().find(v => v.candidateId === cmd.candidateId && (cmd.candidateRevision === undefined || v.candidateRevision === cmd.candidateRevision)); invariant(v, 'not-found', 'Candidate not found', 404); select(m, v); } else invariant(false, 'invalid-command', 'Unknown command');
                 }
                 c.contentRevision++; invalidate(s, cid); event(s, cid, 'conversation.changed', { type: cmd.type });
             }
@@ -404,7 +439,20 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         }),
         recordTool: input => tx(s => { const t = get(s.turns, input.turnId); invariant(t.conversationId === input.conversationId, 'invalid-tool', 'Tool conversation mismatch'); const old = Object.values(s.tools).find(r => r.turnId === input.turnId && r.memberRunId === input.memberRunId && r.toolCallId === input.toolCallId); if (old) { invariant(old.requestHash === input.requestHash, 'idempotency-conflict', 'Tool call payload changed', 409); return { record: old, replayed: true }; } live(s, t.id, t.attemptEpoch); const r = { ...copy(input), id: id(), status: 'intent', attemptEpoch: t.attemptEpoch }; s.tools[r.id] = r; event(s, t.conversationId, 'tool.call', { id: r.id, name: r.name }, t.id); return { record: r, replayed: false }; }),
         finishTool: (rid, result) => tx(s => { const r = get(s.tools, rid); live(s, r.turnId, r.attemptEpoch); invariant(['intent', 'running'].includes(r.status), 'late-callback', 'Tool already finalized', 409); invariant(['completed', 'failed', 'unknown'].includes(result.status), 'invalid-status', 'Invalid tool status'); Object.assign(r, redact(result)); event(s, r.conversationId, 'tool.result', { id: rid, status: r.status }, r.turnId); return r; }),
+        recoverTool: (rid, result) => tx(s => {
+            const r = get(s.tools, rid); const t = get(s.turns, r.turnId); idle(conv(s, r.conversationId));
+            invariant(terminal(t), 'turn-active', 'Tool recovery requires a terminal turn', 409);
+            invariant(['completed', 'failed', 'unknown'].includes(result.status), 'invalid-status', 'Invalid recovery status');
+            const value = redact(Object.fromEntries(['status', 'result', 'usage', 'error'].filter(key => result[key] !== undefined).map(key => [key, result[key]])));
+            const fingerprint = canonicalJson(value);
+            if (r.recoveryFingerprint === fingerprint) return { ...r, replayed: true };
+            invariant(r.status === 'unknown', 'idempotency-conflict', 'Only unknown tool results can be recovered', 409);
+            Object.assign(r, value, { recoveryFingerprint: fingerprint, recoveredAt: now() });
+            event(s, r.conversationId, 'tool.recovered', { id: rid, status: r.status }, r.turnId);
+            return { ...r, replayed: false };
+        }),
         getTool: rid => redact(get(read().tools, rid)),
+        listTools: cid => { const s = read(); conv(s, cid); return redact(s[UNIT].values('tools', cid)); },
         saveTrace: input => tx(s => {
             conv(s, input.conversationId);
             const traceId = input.id ?? id();
@@ -415,7 +463,21 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
             const trace = redact({ ...previous, ...copy(input), id: traceId }); s.traces[traceId] = trace; return trace;
         }),
         getTrace: rid => get(read().traces, rid),
-        listTraces: cid => Object.values(read().traces).filter(t => t.conversationId === cid),
+        listTraces: cid => Object.values(read().traces).filter(t => !cid || t.conversationId === cid),
+        pruneTraces: records => tx(s => {
+            for (const { id: tid, fingerprint } of records) {
+                const trace = get(s.traces, tid); idle(conv(s, trace.conversationId));
+                invariant(!trace.turnId || terminal(get(s.turns, trace.turnId)), 'turn-active', 'Active traces cannot be pruned', 409);
+                invariant(canonicalJson(trace) === fingerprint, 'cleanup-conflict', 'Trace changed since preview', 409);
+                const usage = trace.usage ?? trace.events?.filter(e => e.type === 'usage.updated' && e.usage).at(-1)?.usage;
+                const kept = Object.fromEntries(['id', 'conversationId', 'turnId', 'memberRunId', 'kind', 'category', 'parentTraceId', 'status', 'createdAt', 'finishedAt'].filter(k => trace[k] !== undefined).map(k => [k, trace[k]]));
+                if (trace.requestPlan) kept.requestPlan = {};
+                if (trace.providerJob) kept.providerJob = { resumed: trace.providerJob.resumed, originalTraceId: trace.providerJob.originalTraceId };
+                if (usage) kept.usage = copy(usage);
+                s.traces[tid] = { ...kept, detailsPrunedAt: now() };
+            }
+            return { pruned: records.length };
+        }),
         getMessageHistory: (cid, mid) => {
             const s = read(); conv(s, cid); const m = get(s.messages, mid);
             invariant(m.conversationId === cid, 'not-found', 'Message not found', 404);
@@ -430,18 +492,17 @@ export function createStore({ directory, now = () => new Date().toISOString(), i
         }),
         getAttachment: aid => copy(get(read().attachments, aid)),
         listAttachments: () => Object.values(read().attachments),
+        listUnreferencedAttachments: () => { const s = read(); return Object.values(s.attachments).filter(a => !attachmentReferenced(s, a.id)); },
         deleteAttachment: aid => tx(s => {
             get(s.attachments, aid);
-            const references = value => Array.isArray(value) ? value.some(references) : value && typeof value === 'object' ? value.attachmentId === aid || Object.values(value).some(references) : false;
-            for (const table of ENTITY_TABLES.filter(table => table !== 'attachments')) invariant(!Object.values(s[table]).some(references), 'attachment-in-use', 'Attachment is referenced by retained data', 409);
-            invariant(!Object.values(s.events).some(references), 'attachment-in-use', 'Attachment is referenced by events', 409);
+            invariant(!attachmentReferenced(s, aid), 'attachment-in-use', 'Attachment is referenced by retained data', 409);
             delete s.attachments[aid]; return { deleted: true };
         }),
         validateBackup: data => {
             invariant(read()[UNIT].isEmpty(), 'restore-not-empty', 'Restore requires an entirely empty store', 409);
             validateBackupData(data); return { valid: true };
         },
-        exportData: () => materialize(read()),
+        exportData: () => omitProxy(materialize(read())),
         restoreData: data => tx(s => {
             invariant(s[UNIT].isEmpty(), 'restore-not-empty', 'Restore requires an entirely empty store', 409);
             const restored = validateBackupData(data);

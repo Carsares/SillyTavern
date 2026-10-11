@@ -1,3 +1,4 @@
+import { createConnectionFetch } from '../../providers/core/proxy.js';
 import { createSdkGateway } from './index.js';
 import { createRestrictedEnvironment, loadSdk } from './environment.js';
 import { fail, metadata, positiveLimit, preflight } from './contracts.js';
@@ -33,12 +34,14 @@ export function createSdkExecutor(executor, dependencies, execute) {
             args.signal?.addEventListener('abort', onAbort, { once: true });
             if (args.signal?.aborted) controller.abort();
             const timer = setTimeout(() => controller.abort(), timeoutMs);
-            let gateway, environment, cleanupSdk, gatewayAbort, outcome, failure;
+            let gateway, environment, cleanupSdk, gatewayAbort, outcome, failure, transport;
             try {
                 controller.signal.throwIfAborted();
+                if (connection.proxy && fetch === globalThis.fetch) throw fail('invalid-transport', 'Native fetch cannot honor a configured proxy', 422);
+                if (fetch === undefined) transport = createConnectionFetch(connection);
                 const sdk = injectedSdk ?? await loadSdk(executor);
                 gateway = gatewayFactory({ protocol: executor === 'claude' ? 'anthropic' : 'responses', connection,
-                    tools: args.tools ?? [], limits, signal: controller.signal, fetch, countTokens,
+                    tools: args.tools ?? [], limits, signal: controller.signal, fetch: fetch ?? transport.fetch, countTokens,
                     inputBudget: capabilities.inputBudget, maxOutputTokens: capabilities.maxOutputTokens, transcript,
                     beforeRequest: args.beforeRequest, onRequest, onEvent: args.onEvent });
                 gatewayAbort = () => controller.abort();
@@ -69,7 +72,7 @@ export function createSdkExecutor(executor, dependencies, execute) {
                 if (gatewayAbort) gateway.signal.removeEventListener('abort', gatewayAbort);
                 controller.abort();
                 const errors = [];
-                for (const close of [cleanupSdk, () => environment?.close(), () => gateway?.close()]) {
+                for (const close of [cleanupSdk, () => environment?.close(), () => gateway?.close(), () => transport?.close()]) {
                     try { await close?.(); } catch { errors.push(true); }
                 }
                 if (errors.length) failure ??= fail('sdk-shutdown-incomplete', 'One or more SDK resources failed to close', 503);

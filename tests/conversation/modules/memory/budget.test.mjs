@@ -55,3 +55,26 @@ test('nested auxiliary compression batches use selected limits and retain its re
     assert.ok(request.estimatedInputTokens <= 5000); assert.ok(request.messages.length > 0 && request.messages.length < 99);
     assert.ok(store.commits[0].resourceRefs.some(ref => ref.id === 'summary' && ref.revision === 4));
 });
+
+test('foreground prefers last 20 messages, passes half-budget target and records bounded batches', async () => {
+    const store = fakeStore({ completed: 40 }); let request;
+    const memory = createMemoryService({ store, generate: async input => { request = input; return { chapter: 'brief' }; } });
+    const { proposal } = await memory.prepareCompact(store.getConversation());
+    assert.equal(request.compressionPolicy.targetTokens, 16384);
+    assert.deepEqual(proposal.compressionPolicy.retainedMessageIds, store.snapshot.messages.slice(-20).map(m => m.id));
+    assert.ok(proposal.folds[0].sourceRefs.every(r => Number(r.messageId.slice(1)) <= 20));
+    assert.equal(request.compressionPolicy.summaryTargetTokens, Math.floor(Buffer.byteLength(request.messages.map(m => m.content).join('')) / 2));
+    assert.deepEqual(memory.combineProposals([proposal], store.getConversation()).compressionPolicies, [proposal.compressionPolicy]);
+});
+
+test('recent preferences explicitly relax for short history and oversized mandatory last turn', async () => {
+    const store = fakeStore({ completed: 3 });
+    store.snapshot.messages.at(-1).content = 'x'.repeat(17000);
+    const memory = createMemoryService({ store, generate: async () => ({ chapter: 'summary' }) });
+    const { proposal } = await memory.prepareCompact(store.getConversation());
+    const policy = proposal.compressionPolicy;
+    assert.deepEqual(policy.retainedMessageIds, ['m3']);
+    assert.ok(policy.relaxReasons.includes('latest-complete-turn-exceeds-recent-token-preference'));
+    assert.ok(!proposal.folds[0].sourceRefs.some(r => r.messageId === 'm3'));
+    assert.equal(store.commits.length, 0);
+});

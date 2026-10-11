@@ -11,6 +11,7 @@ export function fakeStore({ completed = 5, active = false, settings = {} } = {})
     const jobs = new Map(), tools = new Map(), commits = [];
     let next = 0;
     return { snapshot, turns, jobs, tools, commits,
+        listTools: cid => clone([...tools.values()].filter(record => record.conversationId === cid)),
         getConversation: () => clone(snapshot), getTurn: id => clone(turns.get(id)),
         commitDerived(cid, proposal) {
             if (snapshot.conversation.activeTurnId && proposal.turnId !== snapshot.conversation.activeTurnId) throw new ProtocolError('conversation-busy', 'busy');

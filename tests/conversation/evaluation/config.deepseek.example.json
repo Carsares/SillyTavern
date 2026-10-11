@@ -1,0 +1,113 @@
+{
+  "allowPaid": false,
+  "cacheModes": [
+    "uncontrolled"
+  ],
+  "batchSize": 50,
+  "budget": {
+    "maxCostUsd": 0,
+    "maxRequests": 0,
+    "maxInputTokens": 0,
+    "maxOutputTokens": 0,
+    "deadlineMs": 60000
+  },
+  "executors": {
+    "pi": {
+      "modelVersion": "DeepSeek-V4.1-Flash (documented alias resolution; not pinned)",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "deepseek",
+        "baseUrl": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 1000000,
+        "workingBudget": 950000,
+        "maxOutputTokens": 8192,
+        "reasoningEnabled": false,
+        "reasoning": "off",
+        "pricing": {
+          "inputUsdPerMillionUpper": 0.3,
+          "outputUsdPerMillionUpper": 1.2,
+          "perRequestUsdUpper": 0,
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/ verified 2026-10-11; peak cache-miss upper bounds, no cache-hit discount"
+        }
+      }
+    },
+    "claude": {
+      "modelVersion": "DeepSeek-V4.1-Flash (documented alias resolution; not pinned)",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "anthropic",
+        "baseUrl": "https://api.deepseek.com/anthropic",
+        "model": "deepseek-v4-flash",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 1000000,
+        "workingBudget": 950000,
+        "maxOutputTokens": 8192,
+        "reasoningEnabled": false,
+        "reasoning": "off",
+        "pricing": {
+          "inputUsdPerMillionUpper": 0.3,
+          "outputUsdPerMillionUpper": 1.2,
+          "perRequestUsdUpper": 0,
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/ verified 2026-10-11; peak cache-miss upper bounds, no cache-hit discount"
+        }
+      },
+      "memoryConnection": {
+        "provider": "deepseek",
+        "baseUrl": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 1000000,
+        "workingBudget": 950000,
+        "maxOutputTokens": 8192,
+        "reasoningEnabled": false,
+        "reasoning": "off",
+        "pricing": {
+          "inputUsdPerMillionUpper": 0.3,
+          "outputUsdPerMillionUpper": 1.2,
+          "perRequestUsdUpper": 0,
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/ verified 2026-10-11; peak cache-miss upper bounds, no cache-hit discount"
+        }
+      }
+    },
+    "codex": {
+      "modelVersion": "DeepSeek-V4.1-Flash (documented alias resolution; not pinned)",
+      "maxRequestsPerBatch": 4,
+      "connection": {
+        "provider": "openai-compatible",
+        "baseUrl": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 1000000,
+        "workingBudget": 950000,
+        "maxOutputTokens": 8192,
+        "reasoningEnabled": false,
+        "reasoning": "off",
+        "pricing": {
+          "inputUsdPerMillionUpper": 0.3,
+          "outputUsdPerMillionUpper": 1.2,
+          "perRequestUsdUpper": 0,
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/ verified 2026-10-11; peak cache-miss upper bounds, no cache-hit discount"
+        }
+      },
+      "memoryConnection": {
+        "provider": "deepseek",
+        "baseUrl": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "apiKeyEnv": "EVALUATION_API_KEY",
+        "contextWindow": 1000000,
+        "workingBudget": 950000,
+        "maxOutputTokens": 8192,
+        "reasoningEnabled": false,
+        "reasoning": "off",
+        "pricing": {
+          "inputUsdPerMillionUpper": 0.3,
+          "outputUsdPerMillionUpper": 1.2,
+          "perRequestUsdUpper": 0,
+          "source": "https://api-docs.deepseek.com/quick_start/pricing/ verified 2026-10-11; peak cache-miss upper bounds, no cache-hit discount"
+        }
+      }
+    }
+  }
+}

@@ -146,3 +146,55 @@ test('actual tool-step budget includes tool schemas and preserves failed state',
     assert.equal(turn.error.code, 'budget-blocked');
     await runtime.close();
 });
+
+test('committed source events coalesce refreshes, expose state and unsubscribe on close', async () => {
+    let listener, unsubscribed = false, calls = 0;
+    const events = [];
+    const store = { subscribe(fn) { listener = fn; return () => { unsubscribed = true; }; },
+        getConversation: () => ({ conversation: { id: 'c', activeTurnId: null } }), appendEvent: (id, type, payload) => events.push({ id, type, payload }) };
+    const retrieval = { invalidate() {}, status: () => ({ status: 'not-ready', semanticReady: false, count: 0 }),
+        async index() { calls++; throw new Error('private-token'); } };
+    const runtime = createRuntime({ store, retrieval });
+    listener({ conversationId: 'c', type: 'conversation.changed' });
+    listener({ conversationId: 'c', type: 'memory.updated' });
+    listener({ conversationId: 'c', type: 'retrieval.updated' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+    assert.equal(runtime.retrievalStatus('c').status, 'not-ready');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].payload.error.code, 'index-failed');
+    assert.equal(JSON.stringify(events).includes('private-token'), false);
+    await runtime.close(); assert.equal(unsubscribed, true);
+});
+
+test('successful retrieval results are validated blocks in the runtime compiler snapshot', async () => {
+    let received;
+    const retrieval = { async search() { return [{ content: 'retrieved detail', sourceRefs: [], kind: 'message' }]; }, async index() {} };
+    const { runtime } = setup(fakeExecutor(), { retrieval, compile(snapshot) { received = snapshot.retrieval; return { messages: [], effects: [], budget: {} }; } });
+    runtime.start('c', { ...request, type: 'auxiliary' });
+    await runtime.wait('turn');
+    assert.equal(received[0].status, 'valid');
+    assert.equal(received[0].id, 'retrieved-0');
+    await runtime.close();
+});
+
+for (const notify of [true, false]) test(`fatal tool outcomes cannot become successful turns even when executor swallows errors (callback=${notify})`, async () => {
+    let fatal, onFatal, nextRequest = false;
+    const tools = { definitions: () => [{ name: 'generate_image', parameters: { type: 'object' } }],
+        bindTurn(input) { onFatal = input.onFatal; }, beginRound() {}, release() {},
+        fatalError: () => fatal,
+        async execute() { fatal = new ProtocolError('tool-result-unknown', 'External result unknown', 409); fatal.fatal = true; if (notify) onFatal(fatal); throw fatal; } };
+    const executor = { async runTurn(options) {
+        try { await options.tools[0].execute('call', {}, options.signal); } catch { /* Simulate SDK converting this into a model-visible tool error. */ }
+        assert.equal(options.signal.aborted, notify);
+        try { await options.beforeRequest({ messages: [] }); nextRequest = true; } catch (error) { assert.equal(error.code, 'tool-result-unknown'); }
+        return { content: 'Must not be successful', finishReason: 'stop' };
+    } };
+    const { runtime } = setup(executor, { tools });
+    runtime.start('c', request);
+    const turn = await runtime.wait('turn');
+    assert.equal(turn.status, 'failed');
+    assert.equal(turn.error.code, 'tool-result-unknown');
+    assert.equal(nextRequest, false);
+    await runtime.close();
+});

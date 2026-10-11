@@ -1,4 +1,4 @@
-import { computeBudget, groupHistory } from '../../../public/shared/conversation/policy/index.js';
+import { computeBudget, groupHistory, BUDGET_DEFAULTS } from '../../../public/shared/conversation/policy/index.js';
 import { invariant, sourceRef } from '../../../public/shared/conversation/schemas/index.js';
 
 export const SUMMARY_PROMPT_RESERVE = 2048;
@@ -37,4 +37,37 @@ export function selectBatch(snapshot, messages, { summaries, memories, sourceRef
     invariant(selected.length > 0, 'budget-blocked', 'The earliest complete turn and summary dependencies exceed the auxiliary input budget', 409,
         { budget, reservedTokens: SUMMARY_PROMPT_RESERVE });
     return { messages: selected, budget, estimatedInputTokens: measure(selected) };
+}
+
+/** Preferences never split turns; the most recent complete turn is mandatory. */
+export function compressionPolicy(snapshot, messages) {
+    const groups = groupHistory(messages).filter(group => group.complete);
+    const primary = snapshot.resources.find(r => r.id === snapshot.settings?.connectionId && r.kind === 'connection');
+    const workingBudget = computeBudget(primary?.data ?? {}).workingBudget;
+    const targetTokens = Math.floor(workingBudget * BUDGET_DEFAULTS.compressionRatio);
+    const bytes = items => Buffer.byteLength(items.map(m => m.content ?? '').join(''), 'utf8');
+    const reasons = [];
+    let retained = [], count = 0;
+    for (const group of [...groups].reverse()) {
+        if (retained.length && (count >= BUDGET_DEFAULTS.recentMessages || bytes([...group.messages, ...retained.flatMap(g => g.messages)]) > BUDGET_DEFAULTS.recentTokens)) break;
+        retained.unshift(group); count += group.messages.length;
+    }
+    if (count < BUDGET_DEFAULTS.recentMessages) reasons.push('recent-message-preference-exceeds-available-history-or-token-cap');
+    if (bytes(retained.flatMap(g => g.messages)) > BUDGET_DEFAULTS.recentTokens) reasons.push('latest-complete-turn-exceeds-recent-token-preference');
+    // If all history falls inside the preferred suffix, or the suffix alone is
+    // over the target, release oldest complete turns while always keeping one.
+    if (retained.length === groups.length && groups.length > 1) {
+        retained = retained.slice(1);
+        reasons.push('recent-message-preference-relaxed-to-allow-progress');
+    }
+    while (retained.length > 1 && bytes(retained.flatMap(g => g.messages)) > targetTokens) {
+        retained.shift();
+        if (!reasons.includes('recent-preference-exceeds-compression-target')) reasons.push('recent-preference-exceeds-compression-target');
+    }
+    const keep = new Set(retained.map(g => g.id));
+    return { messages: groups.filter(g => !keep.has(g.id)).flatMap(g => g.messages),
+        policy: { compressionRatio: BUDGET_DEFAULTS.compressionRatio, targetTokens, recentMessages: BUDGET_DEFAULTS.recentMessages, recentTokens: BUDGET_DEFAULTS.recentTokens,
+            retainedMessageIds: retained.flatMap(g => g.messages.map(m => m.id)),
+            retainedEstimatedTokens: bytes(retained.flatMap(g => g.messages)), relaxReasons: reasons,
+            estimateMethod: 'utf8-bytes-upper-bound' } };
 }

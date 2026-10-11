@@ -26,7 +26,7 @@ export function resolveSources(block, snapshot, visiting = new Set()) {
         if (!inherited) return null;
         refs.push(...inherited);
     }
-    const current = new Map((snapshot.messages ?? []).filter(message => !message.deletedAt).map(message => [message.id, sourceKey(sourceRef(message))]));
+    const current = new Map((snapshot.messages ?? []).filter(message => !message.deletedAt && !message.userHidden).map(message => [message.id, sourceKey(sourceRef(message))]));
     if (refs.some(ref => current.get(ref.messageId) !== sourceKey(ref))) return null;
     return uniqueSources(refs);
 }

@@ -80,3 +80,59 @@ test('ordinary query failures retain keywords while provider AbortError propagat
         else assert.equal((await retrieval.search('c', 'dragon')).length, 5);
     }
 });
+
+test('semantic lifecycle is observable, sanitized and source changes cannot publish stale ready data', async () => {
+    const store = fakeStore(), events = [];
+    let finish;
+    const retrieval = createRetrieval({ store, onStatus: (id, state) => events.push({ id, ...state }), embed: ({ texts }) => new Promise(resolve => { finish = () => resolve(vectors(texts)); }) });
+    assert.equal(retrieval.status('c').status, 'not-ready');
+    const pending = retrieval.index('c');
+    assert.equal(retrieval.status('c').status, 'indexing');
+    store.snapshot.messages[0].revision++;
+    finish(); await pending;
+    assert.equal(retrieval.status('c').status, 'stale');
+    assert.equal(retrieval.status('c').semanticReady, false);
+    const next = retrieval.index('c'); finish(); await next;
+    assert.equal(retrieval.status('c').semanticReady, true);
+    assert.deepEqual(events.map(event => event.status), ['indexing', 'stale', 'indexing', 'ready']);
+    retrieval.invalidate('c');
+    assert.equal(retrieval.status('c').status, 'stale');
+});
+
+test('query failures and incompatible embeddings remain visible while keywords return valid provenance', async () => {
+    const store = fakeStore();
+    const retrieval = createRetrieval({ store, embed: async ({ texts, purpose }) => {
+        if (purpose === 'query') throw new Error('Bearer private-test-secret');
+        return vectors(texts);
+    } });
+    await retrieval.index('c');
+    const results = await retrieval.search('c', 'dragon');
+    assert.equal(results.length, 5);
+    assert.ok(results.every(item => item.status === 'valid' && item.kind === 'message' && item.key.startsWith('message:')));
+    assert.equal(retrieval.status('c').status, 'error');
+    assert.equal(retrieval.status('c').error.code, 'query-embedding-failed');
+    assert.equal(JSON.stringify(retrieval.status('c')).includes('private-test-secret'), false);
+});
+
+test('invalidated in-flight index cannot restore ready or erase the newer index', async () => {
+    const store = fakeStore(); const finishers = [];
+    const retrieval = createRetrieval({ store, embed: ({ texts }) => new Promise(resolve => finishers.push(() => resolve(vectors(texts)))) });
+    const first = retrieval.index('c'); retrieval.invalidate('c');
+    const second = retrieval.index('c'); finishers[1](); await second;
+    finishers[0](); assert.equal((await first).status, 'superseded');
+    assert.equal(retrieval.status('c').status, 'ready');
+});
+
+test('hidden sources and their derived facts are absent even with a previously indexed snapshot', async () => {
+    const store = fakeStore();
+    const source = store.snapshot.messages[0];
+    store.snapshot.memories.push({ id: 'hidden-memory', revision: 1, status: 'valid', content: 'dragon derived', sourceRefs: [{ messageId: source.id, revision: source.revision, candidateId: source.candidateId, candidateRevision: source.candidateRevision }] });
+    const retrieval = createRetrieval({ store, embed: async ({ texts }) => vectors(texts) });
+    await retrieval.index('c');
+    const old = store.getConversation();
+    source.userHidden = true;
+    const found = await retrieval.search('c', 'dragon', { snapshot: old });
+    assert.equal(found.length, 4);
+    assert.ok(found.every(item => item.sourceRefs.every(ref => ref.messageId !== source.id)));
+    assert.equal(retrieval.status('c').status, 'stale');
+});

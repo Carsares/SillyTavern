@@ -6,7 +6,7 @@ import { blocked, createBudgetTransport, pipelineQuote } from './transport-budge
 import { seedBackup } from './seed.mjs';
 
 const RUN_ROOT = fileURLToPath(new URL('./.runs/', import.meta.url));
-const NATIVE = new Set(['openai', 'openai-compatible', 'openai_compatible']);
+const NATIVE = new Set(['openai', 'openai-compatible', 'openai_compatible', 'deepseek']);
 const primaryModelPresent = connections => connections.every(c => typeof c.model === 'string' && c.model.length > 0);
 const finitePositive = n => Number.isSafeInteger(n) && n > 0;
 
@@ -21,7 +21,7 @@ export function createEvaluationAdapter({ executor = 'pi', config = {}, env = pr
         if (apiKeyEnv && !env[apiKeyEnv]) reason = 'credential-environment-missing';
         const selectedExecutor = role === 'primary' ? executor : data.executor ?? 'native';
         if (!['pi', 'native', 'claude', 'codex'].includes(selectedExecutor)) reason = 'unknown-executor';
-        if ((['pi', 'native'].includes(selectedExecutor) && !NATIVE.has(data.provider)) || typeof data.provider !== 'string' || !data.provider || !finitePositive(data.contextWindow) || !finitePositive(data.workingBudget)
+        if ((role === 'embedding' && data.provider === 'deepseek') || (['pi', 'native'].includes(selectedExecutor) && !NATIVE.has(data.provider)) || typeof data.provider !== 'string' || !data.provider || !finitePositive(data.contextWindow) || !finitePositive(data.workingBudget)
             || (role !== 'embedding' && !finitePositive(data.maxOutputTokens))) reason = 'valid-protocol-connection-required';
         try { const u = new URL(data.baseUrl); if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash) reason = 'invalid-provider-url'; } catch { reason = 'invalid-provider-url'; }
         if (data.auxiliary) reason = 'use-explicit-evaluation-connections';
@@ -30,12 +30,22 @@ export function createEvaluationAdapter({ executor = 'pi', config = {}, env = pr
     if (!['pi', 'native', 'claude', 'codex'].includes(executor)) reason = 'unknown-executor';
     if (config.tools?.some(name => !['recall_memory', 'search_lore', 'roll_dice', 'get_time'].includes(name))) reason = 'unpriced-side-effect-tool';
     if (!primaryModelPresent(connections)) reason ??= 'model-required';
-    if (!config.modelVersion) reason ??= 'model-version-required';
+    const primary = connections[0];
+    let deepseekEndpoint = false;
+    try { deepseekEndpoint = new URL(primary?.baseUrl).hostname === 'api.deepseek.com'; } catch {}
+    const deepseekAlias = (primary?.provider === 'deepseek' || deepseekEndpoint) && ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'].includes(primary.model);
+    const modelResolution = deepseekAlias ? {
+        requestedModel: primary.model, documentedResolvedModel: 'DeepSeek-V4.1-Flash', versionPinned: false,
+        basis: 'provider-documentation', responseVerified: false, verifiedAt: '2026-10-11',
+        source: 'https://api-docs.deepseek.com/quick_start/pricing/',
+    } : null;
+    const modelVersion = deepseekAlias ? modelResolution.documentedResolvedModel : config.modelVersion;
+    if (!modelVersion) reason ??= 'model-version-required';
+    if (config.proxy != null || connections.some(connection => connection.proxy != null)) reason = 'evaluation-proxy-unsupported';
     const maxRequests = config.maxRequestsPerBatch;
     let quote;
     if (!reason) { try { quote = pipelineQuote(connections, maxRequests); } catch (error) { reason = error.code; } }
-    const primary = connections[0];
-    const capabilities = { executor, model: primary?.model ?? '', modelVersion: config.modelVersion ?? '',
+    const capabilities = { executor, model: primary?.model ?? '', modelVersion: modelVersion ?? '', modelResolution,
         contextWindow: primary?.contextWindow, maxOutputTokens: primary?.maxOutputTokens,
         budgets: ['32k', '64k', '128k', 'full'], runtimeWired: !reason, verified: false,
         cacheControl: false, cacheModes: ['uncontrolled'], blockedReason: reason ?? null,
@@ -106,7 +116,7 @@ export function createEvaluationAdapter({ executor = 'pi', config = {}, env = pr
                 request.signal?.throwIfAborted();
                 if (result.status !== 'completed') throw blocked(result.error?.code ?? 'evaluation-turn-failed');
                 return { output: result.content, usage, cache: { mode: 'uncontrolled', sessionKey: request.condition.sessionKey, verified: false },
-                    execution: { stack: 'composition/runtime/compiler/memory', executor, backgroundIncluded: true } };
+                    execution: { stack: 'composition/runtime/compiler/memory', executor, modelResolution, backgroundIncluded: true } };
             } catch (error) {
                 const failure = blocked(/^[a-z][a-z0-9-]{0,100}$/.test(error?.code ?? '') ? error.code : 'evaluation-run-failed');
                 failure.dispatched = transport.dispatched > 0;

@@ -81,3 +81,44 @@ test('real gateway emits normalized per-request and aggregate usage for a stream
     assert.equal(updates.length, 2); assert.deepEqual(numbers(updates[0]), expected);
     assert.deepEqual(updates[1].usage, usage); assert.equal(updates[0].usage.totalTokens, 120);
 });
+
+test('SDK gateway costs share provider normalization, distinguish estimates and preserve unknown', () => {
+    const record = rawUsage => ({ complete: true, rawUsage: { ...responses, ...rawUsage } });
+    const actual = aggregateUsage('responses', [record({ cost: 0.02 }), record({ cost: 0 })], { provider: 'openrouter' });
+    assert.equal(actual.costUsd, 0.02); assert.equal(actual.costSource, 'provider'); assert.equal(actual.costEstimated, false);
+    assert.equal(actual.requests[1].costUsd, 0);
+    assert.equal(actual.requests[0].rawUsage.cost, 0.02);
+    const estimated = aggregateUsage('responses', [{ ...record({}), sdkUsage: { cost: { total: 0.03 } }, sdkEstimated: true }]);
+    assert.equal(estimated.costUsd, 0.03); assert.equal(estimated.costSource, 'sdk-estimated'); assert.equal(estimated.costEstimated, true);
+    const unlabelled = aggregateUsage('responses', [{ ...record({}), sdkUsage: { cost: { total: 0.03 } } }]);
+    assert.equal(unlabelled.costUsd, null);
+    const mixed = aggregateUsage('responses', [record({ costUsd: 0.02 }), record({ costUsd: 0.03, costEstimated: true })]);
+    assert.equal(mixed.costUsd, 0.05); assert.equal(mixed.costSource, 'mixed'); assert.equal(mixed.costEstimated, true);
+    for (const usage of [aggregateUsage('responses', []), aggregateUsage('responses', [record({ costUsd: 0.02 }), record({})]),
+        aggregateUsage('responses', [record({ cost: 5 })], { provider: 'openai' })]) {
+        assert.equal(usage.costUsd, null); assert.equal(usage.costEstimated, null); assert.equal(usage.costSource, null);
+    }
+});
+
+test('actual gateway cost fields survive provider response, events and optional missing request cost', async t => {
+    const transcript = createTranscript({}, { messages: [{ role: 'user', content: 'Hello' }] });
+    const updates = [];
+    let index = 0;
+    const gateway = createSdkGateway({ protocol: 'responses', connection: { provider: 'openrouter', model: 'synthetic', baseUrl: 'https://test.invalid' },
+        transcript, inputBudget: 10000, maxOutputTokens: 100, onEvent: event => updates.push(event),
+        fetch: async () => Response.json({ status: 'completed', output: [], usage: { ...responses, ...[{ cost: 0.01 }, { costUsd: 0.02, costEstimated: true }, {}][index++] } }) });
+    t.after(() => gateway.close());
+    const call = () => gateway.handle(new Request('http://localhost/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${gateway.token}` },
+        body: JSON.stringify({ model: 'synthetic', input: [{ role: 'user', content: transcript.prompt }] }) }));
+    for (let i = 0; i < 2; i++) assert.equal((await call()).status, 200);
+    let usage = gateway.result().usage;
+    assert.equal(usage.costUsd, 0.03); assert.equal(usage.costSource, 'mixed'); assert.equal(usage.costEstimated, true);
+    const events = updates.filter(event => event.type === 'usage.updated');
+    assert.equal(events[0].costUsd, 0.01); assert.equal(events[0].costEstimated, false);
+    assert.equal(events[1].costUsd, 0.02); assert.equal(events[1].costEstimated, true);
+    assert.deepEqual(events[1].usage, usage);
+    assert.equal((await call()).status, 200);
+    usage = gateway.result().usage;
+    assert.equal(usage.costUsd, null);
+    assert.equal(usage.requests[0].costUsd, 0.01); assert.equal(usage.requests[2].costUsd, null);
+});

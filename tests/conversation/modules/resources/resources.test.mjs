@@ -32,3 +32,20 @@ test('group selects frozen unique members and validates manual requests', () => 
     assert.throws(() => groups.select(snapshot, { members: ['c'] }), /belong/);
     assert.equal(groups.snapshot(snapshot, { characterId: 'a' }).resources.filter(resource => resource.kind === 'character').length, 1);
 });
+
+test('proxy is validated, preserved when omitted, explicitly cleared and redacted', async () => {
+    const { createRedactor } = await import('../../../../src/conversation/providers/core/index.js');
+    const privateProxy = { url: 'http://proxy-user:proxy-password@localhost:8080' };
+    const data = { provider: 'custom', model: 'm', proxy: privateProxy };
+    let saved;
+    const store = { getResource: () => ({ kind: 'connection' }), getConnection: () => ({ kind: 'connection', name: 'one', data }), updateResource(id, input) { saved = input; return {}; } };
+    const service = createResourceService({ store });
+    service.updateResource('c', { expectedRevision: 1, data: { provider: 'custom', model: 'new' } });
+    assert.deepEqual(saved.data.proxy, privateProxy);
+    service.updateResource('c', { expectedRevision: 1, data: { provider: 'custom', model: 'new', proxy: null } });
+    assert.equal(saved.data.proxy, null);
+    assert.throws(() => validateResource({ kind: 'connection', name: 'bad', data: { ...data, proxy: { url: 'socks://localhost:8080' } } }), { code: 'invalid-proxy' });
+    const redacted = JSON.stringify(createRedactor(data)({ proxy: privateProxy, error: `Proxy failure ${privateProxy.url} proxy-user proxy-password` }));
+    assert.equal(redacted.includes('proxy-user'), false); assert.equal(redacted.includes('proxy-password'), false);
+    assert.equal(JSON.stringify(redact({ proxy: privateProxy })).includes('localhost'), false);
+});

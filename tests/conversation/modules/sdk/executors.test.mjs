@@ -8,8 +8,9 @@ const connection = { model: 'synthetic', baseUrl: 'https://upstream.invalid/v1',
 const requestPlan = { messages: [{ role: 'system', content: 'Our instructions' }, { role: 'user', content: 'Hello', id: 'm1', revision: 2 }] };
 
 function harness(kind, { failAfterRequest = false, failEnvironment = false } = {}) {
-    let gateway, closedSdk = false, closedGateway = false, closedEnvironment = false, seenPrompt, options, sent, threadConfig;
+    let gateway, closedSdk = false, closedGateway = false, closedEnvironment = false, seenPrompt, options, sent, threadConfig, transportFetch;
     const gatewayFactory = config => {
+        transportFetch = config.fetch;
         gateway = createSdkGateway({ ...config, fetch: async (_url, init) => {
             sent = JSON.parse(init.body);
             assert.ok(!JSON.stringify(sent).includes('CONVERSATION_TRANSCRIPT_'));
@@ -44,7 +45,7 @@ function harness(kind, { failAfterRequest = false, failEnvironment = false } = {
         if (failEnvironment) throw new Error('failed');
         return { directory: '/synthetic-isolation', env: { HOME: '/synthetic-isolation' }, security: { enforced: true, mode: 'unit-test-double', sdkRuntimeVerified: false }, close: async () => { closedEnvironment = true; } };
     };
-    return { dependencies: { sdk, gatewayFactory, environmentFactory }, state: () => ({ closedSdk, closedGateway, closedEnvironment, seenPrompt, options, sent, threadConfig }) };
+    return { dependencies: { sdk, gatewayFactory, environmentFactory }, state: () => ({ closedSdk, closedGateway, closedEnvironment, seenPrompt, options, sent, threadConfig, transportFetch }) };
 }
 
 for (const [kind, factory] of [['claude', createClaudeExecutor], ['codex', createCodexExecutor]]) {
@@ -106,3 +107,34 @@ test('Codex has no model retry, remote WebSocket transport, inherited MCP server
     assert.deepEqual(Object.keys(config.mcp_servers), ['domain']);
     assert.deepEqual(config.mcp_servers.domain.enabled_tools, ['recall']);
 });
+
+for (const factory of [createClaudeExecutor, createCodexExecutor]) test('legacy proxy fields cannot silently fall back to direct SDK dispatch', async () => {
+    let created = 0;
+    const adapter = factory({ gatewayFactory: () => { created++; throw Error('must not start'); } });
+    for (const proxy of ['http://proxy.invalid:8080', { url: 'http://proxy.invalid:8080' }]) {
+        const configured = { ...connection, proxyUrl: proxy };
+        assert.throws(() => adapter.preflight({ connection: configured }), { code: 'unsupported-proxy' });
+        await assert.rejects(adapter.runTurn({ connection: configured, requestPlan }), { code: 'unsupported-proxy' });
+        assert.equal(adapter.getCapabilities(configured).supported, false);
+    }
+    assert.equal(created, 0);
+});
+
+for (const factory of [createClaudeExecutor, createCodexExecutor]) test('canonical proxy validates and native injected fetch is refused', async () => {
+    const configured = { ...connection, proxy: { url: 'http://127.0.0.1:12345' } };
+    const adapter = factory({ fetch: globalThis.fetch });
+    assert.doesNotThrow(() => adapter.preflight({ connection: configured }));
+    assert.throws(() => adapter.preflight({ connection: { ...configured, proxy: { url: 'socks5://localhost:1' } } }), { code: 'invalid-proxy' });
+    await assert.rejects(adapter.runTurn({ connection: configured, requestPlan }), { code: 'invalid-transport' });
+});
+
+for (const [kind, factory] of [['claude', createClaudeExecutor], ['codex', createCodexExecutor]]) {
+    test(`${kind}: owned upstream transport closes after success and SDK failure`, async () => {
+        for (const failAfterRequest of [false, true]) {
+            const h = harness(kind, { failAfterRequest });
+            const run = factory(h.dependencies).runTurn({ connection, requestPlan });
+            if (failAfterRequest) await assert.rejects(run); else await run;
+            await assert.rejects(h.state().transportFetch('http://never-dispatched.invalid'), { code: 'transport-closed' });
+        }
+    });
+}

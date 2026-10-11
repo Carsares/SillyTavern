@@ -38,6 +38,22 @@ function canonical(value) {
     return JSON.stringify(value);
 }
 
+// Structured terminal states may arrive as a return value through an MCP wrapper.
+// Do not inspect free-form prose or treat an ordinary definitive tool error as unknown.
+function unknownOutcome(output) {
+    const terminal = value => value && typeof value === 'object' && (
+        value.code === 'tool-result-unknown' || value.code === 'tool-persistence-failed' ||
+        value.outcome === 'unknown' || value.status === 'unknown' ||
+        value.details?.outcome === 'unknown' || value.error?.code === 'tool-result-unknown' ||
+        value.error?.code === 'tool-persistence-failed' || value.error?.details?.outcome === 'unknown');
+    if (terminal(output)) return true;
+    if (output?.isError !== true || !Array.isArray(output.content)) return false;
+    return output.content.some(part => {
+        if (part.type !== 'text' || typeof part.text !== 'string') return false;
+        try { return terminal(JSON.parse(part.text)); } catch { return false; }
+    });
+}
+
 export function createDomainTools({ tools = [], signal, limits = {}, onEvent, stop }) {
     const registry = new Map();
     const permits = new Map();
@@ -84,6 +100,7 @@ export function createDomainTools({ tools = [], signal, limits = {}, onEvent, st
             const aborted = new Promise((_, reject) => { listener = () => reject(fail('tool-aborted', 'Tool stopped; external result may be unknown')); effective.addEventListener('abort', listener, { once: true }); if (effective.aborted) listener(); });
             const output = await Promise.race([Promise.resolve().then(() => { effective.throwIfAborted(); return registry.get(name).execute(permit.id, args, effective); }), aborted]);
             effective.throwIfAborted();
+            if (unknownOutcome(output)) throw fail('tool-result-unknown', 'External tool outcome is unknown; stop this turn', 502);
             const result = output?.content ? output : { content: [{ type: 'text', text: typeof output === 'string' ? output : JSON.stringify(output) ?? 'null' }] };
             if (Buffer.byteLength(JSON.stringify(result)) > maxBytes || !Array.isArray(result.content) || result.content.some(p => p.type !== 'text' || typeof p.text !== 'string')) throw fail('invalid-tool-result', 'Tool result is oversized or contains unsupported content');
             await onEvent?.({ type: 'tool.result', toolCallId: permit.id, name, result });
@@ -92,7 +109,10 @@ export function createDomainTools({ tools = [], signal, limits = {}, onEvent, st
             return result;
         } catch {
             permit.state = started ? 'unknown' : 'failed';
-            const error = fail(started ? 'tool-result-unknown' : 'tool-event-failed', started ? 'External tool result is unknown; do not retry automatically' : 'Tool event persistence failed', 502);
+            const error = fail(started ? 'tool-result-unknown' : 'tool-event-failed', started ? 'External tool result is unknown; do not retry automatically' : 'Tool event persistence failed', 502, {
+                outcome: permit.state, toolCallId: permit.id,
+                toolStates: [...permits.values()].map(({ id, name, state }) => ({ id, name, state })),
+            });
             stop(error);
             throw error;
         } finally { clearTimeout(timer); if (listener) effective.removeEventListener('abort', listener); }

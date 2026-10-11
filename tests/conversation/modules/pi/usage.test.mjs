@@ -54,3 +54,21 @@ test('aggregation retains request completion and inclusive fields', () => {
     updatePiUsage(usage, normalizePiUsage(message, { inputTokens: 1, outputTokens: 1, totalTokens: null }));
     assert.equal(usage.totalTokens, null); assert.equal(usage.complete, false);
 });
+
+test('cost preserves reported zero, rejects unknowns and distinguishes SDK estimates', () => {
+    const reported = normalizePiUsage(message, { prompt_tokens: 1, completion_tokens: 1, cost: 0.03, cost_details: { upstream_inference_cost: 9 } }, { provider: 'openrouter' });
+    assert.equal(reported.costUsd, 0.03); assert.equal(reported.costEstimated, false); assert.equal(reported.costSource, 'provider');
+    assert.equal(normalizePiUsage(message, { cost: 0 }, { provider: 'openrouter' }).costUsd, 0);
+    for (const cost of [null, undefined, -1, NaN, Infinity, '0.3']) assert.equal(normalizePiUsage(message, { cost }, { provider: 'openrouter' }).costUsd, null);
+    assert.equal(normalizePiUsage(message, { cost: 12 }, { provider: 'other' }).costUsd, null);
+    const sdk = { ...message, usage: { cost: { total: 0.12 } } };
+    assert.equal(normalizePiUsage(sdk, {}).costUsd, null);
+    const estimate = normalizePiUsage(sdk, {}, { sdkEstimated: true });
+    assert.equal(estimate.costUsd, 0.12); assert.equal(estimate.costEstimated, true); assert.equal(estimate.costSource, 'sdk-estimated');
+    assert.equal(normalizePiUsage(sdk, { cost: 0.03 }, { provider: 'openrouter', sdkEstimated: true }).costUsd, 0.03);
+    const aggregate = { requests: [] };
+    updatePiUsage(aggregate, reported); updatePiUsage(aggregate, estimate);
+    assert.equal(aggregate.costUsd, 0.15); assert.equal(aggregate.costSource, 'mixed'); assert.equal(aggregate.costEstimated, true);
+    updatePiUsage(aggregate, normalizePiUsage(message, {}));
+    assert.equal(aggregate.costUsd, null); assert.equal(aggregate.costEstimated, null);
+});

@@ -318,3 +318,72 @@ test('HTTP restore accepts a valid backup above 20 MiB while ordinary JSON route
         assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
     }
 });
+
+test('HTTP generation recalls a folded original without duplicating recent history', async t => {
+    const app = await startFixture({ settings: { tools: [] } }); t.after(() => app.close());
+    await completed(app, 'The obsidian-key belongs to Mira.');
+    await completed(app, 'A recent unrelated fact.');
+    const snapshot = await app.snapshot();
+    const compact = await app.api(`/conversations/${app.conversation.id}/compact`, { expectedContentRevision: snapshot.conversation.contentRevision, expectedMemoryRevision: snapshot.conversation.memoryRevision });
+    assert.equal(compact.status, 200);
+    await completed(app, 'obsidian-key');
+    const sent = app.captured.at(-1).body.messages;
+    const text = sent.map(message => typeof message.content === 'string' ? message.content : (message.content ?? []).map(part => part.text ?? '').join(''));
+    assert.equal(text.filter(value => value === 'The obsidian-key belongs to Mira.').length, 1);
+    assert.equal(text.filter(value => value === 'obsidian-key').length, 1);
+    assert.ok(text.includes('Local rolling'));
+    const traces = (await app.api(`/conversations/${app.conversation.id}/traces`)).value;
+    const latest = traces.filter(trace => trace.requestPlan?.type === 'send').at(-1);
+    assert.ok(latest.requestPlan.blocks.some(block => block.layer === 'L3' && block.content.includes('obsidian-key belongs to Mira')));
+    const state = app.application.services.runtime.retrievalStatus(app.conversation.id);
+    assert.equal(state.status, 'keyword-only');
+    assert.equal(state.semanticReady, false);
+    assert.ok(app.application.services.store.events(app.conversation.id).some(event => event.type === 'retrieval.updated' && event.payload.status === 'keyword-only'));
+});
+
+test('HTTP history edits automatically refresh the semantic index and expose failures without stopping keyword retrieval', async t => {
+    const app = await startFixture({ settings: { tools: [] } }); t.after(() => app.close());
+    const embedding = await app.api('/resources', { kind: 'connection', name: 'Local embedding', data: { ...app.connectionData, type: 'embedding' } });
+    assert.equal(embedding.status, 201);
+    const configured = await app.api(`/conversations/${app.conversation.id}/commands`, { type: 'conversation.configure', expectedContentRevision: 0, settings: { embeddingConnectionId: embedding.value.id } });
+    assert.equal(configured.status, 200);
+    await completed(app, 'Old indexed fact');
+    const runtime = app.application.services.runtime;
+    await eventually(() => runtime.retrievalStatus(app.conversation.id), state => state.status === 'ready' && state.count === 2);
+    const before = await app.snapshot();
+    const edit = await app.api(`/conversations/${app.conversation.id}/commands`, { type: 'message.edit', messageId: before.messages[0].id,
+        content: 'Edited indexed fact', expectedContentRevision: before.conversation.contentRevision });
+    assert.equal(edit.status, 200);
+    await eventually(() => app.captured.filter(item => item.path === '/v1/embeddings'), calls => calls.some(call => call.body.input.includes('Edited indexed fact')));
+    await eventually(() => runtime.retrievalStatus(app.conversation.id), state => state.status === 'ready');
+    const current = await app.snapshot();
+    const failure = await app.api(`/conversations/${app.conversation.id}/commands`, { type: 'message.edit', messageId: current.messages[0].id,
+        content: 'FAIL_INDEX', expectedContentRevision: current.conversation.contentRevision });
+    assert.equal(failure.status, 200);
+    const state = await eventually(() => runtime.retrievalStatus(app.conversation.id), value => value.status === 'error');
+    assert.equal(state.semanticReady, false);
+    assert.equal(state.error.code, 'index-failed');
+    assert.ok(app.application.services.store.events(app.conversation.id).some(event => event.type === 'retrieval.updated' && event.payload.status === 'error'));
+    await completed(app, 'Still generate without embeddings');
+});
+
+test('HTTP user-hidden history and dependent summaries never reach the next request', async t => {
+    const app = await startFixture({ settings: { tools: [] } }); t.after(() => app.close());
+    await completed(app, 'The hidden-vault code is orchid-seven.');
+    await completed(app, 'Recent public fact.');
+    let snapshot = await app.snapshot();
+    assert.equal((await app.api(`/conversations/${app.conversation.id}/compact`, { expectedContentRevision: snapshot.conversation.contentRevision, expectedMemoryRevision: snapshot.conversation.memoryRevision })).status, 200);
+    snapshot = await app.snapshot();
+    const hide = await app.api(`/conversations/${app.conversation.id}/commands`, { type: 'message.hide', messageId: snapshot.messages[0].id,
+        hidden: true, expectedContentRevision: snapshot.conversation.contentRevision });
+    assert.equal(hide.status, 200, JSON.stringify(hide.value));
+    assert.equal((await app.snapshot()).messages[0].userHidden, true);
+    await completed(app, 'hidden-vault');
+    const wire = JSON.stringify(app.captured.at(-1).body.messages);
+    assert.equal(wire.includes('orchid-seven'), false);
+    assert.equal(wire.includes('Local rolling'), false);
+    assert.equal(wire.includes('Local chapter'), false);
+    const status = await app.api(`/conversations/${app.conversation.id}/retrieval`);
+    assert.equal(status.status, 200);
+    assert.equal(status.value.status, 'keyword-only');
+});

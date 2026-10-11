@@ -1,3 +1,4 @@
+import { normalizeCost, aggregateCost } from '../../providers/core/cost.js';
 const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens'];
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const inclusion = (value, field, alias) => Object.hasOwn(value, field) ? value[field] : Object.hasOwn(value, alias) ? value[alias] : true;
@@ -5,7 +6,7 @@ const sum = values => values.every(value => value !== null) ? count(values.reduc
 export const usageSemantics = Object.freeze({ inputTokensIncludesCache: true, outputTokensIncludesReasoning: true });
 
 /** Provider envelopes retain their raw inclusion flags; public totals are inclusive. */
-export function normalizePiUsage(message, raw) {
+export function normalizePiUsage(message, raw, costOptions = {}) {
     const value = raw ?? {};
     const normalized = ['inputTokens', 'outputTokens', 'totalTokens'].some(key => Object.hasOwn(value, key));
     const anthropic = !normalized && (message.api?.includes('anthropic') || Object.hasOwn(value, 'cache_read_input_tokens') || Object.hasOwn(value, 'cache_creation_input_tokens'));
@@ -30,11 +31,13 @@ export function normalizePiUsage(message, raw) {
     return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens,
         cacheWrite1hTokens: count(normalized ? value.cacheWrite1hTokens : value.cache_creation?.ephemeral_1h_input_tokens),
         ...usageSemantics, complete, usageComplete: complete && inputTokens !== null && outputTokens !== null && totalTokens !== null,
-        raw: raw == null ? null : structuredClone(raw), cost: null };
+        raw: raw == null ? null : structuredClone(raw), cost: null,
+        ...normalizeCost(value, { provider: message.provider, sdkUsage: message.usage, ...costOptions }) };
 }
 
 export function updatePiUsage(usage, entry) {
     usage.requests.push(entry);
+    Object.assign(usage, aggregateCost(usage.requests));
     for (const field of [...fields, 'cacheWrite1hTokens']) usage[field] = sum([usage[field], entry[field]]);
     usage.complete = usage.requests.length > 0 && usage.requests.every(request => request.usageComplete);
     usage.breakdownComplete = usage.requests.length > 0 && fields.every(field => usage[field] !== null);

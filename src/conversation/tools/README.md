@@ -72,3 +72,48 @@ A positive result limit too small even for the stored-result reference returns
 `tool-result-limit`. The full completed result remains persisted; this output
 limit is not mislabeled as an unknown paid effect, and replay does not re-execute
 the tool. No truncation loop can spin forever trying to fit the reference.
+
+## Fatal outcomes and explicit image recovery
+
+`tool-result-unknown` and `tool-persistence-failed` carry `fatal:true` and
+`retryable:false`. `bindTurn({turnId,snapshot,requestPlan,onFatal?})` invokes the
+callback synchronously on the first fatal outcome; `fatalError(turnId)` returns
+that error for runtime checks before another model request or terminal success.
+The registry refuses all further tool calls in that session. Executors must
+propagate fatal errors and abort generation, never convert them to ordinary tool
+result text. Runtime must wire `onFatal` to its controller and preserve the domain
+error when finalizing. These flags alone cannot stop an SDK that swallows errors.
+
+`store.listTools(conversationId)` must return persisted records including
+`id,conversationId,turnId,memberRunId,name,args,status`. Before creating any image
+intent on a retry, the registry walks every `request.retryTurnId` ancestor and
+matches name plus canonical args. Unknown/running/intent matches block new charges.
+Group identity uses persisted `plannedMembers[].{id,characterId}` (or completed
+`members[].{memberRunId,characterId}`), so different members stay separate even
+when prompts match. Missing identity is conservatively blocked; absent listTools
+fails closed on image retries before external I/O.
+
+`imageRecovery(conversationId,recordId)` returns
+`{recordId,turnId,memberRunId,status,jobRecordId,canResume,canCancel,
+resubmitAllowed:false,blockedReason?}`. It finds the unique provider-request job
+whose `dependencies.origin` is that tool record; no opaque provider handle,
+connection credentials, or provider calls are exposed here. A missing saved
+handle returns `provider-job-handle-missing`. Composition/API own
+`providerJobs.resume(cid,jobRecordId)` and `cancel(cid,jobRecordId)`, using the exact
+saved handle, frozen connection, and original tool args.prompt. Resume never
+submits a replacement job. Recovered images remain on job/tool records for UI
+view/download; recovery does not rewrite the original assistant message.
+
+Completed image records (including manually recovered records) also participate
+in retry-chain matching. Identical args and the same member reuse the saved result
+without generating or polling. The current turn receives a completed replay tool
+record with `result.reusedFromToolId` and `usage:{cost:0,complete:true}`; registered
+images attach only to the retry's member. Original records/messages and their
+original charges remain unchanged. Cached replay still obeys call/result limits.
+Missing cached images or unresolved member identity block automatic execution;
+starting a genuinely new turn without `retryTurnId` is the explicit new-request
+path. No additional composition or store port is needed beyond `listTools`.
+
+Run the local fake-provider recovery/retry integration explicitly with
+`node --test tests/conversation/integration/tools-recovery.test.mjs`.
+It is included in `npm run test:conversation:integration` and makes no paid requests.

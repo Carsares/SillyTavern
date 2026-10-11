@@ -8,7 +8,7 @@ export function createPrimaryModel(connection, capabilities = {}) {
         baseUrl: connection.baseUrl, reasoning: capabilities.reasoningEnabled === true, input: capabilities.media ?? ['text'],
         thinkingLevelMap: capabilities.reasoningEnabled ? Object.fromEntries(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(level => [level, capabilities.reasoningEfforts.includes(level) ? level : null])) : undefined,
         contextWindow: connection.contextWindow, maxTokens: connection.maxOutputTokens,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: { input: NaN, output: NaN, cacheRead: NaN, cacheWrite: NaN },
         // Preserve system messages, including those interleaved with user/assistant history.
         compat: { supportsDeveloperRole: false, supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true, supportsUsageInStreaming: true, supportsStore: false },
     };

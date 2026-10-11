@@ -51,7 +51,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
             const effectiveSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
             let outputMedia = [];
             let agent, fatal, requests = 0, calls = 0, content = '', reasoning = '', finishReason = 'stop';
-            const usage = { ...usageSemantics, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheWrite1hTokens: 0, reasoningTokens: 0, totalTokens: 0, complete: false, cost: null, requests: [] };
+            const usage = { ...usageSemantics, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheWrite1hTokens: 0, reasoningTokens: 0, totalTokens: 0, complete: false, cost: null, costUsd: null, costSource: null, costEstimated: null, requests: [] };
             function check() { if (fatal) throw fatal; effectiveSignal.throwIfAborted(); }
             function stop(error) { fatal ??= error; controller.abort(); agent?.abort(); }
             let timer;
@@ -89,6 +89,10 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                             }
                             return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result) ?? 'null' }], details: result ?? null };
                         } catch (error) {
+                            if (['tool-result-unknown', 'tool-persistence-failed'].includes(error?.code)) {
+                                stop(fail(error.code, 'Tool outcome is unknown; automatic continuation is blocked'));
+                                throw fatal;
+                            }
                             if (toolSignal.aborted) { stop(fail(timeout.signal.aborted ? 'tool-timeout' : 'aborted', 'Tool execution stopped; external effects may be unknown')); throw fatal; }
                             // Do not let SDK embed raw exception text (which may contain credentials) in history.
                             throw fail('tool-failed', 'Tool execution failed');
@@ -172,7 +176,7 @@ export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fe
                         if (fatal) return;
                         rawUsage = message.providerUsage ?? rawUsage;
                         if (message.media) { if (!Array.isArray(message.media)) throw fail('unsupported-media', 'Provider output media must be an array'); outputMedia = structuredClone(message.media); }
-                        const normalized = normalizePiUsage(message, rawUsage);
+                        const normalized = normalizePiUsage(message, rawUsage, { provider: c.provider, sdkEstimated: model.costSource === 'sdk-estimated' });
                         const entry = { ...normalized, requestIndex: requests, model: message.model, responseModel: message.responseModel,
                             normalized: { input: normalized.inputTokens, output: normalized.outputTokens, cacheRead: normalized.cacheReadTokens,
                                 cacheWrite: normalized.cacheWriteTokens, totalTokens: normalized.totalTokens, reasoning: normalized.reasoningTokens,

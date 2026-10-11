@@ -12,8 +12,8 @@ import { createServer, connect } from 'node:net';
 import { createClaudeExecutor } from '../../../src/conversation/executors/claude/index.js';
 import { codexProcessConfig, createCodexExecutor } from '../../../src/conversation/executors/codex/index.js';
 
-for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'live-shape', 'tool', 'tool-budget', 'budget', 'abort', 'forbidden']) test(`installed ${executor}: ${scenario}`, { timeout: 45000, skip: process.platform !== 'darwin' ? 'Built-in SDK isolation currently requires macOS' : false }, async t => {
-    const requests = [], serverErrors = [];
+for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'proxy', 'live-shape', 'tool', 'tool-budget', 'tool-unknown', 'budget', 'abort', 'forbidden']) test(`installed ${executor}: ${scenario}`, { timeout: 45000, skip: process.platform !== 'darwin' ? 'Built-in SDK isolation currently requires macOS' : false }, async t => {
+    const requests = [], serverErrors = [], proxyRequests = [], traces = [];
     const controller = new AbortController();
     let executed = 0, isolatedDirectory, gatewayPort;
     t.after(async () => {
@@ -27,10 +27,10 @@ for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'liv
         });
     });
     t.after(async () => { if (isolatedDirectory) await assert.rejects(access(isolatedDirectory), { code: 'ENOENT' }); });
-    const tool = ['tool', 'tool-budget'].includes(scenario) ? { name: 'mcp__domain__lookup', id: 'call_local', args: { value: 'local' } } : scenario === 'forbidden' ? { name: executor === 'claude' ? 'Bash' : 'exec_command', id: 'host_call', args: { command: 'forbidden' } } : null;
+    const tool = ['tool', 'tool-budget', 'tool-unknown'].includes(scenario) ? { name: 'mcp__domain__lookup', id: 'call_local', args: { value: 'local' } } : scenario === 'forbidden' ? { name: executor === 'claude' ? 'Bash' : 'exec_command', id: 'host_call', args: { command: 'forbidden' } } : null;
     const server = http.createServer(async (req, res) => {
         const chunks = []; for await (const chunk of req) chunks.push(chunk);
-        const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push({ url: req.url, body });
+        const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push({ url: req.url, body, headers: req.headers });
         if (scenario === 'abort') { controller.abort(); return; }
         const call = requests.length === 1 ? tool : null;
         res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -69,7 +69,31 @@ for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'liv
     t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
     const events = [], prepared = [];
     const connection = { executor, provider: executor === 'claude' ? 'anthropic' : 'openai', model: scenario === 'live-shape' ? 'deepseek-v4-flash' : executor === 'claude' ? 'claude-sonnet-4-5' : 'gpt-5-codex', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKey: 'local-only-test-key', contextWindow: 65536, workingBudget: scenario === 'budget' ? 1 : scenario === 'tool-budget' ? 4000 : 32768, maxOutputTokens: 512, reasoning: 'off' };
+    if (scenario === 'proxy') {
+        const proxy = http.createServer((req, res) => {
+            proxyRequests.push({ url: req.url, headers: req.headers });
+            if (req.headers['proxy-authorization'] !== 'Basic ' + Buffer.from('local-proxy:local-password').toString('base64')) {
+                res.writeHead(407); res.end(); return;
+            }
+            const expected = `http://sdk-proxy-only.invalid/v1/${executor === 'claude' ? 'messages' : 'responses'}`;
+            if (req.url !== expected) { res.writeHead(403); res.end(); return; }
+            const headers = { ...req.headers };
+            delete headers['proxy-authorization']; delete headers['proxy-connection'];
+            // Forward solely to this test's independently listening model peer.
+            const upstream = http.request({ hostname: '127.0.0.1', port: server.address().port,
+                path: new URL(req.url).pathname, method: req.method, headers }, response => {
+                res.writeHead(response.statusCode, response.headers); response.pipe(res);
+            });
+            upstream.on('error', () => { res.writeHead(502); res.end(); });
+            req.pipe(upstream);
+        });
+        await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(0, '127.0.0.1', resolve); });
+        t.after(async () => { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); });
+        connection.proxy = { url: `http://local-proxy:local-password@127.0.0.1:${proxy.address().port}` };
+        connection.baseUrl = 'http://sdk-proxy-only.invalid/v1';
+    }
     const adapter = (executor === 'claude' ? createClaudeExecutor : createCodexExecutor)({
+        onRequest: request => traces.push(request),
         environmentFactory: async options => {
             const environment = await createRestrictedEnvironment(options);
             isolatedDirectory = environment.directory;
@@ -83,18 +107,18 @@ for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'liv
             }
             return environment;
         },
-        fetch: (input, init) => {
+        fetch: scenario === 'proxy' ? undefined : (input, init) => {
             const request = new Request(input, init);
             assert.equal(request.url, `${connection.baseUrl}/${executor === 'claude' ? 'messages' : 'responses'}`);
             assert.equal(request.method, 'POST');
             return fetch(request, { redirect: 'error' });
         },
     });
-    const running = adapter.runTurn({ connection, snapshot: { id: 'isolated-snapshot' }, requestPlan: { type: 'send', sourceRefs: [], messages: scenario === 'live-shape' ? [{ role: 'system', content: 'This is a connection test. Reply with exactly OK. Do not use tools.' }, { role: 'user', content: 'Reply OK.' }] : [{ role: 'system', content: 'Reply briefly.' }, { role: 'user', content: 'Previous question' }, { role: 'assistant', content: 'Previous answer' }, { role: 'user', content: 'Current question' }] }, tools: ['tool', 'tool-budget'].includes(scenario) ? [{ name: 'lookup', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false }, execute: async (id, args) => { assert.equal(id, 'call_local'); assert.deepEqual(args, { value: 'local' }); executed++; return { content: [{ type: 'text', text: 'DOMAIN RESULT'.repeat(scenario === 'tool-budget' ? 1000 : 1) }] }; } }] : [], limits: { ...(scenario === 'live-shape' ? { rounds: 1 } : {}), turnTimeoutMs: 30000, maxOutputTokens: 512 }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]), beforeRequest: request => prepared.push(request), onEvent: event => events.push(event) });
-    if (['budget', 'tool-budget', 'abort', 'forbidden'].includes(scenario)) {
-        await assert.rejects(running, { code: { 'tool-budget': 'budget-blocked', budget: 'budget-blocked', abort: 'aborted', forbidden: 'forbidden-tool' }[scenario] });
+    const running = adapter.runTurn({ connection, snapshot: { id: 'isolated-snapshot' }, requestPlan: { type: 'send', sourceRefs: [], messages: scenario === 'live-shape' ? [{ role: 'system', content: 'This is a connection test. Reply with exactly OK. Do not use tools.' }, { role: 'user', content: 'Reply OK.' }] : [{ role: 'system', content: 'Reply briefly.' }, { role: 'user', content: 'Previous question' }, { role: 'assistant', content: 'Previous answer' }, { role: 'user', content: 'Current question' }] }, tools: ['tool', 'tool-budget', 'tool-unknown'].includes(scenario) ? [{ name: 'lookup', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false }, execute: async (id, args) => { assert.equal(id, 'call_local'); assert.deepEqual(args, { value: 'local' }); executed++; if (scenario === 'tool-unknown') return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'tool-result-unknown' } }) }] }; return { content: [{ type: 'text', text: 'DOMAIN RESULT'.repeat(scenario === 'tool-budget' ? 1000 : 1) }] }; } }] : [], limits: { ...(scenario === 'live-shape' ? { rounds: 1 } : {}), turnTimeoutMs: 30000, maxOutputTokens: 512 }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]), beforeRequest: request => prepared.push(request), onEvent: event => events.push(event) });
+    if (['budget', 'tool-budget', 'tool-unknown', 'abort', 'forbidden'].includes(scenario)) {
+        await assert.rejects(running, { code: { 'tool-unknown': 'tool-result-unknown', 'tool-budget': 'budget-blocked', budget: 'budget-blocked', abort: 'aborted', forbidden: 'forbidden-tool' }[scenario] });
         assert.equal(requests.length, scenario === 'budget' ? 0 : 1);
-        assert.equal(executed, scenario === 'tool-budget' ? 1 : 0);
+        assert.equal(executed, ['tool-budget', 'tool-unknown'].includes(scenario) ? 1 : 0);
         await assert.rejects(access(isolatedDirectory), { code: 'ENOENT' });
         return;
     }
@@ -102,14 +126,23 @@ for (const executor of ['claude', 'codex']) for (const scenario of ['text', 'liv
     await assert.rejects(access(isolatedDirectory), { code: 'ENOENT' });
     assert.equal(serverErrors.length, 0);
     assert.equal(result.content, 'LOCAL SDK OK');
-    assert.equal(requests.length, ['tool', 'tool-budget'].includes(scenario) ? 2 : 1); assert.equal(prepared.length, requests.length);
-    assert.equal(executed, ['tool', 'tool-budget'].includes(scenario) ? 1 : 0);
+    assert.equal(requests.length, ['tool', 'tool-budget', 'tool-unknown'].includes(scenario) ? 2 : 1); assert.equal(prepared.length, requests.length);
+    assert.equal(executed, ['tool', 'tool-budget', 'tool-unknown'].includes(scenario) ? 1 : 0);
     if (scenario === 'tool') assert.match(JSON.stringify(requests[1].body), /DOMAIN RESULT/);
+    if (scenario === 'proxy') {
+        assert.equal(proxyRequests.length, 1);
+        assert.equal(proxyRequests[0].url, `http://sdk-proxy-only.invalid/v1/${executor === 'claude' ? 'messages' : 'responses'}`);
+        assert.equal(proxyRequests[0].headers['proxy-authorization'], 'Basic ' + Buffer.from('local-proxy:local-password').toString('base64'));
+        assert.equal(requests[0].headers['proxy-authorization'], undefined);
+        assert.equal(requests[0].headers['proxy-connection'], undefined);
+        assert.equal(requests[0].url, `/v1/${executor === 'claude' ? 'messages' : 'responses'}`);
+        assert.doesNotMatch(JSON.stringify({ requests, traces, events, result }), /local-password|local-proxy|bG9jYWwtcHJveHk6/);
+    }
     const wire = requests[0].body;
     assert.equal(wire.model, connection.model);
     assert.equal(executor === 'claude' ? wire.max_tokens : wire.max_output_tokens, 512);
     assert.equal(executor === 'claude' ? wire.thinking?.type : wire.reasoning?.effort, executor === 'claude' ? 'disabled' : 'none');
-    assert.equal(wire.tools?.length ?? 0, ['tool', 'tool-budget'].includes(scenario) ? 1 : 0);
+    assert.equal(wire.tools?.length ?? 0, ['tool', 'tool-budget', 'tool-unknown'].includes(scenario) ? 1 : 0);
     if (scenario === 'tool') {
         assert.equal(wire.tools[0].name, executor === 'claude' ? 'mcp__domain__lookup' : 'mcp__domain');
         if (executor === 'codex') assert.equal(wire.tools[0].tools[0].name, 'lookup');

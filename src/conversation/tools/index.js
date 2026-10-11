@@ -63,6 +63,57 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         invariant(now() - state.startedAt < state.limits.turnTimeoutMs, 'tool-limit', 'Turn tool deadline exceeded', 409);
         return { state, turn };
     }
+    function fatal(state, code, details = {}) {
+        const error = new ProtocolError(code, 'Tool outcome requires explicit recovery; automatic execution stopped', 409, details);
+        error.fatal = true; error.retryable = false;
+        state.fatal ??= error;
+        try { state.onFatal?.(state.fatal); } catch { /* Preserve the domain failure. */ }
+        return state.fatal;
+    }
+    function imageRecovery(conversationId, recordId) {
+        const record = store.getTool(recordId);
+        invariant(record?.conversationId === conversationId && record.name === 'generate_image', 'invalid-tool', 'Image record belongs to another operation', 409);
+        const jobs = store.listJobs(conversationId).filter(job => job.kind === 'provider-request' && job.dependencies?.origin === record.id);
+        invariant(jobs.length <= 1, 'provider-job-conflict', 'Ambiguous provider job', 409);
+        const job = jobs[0];
+        return { recordId, turnId: record.turnId, memberRunId: record.memberRunId ?? null, status: record.status,
+            jobRecordId: job?.id ?? null, canResume: Boolean(job?.payload?.jobId) && record.status === 'unknown' && !['completed', 'cancelled'].includes(job.payload.state),
+            canCancel: Boolean(job?.payload?.jobId) && !['completed', 'cancelled'].includes(job.payload.state),
+            resubmitAllowed: false, ...(job?.payload?.jobId ? {} : { blockedReason: 'provider-job-handle-missing' }) };
+    }
+    function guardImageRetry(turn, memberRunId, args, state) {
+        if (!turn.request?.retryTurnId) return;
+        if (typeof store.listTools !== 'function') throw fatal(state, 'tool-retry-history-unavailable');
+        const character = (item, member) => member == null ? null : item.plannedMembers?.find(m => m.id === member)?.characterId
+            ?? item.members?.find(m => m.memberRunId === member)?.characterId;
+        const identity = character(turn, memberRunId);
+        const visited = new Set([turn.id]);
+        let id = turn.request.retryTurnId, cached;
+        const records = store.listTools(turn.conversationId);
+        while (id) {
+            invariant(!visited.has(id), 'invalid-retry', 'Cyclic retry chain', 409); visited.add(id);
+            const ancestor = store.getTurn(id);
+            invariant(ancestor?.conversationId === turn.conversationId, 'invalid-retry', 'Retry turn belongs to another conversation', 409);
+            for (const record of records) {
+                if (record.turnId !== id || record.name !== 'generate_image' || canonicalJson(record.args) !== canonicalJson(args)
+                    || !['intent', 'running', 'unknown', 'completed'].includes(record.status)) continue;
+                const priorIdentity = character(ancestor, record.memberRunId);
+                const sameMember = memberRunId == null ? record.memberRunId == null
+                    : record.memberRunId === memberRunId || identity === undefined || priorIdentity === undefined || identity === priorIdentity;
+                if (!sameMember) continue;
+                if (record.status !== 'completed') throw fatal(state, 'tool-result-unknown', { recordId: record.id, recovery: 'existing-provider-job-only' });
+                // An unresolved identity may conservatively block a charge, but
+                // must never authorize returning another member's saved image.
+                if (memberRunId != null && record.memberRunId !== memberRunId && (identity === undefined || priorIdentity === undefined))
+                    throw fatal(state, 'tool-retry-identity-unknown', { recordId: record.id });
+                if (!record.result || typeof record.result !== 'object' || !Array.isArray(record.result.images))
+                    throw fatal(state, 'tool-result-unknown', { recordId: record.id, recovery: 'existing-provider-job-only' });
+                cached ??= record;
+            }
+            id = ancestor.request?.retryTurnId;
+        }
+        return cached;
+    }
     function beginRound({ turnId, conversationId, round }) {
         const { state } = session(turnId, conversationId);
         invariant(Number.isSafeInteger(round) && round >= state.round && round <= state.limits.rounds, 'tool-limit', 'Tool round limit exceeded', 409);
@@ -123,7 +174,7 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
                 return { entries: entries.slice(0, 32) };
             }
             case 'update_memory': {
-                const refs = snapshot.messages.filter(m => !m.deletedAt && (!m.status || m.status === 'completed')).map(sourceRef);
+                const refs = snapshot.messages.filter(m => !m.deletedAt && !m.userHidden && (!m.status || m.status === 'completed')).map(sourceRef);
                 const proposal = memoryProposal(snapshot, { ...args.block, op: args.op, content: args.content }, refs);
                 invariant(![...state.proposals.values()].flat().some(p => p.id === proposal.id), 'memory-proposal-conflict', 'This turn already proposed a change to that block', 409);
                 return { memoryProposal: proposal, status: 'proposed' };
@@ -145,10 +196,12 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         signal?.throwIfAborted();
         invariant(typeof toolCallId === 'string' && toolCallId.length > 0 && toolCallId.length <= 128, 'invalid-tool-call', 'Tool call ID is required');
         const { state, turn } = session(turnId, conversationId);
+        if (state.fatal) throw state.fatal;
         const enabled = state.snapshot.settings?.tools;
         const definition = definitions({ type: turn.type, enabled }).find(d => d.name === name);
         invariant(definition, 'tool-disabled', 'Tool is disabled or unknown', 403);
         validate(args, definition.parameters);
+        const cachedImage = name === 'generate_image' ? guardImageRetry(turn, memberRunId, args, state) : undefined;
         const requestHash = createHash('sha256').update(canonicalJson({ name, args })).digest('hex');
         const { record, replayed } = store.recordTool({ conversationId, turnId, memberRunId, toolCallId, requestHash, name, args });
         if (replayed) {
@@ -158,9 +211,10 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
                 rememberArtifacts(state, record);
                 return bounded(record.result, record, state.limits);
             }
+            if (record.status === 'failed' && ['tool-result-unknown', 'provider-job-unknown', 'tool-persistence-failed'].includes(record.error?.code)) throw fatal(state, record.error.code, { recordId: record.id });
             if (record.status === 'failed') throw new ProtocolError(record.error?.code ?? 'tool-failed', 'Previous tool call failed', 409);
             // Persisted intent may have reached an external service before a process died.
-            throw new ProtocolError('tool-result-unknown', 'Tool outcome is unknown; this call will not be replayed', 409);
+            throw fatal(state, 'tool-result-unknown', { recordId: record.id });
         }
         const calls = state.calls.get(state.round) ?? 0;
         if (calls >= state.limits.callsPerRound || state.total >= state.limits.rounds * state.limits.callsPerRound) {
@@ -168,6 +222,15 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
             throw new ProtocolError('tool-limit', 'Tool call limit exceeded', 409);
         }
         state.calls.set(state.round, calls + 1); state.total++;
+        if (cachedImage) {
+            // Persist a new-turn replay record so artifact collection remains
+            // scoped to this member. Never mutate the historical tool/message.
+            const usage = { cost: 0, complete: true };
+            const result = { ...structuredClone(cachedImage.result), usage, reusedFromToolId: cachedImage.id };
+            try { store.finishTool(record.id, { status: 'completed', result, usage }); } catch (error) { throw fatal(state, 'tool-persistence-failed', { recordId: record.id, code: error.code }); }
+            rememberArtifacts(state, store.getTool(record.id));
+            return bounded(result, record, state.limits);
+        }
         const controller = new AbortController();
         const forward = () => controller.abort(signal.reason);
         signal?.addEventListener('abort', forward, { once: true });
@@ -191,13 +254,15 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
                 rememberArtifacts(state, store.getTool(record.id));
                 return bounded(result, record, state.limits);
             } catch (error) {
-                const status = name === 'generate_image' && context.externalStarted && error.definitive !== true ? 'unknown' : 'failed';
+                const status = (name === 'generate_image' && context.externalStarted && error.definitive !== true)
+                    || ['tool-result-unknown', 'provider-job-unknown', 'tool-persistence-failed'].includes(error.code) ? 'unknown' : 'failed';
                 // Never overwrite an already committed result if persistence failed after commit.
                 const persisted = store.getTool(record.id);
                 if (persisted.status === 'completed' && error.code === 'tool-result-limit') throw error;
                 if (['intent', 'running'].includes(persisted.status)) {
-                    try { store.finishTool(record.id, { status, error: { code: status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed') }, ...(status === 'unknown' ? { usage: { cost: null, complete: false } } : {}) }); } catch (persistenceError) { throw new ProtocolError('tool-persistence-failed', 'Tool outcome could not be persisted; do not replay', 500, { outcome: status, code: persistenceError.code }); }
+                    try { store.finishTool(record.id, { status, error: { code: status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed') }, ...(status === 'unknown' ? { usage: { cost: null, complete: false } } : {}) }); } catch (persistenceError) { throw fatal(state, 'tool-persistence-failed', { recordId: record.id, outcome: status, code: persistenceError.code }); }
                 }
+                if (status === 'unknown') throw fatal(state, 'tool-result-unknown', { recordId: record.id, recovery: 'existing-provider-job-only' });
                 throw new ProtocolError(status === 'unknown' ? 'tool-result-unknown' : (error.code ?? 'tool-failed'), status === 'unknown' ? 'Paid tool outcome is unknown; do not replay' : 'Tool execution failed', 409);
             } finally {
                 clearTimeout(timeout); signal?.removeEventListener('abort', forward);
@@ -207,10 +272,12 @@ export function createToolRegistry({ store, retrieval, memory, resources, image,
         inFlight.set(record.id, operation);
         try { return await operation; } finally { inFlight.delete(record.id); }
     }
-    return { definitions, execute, beginRound, toolArtifacts,
-        bindTurn({ turnId, snapshot, requestPlan }) {
+    return { definitions, execute, beginRound, toolArtifacts, imageRecovery,
+        fatalError(turnId) { return sessions.get(turnId)?.fatal ?? null; },
+        bindTurn({ turnId, snapshot, requestPlan, onFatal }) {
             const conversationId = snapshot.conversationId ?? snapshot.conversation.id;
             const { state } = session(turnId, conversationId, snapshot);
+            if (onFatal !== undefined) { invariant(typeof onFatal === 'function', 'invalid-tool', 'onFatal must be a function'); state.onFatal = onFatal; }
             state.snapshot = structuredClone(snapshot);
             state.includedLore = new Set((requestPlan?.blocks ?? []).filter(b => b.worldKey).map(b => b.worldKey));
         },

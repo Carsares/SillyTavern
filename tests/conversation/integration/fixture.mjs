@@ -17,6 +17,12 @@ export async function startFixture({ seed = true, settings = {} } = {}) {
         let body;
         try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400).end(); return; }
         captured.push({ path: req.url, body });
+        if (req.url === '/v1/embeddings') {
+            const inputs = Array.isArray(body.input) ? body.input : [body.input];
+            if (inputs.some(text => text.includes('FAIL_INDEX'))) { res.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Synthetic embedding failure' } })); return; }
+            res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ model: body.model, data: inputs.map((_, index) => ({ index, embedding: [1, 0] })), usage: { prompt_tokens: inputs.length, total_tokens: inputs.length } }));
+            return;
+        }
         if (req.url === '/v1/images/generations') {
             res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: [{ b64_json: IMAGE_BASE64 }] }));
             return;

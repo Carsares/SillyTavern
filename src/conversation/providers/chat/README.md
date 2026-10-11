@@ -239,3 +239,31 @@ Named `openai` streaming requests opt into `stream_options:{include_usage:true}`
 Non-stream requests omit this field; other compatible platforms are not assumed to
 accept the option. A final usage-only chunk is decoded without needing a choice.
 Missing/aborted usage remains unknown.
+
+### Amount accounting and PI fatal tool outcomes
+
+`providers/core/cost.js` exports `normalizeCost(value, {provider, sdkUsage,
+sdkEstimated})` and `aggregateCost(requests)`. The result is
+`{costUsd:number|null, costSource:'provider'|'sdk-estimated'|'mixed'|null,
+costEstimated:boolean|null}`. Explicit `costUsd` is already USD. Only the named
+OpenRouter protocol maps numeric `usage.cost` to USD; it is the account charge,
+not `cost_details.upstream_inference_cost`, and these amounts must never be added.
+The raw usage envelope is retained. Missing, negative, nonfinite or nonnumeric
+amounts stay unknown; reported zero is valid. One unknown request makes the
+aggregate unknown. Existing `cost:null` remains for compatibility; consumers use
+`costUsd` and must display the estimate label when `costEstimated` is true.
+
+PI accepts SDK `message.usage.cost.total` only when the injected model declares
+`costSource:'sdk-estimated'`, or that SDK usage explicitly declares
+`costEstimated:true` / `costSource:'sdk-estimated'`. The model supplier owns the
+price provenance; no prices are inferred from model names. Default primary model
+prices are NaN, never fabricated zero. Actual provider amounts take precedence.
+SDK gateway owners can reuse the same pure cost helpers without importing PI.
+
+A tool throwing `tool-result-unknown` or `tool-persistence-failed` now aborts the
+PI turn before any further tool/model request. The public error preserves the
+code but not provider exception text. Ordinary known tool failures retain SDK
+error handling. Store-side final-success checks are a separate owner concern.
+
+Protocol evidence: https://openrouter.ai/docs/cookbook/administration/usage-accounting
+and https://openrouter.ai/support/ (USD-denominated credits).

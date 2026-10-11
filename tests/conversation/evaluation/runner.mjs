@@ -29,8 +29,10 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
     const check = validateDataset(dataset);
     if (check.status !== 'passed') throw new Error('Evaluation dataset is invalid');
     const plan = evaluationMatrix(JSON.stringify(config?.cacheModes) === '["uncontrolled"]' ? ['uncontrolled'] : undefined);
+    const scope = config?.cacheModes?.[0] === 'uncontrolled'
+        ? { evaluationScope: 'uncontrolled-diagnostic', fullG5: false } : { evaluationScope: 'cold-warm-matrix' };
     const configError = validateRunConfig(config);
-    if (configError) return { status: 'blocked', reason: configError, evidence: 'not-run', dataset: dataset.fingerprint,
+    if (configError) return { ...scope, status: 'blocked', reason: configError, evidence: 'not-run', dataset: dataset.fingerprint,
         conditions: plan.map(condition => ({ ...condition, status: 'blocked', reason: configError })), measurements: [], quality: null };
     const budget = config.budget, startedAt = now(), measurements = [], conditions = [];
     const ledger = { reservedCostUsd: 0, reservedRequests: 0, reservedInputTokens: 0, reservedOutputTokens: 0, actualCostUsd: 0, actualCostComplete: true };
@@ -70,10 +72,10 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
             const forward = () => controller.abort(); signal?.addEventListener('abort', forward, { once: true });
             const before = now();
             const row = { conditionId: condition.id, batch: start / batchSize, questionIds: questions.map(q => q.id), status: 'unknown', evidence,
-                model: cap.model, modelVersion: cap.modelVersion, quote: { maxCostUsd: quote.maxCostUsd, maxRequests: quote.maxRequests, maxInputTokens: quote.maxInputTokens, maxOutputTokens: quote.maxOutputTokens, hardUpperBound: true }, firstTokenMs: null };
+                model: cap.model, modelVersion: cap.modelVersion, modelResolution: cap.modelResolution ?? null, quote: { maxCostUsd: quote.maxCostUsd, maxRequests: quote.maxRequests, maxInputTokens: quote.maxInputTokens, maxOutputTokens: quote.maxOutputTokens, hardUpperBound: true }, firstTokenMs: null };
             let abortListener;
             try {
-                await onRecord({ phase: 'intent', conditionId: condition.id, batch: row.batch, quote: row.quote, evidence });
+                await onRecord({ phase: 'intent', conditionId: condition.id, batch: row.batch, quote: row.quote, modelResolution: row.modelResolution, evidence });
                 controller.signal.throwIfAborted();
                 const aborted = new Promise((_, reject) => { abortListener = () => reject(new Error('aborted')); controller.signal.addEventListener('abort', abortListener, { once: true }); });
                 const response = await Promise.race([Promise.resolve().then(() => adapter.run({ ...request, signal: controller.signal, ceiling: { ...quote },
@@ -122,7 +124,7 @@ export async function runEvaluation({ config, adapters = {}, dataset = createDat
         if (complete && condition.cache === 'cold') coldCompleted.add(condition.sessionKey);
     }
     const complete = conditions.every(c => c.status === 'completed');
-    return { status: complete ? 'completed' : 'blocked', evidence, dataset: dataset.fingerprint, datasetId: dataset.id,
+    return { ...scope, status: complete ? 'completed' : 'blocked', evidence, dataset: dataset.fingerprint, datasetId: dataset.id,
         quality: complete ? (conditions.every(c => c.score.gate === 'passed') ? 'passed' : 'failed') : null,
         conditions, measurements, ledger: { ...ledger, actualCostUsd: ledger.actualCostComplete ? ledger.actualCostUsd : null },
         summary: summarizeMeasurements(measurements) };

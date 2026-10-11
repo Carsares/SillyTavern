@@ -299,3 +299,54 @@ test('text templates keep declared media in typed messages and count it separate
     assert.ok(plan.estimatedTokens >= 1000);
     assert.throws(() => compileContext(input, { capabilities: { media: ['text', 'image'] } }), { code: 'media-budget-unknown' });
 });
+
+test('retrieval reintroduces folded original detail but never duplicates active raw history or itself', () => {
+    const input = folded();
+    const recall = (message, id) => ({ id, key: `message:${message.id}`, kind: 'message', status: 'valid', content: message.content, sourceRefs: [sourceRef(message)] });
+    input.retrieval = [recall(input.messages[0], 'old'), recall(input.messages[2], 'recent'), recall(input.messages[0], 'duplicate')];
+    const plan = compileContext(input);
+    assert.ok(plan.blocks.some(block => block.id === 'derived:old' && block.layer === 'L3'));
+    assert.ok(plan.messages.some(message => message.content === 'summary'));
+    assert.equal(plan.messages.filter(message => message.content === 'u1').length, 1);
+    assert.equal(plan.messages.filter(message => message.content === 'u2').length, 1);
+    assert.ok(plan.omitted.some(item => item.id === 'derived:duplicate'));
+    input.messages[0].revision++;
+    assert.ok(!compileContext(input).blocks.some(block => block.id === 'derived:old'));
+});
+
+test('recalled originals remain optional and budget bounded, without duplicating derived memories', () => {
+    const input = folded();
+    const refs = [sourceRef(input.messages[0])];
+    input.memories = [{ id: 'm', content: 'remembered', status: 'valid', sourceRefs: refs }];
+    input.retrieval = [{ id: 'r', key: 'message:u1', kind: 'message', status: 'valid', content: 'x'.repeat(9000), sourceRefs: refs },
+        { id: 'm-copy', key: 'derived:m', kind: 'derived', status: 'valid', content: 'remembered', sourceRefs: refs }];
+    const plan = compileContext(input, { countTokens: counter });
+    assert.equal(plan.messages.filter(message => message.content === 'remembered').length, 1);
+    assert.ok(plan.omitted.some(item => item.id === 'derived:r' && item.reason === 'budget'));
+});
+
+test('latest rolling replaces covered chapters but cannot re-hide expanded raw history', () => {
+    const input = folded();
+    const refs = input.summaries[0].sourceRefs;
+    input.summaries.push({ id: 'rolling-old', revision: 1, kind: 'rolling', status: 'valid', content: 'older rolling', sourceRefs: refs },
+        { id: 'rolling-new', revision: 1, kind: 'rolling', status: 'valid', content: 'new rolling', sourceRefs: refs, parentSummaryRefs: [{ id: 's', revision: 1 }] });
+    let plan = compileContext(input);
+    assert.deepEqual(plan.messages.map(message => message.content), ['new rolling', 'u2', 'a2', 'u3']);
+    input.folds[0].expanded = true;
+    plan = compileContext(input);
+    assert.deepEqual(plan.messages.map(message => message.content), ['u1', 'a1', 'u2', 'a2', 'u3']);
+});
+
+test('hidden original invalidates derived injection independently of folding', () => {
+    const input = folded();
+    input.messages[0].userHidden = true;
+    const refs = [sourceRef(input.messages[0])];
+    input.memories.push({ id: 'hidden-memory', status: 'valid', locked: true, content: 'Hidden derived fact', sourceRefs: refs });
+    input.retrieval = [{ id: 'hidden-recall', kind: 'message', status: 'valid', content: 'Hidden recalled fact', sourceRefs: refs }];
+    let plan = compileContext(input);
+    assert.deepEqual(plan.messages.map(message => message.content), ['a1', 'u2', 'a2', 'u3']);
+    assert.equal(input.folds[0].status, 'valid', 'Compilation does not mutate fold or visibility state');
+    input.messages[0].userHidden = false;
+    plan = compileContext(input);
+    assert.ok(plan.messages.some(message => message.content === 'summary'));
+});

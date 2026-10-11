@@ -5,7 +5,7 @@ import { summarizeUsage } from '../traces/usage.js';
 const wrap = handler => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(next);
 const publicTurn = turn => ({ ...turn, payloadHash: undefined, request: turn.request ? { ...turn.request, apiKey: undefined } : undefined });
 
-export function createRouter({ store, runtime, capabilities, maintenance, resources, attachments }) {
+export function createRouter({ store, runtime, capabilities, maintenance, resources, attachments, providerJobs }) {
     const router = express.Router();
     const normalBody = express.json({ limit: '20mb' });
     const backupBody = express.json({ limit: BACKUP_MAX_BYTES });
@@ -16,6 +16,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
             try {
                 requireObject(req.body);
                 invariant(req.body.schemaVersion === SCHEMA_VERSION, 'schema-version', 'Unsupported protocol version', 409);
+                if (['/maintenance/cleanup', '/maintenance/restore'].includes(req.path)) invariant(!providerJobs?.busy(), 'provider-job-busy', 'Wait for image job recovery before maintenance', 409);
             } catch (error) { return next(error); }
         }
         next();
@@ -49,9 +50,14 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
     router.post('/conversations/:id/compact', wrap(async (req, res) => res.json(await runtime.compact(req.params.id, req.body))));
     router.post('/conversations/:id/automatic', wrap((req, res) => res.json(runtime.setAutomatic(req.params.id, req.body))));
     router.get('/conversations/:id/automatic', wrap((req, res) => res.json(runtime.automaticStatus(req.params.id))));
+    router.get('/conversations/:id/retrieval', wrap((req, res) => res.json(runtime.retrievalStatus(req.params.id))));
     router.get('/conversations/:id/messages/:messageId/candidates', wrap((req, res) => res.json(store.getCandidates(req.params.id, req.params.messageId))));
     router.get('/conversations/:id/messages/:messageId/history', wrap((req, res) => res.json(store.getMessageHistory(req.params.id, req.params.messageId))));
     router.get('/conversations/:id/jobs', wrap((req, res) => res.json(store.listJobs(req.params.id))));
+    if (providerJobs) {
+        router.post('/conversations/:id/jobs/:jobId/resume', wrap(async (req, res) => res.json(await providerJobs.resume(req.params.id, req.params.jobId))));
+        router.post('/conversations/:id/jobs/:jobId/cancel', wrap(async (req, res) => res.json(await providerJobs.cancel(req.params.id, req.params.jobId))));
+    }
     router.get('/conversations/:id/traces', wrap((req, res) => { store.getConversation(req.params.id); res.json(store.listTraces(req.params.id)); }));
     router.get('/conversations/:id/usage', wrap((req, res) => { store.getConversation(req.params.id); res.json(summarizeUsage(store.listTraces(req.params.id))); }));
     router.get('/traces/:id', wrap((req, res) => res.json(store.getTrace(req.params.id))));
@@ -105,7 +111,7 @@ export function createRouter({ store, runtime, capabilities, maintenance, resour
     if (maintenance) {
         router.get('/maintenance/status', wrap((req, res) => res.json(maintenance.status())));
         router.get('/maintenance/export', wrap((req, res) => res.json(maintenance.export())));
-        router.post('/maintenance/backup', wrap((req, res) => res.json(maintenance.export(req.body))));
+        router.post('/maintenance/backup', wrap((req, res) => res.json(maintenance.backup(req.body))));
         router.post('/maintenance/restore', wrap(async (req, res) => res.json(await maintenance.restore(req.body.backup ?? req.body.data))));
         router.post('/maintenance/reindex', wrap(async (req, res) => res.json(await maintenance.reindex(req.body.conversationId))));
         router.post('/maintenance/cleanup-preview', wrap((req, res) => res.json(maintenance.previewCleanup(req.body))));

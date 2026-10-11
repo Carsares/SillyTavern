@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { invariant, sourceRef, canonicalJson } from '../../../public/shared/conversation/schemas/index.js';
 import { derivedSources, sourcesValid, uniqueRefs, resourceRefs, resourcesValid, summaryParents } from './sources.js';
 
-import { selectBatch } from './budget.js';
+import { selectBatch, compressionPolicy } from './budget.js';
 import { compactSnapshot, combineProposals } from './compaction.js';
 export { combineProposals } from './compaction.js';
 
@@ -29,24 +29,25 @@ export function memoryProposal(snapshot, input, refs) {
 export function createMemoryService({ store, generate, now = Date.now }) {
     let draining;
     function eligible(snapshot) {
-        const turnIds = [...new Set(snapshot.messages.filter(m => !m.deletedAt && m.turnId).map(m => m.turnId))];
+        const turnIds = [...new Set(snapshot.messages.filter(m => !m.deletedAt && !m.userHidden && m.turnId).map(m => m.turnId))];
         const completed = new Set(turnIds.filter(id => store.getTurn(id)?.status === 'completed'));
-        return snapshot.messages.filter(m => !m.deletedAt && completed.has(m.turnId) && (!m.status || m.status === 'completed'));
+        return snapshot.messages.filter(m => !m.deletedAt && !m.userHidden && completed.has(m.turnId) && (!m.status || m.status === 'completed'));
     }
     async function propose(snapshot, { signal, budget, foreground = false } = {}) {
         signal?.throwIfAborted();
         invariant(typeof generate === 'function', 'memory-unavailable', 'No memory generator configured', 503);
         let messages = eligible(snapshot);
-        if (foreground) {
-            const lastTurn = messages.at(-1)?.turnId;
-            messages = messages.filter(m => m.turnId !== lastTurn);
-        }
+        let policy;
         const parents = summaryParents(snapshot);
         const parentRefs = uniqueRefs(parents.flatMap(s => derivedSources(s, snapshot)));
         const resources = uniqueRefs([...resourceRefs(snapshot), ...parents.flatMap(s => s.resourceRefs ?? [])]);
         const folded = (snapshot.folds ?? []).filter(f => f.status === 'valid' && resourcesValid(f.resourceRefs, snapshot) && sourcesValid(f.sourceRefs, snapshot)
             && (snapshot.summaries ?? []).some(s => s.id === f.summaryRef?.id && s.revision === f.summaryRef.revision && derivedSources(s, snapshot)));
         messages = messages.filter(m => !folded.some(f => f.sourceRefs.some(ref => canonicalJson(ref) === canonicalJson(sourceRef(m)))));
+        if (foreground) {
+            const selected = compressionPolicy(snapshot, messages);
+            messages = selected.messages; policy = selected.policy;
+        }
         if (!foreground) {
             const covered = new Set(parentRefs.map(canonicalJson));
             // Retain complete turns whenever at least one message is not yet summarized.
@@ -56,12 +57,18 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         }
         invariant(messages.length > 0, 'budget-blocked', 'No complete unfurled turns can be compressed', 409);
         const validMemories = snapshot.memories.filter(m => derivedSources(m, snapshot));
+        const eligibleCount = messages.length;
         const batch = selectBatch(snapshot, messages, { summaries: parents, memories: validMemories, sourceRefs: parentRefs, resourceRefs: resources });
         messages = batch.messages;
+        if (policy) {
+            const sourceBytes = Buffer.byteLength([...messages, ...parents].map(m => m.content ?? '').join(''));
+            policy.summaryTargetTokens = Math.max(1, Math.floor(sourceBytes * policy.compressionRatio));
+            if (messages.length < eligibleCount) policy.relaxReasons.push('auxiliary-batch-may-require-additional-compaction');
+        }
         const refs = messages.map(sourceRef);
         const allRefs = uniqueRefs([...refs, ...parentRefs]);
         const response = await generate({ type: 'memory', snapshot: copy({ ...snapshot, messages, summaries: parents, memories: validMemories, folds: [] }), messages: copy(messages),
-            summaries: copy(parents), memories: copy(validMemories), sourceRefs: copy(allRefs), resourceRefs: copy(resources), budget, inputBudget: batch.budget, estimatedInputTokens: batch.estimatedInputTokens, signal,
+            summaries: copy(parents), memories: copy(validMemories), sourceRefs: copy(allRefs), resourceRefs: copy(resources), budget, inputBudget: batch.budget, estimatedInputTokens: batch.estimatedInputTokens, compressionPolicy: copy(policy), signal,
             outputSchema: { chapter: 'nonempty string', rolling: 'optional nonempty string', memories: 'array of memory proposals' } });
         signal?.throwIfAborted();
         const output = typeof response === 'string' ? JSON.parse(response) : response;
@@ -79,7 +86,11 @@ export function createMemoryService({ store, generate, now = Date.now }) {
         const cap = typeof budget === 'number' ? budget : budget?.summaryTokens;
         if (cap != null) invariant(Number.isFinite(cap) && cap > 0 && Buffer.byteLength(summaries.map(s => s.content).join('') + memories.map(m => m.content).join('')) <= cap,
             'budget-blocked', 'Derived content exceeds conservative summary token budget', 409);
-        return { summaries, memories, folds, sourceRefs: allRefs, resourceRefs: resources, expectedMemoryRevision: snapshot.conversation.memoryRevision };
+        if (policy) {
+            policy.summaryEstimatedTokens = Buffer.byteLength(summaries.map(s => s.content).join('') + memories.map(m => m.content).join(''));
+            if (policy.summaryEstimatedTokens > policy.summaryTargetTokens) policy.relaxReasons.push('generated-summary-exceeds-half-source-target');
+        }
+        return { ...(policy ? { compressionPolicy: policy } : {}), summaries, memories, folds, sourceRefs: allRefs, resourceRefs: resources, expectedMemoryRevision: snapshot.conversation.memoryRevision };
     }
     async function prepareCompact(snapshot, { signal, budget, turnId, attemptEpoch } = {}) {
         const proposal = { ...await propose(snapshot, { signal, budget, foreground: true }),
