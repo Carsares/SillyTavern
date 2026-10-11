@@ -16,6 +16,8 @@ export function createGroupActions({
     ensureAvailableChatMode,
     updateGroupMetadata,
     deleteGroupMetadata,
+    // 新建聊天的开场白（chat-context.js 的 createOpeningMessages）：群聊时每个成员各一条
+    createOpeningMessages,
 }) {
     function defaultGroupForm() {
         return {
@@ -134,19 +136,22 @@ export function createGroupActions({
         }
 
         // 先写出首个会话文件，再把它登记进群组：群组登记的会话都有对应文件，首次打开聊天直接进入这个会话，
-        // 不会再另建一个会话而留下一个没有文件的登记。
+        // 不会再另建一个会话而留下一个没有文件的登记。文件里带上成员开场白，与聊天页新建群聊（createModernChatFile）
+        // 和旧版新群组一致：这个会话已有文件，之后不会再走新建聊天写开场白的分支。开场白只用到成员列表，
+        // 成员卡读不到（懒加载的摘要卡要取完整卡）时什么都不写，群组也不创建。
         const chatId = createInitialGroupChatId();
+        const openingMessages = await createOpeningMessages(payload, true);
         await apiFetch('/api/chats/group/save', {
             body: {
                 id: chatId,
-                chat: [{ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }],
+                chat: [{ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }, ...openingMessages],
             },
         });
         let group;
         try {
             group = await apiFetch('/api/groups/create', { body: { ...payload, chat_id: chatId, chats: [chatId] } });
         } catch (error) {
-            // 群组没建成时删掉刚写出的空会话文件；清理失败只会留下一个未登记的空文件，不影响重试。
+            // 群组没建成时删掉刚写出的会话文件；清理失败只会留下一个未登记的会话文件，不影响重试。
             await apiFetch('/api/chats/group/delete', { body: { id: chatId } }).catch(() => {});
             throw error;
         }

@@ -149,6 +149,8 @@ export function createActionRegistry({
         showToast,
         reloadCharacter: bridgeReload.reloadCharacter,
         reloadWorldInfo: bridgeReload.reloadWorldInfo,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
     });
     const {
         getCharacterAvatarUrl,

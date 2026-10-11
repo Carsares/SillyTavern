@@ -37,6 +37,8 @@ const MAX_WRITE_ATTEMPTS = 3;
  * @param {() => Promise<any>} [deps.reloadCharacter] 通知生成引擎重载角色列表
  * @param {(names?: string[] | null, options?: { refreshList?: boolean }) => Promise<any>} [deps.reloadWorldInfo] 通知生成引擎丢弃世界书缓存并刷新世界书列表
  * @param {(avatar: string, previousWorld: string, nextWorld: string) => void} [deps.onWorldLinked] 角色的关联世界书已改变，供编辑器同步表单基线
+ * @param {(name: string) => void} [deps.ensureWorldbookFileWriteAllowed] 写世界书文件前的删除屏障检查（actions/worldbook-details.js），正在删除时抛出
+ * @param {(name: string) => void} [deps.restoreWorldbookFile] 写入成功后解除「已删除」屏障，按原名恢复的世界书在本次会话里可以继续编辑和删除
  */
 export function createCharacterEmbeddedWorldActions({
     state,
@@ -48,6 +50,8 @@ export function createCharacterEmbeddedWorldActions({
     reloadCharacter = noEngineSync,
     reloadWorldInfo = noEngineSync,
     onWorldLinked = () => {},
+    ensureWorldbookFileWriteAllowed = () => {},
+    restoreWorldbookFile = () => {},
 }) {
     /** @type {Map<string, Promise<any>>} 正在导入的角色，同一角色的重复请求共用同一次导入 */
     const inFlight = new Map();
@@ -184,6 +188,7 @@ export function createCharacterEmbeddedWorldActions({
                 }
             }
 
+            ensureWorldbookFileWriteAllowed(targetName);
             try {
                 await apiFetch('/api/worldinfo/edit', {
                     body: {
@@ -194,6 +199,8 @@ export function createCharacterEmbeddedWorldActions({
                 });
                 break;
             } catch (error) {
+                // 请求在响应前失败时服务端也可能已经写入（覆盖时就是旧内容被换掉了），缓存里的内容不再可信
+                delete state.worldDetails[targetName];
                 // 别处刚好创建了同名文件：重新读取名单，再按新的重名情况询问
                 if (/** @type {any} */ (error)?.status === 409 && !overwritten && attempt < MAX_WRITE_ATTEMPTS) {
                     knownNames = await fetchWorldNames(knownNames);
@@ -202,6 +209,11 @@ export function createCharacterEmbeddedWorldActions({
                 throw error;
             }
         }
+
+        // 与世界书页的新建、导入一致：解除「已删除」屏障，按原名恢复的世界书在本次会话里能继续编辑、删除；
+        // 丢掉这本世界书的内容缓存，否则覆盖导入后世界书页仍显示旧条目，下一次编辑任意条目会把旧内容整份写回
+        restoreWorldbookFile(targetName);
+        delete state.worldDetails[targetName];
 
         // 世界书文件已落盘：关联、刷新界面数据、通知引擎。关联失败也要先刷新和通知，再把错误带上「文件已写入」的说明抛出
         let linkError = null;

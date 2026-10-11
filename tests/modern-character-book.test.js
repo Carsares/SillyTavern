@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, jest, test } from '@jest/globals';
 
 import { createCharacterEmbeddedWorldActions } from '../public/modern/actions/character-embedded-world.js';
+import { createWorldbookDetailActions } from '../public/modern/actions/worldbook-details.js';
 import {
     convertCharacterBook,
     findExistingWorldName,
@@ -346,13 +347,14 @@ function createCard({ name = 'Alice', world = '', book = true, bookExtensions = 
     };
 }
 
-function createHarness({ card = createCard(), worldNames = [], settings = { power_user: {} }, handlers = {} } = {}) {
+function createHarness({ card = createCard(), worldNames = [], settings = { power_user: {} }, handlers = {}, deps = {} } = {}) {
     const calls = [];
     const state = {
         characters: [card],
         characterDetails: {},
         worldbooks: worldNames.map(file_id => ({ file_id, name: file_id })),
         settingsBundle: { world_names: [...worldNames] },
+        worldDetails: {},
         settings,
         errors: [],
         characterEmbeddedWorld: { prompt: '', importing: '', conflict: null },
@@ -405,6 +407,7 @@ function createHarness({ card = createCard(), worldNames = [], settings = { powe
             calls.push({ url: 'reloadWorldInfo', body: names });
             return { ok: true };
         },
+        ...deps,
     });
     return { actions, state, calls, toasts, syncLog, apiFetch, loadCharacterDetail };
 }
@@ -608,6 +611,106 @@ describe('importEmbeddedWorldbook', () => {
         await actions.importEmbeddedWorldbook('alice.png');
 
         expect(onWorldLinked).toHaveBeenCalledWith('alice.png', '', 'Alice Lore');
+    });
+});
+
+// 内嵌世界书导入与世界书页（actions/worldbook-details.js）共用删除屏障和内容缓存：导入写入的文件必须能在世界书页继续编辑、删除，
+// 且编辑从导入后的内容出发，不能拿旧缓存整份写回
+describe('importEmbeddedWorldbook and the world book page', () => {
+    // 服务端的世界书文件用内存表模拟；世界书页的动作用真实实现，与导入共用 state 和 apiFetch
+    function createWorldbookHarness({ card, worldNames = [], files = {} }) {
+        let worldbookDetails = null;
+        const harness = createHarness({
+            card,
+            worldNames,
+            handlers: {
+                '/api/worldinfo/get': body => structuredClone(files[body.name]),
+                '/api/worldinfo/edit': body => {
+                    files[body.name] = structuredClone(body.data);
+                    return { ok: true };
+                },
+                '/api/worldinfo/delete': body => {
+                    delete files[body.name];
+                    return { ok: true };
+                },
+            },
+            deps: {
+                ensureWorldbookFileWriteAllowed: name => worldbookDetails.ensureWorldbookFileWriteAllowed(name),
+                restoreWorldbookFile: name => worldbookDetails.restoreWorldbookFile(name),
+            },
+        });
+        worldbookDetails = createWorldbookDetailActions({
+            state: harness.state,
+            apiFetch: harness.apiFetch,
+            loadData: async () => {},
+            showToast: () => {},
+        });
+        return { ...harness, worldbookDetails, files };
+    }
+
+    test('an overwrite import drops the cached detail, so the next entry edit starts from the imported entries', async () => {
+        const files = { 'ALICE LORE': { name: 'ALICE LORE', entries: { 0: { uid: 0, content: 'stale entry' } } } };
+        const harness = createWorldbookHarness({ worldNames: ['ALICE LORE'], files });
+        // 世界书页先打开过这本世界书，内容已缓存
+        await harness.worldbookDetails.loadWorldDetail('ALICE LORE');
+
+        const result = await harness.actions.importEmbeddedWorldbook('alice.png', { onConflict: () => 'overwrite' });
+        expect(result).toMatchObject({ status: 'imported', worldName: 'ALICE LORE', overwritten: true });
+        expect(harness.state.worldDetails).not.toHaveProperty('ALICE LORE');
+
+        await harness.worldbookDetails.updateWorldbookDetail('ALICE LORE', detail => {
+            detail.entries[0].content = 'edited after import';
+        });
+
+        expect(Object.keys(files['ALICE LORE'].entries)).toEqual(['0', '1']);
+        expect(files['ALICE LORE'].entries[0].content).toBe('edited after import');
+        expect(files['ALICE LORE'].entries[1].content).toBe('B');
+    });
+
+    test('a world book deleted in this session and restored under its name can be edited and deleted again', async () => {
+        const files = { 'Gone Lore': { name: 'Gone Lore', entries: { 0: { uid: 0, content: 'old' } } } };
+        const harness = createWorldbookHarness({ card: createCard({ world: 'Gone Lore' }), files });
+        await harness.worldbookDetails.deleteWorldbookFile('Gone Lore');
+        await expect(harness.worldbookDetails.updateWorldbookDetail('Gone Lore', () => {})).rejects.toThrow('世界书已删除或正在删除');
+
+        const result = await harness.actions.importEmbeddedWorldbook('alice.png');
+        expect(result).toMatchObject({ status: 'imported', worldName: 'Gone Lore' });
+
+        await harness.worldbookDetails.updateWorldbookDetail('Gone Lore', detail => {
+            detail.entries[1].content = 'B edited';
+        });
+        expect(files['Gone Lore'].entries[1].content).toBe('B edited');
+        await harness.worldbookDetails.deleteWorldbookFile('Gone Lore');
+        expect(files).not.toHaveProperty('Gone Lore');
+    });
+
+    test('writes nothing while the same world book is being deleted', async () => {
+        const harness = createHarness({
+            card: createCard({ world: 'Gone Lore' }),
+            deps: {
+                ensureWorldbookFileWriteAllowed: () => {
+                    throw new Error('世界书正在删除，无法创建或导入同名文件。');
+                },
+            },
+        });
+
+        await expect(harness.actions.importEmbeddedWorldbook('alice.png')).rejects.toThrow('世界书正在删除');
+        expect(urls(harness.calls)).not.toContain('/api/worldinfo/edit');
+        expect(harness.syncLog).toEqual([]);
+    });
+
+    test('a failed overwrite request also drops the cached detail and keeps the delete barrier', async () => {
+        const restoreWorldbookFile = jest.fn();
+        const harness = createHarness({
+            worldNames: ['Alice Lore'],
+            handlers: { '/api/worldinfo/edit': () => { throw new Error('socket hang up'); } },
+            deps: { restoreWorldbookFile },
+        });
+        harness.state.worldDetails['Alice Lore'] = { entries: { 0: { content: 'stale entry' } } };
+
+        await expect(harness.actions.importEmbeddedWorldbook('alice.png', { onConflict: () => 'overwrite' })).rejects.toThrow('socket hang up');
+        expect(harness.state.worldDetails).not.toHaveProperty('Alice Lore');
+        expect(restoreWorldbookFile).not.toHaveBeenCalled();
     });
 });
 

@@ -187,6 +187,11 @@ export function createChatGenerationActions({
                 groupMode,
                 isContextCurrent: () => isGenerationContextCurrent(contextKey, chatId),
             });
+        } else if (written) {
+            // 已切到别的聊天：与 syncGeneratedChat 一致丢掉这份聊天的缓存，切回时从文件重读。摘要不改变条数和末条时间，
+            // 留着缓存会一直用旧 integrity 保存，之后的编辑、删除、作者注释和摘要修改都会被服务端拒绝
+            delete state.chatMessages[getChatCacheKey(contextKey, chatId)];
+            delete state.chatMetadata[getChatCacheKey(contextKey, chatId)];
         }
         return { stopped: result?.stopped === true || result?.reason === 'stopped', written, result };
     }

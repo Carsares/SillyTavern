@@ -146,6 +146,8 @@ export function createChatActionRegistry({
         ensureAvailableChatMode,
         updateGroupMetadata,
         deleteGroupMetadata,
+        // 新群组首个会话的成员开场白，与 createModernChatFile 的群聊分支同一构造
+        createOpeningMessages: chatContextActions.createOpeningMessages,
     });
     const { beginGroupCreate } = groupActions;
 

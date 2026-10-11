@@ -50,6 +50,10 @@ export function createCharacterActions({
     showToast,
     reloadCharacter,
     reloadWorldInfo = noEngineSync,
+    // 世界书文件的删除屏障（actions/worldbook-details.js）：内嵌世界书导入写世界书文件时与世界书页走同一套检查和恢复。
+    // 未注入时不检查屏障（独立测试只关心导入本身）
+    ensureWorldbookFileWriteAllowed = (/** @type {string} */ _name) => {},
+    restoreWorldbookFile = (/** @type {string} */ _name) => {},
 }) {
     const {
         characterCreateFormData,
@@ -105,6 +109,8 @@ export function createCharacterActions({
         reloadCharacter,
         reloadWorldInfo,
         onWorldLinked: syncLinkedWorldIntoEditState,
+        ensureWorldbookFileWriteAllowed,
+        restoreWorldbookFile,
     });
 
     function emptyCharacterCreating() {

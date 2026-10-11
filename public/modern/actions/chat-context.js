@@ -887,6 +887,7 @@ export function createChatContextActions({
         refreshSelectedChatList,
         refreshSelectedChatUnreadState,
         selectLatestUnreadChatTarget,
+        createOpeningMessages,
         createModernChatFile,
         moveChatReadState,
         deleteChatReadState,

@@ -68,7 +68,13 @@ test.describe('Modern group resources', () => {
         expect(fixture.requests.order).toEqual(['chat-save', 'group-create']);
         const initialChatId = fixture.requests.groupChatSave[0].id;
         expect(initialChatId).toMatch(/^Modern \d{4}-\d{2}-\d{2}T/);
-        expect(fixture.requests.groupChatSave[0].chat).toEqual([{ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }]);
+        // Like a new group chat from the chat page and the legacy UI, the first chat starts with each member's greeting.
+        const initialChat = fixture.requests.groupChatSave[0].chat;
+        expect(initialChat[0]).toEqual({ chat_metadata: {}, user_name: 'unused', character_name: 'unused' });
+        expect(initialChat.slice(1)).toEqual([
+            expect.objectContaining({ name: 'Alice Fixture', is_user: false, mes: 'Hello from Alice.', original_avatar: 'alice.png' }),
+            expect.objectContaining({ name: 'Bruno Fixture', is_user: false, mes: 'Hello from Bruno.', original_avatar: 'bruno.png' }),
+        ]);
         expect(fixture.requests.groupCreate[0]).toMatchObject({ chat_id: initialChatId, chats: [initialChatId] });
         await expect(page.locator('[data-select-group="modern-test-group"]')).toContainText('1 个会话');
 
