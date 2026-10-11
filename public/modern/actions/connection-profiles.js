@@ -475,7 +475,7 @@ export function buildProfileApplication({ settings, profile, presetGroups = [], 
             }
             oai.preset_settings_openai = value;
             // 旧版 bind_preset_to_connection 缺省为开：预设里的来源、模型、地址、代理会一并写入，后面的 api / api-url / model / proxy 再按档案改回来
-            useOpenAiPresetFields(oai, content, { bindToConnection: oai.bind_preset_to_connection ?? true });
+            useOpenAiPresetFields(oai, content);
             syncTopLevelSource();
             markApplied('preset', value);
         },

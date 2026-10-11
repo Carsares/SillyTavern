@@ -846,15 +846,19 @@ describe('recent models', () => {
 });
 
 describe('the preset field helper', () => {
-    test('keeps its old default for connection fields and accepts an explicit override', () => {
+    test('treats a missing binding switch as on like the legacy default, and accepts an explicit override', () => {
         const preset = { temperature: 0.4, chat_completion_source: 'claude', claude_model: 'c' };
-        const unbound = {};
-        useOpenAiPresetFields(unbound, preset);
-        expect(unbound).toEqual({ temp_openai: 0.4 });
+        const missing = {};
+        useOpenAiPresetFields(missing, preset);
+        expect(missing).toEqual({ temp_openai: 0.4, chat_completion_source: 'claude', claude_model: 'c' });
 
-        const bound = {};
-        useOpenAiPresetFields(bound, preset, { bindToConnection: true });
-        expect(bound).toEqual({ temp_openai: 0.4, chat_completion_source: 'claude', claude_model: 'c' });
+        const unbound = { bind_preset_to_connection: false };
+        useOpenAiPresetFields(unbound, preset);
+        expect(unbound).toEqual({ bind_preset_to_connection: false, temp_openai: 0.4 });
+
+        const forcedOn = { bind_preset_to_connection: false };
+        useOpenAiPresetFields(forcedOn, preset, { bindToConnection: true });
+        expect(forcedOn).toMatchObject({ chat_completion_source: 'claude', claude_model: 'c' });
 
         const forcedOff = { bind_preset_to_connection: true };
         useOpenAiPresetFields(forcedOff, preset, { bindToConnection: false });

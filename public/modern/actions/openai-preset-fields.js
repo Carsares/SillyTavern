@@ -39,8 +39,8 @@ export function buildOpenAiPresetFromSettings({
 /**
  * 把预设里的字段写回聊天补全设置（对应旧版 openai.js 的 onSettingsPresetChange）。
  * 来源、模型、地址、代理等「连接类」字段只有在预设绑定连接（bind_preset_to_connection）时才写入。
- * 旧版这个开关缺省为开（default_settings.bind_preset_to_connection = true），而这里按设置里的值判断，缺省视为关；
- * 调用方想按旧版缺省行为处理时传 bindToConnection（连接档案就这样做）。
+ * 与旧版一致，设置里没有这个开关时视为开（default_settings.bind_preset_to_connection = true）；
+ * 预设页切换预设和连接档案应用预设都走这里，两处结果相同。
  * @param {Record<string, any>} settings oai_settings，会被就地修改
  * @param {Record<string, any>} preset 预设内容
  * @param {{ bindToConnection?: boolean }} [options] bindToConnection 覆盖按 settings 判断的结果
@@ -112,7 +112,7 @@ export function useOpenAiPresetFields(settings, preset, { bindToConnection } = {
         reverse_proxy: ['reverse_proxy', true],
         proxy_password: ['proxy_password', true],
     };
-    const useConnectionFields = bindToConnection ?? Boolean(settings.bind_preset_to_connection);
+    const useConnectionFields = bindToConnection ?? (settings.bind_preset_to_connection ?? true) !== false;
 
     for (const [presetKey, [settingsKey, isConnection]] of Object.entries(fieldMap)) {
         if (isConnection && !useConnectionFields) {
