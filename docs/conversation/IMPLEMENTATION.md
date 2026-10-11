@@ -4,7 +4,11 @@ All work remains on master in the original workspace. Initial clean baseline: `6
 
 ## Current stage
 
-Feature implementation and module contract review reached the final integration stage after focused unit checks. Local HTTP/database and browser validation passed the inspected scenarios; installed SDK integration and three bounded real connection checks passed. Container builds failed during the base-image fetch. Real-model quality/cost/latency evaluation has not run. See VALIDATION.md for check-specific evidence. A module commit is not acceptance of the complete product. The user's testing order is authoritative: focused unit tests during development, full integration after all feature changes are ready.
+The new-application cleanup is complete. See [CLEANUP.md](CLEANUP.md) for the removed
+legacy tree, retained functions, canonical input changes and current validation.
+The stage history below records earlier work.
+
+Feature implementation and module contract review reached the final integration stage after focused unit checks. Local HTTP/database and browser validation passed the inspected scenarios; installed SDK integration and three bounded real connection checks passed. Container builds failed during the base-image fetch. A later long-history diagnostic dispatched one request and timed out without a quality result; the user cancelled that evaluation. No further quality matrix or budget-limit experiment is required. See VALIDATION.md for check-specific evidence. A module commit is not acceptance of the complete product. The user's testing order is authoritative: focused unit tests during development, full integration after all feature changes are ready.
 
 ## Committed stages
 
@@ -41,26 +45,22 @@ Feature implementation and module contract review reached the final integration 
 
 Numbers overlap between reruns and must not be added into a claimed distinct-test total.
 
-## Remaining acceptance work
+## Current delivery scope
 
-- Local scope corrections and phase commits are complete. See VALIDATION.md for
-  664 passing unit tests, 58 passing integration tests, inspected browser scenarios
-  and three real connection checks. The last presentation-only change passed
-  all 68 client tests and affected lint checks.
-- Retry container validation after base-image registry access is available.
-- Run the long-conversation matrix (32K/64K/128K/full, cold/warm, at least three
-  repeats and all executors) with frozen model versions, exact expected answers
-  and measured usage. Harness unit tests do not prove quality.
-- Record unsupported or unverified platform/provider combinations explicitly.
-  Default working budget remains provisional until quality/cost/latency acceptance.
+The user cancelled long-conversation quality matrices and budget-limit experiments.
+Acceptance now uses offline functional tests and minimal explicitly authorized
+connection checks only. Do not resume paid evaluations from older plan entries.
 
-Three paid model requests completed using the user's existing selected connection:
-native PI, Claude Agent SDK and Codex SDK each returned the expected OK, with
-reported usage of 24 input and 1 output tokens. The initial Claude attempt failed
-context validation before dispatch; the local reproduction was fixed before its
-single successful provider request. No credentials were persisted in test output.
+Old application sources, pages, plugins, configuration initialization, migrations,
+legacy tests, bundling, upstream publishing and auto-update scripts have been
+removed. The retained source trees are `src/conversation`,
+`public/shared/conversation` and `public/modern/conversation`. Required NovelAI
+tokenizer assets live under the new provider module. Package dependencies match
+these modules; the browser uses native ES modules without a bundler.
 
-This authorization does not set a spending ceiling for the full repeated
-long-conversation matrix. That ceiling and compatible model windows must be
-confirmed at the final evaluation stage. The existing local setting uses a 4095
-token context window and cannot directly satisfy the planned 32K/64K/128K matrix.
+Existing local chats, credentials and backups are user data, not source to remove.
+They remain untouched and are not read by normal new-application startup.
+
+Current verification evidence and remaining platform limitations are recorded in
+VALIDATION.md. Earlier suite counts above are historical and do not validate a
+later revision automatically.

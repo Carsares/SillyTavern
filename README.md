@@ -30,6 +30,7 @@ npm start
 - [运行、恢复与维护](docs/conversation/OPERATIONS.md)
 - [实施和提交阶段](docs/conversation/IMPLEMENTATION.md)
 - [验收证据与剩余限制](docs/conversation/VALIDATION.md)
+- [旧实现清理与功能保留核对](docs/conversation/CLEANUP.md)
 - [可选离线评测工具（默认禁用付费）](tests/conversation/evaluation/README.md)
 
 新数据库是对话事实的唯一持久化来源。消息版本、候选、快照、事件、资源版本与工具记录分别持久化。同一对话最多一个活动轮次；模型调用期间不持有数据库事务。

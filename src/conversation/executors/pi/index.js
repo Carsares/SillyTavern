@@ -15,7 +15,7 @@ export { createPiStreamBridge } from './bridge.js';
 export function createPiExecutor({ onRequest, streamFn, model: injectedModel, fetch: fetchImpl, capabilityResolver = getCapabilities, modelFactory = createPrimaryModel } = {}) {
     return {
         async runTurn({ requestPlan, connection, tools = [], limits = {}, signal, beforeRequest, onEvent }) {
-            const c = connection?.data ?? connection;
+            const c = connection;
             const capabilities = validateCapabilities(c, capabilityResolver(c));
             if (!capabilities.supported) throw fail('unsupported-capability', capabilities.reason);
             const providerReasoning = Array.isArray(capabilities.reasoning);

@@ -5,6 +5,15 @@ inside dedicated temporary directories. Existing conversations and credentials a
 not copied into the new application. The separate live check has explicit user
 authorization to read only the selected connection credentials in memory.
 
+## Current cleanup verification
+
+See [new-application cleanup](CLEANUP.md) for the current revision: 649 offline
+functional units passed; 57 of 58 local integration scenarios passed initially,
+and the one outdated restore-request test was corrected with all 16 HTTP
+integration tests passing on rerun. The retained 42 other scenarios had already
+passed. Final PI/adapter checks passed 63 tests. No paid or long-history quality
+checks ran. Counts below describe earlier revisions and overlap later reruns.
+
 ## Completed checks
 
 | Check | Result | Evidence and boundary |
@@ -55,18 +64,21 @@ with EOF. No image/container/volume was created. Container runtime checks are
 therefore unrun; `docker/validate-conversation.py` retains the isolated validation
 procedure. Local Docker is desktop-linux, Linux arm64, server version 29.2.1.
 
-## Final quality acceptance is separate
+## Cancelled paid quality evaluation
 
-The long-conversation dataset contains 3,040 selected messages, historical/deleted
-variants and 1,600 scored questions. The planned matrix has 72 conditions: three
-executors, four context budgets, cold/warm cache conditions and three repetitions.
-Dataset/harness tests do not establish model quality. Actual model quality, cost,
-latency and provider-controlled cache isolation remain unverified. The full matrix
-requires a separately confirmed spending ceiling and compatible model windows.
+The user cancelled long-conversation quality and budget-limit testing. These
+experiments are no longer delivery prerequisites and must not resume from old
+plan entries. Functional verification uses synthetic local provider peers; the
+three earlier real short replies remain connectivity evidence only.
 
-Unverified provider/platform combinations must remain labeled unverified. This
-document does not claim that one real connection verifies every named provider,
-or that the complete G5 quality gate has passed.
+A later pre-dispatch attempt made zero provider requests. One separate Codex
+long-history diagnostic dispatched one request and timed out without a scored
+answer. Its reserved maximum was USD 0.3073728; actual billing is unknown. No
+automatic retry was made. Local evidence is in
+`test-results/evaluation-10usd-codex-full/report.json`.
+
+This document does not claim model-quality thresholds or verification of every
+provider/platform combination.
 
 ## Final browser scope pass
 

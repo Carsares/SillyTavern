@@ -49,14 +49,13 @@ actual injected tokenize function, capability.supported is false and types is em
 adapter construction fails before generation. Without stops, tokenization is not
 required and an otherwise valid connection remains eligible.
 
-`getTextCapabilities(connection,{tokenize})` and
-`providerCapabilities(connection,{tokenize})` accept the same actual function used
+`getTextCapabilities(connection,{tokenize})` accepts the same actual function used
 by `createProviderAdapter`/`createProviderStream`. Connection data cannot claim an
 injection through a boolean. Hosts adding custom tokenizers must wire the function
 to both preflight and execution. `stopTokenization` reports supported/family/source.
 
-Read-only assets must be shipped at src/tokenizers/nerdstash.model,
-src/tokenizers/nerdstash_v2.model and src/tokenizers/llama3.json. Existing installed
+Read-only assets must be shipped at src/conversation/providers/text/assets/nerdstash.model,
+src/conversation/providers/text/assets/nerdstash_v2.model and src/conversation/providers/text/assets/llama3.json. Existing installed
 @agnai/sentencepiece-js and @agnai/web-tokenizers are sufficient; no new dependency
 or download is needed. Container asset copying belongs to the parent; Docker has
 not been executed by this audit.

@@ -41,8 +41,7 @@ https://developers.openai.com/api/reference/resources/images/methods/generate ;
 https://image.novelai.net/docs/index.html .
 
 V4 feature reference: https://docs.novelai.net/en/image/multiplecharacters/ .
-The local legacy request field listing at `src/endpoints/novelai.js` was read as
-protocol evidence only; no legacy state or handler is reused.
+Provider codecs are implemented in this module and validated against explicit protocol tests.
 
 
 ## Expanded source implementation and integration ports
@@ -162,10 +161,8 @@ model-dependent; known BFL ultra/1.1 restrictions fail before dispatch.
 
 ### Protocol evidence and verification
 
-Read-only protocol evidence: src/vectors/*-vectors.js, src/endpoints/stable-diffusion.js,
-src/endpoints/google.js and original source enumerations. No legacy handler,
-configuration, credential lookup, saved data or startup path is imported.
-Additional primary sources:
+No old handler, configuration reader, credential lookup or saved-data path is imported.
+Primary protocol sources:
 
 - https://github.com/LostRuins/lite.koboldai.net/blob/main/koboldcpp_api.json (/v1/embeddings)
 - https://github.com/nomic-ai/nomic/blob/main/nomic/embed.py (task_type/dimensionality)

@@ -303,7 +303,7 @@ test('HTTP restore accepts a valid backup above 20 MiB while ordinary JSON route
     await completed(source, 'Large backup history');
     const exported = await source.api('/maintenance/backup', {});
     assert.equal(exported.status, 200);
-    const body = { backup: exported.value };
+    const body = { data: exported.value };
     assert.ok(Buffer.byteLength(JSON.stringify({ schemaVersion: 1, ...body })) > 20 * 1024 * 1024);
     const rejected = await target.api('/resources', body);
     assert.equal(rejected.status, 413);

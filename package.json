@@ -43,5 +43,18 @@
         "eslint": "^8.57.1",
         "eslint-plugin-jsdoc": "^48.10.0"
     },
-    "description": "Standalone Conversation v1: versioned conversations, memory and three model executors"
+    "description": "Standalone Conversation v1: versioned conversations, memory and three model executors",
+    "files": [
+        "server.js",
+        "src/conversation/",
+        "public/shared/conversation/",
+        "public/modern/conversation/",
+        "docs/conversation/",
+        "README.md",
+        "LICENSE",
+        "SECURITY.md",
+        "CONTRIBUTING.md",
+        "start.sh",
+        "Start.bat"
+    ]
 }

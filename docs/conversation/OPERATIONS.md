@@ -32,7 +32,7 @@ For revision conflicts, reload current state and review the pending edit. The cl
 
 ## Validation status
 
-Read IMPLEMENTATION.md before treating a path as accepted. Module tests, protocol simulations, browser scenarios, installed-SDK execution and paid quality evaluation prove different things. The evaluation runner requires explicit connection configuration and admission budgets. No mock test establishes long-conversation quality, cost or latency against real models.
+Read IMPLEMENTATION.md and VALIDATION.md before treating a path as accepted. Module tests, local protocol simulations, browser scenarios and real connection checks prove different things. Paid quality matrices and budget-limit experiments were cancelled by the user; do not run them as delivery validation. No mock test establishes real-model quality, cost or latency.
 
 ## Connection proxies and indexing
 
