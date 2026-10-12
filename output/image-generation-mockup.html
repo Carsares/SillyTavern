@@ -1,0 +1,1076 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型 · 会话内图片生成</title>
+<style>
+:root {
+    color-scheme: light;
+    --bg: #f4f7fb; --surface: #ffffff; --surface-muted: #f7f9fc; --surface-strong: #e8eef6;
+    --text: #171b22; --text-muted: #667085; --border: #d8e0ea; --border-strong: #b9c5d5;
+    --accent: #0f766e; --accent-strong: #115e59; --accent-soft: #dff5f1;
+    --warning: #b7791f; --danger: #c24141; --success: #287d3c;
+    --shadow: 0 18px 44px rgba(18, 26, 36, 0.13); --shadow-soft: 0 8px 24px rgba(18, 26, 36, 0.07);
+    --radius: 8px; --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+}
+[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #101418; --surface: #181d23; --surface-muted: #20262e; --surface-strong: #2a333d;
+    --text: #edf2f7; --text-muted: #a5b1bf; --border: #2e3945; --border-strong: #465567;
+    --accent: #46c2b4; --accent-strong: #8be2d8; --accent-soft: #163d3a;
+    --warning: #e1a858; --danger: #e06c6c; --success: #68c184;
+    --shadow: 0 18px 48px rgba(0, 0, 0, 0.36); --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; min-width: 1180px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+.ic.sm { width: 13px; height: 13px; vertical-align: -2px; }
+.ic.lg { width: 22px; height: 22px; }
+
+/* ---------- 原型导航条（不属于产品界面） ---------- */
+.proto-bar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 14px; height: 46px; padding: 0 16px; background: #0b1220; color: #e2e8f0; font-size: 13px; }
+.proto-bar strong { font-size: 13px; letter-spacing: .02em; }
+.proto-bar .proto-tabs { display: flex; gap: 4px; }
+.proto-bar button { border: 1px solid #263247; background: #131c2e; color: #cbd5e1; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.proto-bar button.active { background: #e2e8f0; color: #0b1220; border-color: #e2e8f0; }
+.proto-bar select { background: #131c2e; color: #e2e8f0; border: 1px solid #263247; border-radius: 6px; padding: 4px 8px; }
+.proto-bar .proto-note { margin-left: auto; color: #94a3b8; }
+
+/* ---------- 应用外壳 ---------- */
+.app { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: calc(100vh - 46px); }
+.sidebar { border-right: 1px solid var(--border); background: var(--surface); padding: 18px 14px; overflow: auto; }
+.brand { display: flex; align-items: center; gap: 12px; padding: 4px 6px 20px; }
+.brand-mark { width: 44px; height: 44px; border-radius: 10px; background: #13312d; color: #fff; display: grid; place-items: center; font-weight: 700; }
+.brand-title { font-weight: 700; font-size: 16px; }
+.brand-sub { color: var(--text-muted); font-size: 12px; }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 9px 12px; margin: 2px 0; border-radius: var(--radius); color: var(--text-muted); cursor: pointer; border-left: 3px solid transparent; }
+.nav-item:hover { background: var(--surface-muted); color: var(--text); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent-strong); border-left-color: var(--accent); font-weight: 600; }
+.nav-item .count { margin-left: auto; font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--surface-muted); border: 1px solid var(--border); }
+.workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topbar { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 70%, var(--bg)); }
+.search { flex: 1; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text-muted); }
+.search kbd { margin-left: auto; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; background: var(--surface-muted); }
+.status-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 999px; background: var(--success); flex: none; }
+.dot.warning { background: var(--warning); } .dot.danger { background: var(--danger); } .dot.muted { background: var(--text-muted); }
+.content { flex: 1; min-height: 0; overflow: auto; padding: 20px 22px 22px; }
+.content.chat-content { display: flex; flex-direction: column; overflow: hidden; }
+
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.eyebrow { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.page-title { margin: 2px 0 2px; font-size: 26px; line-height: 1.25; }
+.page-description { margin: 0; color: var(--text-muted); }
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.icon-button, .primary-button, .secondary-button, .ghost-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; border-radius: var(--radius); cursor: pointer; white-space: nowrap; transition: background 140ms, border-color 140ms, color 140ms; }
+.icon-button { width: 38px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); }
+.icon-button.mini { width: 28px; min-height: 28px; }
+.primary-button { padding: 0 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; }
+[data-theme="dark"] .primary-button { color: #06201d; }
+.primary-button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.secondary-button { padding: 0 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.secondary-button:hover, .icon-button:hover { border-color: var(--border-strong); color: var(--text); }
+.ghost-button { min-height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--text-muted); font-size: 12px; }
+.ghost-button:hover { background: var(--surface-muted); color: var(--text); }
+.ghost-button.danger, .secondary-button.danger { color: var(--danger); }
+.small { min-height: 30px !important; font-size: 13px; padding: 0 10px; }
+button:disabled { cursor: not-allowed !important; opacity: .55; }
+
+.panel { border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow-soft); }
+.tag { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.tag.mini { min-height: 20px; padding: 0 7px; font-size: 11px; }
+.tag.accent { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: var(--accent-soft); color: var(--accent-strong); }
+.tag.warn { border-color: color-mix(in srgb, var(--warning) 45%, transparent); background: color-mix(in srgb, var(--warning) 12%, var(--surface)); color: var(--warning); }
+.tag.ok { border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
+
+.segmented-control { display: inline-grid; grid-auto-flow: column; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface-muted) 82%, var(--surface)); }
+.segmented-control button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 14px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.segmented-control button.active { background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(18, 26, 36, .08); font-weight: 600; }
+.segmented-control.compact button { min-height: 24px; padding: 0 10px; font-size: 12px; }
+
+.text-input, .select-input, textarea.text-input { width: 100%; min-height: 38px; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+.text-input:focus, .select-input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.field-label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.field-hint { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+.field-hint.warn { color: var(--warning); }
+
+/* ---------- 聊天页 ---------- */
+.content.chat-content { overflow: auto; }
+.chat-content .page-head { margin-bottom: 10px; }
+.chat-content .page-title { font-size: 20px; }
+.chat-panel { flex: 1; min-height: 640px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 14px 16px 14px; }
+.chat-hero { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.hero-avatar { width: 48px; height: 48px; border-radius: 10px; background: linear-gradient(135deg, #3b3f8f, #9d6bd8 60%, #e9b7d6); color: #fff; display: grid; place-items: center; font-size: 20px; font-weight: 700; flex: none; }
+.hero-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.hero-title { margin: 0; font-size: 18px; }
+.hero-sub { color: var(--text-muted); font-size: 12px; }
+.hero-tags { display: flex; gap: 6px; flex-wrap: wrap; flex-basis: 100%; }
+.hero-actions { display: flex; gap: 8px; }
+
+.thread { min-height: 300px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface-muted) 60%, var(--surface)); }
+.message-list { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 12px; padding: 0 16px 16px; }
+.select-banner { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; margin: 0 -16px; padding: 8px 16px; background: color-mix(in srgb, var(--accent-soft) 92%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); color: var(--accent-strong); font-size: 13px; }
+.select-banner .ghost-button { margin-left: auto; color: var(--accent-strong); }
+.list-spacer { height: 4px; }
+
+.message { position: relative; max-width: min(78%, 760px); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 1px 2px rgba(18, 26, 36, .05); }
+.message.user { justify-self: end; background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.message-meta, .message-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: var(--text-muted); font-size: 12px; }
+.message-foot { margin: 8px 0 0; }
+.meta-left { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.message-meta strong { color: var(--text); }
+.message-body p { margin: 0 0 6px; } .message-body p:last-child { margin-bottom: 0; }
+.message-body em { color: var(--text-muted); }
+.message.selectable { cursor: pointer; }
+.message.selectable:hover { border-color: var(--border-strong); }
+.message.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+.message.dimmed { opacity: .55; }
+.checkbox { width: 16px; height: 16px; border: 1.5px solid var(--border-strong); border-radius: 4px; display: inline-grid; place-items: center; background: var(--surface); color: transparent; flex: none; }
+.checkbox .ic { width: 11px; height: 11px; stroke-width: 3; }
+.selected .checkbox { background: var(--accent); border-color: var(--accent); color: #fff; }
+.message-streaming .stream-text::after { content: ''; display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: text-bottom; background: var(--accent); animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+
+/* 图片消息 */
+.message.image-message { max-width: min(78%, 520px); }
+.media-frame { position: relative; display: inline-block; max-width: 100%; }
+.media-frame img { display: block; max-width: 100%; max-height: 360px; border-radius: var(--radius); cursor: zoom-in; background: var(--surface-muted); }
+.media-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.media-grid img { width: 100%; max-height: 240px; object-fit: cover; }
+.variant-switch { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.media-overlay { position: absolute; inset: 0; border-radius: var(--radius); display: grid; place-items: center; background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(2px); color: var(--text); font-size: 13px; }
+.prompt-details { margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.prompt-details summary { cursor: pointer; padding: 6px 10px; font-size: 12px; color: var(--text-muted); list-style: none; display: flex; gap: 6px; align-items: center; }
+.prompt-details summary::-webkit-details-marker { display: none; }
+.prompt-details[open] summary .chev { transform: rotate(90deg); }
+.prompt-details .prompt-text { padding: 0 10px 8px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: var(--text); }
+.image-info { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+.image-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.delete-confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--danger); }
+
+/* 生成中 / 失败 / 未知 卡片 */
+.skeleton { width: min(340px, 100%); border-radius: var(--radius); background: linear-gradient(90deg, var(--surface-muted) 0%, var(--surface-strong) 50%, var(--surface-muted) 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; display: grid; place-items: center; color: var(--text-muted); font-size: 13px; text-align: center; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.job-card.failed { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.job-card.unknown { border-color: color-mix(in srgb, var(--warning) 50%, var(--border)); background: color-mix(in srgb, var(--warning) 6%, var(--surface)); }
+.job-title { display: flex; align-items: center; gap: 7px; font-weight: 600; margin-bottom: 4px; }
+.job-card.failed .job-title { color: var(--danger); } .job-card.unknown .job-title { color: var(--warning); }
+.job-text { font-size: 13px; color: var(--text-muted); }
+.job-text code { font-family: var(--mono); font-size: 12px; background: var(--surface-muted); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+
+/* 输入框 */
+.composer { position: relative; display: grid; gap: 8px; margin-top: 10px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 1px 2px rgba(18, 26, 36, .05); }
+.composer.image-mode { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent); }
+.composer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.composer textarea { width: 100%; min-height: 46px; max-height: 200px; resize: none; padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+.composer-buttons { display: flex; gap: 8px; align-items: flex-end; }
+.composer-top { display: flex; align-items: center; gap: 10px; }
+.composer-top .hint { color: var(--text-muted); font-size: 12px; }
+.composer-status { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.composer-status.warn { color: var(--warning); }
+.composer-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.composer-meta .usage { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+.mode-toggle button { gap: 5px; }
+.connection-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 420px; min-height: 28px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-muted); font-size: 12px; cursor: pointer; }
+.connection-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.connection-chip.image { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent-strong); background: var(--accent-soft); }
+.chip-popover { position: absolute; left: 8px; bottom: calc(100% + 8px); z-index: 20; width: 340px; padding: 14px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); background: var(--surface); box-shadow: var(--shadow); }
+.chip-popover h4 { margin: 0 0 8px; font-size: 14px; }
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 6px 10px; font-size: 13px; margin-bottom: 12px; }
+.kv span:nth-child(odd) { color: var(--text-muted); }
+
+.stepper { display: flex; align-items: center; gap: 8px; padding: 2px 2px 0; }
+.step { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.step .num { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); display: grid; place-items: center; font-size: 11px; background: var(--surface); }
+.step.active { color: var(--text); font-weight: 600; }
+.step.active .num { background: var(--accent); border-color: var(--accent); color: #fff; }
+.step.done { color: var(--accent-strong); }
+.step.done .num { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.step-line { flex: 0 0 26px; height: 1px; background: var(--border-strong); }
+.select-box { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+.select-summary { font-size: 13px; }
+.select-summary strong { font-size: 15px; color: var(--accent-strong); }
+.select-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text); }
+.switch .knob { width: 28px; height: 16px; border-radius: 999px; background: var(--border-strong); position: relative; transition: background 140ms; }
+.switch .knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left 140ms; }
+.switch.on .knob { background: var(--accent); } .switch.on .knob::after { left: 14px; }
+.progress-box { display: flex; align-items: center; gap: 12px; padding: 14px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); font-size: 13px; }
+.spinner-ring { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.prompt-source { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.prompt-source .tag { color: var(--accent-strong); }
+.param-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.param { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 4px 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); font-size: 12px; color: var(--text-muted); }
+.param select { border: 0; background: transparent; color: var(--text); font-size: 12px; padding: 3px 2px; cursor: pointer; }
+.param select:focus { outline: none; }
+.param-note { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+.advanced-box { display: grid; grid-template-columns: minmax(0, 1fr) 140px 120px; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.advanced-box textarea { min-height: 38px; height: 38px; }
+.empty-composer { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface-muted); }
+.empty-composer .icon-wrap { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-strong); }
+.empty-composer p { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
+.text-mode-row textarea { min-height: 46px; }
+
+/* ---------- API 页 ---------- */
+.api-tabs { margin: -4px 0 16px; }
+.api-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
+.panel-pad { padding: 18px; }
+.panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.panel-title { margin: 0; font-size: 15px; }
+.panel-subtitle { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.tile span { display: block; font-size: 12px; color: var(--text-muted); }
+.tile strong { font-family: var(--mono); font-size: 13px; }
+.form-section { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+.form-section h4 { margin: 0; font-size: 13px; }
+.form-section > p { margin: 2px 0 12px; color: var(--text-muted); font-size: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid .full { grid-column: 1 / -1; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-btn { border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer; font-weight: 600; }
+.chip-btn:hover { border-color: var(--accent); color: var(--accent-strong); }
+.field.disabled { opacity: .55; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.diag-item { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
+.diag-item .ok { color: var(--success); } .diag-item .warn { color: var(--warning); } .diag-item .muted { color: var(--text-muted); }
+.diag-item b { font-size: 13px; }
+.diag-item small { display: block; color: var(--text-muted); font-size: 12px; }
+.diag-item .state { font-size: 12px; color: var(--text-muted); }
+.history-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 6px 0; border-top: 1px dashed var(--border); color: var(--text-muted); }
+.history-row:first-child { border-top: 0; }
+
+/* ---------- 交互说明页 ---------- */
+.spec { max-width: 980px; }
+.spec section { margin-bottom: 16px; padding: 18px 20px; }
+.spec h2 { margin: 0 0 10px; font-size: 18px; }
+.spec h3 { margin: 14px 0 6px; font-size: 14px; }
+.spec p, .spec li { color: var(--text); }
+.spec ol, .spec ul { margin: 6px 0; padding-left: 22px; }
+.spec li { margin: 3px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+.spec th, .spec td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--border); }
+.spec th { color: var(--text-muted); font-weight: 600; background: var(--surface-muted); }
+.spec code { font-family: var(--mono); font-size: 12px; background: var(--surface-muted); border: 1px solid var(--border); padding: 0 5px; border-radius: 4px; }
+.spec .muted { color: var(--text-muted); }
+
+/* ---------- 浮层 ---------- */
+.lightbox { position: fixed; inset: 0; z-index: 80; display: grid; grid-template-columns: minmax(0, 1fr) 360px; background: rgba(8, 12, 18, .82); }
+.lightbox-stage { display: grid; place-items: center; padding: 32px; min-width: 0; }
+.lightbox-stage img { max-width: 100%; max-height: calc(100vh - 64px); border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.lightbox-side { background: var(--surface); padding: 20px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.lightbox-side h3 { margin: 0; font-size: 16px; }
+.lightbox-side .prompt-text { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.lightbox-side .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+.toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; max-width: 420px; padding: 10px 14px; border-radius: var(--radius); background: #111827; color: #f3f4f6; font-size: 13px; box-shadow: var(--shadow); animation: toast-in 160ms ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+    <symbol id="i-brush" viewBox="0 0 24 24"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chev-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+    <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 4 12 8-12 8z"/><path d="M20 4v16"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><path d="M8 16h.01"/><path d="M16 16h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M22 21a7 7 0 0 0-4-6.3"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></symbol>
+  </defs>
+</svg>
+<div id="root"></div>
+<script>
+'use strict';
+const ic = (n, cls = '') => `<svg class="ic ${cls}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ---------- 供应商能力（与 src/conversation/capabilities/auxiliary 的参数表对应，示例） ---------- */
+const PROVIDERS = {
+    openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-image-1', 'dall-e-3'], params: ['size', 'quality', 'count', 'style'],
+        sizes: [['1024x1024', '方图 1024×1024'], ['1024x1536', '竖图 1024×1536'], ['1536x1024', '横图 1536×1024']],
+        qualities: [['auto', '自动'], ['low', '低'], ['medium', '中'], ['high', '高']], styles: [['', '不指定'], ['vivid', '鲜艳'], ['natural', '自然']], countMax: 4 },
+    compat: { label: 'OpenAI 兼容', baseUrl: '', baseHint: '例如 https://api.siliconflow.cn/v1', models: ['Kwai-Kolors/Kolors', 'black-forest-labs/FLUX.1-schnell'], params: ['size', 'quality', 'count', 'style'],
+        sizes: [['1024x1024', '方图 1024×1024'], ['768x1024', '竖图 768×1024'], ['1024x768', '横图 1024×768']],
+        qualities: [['standard', '标准'], ['hd', '高清']], styles: [['', '不指定'], ['vivid', '鲜艳'], ['natural', '自然']], countMax: 4 },
+    google: { label: 'Google Gemini / Imagen', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', models: ['gemini-2.5-flash-image', 'imagen-4.0-generate-001'], params: ['aspect', 'count'],
+        aspects: [['1:1', '1:1 方图'], ['3:4', '3:4 竖图'], ['4:3', '4:3 横图'], ['9:16', '9:16 竖屏'], ['16:9', '16:9 宽屏']], countMax: 4 },
+    openrouter: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', models: ['google/gemini-2.5-flash-image'], params: ['aspect'],
+        aspects: [['1:1', '1:1 方图'], ['3:4', '3:4 竖图'], ['4:3', '4:3 横图'], ['16:9', '16:9 宽屏']], countMax: 1 },
+    novelai: { label: 'NovelAI', baseUrl: 'https://image.novelai.net', models: ['nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated'], params: ['size', 'count', 'negative', 'seed', 'steps'],
+        sizes: [['832x1216', '竖图 832×1216'], ['1216x832', '横图 1216×832'], ['1024x1024', '方图 1024×1024']], countMax: 4 },
+    sdwebui: { label: '本地 SD WebUI', baseUrl: 'http://127.0.0.1:7860', models: ['（使用 WebUI 当前加载的模型）'], params: ['size', 'count', 'negative', 'seed', 'steps'],
+        sizes: [['512x768', '竖图 512×768'], ['768x512', '横图 768×512'], ['768x768', '方图 768×768']], countMax: 4 },
+};
+const PARAM_LABEL = { size: '尺寸', aspect: '比例', quality: '质量', count: '数量', style: '风格', negative: '反向提示词', seed: '种子', steps: '步数' };
+const ALL_PARAMS = ['size', 'aspect', 'quality', 'count', 'style', 'negative', 'seed', 'steps'];
+
+const GENERATED_PROMPT = 'Night rooftop under a full moon, a young woman with long silver hair turning sideways to offer the corner of her dark cape to the viewer, distant city lights mirrored in her eyes, gentle wind lifting her hair, quiet intimate mood, medium shot from the viewer\'s perspective, soft moonlight with warm bokeh, detailed anime illustration';
+const DEFAULT_TEMPLATE = `You write prompts for an image generation model.
+Based on the conversation excerpt and character appearance below, describe ONE single frame:
+setting, time and lighting, characters present (appearance, outfit), pose and action, camera angle, mood and art style.
+Output one English paragraph under 120 words. No dialogue, no explanations.`;
+
+/* ---------- 状态 ---------- */
+let uid = 100;
+const S = {
+    page: 'chat', sim: 'normal', theme: 'light',
+    composerMode: 'text', imageSub: 'manual', autoStep: 1,
+    selected: new Set(), includeAppearance: true, defaultSelectCount: 3,
+    prompt: '', negative: 'lowres, bad anatomy, extra fingers, watermark', seed: '', steps: '28',
+    promptFrom: 0, showAdvanced: false, chipOpen: false,
+    provider: 'openai', model: 'gpt-image-1', size: '1024x1024', aspect: '1:1', quality: 'high', count: '1', style: '',
+    job: null, regenId: null, confirmDelete: null, lightbox: null,
+    textDraft: '', streaming: null, apiTab: 'image', testConfirm: false, checked: false,
+    history: [{ time: '22:04', ok: true, text: '成功 · 18 秒 · 1024×1024' }],
+    messages: [
+        { id: 1, user: true, name: '你', time: '22:01', text: '今晚的屋顶好安静。你经常一个人来这里吗？' },
+        { id: 2, name: '莉亚', time: '22:01', model: 'deepseek-v4-flash', text: '*她靠在栏杆上，银白的长发被夜风吹起，抬头望着那轮满月。*\n常来。城里只有这里，能同时看见月亮和整条河。' },
+        { id: 3, image: true, name: '莉亚', time: '22:04', source: '由 2 条消息生成',
+            prompt: 'Moonlit rooftop at night, a young woman with long silver hair leaning on an iron railing, cape fluttering in the wind, full moon, distant city lights reflected on a river, cinematic wide shot, soft rim light, anime illustration style',
+            variants: [{ media: [{ seed: 7, ratio: 1 }], info: 'OpenAI · gpt-image-1 · 1024×1024 · 高质量 · 耗时 18 秒' }], vi: 0 },
+        { id: 4, user: true, name: '你', time: '22:06', text: '那我陪你看一会儿。' },
+        { id: 5, name: '莉亚', time: '22:06', model: 'deepseek-v4-flash', text: '*她侧过身，把披风的一角递给你，眼里映着远处的灯火。*\n那就别说话，听风。' },
+    ],
+};
+let scrollToBottom = true;
+let focusPrompt = false;
+
+const P = () => PROVIDERS[S.provider];
+const configured = () => S.sim !== 'unconfigured';
+const textBusy = () => Boolean(S.streaming);
+const jobBusy = () => S.job?.status === 'pending' || S.regenId !== null;
+const selectionActive = () => S.page === 'chat' && S.composerMode === 'image' && S.imageSub === 'auto' && S.autoStep === 1 && configured();
+const textMessages = () => S.messages.filter(m => !m.image);
+const ratioOf = () => {
+    const p = P();
+    if (p.params.includes('aspect')) { const [a, b] = S.aspect.split(':').map(Number); return b / a; }
+    const [w, h] = S.size.split('x').map(Number); return h / w;
+};
+const sizeLabel = () => P().params.includes('aspect') ? S.aspect : S.size.replace('x', '×');
+const qualityLabel = () => (P().qualities?.find(q => q[0] === S.quality)?.[1] ?? '');
+const now = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+/* ---------- 示意图片（本地画布生成，不调用任何服务） ---------- */
+function rng(seed) { let a = seed >>> 0; return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const paintCache = new Map();
+function paint(seed, ratio) {
+    const key = `${seed}:${ratio}`;
+    if (paintCache.has(key)) return paintCache.get(key);
+    const w = 512, h = Math.round(512 * ratio);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); const r = rng(seed);
+    const hue = 215 + r() * 60;
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, `hsl(${hue},55%,9%)`); sky.addColorStop(.62, `hsl(${hue + 35},45%,27%)`); sky.addColorStop(1, `hsl(${hue + 60},40%,40%)`);
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 140; i++) { g.fillStyle = `rgba(255,255,255,${.25 + r() * .7})`; const s = r() * 1.7; g.fillRect(r() * w, r() * h * .6, s, s); }
+    const mx = w * (.22 + r() * .56), my = h * (.16 + r() * .12), mr = Math.min(w, h) * (.07 + r() * .04);
+    const glow = g.createRadialGradient(mx, my, mr * .4, mx, my, mr * 4.5);
+    glow.addColorStop(0, 'rgba(255,244,214,.5)'); glow.addColorStop(1, 'rgba(255,244,214,0)');
+    g.fillStyle = glow; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#fdf6e3'; g.beginPath(); g.arc(mx, my, mr, 0, Math.PI * 2); g.fill();
+    const base = h * .72;
+    for (let x = 0; x < w;) {
+        const bw = 12 + r() * 34, bh = 20 + r() * h * .2;
+        g.fillStyle = `hsl(${hue + 20},35%,${10 + r() * 7}%)`; g.fillRect(x, base - bh, bw, h);
+        for (let k = 0; k < 7; k++) if (r() < .55) { g.fillStyle = `rgba(255,${190 + r() * 50 | 0},120,${.5 + r() * .5})`; g.fillRect(x + 2 + r() * (bw - 5), base - bh + 4 + r() * (bh - 8), 2, 2); }
+        x += bw + 2;
+    }
+    const river = g.createLinearGradient(0, base, 0, h * .8);
+    river.addColorStop(0, `hsla(${hue + 40},50%,55%,.35)`); river.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = river; g.fillRect(0, base, w, h * .08);
+    g.fillStyle = '#07090f'; g.beginPath(); g.moveTo(0, h * .84); g.lineTo(w, h * .8); g.lineTo(w, h); g.lineTo(0, h); g.fill();
+    g.strokeStyle = '#0b0e16'; g.lineWidth = 3; g.beginPath(); g.moveTo(0, h * .78); g.lineTo(w, h * .74); g.stroke();
+    for (let x = 10; x < w; x += 26) { g.beginPath(); g.moveTo(x, h * .78 - (x / w) * h * .04); g.lineTo(x, h * .84 - (x / w) * h * .04); g.stroke(); }
+    const fx = w * (.3 + r() * .4), fy = h * .82, s = h * .24;
+    g.fillStyle = '#05070c';
+    g.beginPath(); g.ellipse(fx, fy - s * .95, s * .1, s * .12, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.moveTo(fx - s * .1, fy - s * .82); g.lineTo(fx + s * .1, fy - s * .82); g.lineTo(fx + s * .3, fy); g.lineTo(fx - s * .26, fy); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(214,220,240,.45)'; g.lineWidth = 1.1;
+    for (let k = 0; k < 9; k++) { g.beginPath(); g.moveTo(fx - s * .05 + k * s * .012, fy - s * 1.02); g.quadraticCurveTo(fx + s * .25, fy - s * .95 + k * 2, fx + s * (.38 + r() * .22), fy - s * (.72 + r() * .18)); g.stroke(); }
+    const url = c.toDataURL('image/png');
+    paintCache.set(key, url);
+    return url;
+}
+
+/* ---------- 渲染：外壳 ---------- */
+function render() {
+    const list = document.querySelector('.message-list');
+    const prevTop = list?.scrollTop ?? 0;
+    const nearBottom = list ? list.scrollHeight - list.scrollTop - list.clientHeight < 60 : true;
+    const content = document.querySelector('.content');
+    const prevContentTop = content?.scrollTop ?? 0;
+    const prevPage = document.querySelector('[data-page-key]')?.dataset.pageKey;
+
+    document.documentElement.dataset.theme = S.theme;
+    document.getElementById('root').innerHTML = protoBar() + `<div class="app">${sidebar()}<div class="workspace">${topbar()}${
+        S.page === 'chat' ? chatPage() : S.page === 'api' ? apiPage() : specPage()}</div></div>${lightbox()}`;
+
+    const nextList = document.querySelector('.message-list');
+    if (nextList) {
+        const stick = scrollToBottom || nearBottom;
+        nextList.scrollTop = stick ? nextList.scrollHeight : prevTop;
+        // 图片解码后高度才确定，贴底时再滚一次
+        if (stick) for (const img of nextList.querySelectorAll('img')) if (!img.complete) img.addEventListener('load', () => { nextList.scrollTop = nextList.scrollHeight; }, { once: true });
+    }
+    scrollToBottom = false;
+    const nextContent = document.querySelector('.content');
+    if (nextContent && prevPage === S.page) nextContent.scrollTop = prevContentTop;
+    if (focusPrompt) {
+        const ta = document.getElementById('prompt-input');
+        if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+        focusPrompt = false;
+    }
+    autoGrow();
+}
+
+function protoBar() {
+    const tab = (id, label) => `<button class="${S.page === id ? 'active' : ''}" data-act="page" data-page="${id}">${label}</button>`;
+    return `<div class="proto-bar"><strong>原型 · 会话内图片生成</strong>
+        <div class="proto-tabs">${tab('chat', '聊天页')}${tab('api', 'API 页 · 图片模型')}${tab('spec', '交互说明')}</div>
+        <label>状态模拟 <select data-act-change="sim">
+            ${[['normal', '正常'], ['unconfigured', '未配置图片模型'], ['textCompletion', '主连接是文本补全'], ['fail', '下次生图失败'], ['unknown', '下次生图结果未知']]
+                .map(([v, l]) => `<option value="${v}" ${S.sim === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select></label>
+        <span class="proto-note">示例数据，图片为本地画布生成，不连接任何后端</span></div>`;
+}
+
+function sidebar() {
+    const items = [['grid', '总览'], ['message', '聊天', 'chat'], ['bot', 'Agent 会话'], ['user', '角色', '', 33], ['users', '群组', '', 0], ['book', '世界书', '', 1],
+        ['sliders', '预设', '', 127], ['user', '用户人设', '', 1], ['folder', '素材', '', 23], ['cloud', '远程资源', '', 21], ['plug', 'API', 'api'], ['box', '扩展', '', 14], ['chart', '活动'], ['gear', '设置']];
+    return `<aside class="sidebar"><div class="brand"><div class="brand-mark">ST</div><div><div class="brand-title">SillyTavern</div><div class="brand-sub">Modern Workspace</div></div></div>
+        ${items.map(([i, l, p, n]) => `<div class="nav-item ${p && (S.page === p || (p === 'chat' && S.page === 'spec' && false)) ? 'active' : ''}" ${p ? `data-act="page" data-page="${p}"` : ''}>${ic(i)}<span>${l}</span>${n !== undefined ? `<span class="count">${n}</span>` : ''}</div>`).join('')}
+    </aside>`;
+}
+
+function topbar() {
+    return `<div class="topbar"><div class="search">${ic('search')}<span>搜索角色、世界书、预设、扩展</span><kbd>⌘K</kbd></div>
+        <span class="status-pill"><span class="dot"></span><span>Custom OpenAI-compatible · deepseek-v4-flash</span></span>
+        <button class="icon-button">${ic('refresh')}</button><button class="icon-button" data-act="theme" title="切换深浅色">${ic('moon')}</button><button class="icon-button">${ic('info')}</button></div>`;
+}
+
+/* ---------- 渲染：聊天页 ---------- */
+function chatPage() {
+    return `<div class="content chat-content" data-page-key="chat">
+        <div class="page-head"><div><div class="eyebrow">聊天</div><h1 class="page-title">聊天工作区</h1><p class="page-description">角色、会话文件和消息预览。</p></div>
+            <div class="page-actions"><button class="secondary-button">${ic('download')}导入聊天</button><button class="secondary-button">${ic('clock')}聊天备份</button><button class="secondary-button">${ic('list')}展开列表</button></div></div>
+        <div class="panel chat-panel">
+            <div class="chat-hero"><div class="hero-avatar">莉</div><div class="hero-main"><h2 class="hero-title">莉亚（示例角色）</h2><span class="hero-sub">Modern 2026-10-11T22-01-00.jsonl</span>
+                <div class="hero-tags"><span class="tag mini">${S.messages.length} 条消息</span><span class="tag mini">6.2KB</span><span class="tag mini">10/11 22:06</span><span class="tag mini ${textBusy() ? 'accent' : ''}">生成引擎 · ${textBusy() ? '生成中' : '就绪'}</span></div></div>
+                <div class="hero-actions"><button class="secondary-button small">${ic('tools')}聊天工具</button><button class="secondary-button small">${ic('dots')}管理聊天</button></div></div>
+            <div class="thread"><div class="message-list">${selectionBanner()}<div class="list-spacer"></div>${S.messages.map(messageView).join('')}${streamingView()}${jobView()}</div></div>
+            ${composer()}
+        </div></div>`;
+}
+
+function selectionBanner() {
+    if (!selectionActive()) return '';
+    return `<div class="select-banner">${ic('list')}<span>正在勾选消息：点击消息即可勾选或取消，已选 <b>${S.selected.size}</b> 条</span><button class="ghost-button" data-act="exit-select">退出勾选（Esc）</button></div>`;
+}
+
+const formatText = t => t.split('\n').map(line => `<p>${esc(line).replace(/\*(.+?)\*/g, '<em>$1</em>')}</p>`).join('');
+
+function messageView(m) {
+    if (m.image) return imageMessageView(m);
+    const sel = selectionActive();
+    const checked = S.selected.has(m.id);
+    return `<article class="message ${m.user ? 'user' : ''} ${sel ? 'selectable' : ''} ${sel && checked ? 'selected' : ''}" ${sel ? `data-act="toggle-msg" data-id="${m.id}"` : ''}>
+        <div class="message-meta"><span class="meta-left">${sel ? `<span class="checkbox">${ic('check')}</span>` : ''}<strong>${esc(m.name)}</strong><span>${m.time}</span></span>
+            ${sel ? '' : `<span class="message-actions"><button class="ghost-button">${ic('edit', 'sm')}</button></span>`}</div>
+        <div class="message-body">${formatText(m.text)}</div>
+        ${m.model ? `<div class="message-foot"><span style="font-family:var(--mono)">${m.model}</span></div>` : ''}
+    </article>`;
+}
+
+function imageMessageView(m) {
+    const sel = selectionActive();
+    const v = m.variants[m.vi];
+    const regen = S.regenId === m.id;
+    const media = v.media.length > 1
+        ? `<div class="media-grid">${v.media.map((x, i) => `<img src="${paint(x.seed, x.ratio)}" alt="生成图片" data-act="open-lightbox" data-id="${m.id}" data-index="${i}">`).join('')}</div>`
+        : `<img src="${paint(v.media[0].seed, v.media[0].ratio)}" alt="生成图片" data-act="open-lightbox" data-id="${m.id}" data-index="0">`;
+    const del = S.confirmDelete === m.id
+        ? `<span class="delete-confirm">删除这条图片消息？图片文件会保留在图片目录。<button class="secondary-button small danger" data-act="confirm-delete" data-id="${m.id}">${ic('trash', 'sm')}删除</button><button class="secondary-button small" data-act="cancel-delete">取消</button></span>`
+        : `<button class="ghost-button danger" data-act="delete-msg" data-id="${m.id}" ${jobBusy() ? 'disabled' : ''}>${ic('trash', 'sm')}删除</button>`;
+    return `<article class="message image-message ${sel ? 'dimmed' : ''}" ${sel ? 'title="图片消息不参与生成提示词"' : ''}>
+        <div class="message-meta"><span class="meta-left"><strong>${esc(m.name)}</strong><span class="tag mini accent">${ic('image', 'sm')}图片</span><span class="tag mini" title="保存为 is_system 消息，后续文本回复看不到它">${ic('eyeoff', 'sm')}不进入上下文</span></span>
+            <span class="meta-left">${m.variants.length > 1 ? `<span class="variant-switch"><button class="icon-button mini" data-act="variant" data-id="${m.id}" data-dir="-1" ${m.vi === 0 ? 'disabled' : ''}>${ic('chev-left', 'sm')}</button>${m.vi + 1}/${m.variants.length}<button class="icon-button mini" data-act="variant" data-id="${m.id}" data-dir="1" ${m.vi === m.variants.length - 1 ? 'disabled' : ''}>${ic('chev-right', 'sm')}</button></span>` : ''}<span>${m.time}</span></span></div>
+        <div class="media-frame">${media}${regen ? `<div class="media-overlay"><span style="display:inline-flex;gap:8px;align-items:center"><span class="spinner-ring"></span>正在生成新版本 · <span class="job-elapsed">0</span> 秒</span></div>` : ''}</div>
+        <details class="prompt-details"><summary>${ic('chev-right', 'sm chev')}提示词${m.source ? ` · ${esc(m.source)}` : ''}</summary><div class="prompt-text">${esc(m.prompt)}</div></details>
+        <div class="image-info">${esc(v.info)}</div>
+        ${sel ? '' : `<div class="image-actions">
+            <button class="ghost-button" data-act="regen-image" data-id="${m.id}" ${jobBusy() || textBusy() ? 'disabled' : ''}>${ic('refresh', 'sm')}重新生成</button>
+            <button class="ghost-button" data-act="edit-prompt" data-id="${m.id}">${ic('edit', 'sm')}编辑提示词</button>
+            <button class="ghost-button" data-act="copy-prompt" data-id="${m.id}">${ic('copy', 'sm')}复制提示词</button>
+            <button class="ghost-button" data-act="download">${ic('download', 'sm')}下载</button>
+            ${del}</div>`}
+    </article>`;
+}
+
+function streamingView() {
+    if (!S.streaming) return '';
+    return `<article class="message message-streaming"><div class="message-meta"><span class="meta-left"><strong>莉亚</strong><span>${now()}</span></span></div>
+        <div class="message-body"><p class="stream-text" id="stream-text">${esc(S.streaming.text)}</p></div></article>`;
+}
+
+function jobView() {
+    const j = S.job;
+    if (!j) return '';
+    const head = `<div class="message-meta"><span class="meta-left"><strong>莉亚</strong><span class="tag mini accent">${ic('image', 'sm')}图片</span></span><span>${j.time}</span></div>`;
+    if (j.status === 'pending') {
+        const width = 340, height = Math.min(360, Math.round(width * j.ratio));
+        return `<article class="message image-message job-card">${head}
+            <div class="skeleton" style="height:${height}px"><div>${ic('brush', 'lg')}<div style="margin-top:6px">正在生成 · 已等待 <span class="job-elapsed">0</span> 秒</div><div style="font-size:12px">${esc(j.info)}</div></div></div>
+            <div class="image-actions"><button class="ghost-button" data-act="cancel-job">${ic('x', 'sm')}停止等待</button><span class="param-note">停止只是不再等待；已提交的请求，供应商可能照常计费。</span></div></article>`;
+    }
+    if (j.status === 'failed') {
+        return `<article class="message image-message job-card failed">${head}
+            <div class="job-title">${ic('alert')}图片生成失败</div>
+            <div class="job-text">供应商返回 400：提示词触发了内容安全策略（moderation_blocked）。这次没有写入聊天文件。</div>
+            <div class="image-actions"><button class="ghost-button" data-act="edit-job">${ic('edit', 'sm')}编辑提示词</button><button class="ghost-button" data-act="retry-job">${ic('refresh', 'sm')}重试</button><button class="ghost-button" data-act="dismiss-job">${ic('x', 'sm')}移除</button></div></article>`;
+    }
+    return `<article class="message image-message job-card unknown">${head}
+        <div class="job-title">${ic('clock')}结果未知</div>
+        <div class="job-text">等待超过 10 分钟仍无响应，连接已断开。供应商可能已经生成并计费。若图片已生成，会出现在 <code>/user/images/莉亚/</code>；这里不会自动重试。</div>
+        <div class="image-actions"><button class="ghost-button" data-act="retry-job">${ic('refresh', 'sm')}重新提交（会再次计费）</button><button class="ghost-button" data-act="dismiss-job">${ic('x', 'sm')}移除</button></div></article>`;
+}
+
+/* ---------- 渲染：输入框 ---------- */
+function composer() {
+    const imageMode = S.composerMode === 'image';
+    return `<div class="composer ${imageMode ? 'image-mode' : ''}">
+        ${imageMode ? imageComposerBody() : textComposerBody()}
+        <div class="composer-meta">
+            <div class="segmented-control compact mode-toggle">
+                <button class="${!imageMode ? 'active' : ''}" data-act="composer-mode" data-mode="text">${ic('message', 'sm')}文本</button>
+                <button class="${imageMode ? 'active' : ''}" data-act="composer-mode" data-mode="image">${ic('image', 'sm')}图片</button>
+            </div>
+            ${imageMode
+                ? (configured() ? `<button class="connection-chip image" data-act="chip">${ic('brush', 'sm')}<span>${esc(P().label)} · ${esc(S.model)}</span>${ic(S.chipOpen ? 'chev-down' : 'chev-up', 'sm')}</button>` : `<span class="connection-chip"><span class="dot muted"></span>未配置图片模型</span>`)
+                : `<button class="connection-chip">${ic('plug', 'sm')}<span>Custom OpenAI-compatible · deepseek-v4-flash</span>${ic('chev-up', 'sm')}</button>`}
+            <span class="usage">${imageMode ? '图片按次计费，生成前不预估费用' : '上次回复 312 tokens'}</span>
+        </div>
+        ${imageMode && S.chipOpen && configured() ? chipPopover() : ''}
+    </div>`;
+}
+
+function textComposerBody() {
+    const lock = jobBusy();
+    const busy = textBusy();
+    return `<div class="composer-row text-mode-row">
+            <textarea data-model="textDraft" placeholder="输入消息，按 Ctrl/⌘ + Enter 发送" ${lock ? 'disabled' : ''}>${esc(S.textDraft)}</textarea>
+            <div class="composer-buttons">
+                ${busy ? `<button class="secondary-button danger" data-act="stop-text">${ic('stop')}停止</button>`
+                    : `<button class="primary-button" data-act="send-text" ${lock ? 'disabled' : ''}>${ic('send')}发送</button>`}
+                <button class="secondary-button" ${lock || busy ? 'disabled' : ''}>${ic('play')}继续</button>
+                <button class="secondary-button" ${lock || busy ? 'disabled' : ''}>${ic('refresh')}重生成</button>
+            </div></div>
+        ${lock ? `<div class="composer-status warn">${ic('clock', 'sm')}图片生成中，完成或停止等待后才能发送文本。</div>` : ''}`;
+}
+
+function imageComposerBody() {
+    if (!configured()) {
+        return `<div class="empty-composer"><div class="icon-wrap">${ic('brush')}</div><div><b>还没有配置图片模型</b><p>图片模型和文本模型分开配置。先到 API 页的「图片模型」填写供应商、模型和密钥。</p></div>
+            <button class="primary-button" data-act="go-api">${ic('plug')}去配置图片模型</button></div>`;
+    }
+    const autoDisabled = S.sim === 'textCompletion';
+    const top = `<div class="composer-top">
+        <div class="segmented-control compact">
+            <button class="${S.imageSub === 'manual' ? 'active' : ''}" data-act="image-sub" data-sub="manual">${ic('edit', 'sm')}手动输入</button>
+            <button class="${S.imageSub === 'auto' ? 'active' : ''}" data-act="image-sub" data-sub="auto" ${autoDisabled ? 'title="主连接是文本补全，暂不支持"' : ''}>${ic('spark', 'sm')}从消息生成</button>
+        </div>
+        <span class="hint">${S.imageSub === 'manual' ? '自己写提示词，生成后作为一条「仅展示」消息插入当前会话。' : '勾选消息 → 用文本模型生成提示词 → 自动填入提示词框后再生成图片。'}</span></div>`;
+    if (S.imageSub === 'manual') return top + promptArea();
+    if (autoDisabled) {
+        return top + `<div class="progress-box">${ic('info')}<span>当前主连接是<b>文本补全</b>，第一期只支持在<b>聊天补全</b>连接上从消息生成提示词。可以切到「手动输入」自己写。</span></div>`;
+    }
+    return top + stepper() + (S.autoStep === 1 ? selectStep() : S.autoStep === 2 ? generatingStep() : promptArea(true));
+}
+
+function stepper() {
+    const st = n => (S.autoStep === n ? 'active' : S.autoStep > n ? 'done' : '');
+    const num = n => (S.autoStep > n ? ic('check', 'sm') : n);
+    return `<div class="stepper"><span class="step ${st(1)}"><span class="num">${num(1)}</span>勾选消息</span><span class="step-line"></span>
+        <span class="step ${st(2)}"><span class="num">${num(2)}</span>生成提示词</span><span class="step-line"></span>
+        <span class="step ${st(3)}"><span class="num">3</span>确认并生成图片</span></div>`;
+}
+
+function selectStep() {
+    const picked = textMessages().filter(m => S.selected.has(m.id));
+    const chars = picked.reduce((n, m) => n + m.text.length, 0);
+    const over = picked.length > 20 || chars > 6000;
+    const blocked = textBusy();
+    return `<div class="select-box"><div>
+            <div class="select-summary">在上方消息列表里勾选要参考的消息 · 已选 <strong>${picked.length}</strong> 条，约 ${chars} 字</div>
+            <div class="select-tools">快速选择
+                <button class="secondary-button small" data-act="quick-select" data-n="1">最近 1 条</button>
+                <button class="secondary-button small" data-act="quick-select" data-n="3">最近 3 条</button>
+                <button class="secondary-button small" data-act="quick-select" data-n="5">最近 5 条</button>
+                <button class="ghost-button" data-act="quick-select" data-n="0">清空</button>
+                <span style="width:10px"></span>
+                <span class="switch ${S.includeAppearance ? 'on' : ''}" data-act="toggle-appearance"><span class="knob"></span>附带角色外貌（取角色卡描述）</span>
+            </div>
+            ${over ? '<div class="field-hint warn">最多参考 20 条、6000 字，请减少勾选。</div>' : ''}
+            ${blocked ? '<div class="field-hint warn">文本回复生成中，结束后才能生成提示词。</div>' : ''}
+        </div>
+        <button class="primary-button" data-act="gen-prompt" ${picked.length === 0 || over || blocked ? 'disabled' : ''}>${ic('spark')}生成提示词${ic('arrow-right', 'sm')}</button></div>`;
+}
+
+function generatingStep() {
+    return `<div class="progress-box"><span class="spinner-ring"></span><span>正在用 <b>deepseek-v4-flash</b> 根据 ${S.selected.size} 条消息${S.includeAppearance ? '和角色外貌' : ''}生成图片提示词……不会写入聊天记录。</span>
+        <button class="secondary-button small" data-act="cancel-prompt" style="margin-left:auto">${ic('x', 'sm')}取消</button></div>`;
+}
+
+function promptArea(fromAuto = false) {
+    const p = P();
+    const busy = jobBusy();
+    const blocked = textBusy();
+    const disabled = busy || blocked || !S.prompt.trim();
+    const sel = (key, opts) => `<label class="param">${PARAM_LABEL[key]}<select data-act-change="param" data-key="${key}">${opts.map(([v, l]) => `<option value="${v}" ${String(S[key]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+    const chips = [];
+    if (p.params.includes('size')) chips.push(sel('size', p.sizes));
+    if (p.params.includes('aspect')) chips.push(sel('aspect', p.aspects));
+    if (p.params.includes('quality')) chips.push(sel('quality', p.qualities));
+    if (p.params.includes('count')) chips.push(sel('count', Array.from({ length: p.countMax }, (_, i) => [String(i + 1), `${i + 1} 张`])));
+    if (p.params.includes('style')) chips.push(sel('style', p.styles));
+    const hasAdvanced = ['negative', 'seed', 'steps'].some(k => p.params.includes(k));
+    const unsupported = ALL_PARAMS.filter(k => !p.params.includes(k) && !(k === 'size' && p.params.includes('aspect')) && !(k === 'aspect' && p.params.includes('size')));
+    return `${fromAuto ? `<div class="prompt-source"><span class="tag mini accent">${ic('spark', 'sm')}由 ${S.promptFrom} 条消息生成</span>可以直接修改；确认后点「生成图片」。
+            <button class="ghost-button" data-act="regen-prompt">${ic('refresh', 'sm')}重新生成提示词</button><button class="ghost-button" data-act="back-select">${ic('arrow-left', 'sm')}返回勾选</button></div>` : ''}
+        <div class="composer-row">
+            <textarea id="prompt-input" data-model="prompt" placeholder="描述想生成的画面，例如：月光下的屋顶，银发少女倚着栏杆，远处城市灯火，动漫插画风格">${esc(S.prompt)}</textarea>
+            <div class="composer-buttons">
+                <button class="primary-button" data-act="generate" id="generate-btn" ${disabled ? 'disabled' : ''}>${busy ? '<span class="spinner-ring" style="border-top-color:#fff"></span>生成中' : `${ic('brush')}生成图片`}</button>
+                <button class="secondary-button" data-act="clear-prompt" ${busy ? 'disabled' : ''}>清空</button>
+            </div></div>
+        <div class="param-row">${chips.join('')}
+            ${hasAdvanced ? `<button class="ghost-button" data-act="toggle-advanced">${ic(S.showAdvanced ? 'chev-up' : 'chev-down', 'sm')}高级</button>` : ''}
+            <span class="param-note">${unsupported.length ? `${esc(p.label)} 不支持：${unsupported.map(k => PARAM_LABEL[k]).join('、')}` : ''}</span></div>
+        ${hasAdvanced && S.showAdvanced ? `<div class="advanced-box">
+            ${p.params.includes('negative') ? `<div><span class="field-label">反向提示词</span><textarea class="text-input" data-model="negative">${esc(S.negative)}</textarea></div>` : '<div></div>'}
+            ${p.params.includes('seed') ? `<div><span class="field-label">种子（留空随机）</span><input class="text-input" data-model="seed" value="${esc(S.seed)}" placeholder="随机"></div>` : '<div></div>'}
+            ${p.params.includes('steps') ? `<div><span class="field-label">步数</span><input class="text-input" data-model="steps" value="${esc(S.steps)}"></div>` : '<div></div>'}
+        </div>` : ''}
+        ${blocked ? `<div class="composer-status warn">${ic('clock', 'sm')}文本回复生成中，结束后才能生成图片。</div>` : ''}`;
+}
+
+function chipPopover() {
+    const p = P();
+    return `<div class="chip-popover"><h4>图片模型</h4><div class="kv">
+        <span>供应商</span><span>${esc(p.label)}</span><span>模型</span><span>${esc(S.model)}</span>
+        <span>默认参数</span><span>${sizeLabel()}${qualityLabel() ? ` · ${qualityLabel()}` : ''} · ${S.count} 张</span>
+        <span>密钥</span><span>已保存（api_key_image_generation）</span></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="secondary-button small" data-act="chip">关闭</button><button class="primary-button small" data-act="go-api">${ic('plug', 'sm')}在 API 页修改</button></div></div>`;
+}
+
+/* ---------- 渲染：API 页 ---------- */
+function apiPage() {
+    return `<div class="content" data-page-key="api">
+        <div class="page-head"><div><div class="eyebrow">API</div><h1 class="page-title">API 连接管理</h1><p class="page-description">连接、模型、预设和请求状态。</p></div>
+            <div class="page-actions">${S.apiTab === 'image'
+                ? `<button class="primary-button" data-act="check-config">${ic('check')}检查配置</button>`
+                : `<button class="primary-button">${ic('plug')}测试连接</button>`}<button class="secondary-button">${ic('refresh')}刷新</button></div></div>
+        <div class="api-tabs"><div class="segmented-control">
+            <button class="${S.apiTab === 'text' ? 'active' : ''}" data-act="api-tab" data-tab="text">${ic('message', 'sm')}文本模型</button>
+            <button class="${S.apiTab === 'image' ? 'active' : ''}" data-act="api-tab" data-tab="image">${ic('image', 'sm')}图片模型</button></div></div>
+        ${S.apiTab === 'text' ? apiTextTab() : apiImageTab()}</div>`;
+}
+
+function apiTextTab() {
+    return `<div class="panel panel-pad"><div class="panel-header"><div><h3 class="panel-title">当前连接</h3><p class="panel-subtitle">这一页就是现有的 API 连接管理，保持不变；这里只放摘要示意。</p></div><span class="tag">Custom OpenAI-compatible</span></div>
+        <div class="tiles"><div class="tile"><span>主 API</span><strong>聊天补全 (openai)</strong></div><div class="tile"><span>来源</span><strong>Custom OpenAI-compatible</strong></div>
+        <div class="tile"><span>模型</span><strong>deepseek-v4-flash</strong></div><div class="tile"><span>预设</span><strong>Default</strong></div></div>
+        <p class="panel-subtitle">「从消息生成提示词」默认使用这里的文本连接。</p></div>`;
+}
+
+function apiImageTab() {
+    const p = P();
+    const fieldDisabled = key => !p.params.includes(key) && !(key === 'size' && p.params.includes('size')) ;
+    const field = (key, inner, full = false) => {
+        const off = !p.params.includes(key);
+        return `<div class="field ${off ? 'disabled' : ''} ${full ? 'full' : ''}"><span class="field-label">${key === 'negative' ? '默认反向提示词' : '默认' + PARAM_LABEL[key]}</span>${inner(off)}${off ? `<div class="field-hint">${esc(p.label)} 不支持该参数</div>` : ''}</div>`;
+    };
+    const opt = (list, cur) => (list ?? [['', '—']]).map(([v, l]) => `<option value="${v}" ${String(cur) === v ? 'selected' : ''}>${l}</option>`).join('');
+    void fieldDisabled;
+    return `<div class="api-grid">
+        <div class="panel panel-pad">
+            <div class="panel-header"><div><h3 class="panel-title">图片模型连接</h3><p class="panel-subtitle">和文本模型分开保存：非密钥字段写入 settings.json，密钥写入本地 secrets，不在页面回显。</p></div>
+                ${configured() ? '<span class="tag ok">已配置</span>' : '<span class="tag warn">未配置</span>'}</div>
+            <div class="tiles"><div class="tile"><span>供应商</span><strong>${esc(p.label)}</strong></div><div class="tile"><span>模型</span><strong>${esc(S.model)}</strong></div>
+                <div class="tile"><span>默认参数</span><strong>${sizeLabel()}${qualityLabel() ? ' · ' + qualityLabel() : ''} · ${S.count} 张</strong></div><div class="tile"><span>密钥</span><strong>${configured() ? '已保存' : '未保存'}</strong></div></div>
+
+            <div class="form-section"><h4>连接</h4><p>选择图片供应商、地址和模型。第一期支持下面 6 家，其余供应商后端已具备，后续按需放开。</p>
+                <div class="form-grid">
+                    <div><span class="field-label">供应商</span><select class="select-input" data-act-change="provider">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${S.provider === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select></div>
+                    <div><span class="field-label">地址</span><input class="text-input" value="${esc(p.baseUrl)}" placeholder="${esc(p.baseHint ?? '')}"><div class="field-hint">${p.baseUrl ? '留默认值即可；用代理或自建网关时再改。' : '兼容接口必须填写，需支持 /images/generations。'}</div></div>
+                    <div class="full"><span class="field-label">模型</span><input class="text-input" data-model="model" value="${esc(S.model)}">
+                        <div class="field-hint">常用模型（点击填入）</div><div class="chips">${p.models.map(m => `<button class="chip-btn" data-act="pick-model" data-model-name="${esc(m)}">${esc(m)}</button>`).join('')}</div></div>
+                </div></div>
+
+            <div class="form-section"><h4>默认参数</h4><p>聊天里每次生成都可以临时改；这里只决定默认值。可用字段随供应商变化，不支持的置灰。</p>
+                <div class="form-grid">
+                    ${p.params.includes('aspect')
+                        ? field('aspect', off => `<select class="select-input" ${off ? 'disabled' : ''} data-act-change="param" data-key="aspect">${opt(p.aspects, S.aspect)}</select>`)
+                        : field('size', off => `<select class="select-input" ${off ? 'disabled' : ''} data-act-change="param" data-key="size">${opt(p.sizes, S.size)}</select>`)}
+                    ${field('quality', off => `<select class="select-input" ${off ? 'disabled' : ''} data-act-change="param" data-key="quality">${opt(p.qualities, S.quality)}</select>`)}
+                    ${field('count', off => `<select class="select-input" ${off ? 'disabled' : ''} data-act-change="param" data-key="count">${opt(Array.from({ length: p.countMax ?? 1 }, (_, i) => [String(i + 1), `${i + 1} 张`]), S.count)}</select>`)}
+                    ${field('style', off => `<select class="select-input" ${off ? 'disabled' : ''} data-act-change="param" data-key="style">${opt(p.styles, S.style)}</select>`)}
+                    ${field('negative', off => `<textarea class="text-input" rows="2" ${off ? 'disabled' : ''}>${off ? '' : esc(S.negative)}</textarea>`, true)}
+                    ${field('seed', off => `<input class="text-input" ${off ? 'disabled' : ''} placeholder="留空随机">`)}
+                    ${field('steps', off => `<input class="text-input" ${off ? 'disabled' : ''} value="${off ? '' : esc(S.steps)}">`)}
+                </div></div>
+
+            <div class="form-section"><h4>安全密钥</h4><p>写入本地 secrets（键名 api_key_image_generation），和文本模型的密钥互不影响。</p>
+                <span class="field-label">API Key</span><input class="text-input" type="password" placeholder="${configured() ? '密钥已保存；留空不修改' : '粘贴 API Key'}">
+                ${p.label === '本地 SD WebUI' ? '<div class="field-hint">本地 WebUI 通常不需要密钥。</div>' : ''}</div>
+
+            <div class="form-actions">
+                <button class="secondary-button ${S.testConfirm ? 'danger' : ''}" data-act="test-generate">${ic('brush')}${S.testConfirm ? '确认试生成（会按次计费）' : '试生成一张'}</button>
+                <button class="primary-button" data-act="save-config">${ic('save')}保存图片模型</button></div>
+        </div>
+
+        <div style="display:grid;gap:16px">
+            <div class="panel panel-pad"><div class="panel-header"><div><h3 class="panel-title">配置诊断</h3><p class="panel-subtitle">「检查配置」只校验，不出图、不计费。</p></div></div>
+                ${diag(configured() ? 'ok' : 'warn', '供应商支持', `${p.label} · 走后端统一生图适配层`, configured() ? '已支持' : '未配置')}
+                ${diag(configured() ? 'ok' : 'warn', '模型', S.model, configured() ? '已填写' : '未填写')}
+                ${diag(configured() ? 'ok' : 'warn', '密钥', 'api_key_image_generation', configured() ? '已保存' : '未保存')}
+                ${diag('ok', '可用参数', p.params.map(k => PARAM_LABEL[k]).join('、'), `${p.params.length} 项`)}
+                ${diag(S.checked ? 'ok' : 'muted', '最近一次检查', S.checked ? '参数合法，供应商支持当前组合' : '尚未检查', S.checked ? '通过' : '未检查')}
+                <div class="tile" style="margin-top:4px"><span style="margin-bottom:4px">最近生成（保留 5 次）</span>
+                    ${S.history.slice(0, 5).map(h => `<div class="history-row"><span>${h.time}</span><span style="color:${h.ok ? 'var(--success)' : 'var(--danger)'}">${esc(h.text)}</span></div>`).join('')}</div>
+            </div>
+            <div class="panel panel-pad"><div class="panel-header"><div><h3 class="panel-title">从消息生成提示词</h3><p class="panel-subtitle">聊天里「从消息生成」第二步用到的设置。</p></div></div>
+                <div style="display:grid;gap:12px">
+                    <div><span class="field-label">使用的文本模型</span><div class="tag">${ic('plug', 'sm')}跟随当前文本连接 · deepseek-v4-flash</div><div class="field-hint">第一期固定跟随文本连接；只支持聊天补全类连接。</div></div>
+                    <div><span class="field-label">提示词模板</span><textarea class="text-input" rows="6" style="font-family:var(--mono);font-size:12px">${esc(DEFAULT_TEMPLATE)}</textarea><div class="field-hint">发送内容 = 模板 + 角色外貌（可选） + 勾选的消息。</div></div>
+                    <div class="form-grid"><div><span class="field-label">默认勾选最近</span><select class="select-input" data-act-change="default-count">${[1, 2, 3, 5].map(n => `<option value="${n}" ${S.defaultSelectCount === n ? 'selected' : ''}>${n} 条</option>`).join('')}</select></div>
+                        <div><span class="field-label">附带角色外貌</span><select class="select-input"><option>默认开启</option><option>默认关闭</option></select></div></div>
+                </div></div>
+        </div></div>`;
+}
+
+const diag = (kind, title, sub, state) => `<div class="diag-item"><span class="${kind}">${ic(kind === 'ok' ? 'check' : kind === 'warn' ? 'alert' : 'info')}</span><div><b>${esc(title)}</b><small>${esc(sub)}</small></div><span class="state">${esc(state)}</span></div>`;
+
+/* ---------- 渲染：交互说明 ---------- */
+function specPage() {
+    return `<div class="content" data-page-key="spec"><div class="spec">
+    <div class="page-head"><div><div class="eyebrow">交互说明</div><h1 class="page-title">会话内图片生成 · 交互与界面</h1><p class="page-description">配合「聊天页」「API 页」两个原型页面看。第 8 节是已确认的决定。</p></div></div>
+
+    <section class="panel"><h2>1. 入口：输入框加「文本 / 图片」切换</h2>
+        <ul>
+            <li>位置在输入框下方元信息行的最左边，紧挨连接标签。默认「文本」，行为和现在完全一样。</li>
+            <li>切到「图片」后，输入框变成图片提示词框，右侧按钮换成「生成图片」「清空」；连接标签换成图片模型标签（如「OpenAI · gpt-image-1」），点开能看配置摘要并跳到 API 页。</li>
+            <li>每个会话记住自己的模式和草稿，切换会话、刷新页面后仍在。</li>
+            <li>不放进「聊天工具」抽屉，是因为抽屉会盖住消息列表，而自动模式要在消息列表里勾选消息。</li>
+        </ul></section>
+
+    <section class="panel"><h2>2. 手动输入</h2>
+        <ol>
+            <li>写提示词。</li>
+            <li>按需调参数：尺寸或比例、质量、数量、风格；「高级」里是反向提示词、种子、步数。只显示当前供应商支持的参数，不支持的在行尾列出；默认值来自 API 页。</li>
+            <li>点「生成图片」或按 Ctrl/⌘ + Enter。</li>
+            <li>消息列表末尾出现「生成中」卡片（按所选比例占位、显示已等待秒数和「停止等待」）。成功后原位变成图片消息并写入聊天文件。提示词留在输入框，方便微调后再生成。</li>
+        </ol></section>
+
+    <section class="panel"><h2>3. 从消息生成（三步）</h2>
+        <h3>① 勾选消息</h3>
+        <ul>
+            <li>切到「从消息生成」后，消息列表进入勾选状态：每条文本消息左上出现复选框，点消息任意位置切换勾选；默认勾选最近 3 条（API 页可改）。</li>
+            <li>列表顶部出现提示条「正在勾选 · 已选 N 条 · 退出勾选（Esc）」。图片消息变淡、不能勾选。</li>
+            <li>输入框区显示已选条数和字数、快速选择（最近 1 / 3 / 5 条、清空）、「附带角色外貌」开关和「生成提示词」按钮。没选或超过 20 条 / 6000 字时按钮不可用。</li>
+        </ul>
+        <h3>② 生成提示词</h3>
+        <ul>
+            <li>用当前文本连接调用一次，发送「模板 + 角色外貌 + 勾选的消息」。不写聊天文件，也不占用文本回复。</li>
+            <li>期间显示进度和「取消」，勾选暂时锁定。失败时停在这一步，显示错误，可重试或返回勾选。</li>
+        </ul>
+        <h3>③ 确认并生成图片</h3>
+        <ul>
+            <li>提示词自动填进提示词框（和手动输入是同一个框），上方注明「由 N 条消息生成」，并提供「重新生成提示词」「返回勾选」。</li>
+            <li>用户可以改提示词和参数，点「生成图片」后流程同手动输入。</li>
+        </ul></section>
+
+    <section class="panel"><h2>4. 图片消息</h2>
+        <ul>
+            <li>外观：角色一侧的卡片，标题带「图片」「不进入上下文」两个标签；图片按原比例显示，最高 360px，多张时两列网格；提示词默认折叠；底部一行写供应商、模型、尺寸、质量、耗时。</li>
+            <li>操作：重新生成（同提示词同参数再出一张，作为这条消息的新版本，用 ‹ 1/2 › 切换）、编辑提示词（填回输入框并切到图片模式）、复制提示词、下载、删除（两步确认；只删聊天里的记录，图片文件留在图片目录）。</li>
+            <li>点图片打开大图，右侧显示完整提示词、参数和文件路径。</li>
+            <li>保存为 <code>is_system: true</code> 的消息，<code>extra.media</code> 里记 <code>url</code>、<code>title</code>（提示词）、<code>negative</code>、<code>source: 'generated'</code>；后续文本回复看不到它。</li>
+        </ul></section>
+
+    <section class="panel"><h2>5. 状态与互斥规则</h2>
+        <table><tr><th style="width:34%">情况</th><th>表现</th></tr>
+            <tr><td>文本回复生成中</td><td>「生成图片」「生成提示词」不可用，提示「结束后才能生成」。</td></tr>
+            <tr><td>图片生成中</td><td>文本「发送」「继续」「重生成」不可用，状态行提示「图片生成中」；「生成图片」变成「生成中」。<span class="muted">（已确认）</span></td></tr>
+            <tr><td>生成中切换会话或离开聊天页</td><td>弹确认：「图片仍在生成，离开后结果不会插入本会话（文件仍会保存到图片目录）」。</td></tr>
+            <tr><td>停止等待</td><td>移除「生成中」卡片，提示「已停止等待；若供应商已开始生成，可能仍会计费」。</td></tr>
+            <tr><td>供应商明确报错</td><td>卡片变红，显示供应商返回的错误，提供「编辑提示词」「重试」「移除」；不写聊天文件。</td></tr>
+            <tr><td>超时、断网或 5xx</td><td>卡片变黄「结果未知」，说明可能已计费、给出图片目录路径，提供「重新提交（会再次计费）」「移除」；从不自动重试。</td></tr>
+            <tr><td>未配置图片模型</td><td>切到「图片」显示空状态和「去配置图片模型」。</td></tr>
+            <tr><td>主连接是文本补全</td><td>「从消息生成」里说明暂不支持，手动输入照常可用。</td></tr>
+        </table></section>
+
+    <section class="panel"><h2>6. API 页：图片模型</h2>
+        <ul>
+            <li>页头下新增「文本模型 / 图片模型」切换，「文本模型」就是现在的页面，不改。</li>
+            <li>图片模型左侧：当前配置摘要、连接（供应商、地址、模型 + 常用模型）、默认参数（随供应商变化，不支持的置灰并写原因）、安全密钥（只写不读）、「试生成一张」（两步确认，会计费）、「保存图片模型」。</li>
+            <li>右侧：配置诊断（供应商支持、模型、密钥、可用参数、最近一次检查、最近 5 次生成）；下方「从消息生成提示词」设置（使用的文本模型、模板、默认勾选条数、是否附带角色外貌）。</li>
+            <li>「检查配置」只校验参数和供应商是否支持，不出图、不计费。</li>
+            <li>第一期供应商：OpenAI、OpenAI 兼容、Google Gemini / Imagen、OpenRouter、NovelAI、本地 SD WebUI。</li>
+        </ul></section>
+
+    <section class="panel"><h2>7. 本期不做</h2>
+        <ul><li>多套图片配置之间切换；把图片作为模型输入（看图回复）；Agent 会话页接入；Horde、ComfyUI 这类排队任务中断后恢复；移动端布局。</li></ul></section>
+
+    <section class="panel"><h2>8. 已确认（2026-10-11）</h2>
+        <ol>
+            <li>图片生成期间不允许继续发文本。</li>
+            <li>「重新生成」做成同一条消息的多个版本，用 ‹ 1/2 › 切换。</li>
+            <li>图片消息固定不进入上下文，不加「加入上下文」开关。</li>
+            <li>自动模式默认勾选最近 3 条。</li>
+            <li>群聊里「附带角色外貌」取勾选消息中出现的所有角色。</li>
+        </ol></section>
+    </div></div>`;
+}
+
+/* ---------- 大图 ---------- */
+function lightbox() {
+    if (!S.lightbox) return '';
+    const m = S.messages.find(x => x.id === S.lightbox.id);
+    if (!m) return '';
+    const v = m.variants[m.vi];
+    const media = v.media[S.lightbox.index] ?? v.media[0];
+    return `<div class="lightbox" data-act="close-lightbox"><div class="lightbox-stage"><img src="${paint(media.seed, media.ratio)}" alt="大图"></div>
+        <div class="lightbox-side" data-stop="1"><div style="display:flex;justify-content:space-between;align-items:center"><h3>图片详情</h3><button class="icon-button" data-act="close-lightbox">${ic('x')}</button></div>
+            <div><span class="field-label">提示词</span><div class="prompt-text">${esc(m.prompt)}</div></div>
+            <div class="kv"><span>来源</span><span>${esc(m.source ?? '手动输入')}</span><span>参数</span><span>${esc(v.info)}</span><span>文件</span><span style="font-family:var(--mono);font-size:12px;word-break:break-all">/user/images/莉亚/莉亚_2026-10-11@22h04m.png</span></div>
+            <div class="actions"><button class="secondary-button" data-act="copy-prompt" data-id="${m.id}">${ic('copy')}复制提示词</button><button class="secondary-button" data-act="edit-prompt" data-id="${m.id}">${ic('edit')}编辑提示词</button><button class="primary-button" data-act="download">${ic('download')}下载</button></div>
+        </div></div>`;
+}
+
+/* ---------- 行为 ---------- */
+let toastTimer;
+function toast(text) {
+    document.querySelector('.toast')?.remove();
+    const el = document.createElement('div'); el.className = 'toast'; el.textContent = text;
+    document.body.appendChild(el);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.remove(), 3200);
+}
+function autoGrow() {
+    for (const ta of document.querySelectorAll('.composer textarea')) { ta.style.height = 'auto'; ta.style.height = `${Math.min(200, ta.scrollHeight + 2)}px`; }
+}
+function selectRecent(n) {
+    S.selected = new Set(textMessages().slice(-n).map(m => m.id));
+}
+let elapsedTimer;
+function startElapsed() {
+    const t0 = Date.now();
+    clearInterval(elapsedTimer);
+    elapsedTimer = setInterval(() => { for (const el of document.querySelectorAll('.job-elapsed')) el.textContent = Math.floor((Date.now() - t0) / 1000); }, 250);
+}
+function snapshotInfo() {
+    const p = P();
+    return `${p.label} · ${S.model} · ${sizeLabel()}${p.params.includes('quality') ? ' · ' + qualityLabel() + '质量' : ''}`;
+}
+
+function startGenerate(prompt) {
+    if (!configured()) return toast('还没有配置图片模型');
+    if (textBusy()) return toast('文本回复生成中，结束后才能生成图片');
+    if (jobBusy()) return;
+    if (!prompt.trim()) return toast('先写提示词');
+    const ratio = ratioOf();
+    const count = P().params.includes('count') ? Number(S.count) : 1;
+    const outcome = S.sim === 'fail' ? 'failed' : S.sim === 'unknown' ? 'unknown' : 'ok';
+    S.job = { status: 'pending', time: now(), ratio, info: snapshotInfo(), prompt, count, from: S.composerMode === 'image' && S.imageSub === 'auto' ? S.promptFrom : 0 };
+    scrollToBottom = true; render(); startElapsed();
+    const started = Date.now();
+    setTimeout(() => {
+        if (!S.job || S.job.status !== 'pending') return;
+        clearInterval(elapsedTimer);
+        const secs = Math.round((Date.now() - started) / 1000) + 14;
+        if (outcome === 'failed') { S.job.status = 'failed'; S.history.unshift({ time: now(), ok: false, text: '失败 · 供应商返回 400' }); }
+        else if (outcome === 'unknown') { S.job.status = 'unknown'; S.history.unshift({ time: now(), ok: false, text: '结果未知 · 超时' }); }
+        else {
+            const seedBase = Math.floor(Math.random() * 1e6);
+            S.messages.push({ id: ++uid, image: true, name: '莉亚', time: S.job.time, prompt, source: S.job.from ? `由 ${S.job.from} 条消息生成` : '手动输入',
+                variants: [{ media: Array.from({ length: S.job.count }, (_, i) => ({ seed: seedBase + i, ratio })), info: `${S.job.info} · 耗时 ${secs} 秒` }], vi: 0 });
+            S.history.unshift({ time: now(), ok: true, text: `成功 · ${secs} 秒 · ${sizeLabel()}` });
+            S.job = null;
+            toast('图片已插入会话（不进入后续文本上下文）');
+        }
+        scrollToBottom = true; render();
+    }, 3600);
+}
+
+function startPromptGeneration() {
+    if (textBusy()) return toast('文本回复生成中，结束后才能生成提示词');
+    S.autoStep = 2; render();
+    setTimeout(() => {
+        if (S.autoStep !== 2) return;
+        S.prompt = GENERATED_PROMPT; S.promptFrom = S.selected.size; S.autoStep = 3; focusPrompt = true; render();
+    }, 1800);
+}
+
+const REPLY = '*她把披风拉紧了一些，靠得更近，月光落在你们之间的栏杆上。*\n这样就不冷了。等风停了，我带你去看河对岸的灯船。';
+function startStreaming(userText) {
+    if (userText) S.messages.push({ id: ++uid, user: true, name: '你', time: now(), text: userText });
+    S.streaming = { text: '', i: 0 };
+    scrollToBottom = true; render();
+    const timer = setInterval(() => {
+        if (!S.streaming) return clearInterval(timer);
+        S.streaming.i += 2; S.streaming.text = REPLY.slice(0, S.streaming.i).replace(/\*/g, '');
+        const el = document.getElementById('stream-text'); if (el) el.textContent = S.streaming.text;
+        const list = document.querySelector('.message-list'); if (list) list.scrollTop = list.scrollHeight;
+        if (S.streaming.i >= REPLY.length) {
+            clearInterval(timer);
+            S.messages.push({ id: ++uid, name: '莉亚', time: now(), model: 'deepseek-v4-flash', text: REPLY });
+            S.streaming = null; scrollToBottom = true; render();
+        }
+    }, 70);
+}
+
+const actions = {
+    page: t => { S.page = t.dataset.page; S.chipOpen = false; render(); },
+    theme: () => { S.theme = S.theme === 'dark' ? 'light' : 'dark'; render(); },
+    'composer-mode': t => {
+        S.composerMode = t.dataset.mode; S.chipOpen = false;
+        if (S.composerMode === 'image' && S.imageSub === 'auto' && S.autoStep === 1 && S.selected.size === 0) selectRecent(S.defaultSelectCount);
+        scrollToBottom = true; render();
+    },
+    'image-sub': t => {
+        S.imageSub = t.dataset.sub;
+        if (S.imageSub === 'auto' && S.autoStep === 1 && S.selected.size === 0) selectRecent(S.defaultSelectCount);
+        scrollToBottom = true; render();
+    },
+    'exit-select': () => { S.imageSub = 'manual'; render(); },
+    'toggle-msg': t => { const id = Number(t.dataset.id); S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); render(); },
+    'quick-select': t => { const n = Number(t.dataset.n); n ? selectRecent(n) : S.selected.clear(); render(); },
+    'toggle-appearance': () => { S.includeAppearance = !S.includeAppearance; render(); },
+    'gen-prompt': () => startPromptGeneration(),
+    'regen-prompt': () => { S.autoStep = 1; startPromptGeneration(); },
+    'cancel-prompt': () => { S.autoStep = 1; toast('已取消生成提示词'); render(); },
+    'back-select': () => { S.autoStep = 1; render(); },
+    generate: () => startGenerate(S.prompt),
+    'clear-prompt': () => { S.prompt = ''; render(); },
+    'toggle-advanced': () => { S.showAdvanced = !S.showAdvanced; render(); },
+    chip: () => { S.chipOpen = !S.chipOpen; render(); },
+    'go-api': () => { S.page = 'api'; S.apiTab = 'image'; S.chipOpen = false; render(); },
+    'cancel-job': () => { S.job = null; clearInterval(elapsedTimer); toast('已停止等待；若供应商已开始生成，可能仍会计费'); render(); },
+    'dismiss-job': () => { S.job = null; render(); },
+    'retry-job': () => { const p = S.job.prompt; S.job = null; startGenerate(p); },
+    'edit-job': () => { S.prompt = S.job.prompt; S.job = null; S.composerMode = 'image'; S.imageSub = 'manual'; focusPrompt = true; render(); },
+    'edit-prompt': t => { const m = S.messages.find(x => x.id === Number(t.dataset.id)); S.prompt = m.prompt; S.composerMode = 'image'; S.imageSub = 'manual'; S.lightbox = null; S.page = 'chat'; focusPrompt = true; render(); },
+    'copy-prompt': t => { const m = S.messages.find(x => x.id === Number(t.dataset.id)); navigator.clipboard?.writeText(m.prompt).catch(() => {}); toast('已复制提示词'); },
+    download: () => toast('（原型）下载 /user/images/莉亚/ 下对应的 PNG 文件'),
+    'delete-msg': t => { S.confirmDelete = Number(t.dataset.id); render(); },
+    'cancel-delete': () => { S.confirmDelete = null; render(); },
+    'confirm-delete': t => { S.messages = S.messages.filter(m => m.id !== Number(t.dataset.id)); S.confirmDelete = null; toast('已从聊天中删除；图片文件仍在图片目录'); render(); },
+    'regen-image': t => {
+        if (textBusy()) return toast('文本回复生成中，结束后才能生成图片');
+        const id = Number(t.dataset.id); S.regenId = id; render(); startElapsed();
+        setTimeout(() => {
+            const m = S.messages.find(x => x.id === id); clearInterval(elapsedTimer);
+            if (m) { const base = m.variants[m.vi]; m.variants.push({ media: base.media.map(x => ({ seed: Math.floor(Math.random() * 1e6), ratio: x.ratio })), info: base.info.replace(/耗时 \d+ 秒/, `耗时 ${15 + Math.floor(Math.random() * 10)} 秒`) }); m.vi = m.variants.length - 1; }
+            S.regenId = null; toast('已生成新版本，可用 ‹ › 切换'); render();
+        }, 3000);
+    },
+    variant: t => { const m = S.messages.find(x => x.id === Number(t.dataset.id)); m.vi = Math.max(0, Math.min(m.variants.length - 1, m.vi + Number(t.dataset.dir))); render(); },
+    'open-lightbox': t => { S.lightbox = { id: Number(t.dataset.id), index: Number(t.dataset.index) }; render(); },
+    'close-lightbox': (t, e) => { if (e.target.closest('[data-stop]') && !e.target.closest('[data-act="close-lightbox"].icon-button')) return; S.lightbox = null; render(); },
+    'send-text': () => { const text = S.textDraft.trim(); if (!text) return toast('先输入消息'); S.textDraft = ''; startStreaming(text); },
+    'stop-text': () => { S.streaming = null; toast('已停止'); render(); },
+    'api-tab': t => { S.apiTab = t.dataset.tab; render(); },
+    'check-config': () => { S.checked = true; toast('检查通过：参数合法，供应商支持当前组合（未出图、未计费）'); render(); },
+    'test-generate': () => { if (!S.testConfirm) { S.testConfirm = true; render(); return; } S.testConfirm = false; toast('（原型）已提交一次试生成，按次计费'); render(); },
+    'save-config': () => { if (S.sim === 'unconfigured') S.sim = 'normal'; toast('图片模型已保存'); render(); },
+    'pick-model': t => { S.model = t.dataset.modelName; render(); },
+};
+
+document.addEventListener('click', e => {
+    const t = e.target.closest('[data-act]');
+    if (!t || t.disabled) return;
+    if (t.dataset.act === 'toggle-msg' && e.target.closest('button')) return;
+    const fn = actions[t.dataset.act];
+    if (fn) fn(t, e);
+});
+document.addEventListener('change', e => {
+    const t = e.target;
+    const kind = t.dataset.actChange;
+    if (!kind) return;
+    if (kind === 'sim') {
+        S.sim = t.value;
+        if (S.sim === 'textCompletion' && S.imageSub === 'auto') S.autoStep = 1;
+        toast({ normal: '已切回正常状态', unconfigured: '模拟：还没有配置图片模型', textCompletion: '模拟：主连接是文本补全', fail: '模拟：下一次生图会失败', unknown: '模拟：下一次生图会超时，结果未知' }[S.sim]);
+    } else if (kind === 'param') { S[t.dataset.key] = t.value; }
+    else if (kind === 'provider') {
+        S.provider = t.value; const p = P();
+        S.model = p.models[0]; if (p.sizes) S.size = p.sizes[0][0]; if (p.aspects) S.aspect = p.aspects[0][0];
+        if (p.qualities) S.quality = p.qualities[p.qualities.length - 1][0]; S.count = '1'; S.style = '';
+    } else if (kind === 'default-count') { S.defaultSelectCount = Number(t.value); }
+    render();
+});
+document.addEventListener('input', e => {
+    const key = e.target.dataset.model;
+    if (!key) return;
+    S[key] = e.target.value;
+    if (key === 'prompt') { const btn = document.getElementById('generate-btn'); if (btn) btn.disabled = jobBusy() || textBusy() || !S.prompt.trim(); }
+    if (e.target.closest('.composer')) autoGrow();
+});
+document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (e.target.id === 'prompt-input') { e.preventDefault(); startGenerate(S.prompt); }
+        else if (e.target.dataset?.model === 'textDraft') { e.preventDefault(); actions['send-text'](); }
+    }
+    if (e.key === 'Escape') {
+        if (S.lightbox) { S.lightbox = null; render(); }
+        else if (S.chipOpen) { S.chipOpen = false; render(); }
+        else if (selectionActive()) { S.imageSub = 'manual'; render(); }
+    }
+});
+render();
+</script>
+</body>
+</html>
