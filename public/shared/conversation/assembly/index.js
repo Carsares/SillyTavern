@@ -5,6 +5,7 @@ import { applyRegex } from '../regex/index.js';
 import { selectWorldInfo } from '../world-info/index.js';
 import { countRequest } from '../tokens/index.js';
 import { PRESET_DEFAULTS, BLOCK_DEFAULTS, CONTEXT_LAYERS } from './defaults.js';
+import { buildReplyLanguageInstruction, resolveReplyLanguage } from '../../reply-language.js';
 
 export { PRESET_DEFAULTS, BLOCK_DEFAULTS, CONTEXT_LAYERS } from './defaults.js';
 export { WORLD_INFO_DEFAULTS, WORLD_ENTRY_DEFAULTS } from '../world-info/index.js';
@@ -87,6 +88,11 @@ export function compileContext(snapshot, options = {}) {
         auxiliary: 'Perform the requested auxiliary task. This output is a separate draft, not a new conversation reply.',
     };
     if (generationInstructions[type]) add({ id: 'runtime:generation-type', layer: 'L5', placement: { type: 'tail' }, content: preset.generationInstructions?.[type] ?? generationInstructions[type] });
+    // Reply language (public/shared/reply-language.js): right after the history; auxiliary tasks such as memory are not steered.
+    if (type !== 'auxiliary' && typeof settings.replyLanguage === 'string') {
+        const instruction = buildReplyLanguageInstruction(resolveReplyLanguage({ reply_language: settings.replyLanguage }));
+        if (instruction) add({ id: 'runtime:reply-language', layer: 'L5', placement: { type: 'depth', depth: 0 }, content: instruction });
+    }
     for (const resource of [character, persona].filter(Boolean)) {
         for (const field of ['description', 'personality', 'scenario']) if (resource.data[field]) {
             add({ id: `${resource.kind}:${resource.id}:${field}`, layer: 'L1', placement: { type: 'prefix' }, content: resource.data[field] });

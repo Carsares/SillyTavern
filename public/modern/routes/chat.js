@@ -27,6 +27,8 @@ export function createChatRoute(ctx) {
             fitComposerInput(document.querySelector('[data-chat-input]'));
             bindChatBackupDom();
             bindChatToolsDom();
+            // 外语开场白自动显示译文（设置中心「语言」里的开关）；条件不满足时什么也不做，同一条最多尝试一次
+            void ctx.maybeAutoTranslateGreeting?.();
         },
     });
 

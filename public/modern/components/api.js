@@ -1,5 +1,7 @@
-// 设置中心「模型连接」标签：当前连接和测试、连接编辑器（改动即保存）、连接档案。
+// 设置中心「模型连接」标签：当前连接和测试、模型服务、场景（对话、翻译；改动即保存）、连接档案。
 import { getEffectiveConnection } from '../core/connection-labels.js';
+import { readModelServices } from '../../shared/model-services.js';
+import { createModelServiceComponents } from './model-services.js';
 import { createApiChatCompletionComponents } from './api-chat-completion.js';
 import { createApiCurrentComponents } from './api-current.js';
 import { createApiProfileComponents } from './api-profiles.js';
@@ -17,6 +19,9 @@ export function createApiComponents(ctx) {
         escapeHtml,
         getProviderInfo,
         getSelectedApiMain,
+        getModelServiceUi,
+        getChatSceneServiceId,
+        ensureModelServicesMigrated,
     } = ctx;
     const { renderChatCompletionEditor } = createApiChatCompletionComponents(ctx);
     const { renderTextCompletionEditor } = createApiTextCompletionComponents(ctx);
@@ -25,6 +30,7 @@ export function createApiComponents(ctx) {
     const { renderKoboldEditor } = createApiKoboldComponents(ctx);
     const { renderNovelEditor } = createApiNovelComponents(ctx);
     const { renderHordeEditor } = createApiHordeComponents(ctx);
+    const { renderModelServicesPanel, renderModelScenesPanel } = createModelServiceComponents(ctx);
     // 顶部「文本模型 / 图片模型」切换的图片一侧（components/settings-image-model.js，状态 state.settingsConnectionView）
     const { renderImageModelSettings } = createSettingsImageModelComponents(ctx);
 
@@ -50,6 +56,8 @@ export function createApiComponents(ctx) {
         </div>
     `;
         }
+        // 第一次打开时把当前对话连接登记为模型服务（只尝试一次，见 actions/model-services.js ensureMigrated）；不能在渲染中途写设置，所以放到下一轮
+        window.setTimeout(() => void ensureModelServicesMigrated(), 0);
         const canTest = TESTABLE_MAIN_APIS.includes(getSelectedApiMain());
         const test = state.apiTest;
         const tested = test.status && test.status !== '未测试';
@@ -72,16 +80,27 @@ export function createApiComponents(ctx) {
                     </div>
                 </div>
                 ${tested ? `<p class="connection-test-detail ${test.status === '失败' ? 'danger' : ''}" data-api-test-detail>${escapeHtml(test.detail)}</p>` : ''}
-                ${renderApiConnectionEditor()}
             </section>
+            ${renderModelServicesPanel()}
+            ${renderModelScenesPanel(renderChatSceneEditor)}
             ${renderConnectionProfilesSection()}
         </div>
     `;
     }
 
-    function renderApiConnectionEditor() {
+    // 对话场景下方的编辑器：聊天补全（用模型服务，或直接配置来源），或其他接口的编辑器
+    function renderChatSceneEditor() {
         const mainApi = getSelectedApiMain();
+        if (mainApi === 'openai') {
+            const registry = readModelServices(state.settings);
+            const service = registry.services.find(item => item.id === getChatSceneServiceId(registry)) || null;
+            const models = service ? (getModelServiceUi().models[service.id]?.items || []) : [];
+            return renderChatCompletionEditor({ service, models });
+        }
+        return renderOtherInterfaceEditor(mainApi);
+    }
 
+    function renderOtherInterfaceEditor(mainApi) {
         if (mainApi === 'textgenerationwebui') {
             return renderTextCompletionEditor(mainApi, renderApiMainSelect);
         }
@@ -94,10 +113,7 @@ export function createApiComponents(ctx) {
         if (mainApi === 'koboldhorde') {
             return renderHordeEditor(mainApi, renderApiMainSelect);
         }
-        if (mainApi !== 'openai') {
-            return renderUnsupportedApiEditor(mainApi, renderApiMainSelect);
-        }
-        return renderChatCompletionEditor(mainApi, renderApiMainSelect);
+        return renderUnsupportedApiEditor(mainApi, renderApiMainSelect);
     }
 
     return {

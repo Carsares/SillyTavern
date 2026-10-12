@@ -82,7 +82,8 @@ function buildTranslatedMessages() {
 function createChatFixture({ messages = buildChatMessages(), settings = {} } = {}) {
     const fixture = createModernResourceFixture();
     const now = Date.now();
-    fixture.settings.extension_settings = { translate: { target_language: 'zh-CN', provider: 'google', ...settings } };
+    // manual machine translation unless a test asks otherwise: the opening line is English and would be translated on its own
+    fixture.settings.extension_settings = { translate: { mode: 'machine', target_language: 'zh-CN', provider: 'google', auto_greeting: false, ...settings } };
     fixture.chatLists = {
         'alice.png': [{ file_id: 'tr-chat', file_name: 'tr-chat.jsonl', chat_items: messages.length, file_size: '2 KB', last_mes: now }],
         'bruno.png': [],
@@ -409,7 +410,7 @@ function createCharacterFixture() {
         },
     };
     const fixture = createModernResourceFixture({ characters: [alice] });
-    fixture.settings.extension_settings = { translate: { target_language: 'zh-CN', provider: 'google' } };
+    fixture.settings.extension_settings = { translate: { mode: 'machine', target_language: 'zh-CN', provider: 'google' } };
     return fixture;
 }
 
@@ -574,7 +575,7 @@ test.describe('Character card translation', () => {
 // 设置页
 // ---------------------------------------------------------------------------------------------------------------------
 
-function createSettingsFixture({ translate = { target_language: 'en', internal_language: 'en', provider: 'google', auto_mode: 'none', deepl_endpoint: 'free' } } = {}) {
+function createSettingsFixture({ translate = { mode: 'machine', target_language: 'en', internal_language: 'en', provider: 'google', auto_mode: 'none', deepl_endpoint: 'free' } } = {}) {
     const fixture = createModernResourceFixture({ settingsBundle: { enable_extensions: true, enable_accounts: true } });
     fixture.settings.extension_settings = { translate: structuredClone(translate), note: { default: 'kept' } };
     fixture.secretWrites = [];
@@ -614,7 +615,7 @@ const saveStatus = page => page.locator('[data-settings-save-status]');
 test.describe('Translation settings', () => {
     test.use({ viewport: desktopViewport });
 
-    test('saves the provider, language and secrets, then waits for the engine before refreshing', async ({ page }) => {
+    test('saves the provider and secrets, then waits for the engine before refreshing', async ({ page }) => {
         const fixture = createSettingsFixture();
         let savesWhenReloaded = -1;
         await mockSettingsRoutes(page, fixture);
@@ -628,13 +629,14 @@ test.describe('Translation settings', () => {
         });
         await openTranslateSettings(page);
 
-        // the section states where the text goes, shows the saved values and the read-only legacy fields
+        // machine translation: the section states where the text goes, shows the saved values and the read-only legacy fields
+        await expect(page.locator('[data-translate-mode][value="machine"]')).toBeChecked();
         await expect(page.locator('[data-translate-privacy]')).toContainText('第三方');
         await expect(page.locator('[data-translate-provider]')).toHaveValue('google');
-        await expect(page.locator('[data-translate-target-language]')).toHaveValue('en');
+        // the target language is chosen on the language tab and only named here
+        await expect(page.locator('[data-translate-target-label]')).toContainText('English');
+        await expect(page.locator('[data-translate-settings] select[data-translate-target]')).toHaveCount(0);
         await expect(page.locator('[data-translate-internal-language]')).toContainText('English');
-        // the stored values are the factory defaults of the translate extension (target English): say so
-        await expect(page.locator('[data-translate-default-hint]')).toContainText('出厂值');
         await expect(page.locator('[data-translate-provider-description]')).toContainText('免密钥');
         await expect(page.locator('[data-translate-for="deepl"]').first()).toBeHidden();
 
@@ -658,26 +660,58 @@ test.describe('Translation settings', () => {
         await expect(page.locator('[data-translate-secret="deepl"]')).toHaveValue('');
         await page.locator('[data-translate-deepl-endpoint]').selectOption('pro');
         await expect.poll(() => fixture.requests.settingsSave.at(-1).extension_settings.translate.deepl_endpoint).toBe('pro');
-        await page.locator('[data-translate-target-language]').selectOption('ja');
-        await expect.poll(() => fixture.requests.settingsSave.at(-1).extension_settings.translate.target_language).toBe('ja');
         await expect(saveStatus(page)).toContainText('翻译设置已保存');
 
         // the key was written once, although every later save read the whole form again
         expect(fixture.secretWrites).toEqual([{ key: 'deepl', value: 'secret-key-999', label: 'translate modern' }]);
         const saved = fixture.requests.settingsSave.at(-1);
-        // the translate block changed, the legacy-only fields and everything else stayed
-        expect(saved.extension_settings.translate).toEqual({ provider: 'deepl', target_language: 'ja', deepl_endpoint: 'pro', internal_language: 'en', auto_mode: 'none' });
+        // the translate block changed, the target language, the legacy-only fields and everything else stayed
+        expect(saved.extension_settings.translate).toEqual({ mode: 'machine', provider: 'deepl', target_language: 'en', deepl_endpoint: 'pro', internal_language: 'en', auto_mode: 'none' });
         expect(saved.extension_settings.note).toEqual({ default: 'kept' });
         // the status pill reports the saves; there is no save button and no success toast
         await expect(page.locator('[data-translate-save]')).toHaveCount(0);
         await expect(page.locator('.toast-stack')).not.toContainText('翻译设置已保存');
         await expect(page.locator('[data-translate-provider]')).toHaveValue('deepl');
-        await expect(page.locator('[data-translate-target-language]')).toHaveValue('ja');
-        await expect(page.locator('[data-translate-default-hint]')).toHaveCount(0);
+    });
+
+    test('offers LLM translation first and uses it by default, switching the method saves it', async ({ page }) => {
+        const fixture = createSettingsFixture({ translate: {} });
+        fixture.settings.main_api = 'openai';
+        fixture.settings.oai_settings = { ...fixture.settings.oai_settings, chat_completion_source: 'deepseek', deepseek_model: 'deepseek-chat' };
+        fixture.settings.extension_settings.modelServices = {
+            services: [{ id: 'svc-1', name: 'DeepSeek', provider: 'deepseek', secretId: 'key-1', defaultModel: 'deepseek-chat' }],
+            scenes: { chat: { serviceId: 'svc-1' }, translation: { serviceId: '', model: '', maxOutputTokens: 4096 } },
+        };
+        await mockSettingsRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openTranslateSettings(page);
+
+        const modes = page.locator('[data-translate-mode]');
+        await expect(modes).toHaveCount(2);
+        await expect(modes.first()).toHaveAttribute('value', 'llm');
+        await expect(modes.first()).toBeChecked();
+        await expect(page.locator('[data-translate-llm-target]')).toContainText('DeepSeek');
+        await expect(page.locator('[data-translate-llm-target]')).toContainText('deepseek-chat');
+        // the machine translation rows only appear for machine translation
+        await expect(page.locator('[data-translate-provider]')).toHaveCount(0);
+        await expect(page.locator('[data-translate-target-label]')).toContainText('简体中文');
+
+        await page.locator('[data-translate-mode][value="machine"]').check();
+        await expect(page.locator('[data-translate-provider]')).toBeVisible();
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.mode).toBe('machine');
+        // the legacy extension keeps a provider it knows
+        expect(fixture.requests.settingsSave.at(-1).extension_settings.translate.provider).toBe('google');
+
+        await page.locator('[data-translate-mode][value="llm"]').check();
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.mode).toBe('llm');
+
+        // the link goes to the model connection tab
+        await page.locator('[data-translate-llm] [data-settings-section="connection"]').click();
+        await expect(page.locator('[data-scene-translation-service]')).toBeVisible();
     });
 
     test('saves an API key on Enter once and empties the box like leaving it does', async ({ page }) => {
-        const fixture = createSettingsFixture({ translate: { target_language: 'en', internal_language: 'en', provider: 'deepl', auto_mode: 'none', deepl_endpoint: 'free' } });
+        const fixture = createSettingsFixture({ translate: { mode: 'machine', target_language: 'en', internal_language: 'en', provider: 'deepl', auto_mode: 'none', deepl_endpoint: 'free' } });
         await mockSettingsRoutes(page, fixture);
         await mockBridgeFrame(page);
         await openTranslateSettings(page);
@@ -690,8 +724,8 @@ test.describe('Translation settings', () => {
         // the key is not kept in the box after it was saved
         await expect(key).toHaveValue('');
         // a later change saves the form again without writing the same key a second time
-        await page.locator('[data-translate-target-language]').selectOption('ja');
-        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.target_language).toBe('ja');
+        await page.locator('[data-translate-deepl-endpoint]').selectOption('pro');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.deepl_endpoint).toBe('pro');
         expect(fixture.secretWrites).toEqual([{ key: 'deepl', value: 'secret-key-999', label: 'translate modern' }]);
     });
 
@@ -756,5 +790,166 @@ test.describe('Translation settings', () => {
         await page.locator('[data-translate-test]').click();
         await expect(result).toHaveAttribute('data-translate-test-state', 'error');
         await expect(result).toContainText('HTTP 503');
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 大模型翻译和开场白自动翻译
+// ---------------------------------------------------------------------------------------------------------------------
+
+const LLM_SERVICE = { id: 'svc-1', name: 'DeepSeek', provider: 'deepseek', secretId: 'key-1', defaultModel: 'deepseek-chat' };
+
+function createLlmChatFixture(translate = {}) {
+    const fixture = createChatFixture({ settings: { mode: 'llm', auto_greeting: true, ...translate } });
+    fixture.settings.main_api = 'openai';
+    fixture.settings.oai_settings = { ...fixture.settings.oai_settings, chat_completion_source: 'deepseek', deepseek_model: 'deepseek-chat' };
+    fixture.settings.extension_settings.modelServices = {
+        services: [structuredClone(LLM_SERVICE)],
+        scenes: { chat: { serviceId: 'svc-1' }, translation: { serviceId: '', model: '', maxOutputTokens: 4096 } },
+    };
+    return fixture;
+}
+
+// /api/model-services/complete 的替身：把用户消息加上「译：」返回，请求体记在 fixture.llmRequests
+async function mockModelServiceRoutes(page, fixture) {
+    fixture.llmRequests = [];
+    await page.route('**/api/model-services/complete', route => {
+        const body = postJson(route);
+        fixture.llmRequests.push(body);
+        const text = body.messages?.find(message => message.role === 'user')?.content ?? '';
+        return fulfillJson(route, { content: `译：${text}`, finishReason: 'stop', hasReasoning: false, provider: 'deepseek', model: 'deepseek-chat', service: { id: 'svc-1', name: 'DeepSeek', implicit: false, followsChat: true } });
+    });
+}
+
+test.describe('LLM translation', () => {
+    test.use({ viewport: desktopViewport });
+
+    test('translates the foreign greeting on its own when the chat opens, and a reply on request, through the translation scene', async ({ page }) => {
+        const fixture = createLlmChatFixture();
+        await mockTranslateRoutes(page, fixture);
+        await mockModelServiceRoutes(page, fixture);
+        await mockChatRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openChat(page);
+
+        // the greeting is translated without a click and without a privacy question: the text goes to the user's own model service
+        const greeting = page.locator('.message').nth(0);
+        await expect(greeting.locator('[data-message-translation="ready"]')).toBeVisible();
+        await expect(greeting.locator('.message-body')).toContainText('译：Opening line.');
+        await expect.poll(() => fixture.chatSaves.length).toBe(1);
+        expect(fixture.files['tr-chat'].messages[0]).toMatchObject({ mes: 'Opening line.', extra: { display_text: '译：Opening line.', display_text_lang: 'zh-CN' } });
+        expect(fixture.llmRequests).toHaveLength(1);
+        expect(fixture.llmRequests[0].scene).toBe('translation');
+        expect(fixture.llmRequests[0].messages[0].role).toBe('system');
+        expect(fixture.llmRequests[0].messages[0].content).toContain('Chinese (Simplified)');
+        // machine translation was not used
+        expect(fixture.translateRequests).toHaveLength(0);
+        await expect(page.locator('.toast-stack')).not.toContainText('消息已翻译');
+
+        // a reply is translated on request, macros kept out of the request
+        await reply(page).locator('[data-translate-message]').click();
+        await expect(reply(page).locator('[data-message-translation="ready"]')).toBeVisible();
+        expect(fixture.llmRequests.slice(1).map(request => request.messages[1].content)).toEqual(['Hello [[1]], the answer is 42.', 'Let me think about it.']);
+        expect(savedReply(fixture).extra).toMatchObject({ display_text: '译：Hello {{user}}, the answer is 42.', reasoning_display_text: '译：Let me think about it.' });
+
+        // reopening the chat does not translate the greeting again
+        await page.reload();
+        await expect(page.locator('.message')).toHaveCount(3);
+        await expect(page.locator('.message').nth(0).locator('.message-body')).toContainText('译：Opening line.');
+        expect(fixture.llmRequests).toHaveLength(3);
+    });
+
+    test('leaves the greeting alone when the automatic greeting translation is off', async ({ page }) => {
+        const fixture = createLlmChatFixture({ auto_greeting: false });
+        await mockModelServiceRoutes(page, fixture);
+        await mockChatRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openChat(page);
+
+        await expect(page.locator('.message').nth(0).locator('[data-translate-message]')).toBeEnabled();
+        await page.waitForTimeout(300);
+        expect(fixture.llmRequests).toHaveLength(0);
+        expect(fixture.chatSaves).toHaveLength(0);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 设置中心「语言」标签
+// ---------------------------------------------------------------------------------------------------------------------
+
+const LEGACY_RULE = 'Always reply in the same language as {{user}}\'s latest message, even if the character card is in another language.';
+
+async function openLanguageSettings(page) {
+    await page.goto('/modern/?view=settings');
+    await expect(page.locator('#modernApp')).toHaveAttribute('data-loaded', 'true');
+    await page.locator('[data-settings-section="language"]').click();
+    await expect(page.locator('[data-settings-language]')).toBeVisible();
+}
+
+test.describe('Language settings', () => {
+    test.use({ viewport: desktopViewport });
+
+    test('replies in Simplified Chinese by default; the reply language, the translation target and the greeting switch save on change', async ({ page }) => {
+        const fixture = createSettingsFixture({ translate: {} });
+        await mockSettingsRoutes(page, fixture);
+        const calls = await mockBridgeFrame(page);
+        await openLanguageSettings(page);
+
+        const replyLanguage = page.locator('[data-reply-language]');
+        const target = page.locator('[data-translate-target]');
+        await expect(replyLanguage).toHaveValue('zh-CN');
+        await expect(target).toHaveValue('__follow__');
+        await expect(target.locator('option[value="__follow__"]')).toContainText('简体中文');
+        await expect(page.locator('[data-translate-auto-greeting]')).toBeChecked();
+        await expect(page.locator('[data-legacy-language-rule]')).toHaveCount(0);
+
+        await replyLanguage.selectOption('en');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.power_user?.reply_language).toBe('en');
+        await expect.poll(() => calls.filter(call => call.action === 'reloadSettings').length).toBe(1);
+        await expect(saveStatus(page)).toContainText('角色回复语言已保存');
+        // the translation target follows the reply language
+        await expect(target.locator('option[value="__follow__"]')).toContainText('English');
+
+        await target.selectOption('ja');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate).toMatchObject({ follow_reply_language: false, target_language: 'ja' });
+        await target.selectOption('__follow__');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.follow_reply_language).toBe(true);
+
+        await page.locator('[data-translate-auto-greeting]').uncheck();
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.extension_settings.translate.auto_greeting).toBe(false);
+
+        // no preference: the follow option has no language of its own to show
+        await replyLanguage.selectOption('');
+        await expect.poll(() => fixture.requests.settingsSave.at(-1)?.power_user?.reply_language).toBe('');
+        await expect(target.locator('option[value="__follow__"]')).toHaveAttribute('disabled', '');
+        // the target falls back to the language chosen before
+        await expect(target).toHaveValue('ja');
+        // everything else in the settings file stayed
+        expect(fixture.requests.settingsSave.at(-1).extension_settings.note).toEqual({ default: 'kept' });
+    });
+
+    test('points at the hand-written language rule of the main prompt and removes only that paragraph on request', async ({ page }) => {
+        const fixture = createSettingsFixture();
+        fixture.settings.oai_settings = {
+            ...fixture.settings.oai_settings,
+            prompts: [
+                { identifier: 'main', name: 'Main Prompt', content: `Write {{char}}'s next reply.\n\n${LEGACY_RULE}\n\nStay in character.` },
+                { identifier: 'nsfw', name: 'Auxiliary Prompt', content: '' },
+            ],
+        };
+        await mockSettingsRoutes(page, fixture);
+        await mockBridgeFrame(page);
+        await openLanguageSettings(page);
+
+        const note = page.locator('[data-legacy-language-rule]');
+        await expect(note).toBeVisible();
+        expect(fixture.requests.settingsSave).toHaveLength(0);
+
+        await note.locator('[data-remove-legacy-language-rule]').click();
+        await expect.poll(() => fixture.requests.settingsSave.length).toBe(1);
+        const prompts = fixture.requests.settingsSave[0].oai_settings.prompts;
+        expect(prompts[0].content).toBe('Write {{char}}\'s next reply.\n\nStay in character.');
+        expect(prompts[1]).toEqual({ identifier: 'nsfw', name: 'Auxiliary Prompt', content: '' });
+        await expect(note).toHaveCount(0);
     });
 });

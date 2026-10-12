@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConversationServices } from '../../../../src/conversation/composition/index.js';
@@ -12,7 +12,7 @@ import { invariant } from '../../../../public/shared/conversation/schemas/index.
 const directory = '/virtual/conversation-v1';
 const config = { provider: 'openai-compatible', model: 'unit', baseUrl: 'http://stub.invalid/v1', contextWindow: 32000, inputLimit: 30000, maxOutputTokens: 1000, outputLimit: 2000, workingBudget: 16000, apiKey: 'unit-secret', headers: { 'x-custom': 'unit-header-secret' } };
 const cap = c => ({ supported: true, provider: c.provider, executor: c.executor, types: ['send', 'auxiliary'], tools: true, media: ['text'], contextWindow: c.contextWindow, inputLimit: c.inputLimit, outputLimit: c.outputLimit, maxOutputTokens: c.maxOutputTokens, workingBudget: c.workingBudget });
-function harness(overrides = {}, fetch) {
+function harness(overrides = {}, fetch, root = directory) {
     const calls = { closes: 0, trace: [], traceReads: [], read: [], providers: [], retrieval: [], pi: [] };
     const resources = [{ id: 'main', revision: 1, kind: 'connection', data: structuredClone(config) }, { id: 'embed', revision: 1, kind: 'connection', data: { ...config, model: 'embedding' } }, { id: 'image', revision: 1, kind: 'connection', data: { ...config, model: 'image' } }];
     let snapshot = { conversationId: 'c', conversation: { id: 'c', activeTurnId: 't', settings: {} }, settings: { connectionId: 'main' }, resources, messages: [{ id: 'm', role: 'user', content: 'hello', media: [] }], memories: [], summaries: [], folds: [] };
@@ -50,7 +50,7 @@ function harness(overrides = {}, fetch) {
     };
     const attachmentFactory = dependencies.createAttachmentService;
     dependencies.createAttachmentService = input => { const service = attachmentFactory(input); return { ...service, save: async value => { const record = await service.save(value); attachmentRecords.set(record.id, record); return record; } }; };
-    const services = createConversationServices({ directory, dependencies, fetch });
+    const services = createConversationServices({ directory: root, dependencies, fetch });
     return { services, calls, resources, latest, snapshot, store, setSnapshot: value => { snapshot = value; } };
 }
 const options = h => ({ snapshot: h.snapshot, requestPlan: { messages: h.snapshot.messages }, connection: config });
@@ -92,6 +92,25 @@ test('hydration handles historical content and draft media without mutating snap
     assert.equal(h.calls.compiled.snapshot.messages[0].media[0].mimeType, 'image/png');
     assert.equal(h.calls.compiled.options.media[0].data, Buffer.from('image').toString('base64'));
     assert.throws(() => h.calls.runtime.compile(source, { capabilities: cap(config) }), { code: 'unsupported-media' });
+    await h.services.close();
+});
+
+test('compile reads the global reply language from settings.json each time, a conversation setting wins', async t => {
+    const root = mkdtempSync(join(tmpdir(), 'conversation-reply-language-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const conversationDirectory = join(root, 'conversation-v1');
+    mkdirSync(conversationDirectory);
+    const h = harness({}, undefined, conversationDirectory);
+    const compileWith = snapshot => { h.calls.runtime.compile(snapshot, { capabilities: cap(config) }); return h.calls.compiled.snapshot.settings.replyLanguage; };
+
+    // no settings.json yet: nothing is added
+    assert.equal(compileWith(h.snapshot), undefined);
+    writeFileSync(join(root, 'settings.json'), JSON.stringify({ power_user: {} }));
+    assert.equal(compileWith(h.snapshot), 'zh-CN');
+    writeFileSync(join(root, 'settings.json'), JSON.stringify({ power_user: { reply_language: 'en' } }));
+    assert.equal(compileWith(h.snapshot), 'en');
+    assert.equal(compileWith({ ...h.snapshot, conversation: { ...h.snapshot.conversation, settings: { replyLanguage: 'ja' } } }), undefined);
+    assert.equal(compileWith({ ...h.snapshot, settings: { ...h.snapshot.settings, replyLanguage: '' } }), '');
     await h.services.close();
 });
 

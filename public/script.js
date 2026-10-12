@@ -14,6 +14,7 @@ import {
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
 import { BRIDGE_SOURCE, BRIDGE_ACTIONS, BRIDGE_EVENTS } from './modern/core/bridge-protocol.js';
+import { buildReplyLanguageInstruction, resolveReplyLanguage } from './shared/reply-language.js';
 import {
     generateKoboldWithStreaming,
     kai_settings,
@@ -4810,6 +4811,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const depthPromptRole = getExtensionPromptRoleByName(characters[this_chid]?.data?.extensions?.depth_prompt?.role ?? depth_prompt_role_default);
         setExtensionPrompt(inject_ids.DEPTH_PROMPT, depthPromptText, extension_prompt_types.IN_CHAT, depthPromptDepth, extension_settings.note.allowWIScan, depthPromptRole);
     }
+
+    // 回复语言（现代页设置中心「语言」，power_user.reply_language）：一条系统指令放在聊天记录之后。每次生成都重设；
+    // quiet 生成（摘要、扩展的工具提示）不加，免得把它们也引向某种语言。
+    const replyLanguageInstruction = type === 'quiet' ? '' : buildReplyLanguageInstruction(resolveReplyLanguage(power_user));
+    setExtensionPrompt(inject_ids.REPLY_LANGUAGE, replyLanguageInstruction, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
 
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
     if (chat.length) {

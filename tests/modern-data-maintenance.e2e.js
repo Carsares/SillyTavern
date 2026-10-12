@@ -248,7 +248,7 @@ test.describe('Modern data maintenance', () => {
         await mockMaintenance(page);
         await openMaintenance(page);
 
-        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/模型连接/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
+        await expect(page.locator('.settings-tabs [data-settings-section]')).toHaveText([/模型连接/, /语言/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
         // Snapshots first, then the raw settings editor, then the maintenance panel
         const order = await page.locator('[data-settings-panel="data"] .settings-data').evaluate(element => [...element.children].map(child => {
             if (child.matches('[data-settings-snapshots]')) {

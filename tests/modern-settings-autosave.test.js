@@ -14,7 +14,7 @@ function createFixture({ failSave = false, reloadResult = { ok: true } } = {}) {
             return {};
         }
         if (path === '/api/secrets/write') {
-            return {};
+            return { id: 'new-secret' };
         }
         if (path === '/api/secrets/read') {
             return { api_key_custom: [{ id: '1', active: true }] };
@@ -106,10 +106,16 @@ describe('settings autosave', () => {
         const fixture = createFixture();
         const result = await fixture.autosave.commitSecret({ key: 'api_key_custom', value: 'sk-test', label: 'custom modern', description: 'API Key' });
 
-        expect(result).toEqual({ ok: true });
+        expect(result).toEqual({ ok: true, id: 'new-secret' });
         expect(fixture.apiFetch).toHaveBeenCalledWith('/api/secrets/write', { body: { key: 'api_key_custom', value: 'sk-test', label: 'custom modern' } });
         expect(fixture.state.secretState).toEqual({ api_key_custom: [{ id: '1', active: true }] });
         expect(fixture.saved).toHaveLength(0);
+    });
+
+    test('a secret written for a model service can leave the active key alone', async () => {
+        const fixture = createFixture();
+        await fixture.autosave.commitSecret({ key: 'api_key_custom', value: 'sk-test', label: 'service', activate: false });
+        expect(fixture.apiFetch).toHaveBeenCalledWith('/api/secrets/write', { body: { key: 'api_key_custom', value: 'sk-test', label: 'service', activate: false } });
     });
 });
 

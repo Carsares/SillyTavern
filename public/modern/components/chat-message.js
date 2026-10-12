@@ -6,7 +6,7 @@ import {
     getLanguageShortLabel,
     getMessageTranslationView,
     getMessageUiKey,
-    getTranslateProvider,
+    getTranslatorLabel,
     resolveTranslateSettings,
 } from '../core/translation.js';
 import { isImageMessage } from '../core/image-message.js';
@@ -199,7 +199,7 @@ export function createChatMessageComponents(ctx) {
         }
 
         const settings = resolveTranslateSettings(state.settings);
-        const providerLabel = getTranslateProvider(settings.provider)?.label || settings.provider;
+        const providerLabel = getTranslatorLabel(settings);
         const busy = Boolean(state.chatTranslation?.busy?.[translationKey]);
         const empty = !String(message.mes ?? '').trim();
         const disabled = busy || empty || state.engine.generating;

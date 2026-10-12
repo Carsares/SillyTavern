@@ -2,7 +2,7 @@
 // 业务在 actions/character-translation.js，事件在 routes/characters-events.js；翻译结果只进未保存的草稿。
 import {
     getLanguageShortLabel,
-    getTranslateProvider,
+    getTranslatorLabel,
     isChineseLanguage,
     readCharacterFieldValue,
     resolveTranslateSettings,
@@ -64,7 +64,7 @@ export function createCharacterTranslationPanel(ctx) {
         const copying = active && Boolean(ui.copying);
         const busy = running || copying;
         const settings = resolveTranslateSettings(state.settings);
-        const providerLabel = getTranslateProvider(settings.provider)?.label || settings.provider;
+        const providerLabel = getTranslatorLabel(settings);
         const targetLabel = getLanguageShortLabel(settings.target_language);
         const buttonLabel = isChineseLanguage(settings.target_language) ? '翻译为中文' : `翻译为${targetLabel}`;
         const items = active && Array.isArray(ui.items) ? ui.items : [];

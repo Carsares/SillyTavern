@@ -7,6 +7,7 @@
 //   - 旧版先按 Markdown 图片链接把文本切开，只翻译链接之间的文字，链接原样拼回；
 //   - 单次请求的长度上限：google / lingva 5000，deeplx 1500，bing 1000，其余不分块。
 import { alternateGreetingsToInput, inputToAlternateGreetings } from './utils.js';
+import { getReplyLanguageOption, resolveReplyLanguage } from '../../shared/reply-language.js';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // 翻译服务
@@ -137,12 +138,34 @@ export const TRANSLATE_PROVIDERS = Object.freeze([
 
 export const DEFAULT_TRANSLATE_PROVIDER = 'google';
 
+/** 翻译方式：大模型翻译（走设置中心「模型连接」里的翻译场景，默认）或机器翻译（上面的服务）。 */
+export const TRANSLATE_MODES = Object.freeze(['llm', 'machine']);
+export const DEFAULT_TRANSLATE_MODE = 'llm';
+
+/**
+ * 大模型翻译的显示名和分块上限。它不进 TRANSLATE_PROVIDERS：方式另存在 translate.mode，
+ * 旧版翻译扩展（在生成引擎里运行）看到的 provider 始终是它认识的机器翻译服务。
+ */
+export const LLM_TRANSLATION = Object.freeze({ id: 'llm', label: '大模型翻译', chunkLimit: 3000 });
+
 /**
  * @param {string} id 翻译服务 id
  * @returns {TranslateProvider | undefined} 服务信息，未知 id 返回 undefined
  */
 export function getTranslateProvider(id) {
     return TRANSLATE_PROVIDERS.find(provider => provider.id === id);
+}
+
+/**
+ * 界面上称呼当前翻译方式的名字：大模型翻译，或机器翻译服务的名字。
+ * @param {{ mode?: string, provider?: string }} settings resolveTranslateSettings 的结果
+ * @returns {string} 名字
+ */
+export function getTranslatorLabel(settings) {
+    if (settings?.mode === 'llm') {
+        return LLM_TRANSLATION.label;
+    }
+    return getTranslateProvider(settings?.provider)?.label || settings?.provider || '';
 }
 
 /**
@@ -195,6 +218,9 @@ export const MODERN_DEFAULT_TARGET_LANGUAGE = 'zh-CN';
  * @property {string} auto_mode 旧版自动翻译模式
  * @property {string} deepl_endpoint 'free' 或 'pro'
  * @property {boolean} configured settings 里是否已经有翻译设置
+ * @property {'llm' | 'machine'} mode 翻译方式
+ * @property {boolean} follow_reply_language 目标语言跟随设置中心「语言」里的回复语言
+ * @property {boolean} auto_greeting 打开聊天时自动翻译不是目标语言的开场白
  */
 
 /**
@@ -206,9 +232,16 @@ export function resolveTranslateSettings(settings) {
     const raw = settings?.extension_settings?.translate;
     const stored = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     const hasTarget = typeof stored.target_language === 'string' && stored.target_language !== '';
+    // 没存过「跟随」时：从没选过目标语言就跟随回复语言，选过就沿用选过的
+    const followReply = typeof stored.follow_reply_language === 'boolean' ? stored.follow_reply_language : !hasTarget;
+    const replyLanguage = resolveReplyLanguage(settings?.power_user);
+    const storedTarget = normalizeLanguageCode(stored.target_language, hasTarget ? LEGACY_TRANSLATE_DEFAULTS.target_language : MODERN_DEFAULT_TARGET_LANGUAGE);
     return {
+        mode: TRANSLATE_MODES.includes(stored.mode) ? stored.mode : DEFAULT_TRANSLATE_MODE,
+        follow_reply_language: followReply,
+        auto_greeting: stored.auto_greeting !== false,
         provider: getTranslateProvider(stored.provider) ? stored.provider : DEFAULT_TRANSLATE_PROVIDER,
-        target_language: normalizeLanguageCode(stored.target_language, hasTarget ? LEGACY_TRANSLATE_DEFAULTS.target_language : MODERN_DEFAULT_TARGET_LANGUAGE),
+        target_language: followReply && getReplyLanguageOption(replyLanguage) ? replyLanguage : storedTarget,
         internal_language: normalizeLanguageCode(stored.internal_language, LEGACY_TRANSLATE_DEFAULTS.internal_language),
         auto_mode: AUTO_MODES.includes(stored.auto_mode) ? stored.auto_mode : 'none',
         deepl_endpoint: stored.deepl_endpoint === 'pro' ? 'pro' : 'free',
@@ -755,6 +788,112 @@ export function describeTranslateFailure(error, providerId) {
         return `${label} 翻译失败（HTTP ${status}）。${hint}`;
     }
     return `翻译请求没有发出去：${error?.message || '未知错误'}`;
+}
+
+/**
+ * 粗略判断一段文字是不是已经是目标语言：只按文字体系（汉字、假名、谚文、拉丁字母等）区分，分不出英语和法语。
+ * 用于决定开场白要不要自动翻译，宁可少翻也不误翻。
+ * @param {string} text 文本
+ * @param {string} lang 目标语言码
+ * @returns {boolean} 看起来已经是目标语言（或没有可判断的文字）
+ */
+export function looksLikeLanguage(text, lang) {
+    const letters = String(text ?? '').match(/\p{L}/gu) || [];
+    if (letters.length < 8) {
+        return true;
+    }
+    const count = pattern => letters.filter(letter => pattern.test(letter)).length / letters.length;
+    const han = count(/\p{Script=Han}/u);
+    const kana = count(/[\p{Script=Hiragana}\p{Script=Katakana}]/u);
+    const hangul = count(/\p{Script=Hangul}/u);
+    const code = normalizeLanguageCode(lang) || String(lang || '');
+    if (code.startsWith('zh')) {
+        return han >= 0.3 && kana < 0.1;
+    }
+    if (code === 'ja') {
+        return kana >= 0.1 || han >= 0.3;
+    }
+    if (code === 'ko') {
+        return hangul >= 0.3;
+    }
+    // 拉丁、西里尔等目标语言：只在明显是中日韩文字时判为需要翻译
+    return han + kana + hangul < 0.3;
+}
+
+/**
+ * 大模型翻译（/api/model-services/complete）的失败说明。后端失败时返回 `{ error, message, detail? }`（见 src/endpoints/model-services.js），
+ * 本地判断的截断、只有推理内容、空回复用 error.code 传进来。
+ * @param {any} error 抛出的错误，可以带 status 和 body
+ * @returns {string} 面向用户的说明
+ */
+export function describeLlmTranslateFailure(error) {
+    /** @type {any} */
+    let body = null;
+    if (typeof error?.body === 'string' && error.body.trim().startsWith('{')) {
+        try {
+            body = JSON.parse(error.body);
+        } catch {
+            body = null;
+        }
+    }
+    const scenes = '到「设置 → 模型连接 → 场景」';
+    switch (body?.error ?? error?.code) {
+        case 'scene-not-configured':
+            return `翻译场景还没有可用的模型服务。${scenes}为翻译选择服务。`;
+        case 'service-not-found':
+            return `翻译场景选的模型服务已经删除。${scenes}重新选择。`;
+        case 'model-missing':
+            return `翻译场景还没有选模型。${scenes}选择。`;
+        case 'secret-missing':
+            return '这个模型服务还没有保存 API Key。到「设置 → 模型连接 → 模型服务」填写。';
+        case 'invalid-service':
+            return '模型服务的配置不完整或无效（类型或地址）。到「设置 → 模型连接 → 模型服务」检查。';
+        case 'provider-http-error':
+            return `模型服务返回了错误（${body?.detail || body?.message || '未知原因'}）。可能被限流、额度用尽或模型名不对，稍后重试或换一个模型。`;
+        case 'provider-timeout':
+            return '模型服务太久没有回复，稍后重试。';
+        case 'provider-network-error':
+            return '连不上模型服务，检查网络、代理和服务地址。';
+        case 'provider-content-blocked':
+            return '模型服务拒绝翻译这段内容，可以换一个模型或改用机器翻译。';
+        case 'provider-response-invalid':
+            return '模型服务返回了无法识别的内容，稍后重试或换一个模型。';
+        case 'truncated':
+            return `译文超过了翻译场景的回复上限，被截断了，没有保存。${scenes}调大翻译的回复上限后重试。`;
+        case 'reasoning_only':
+            return '模型只给出了推理内容，没有给出译文。换一个不强制推理的模型，或调大翻译的回复上限。';
+        case 'empty_response':
+            return '模型服务返回了空内容，稍后重试或换一个模型。';
+        default:
+            break;
+    }
+    if (error?.name === 'AbortError') {
+        return '翻译已取消。';
+    }
+    const status = Number(error?.status) || 0;
+    if (status === 404) {
+        return '后端没有模型服务接口（/api/model-services），服务端版本可能过旧。';
+    }
+    if (status >= 400) {
+        return `大模型翻译失败（HTTP ${status}）。`;
+    }
+    return `翻译请求没有发出去：${error?.message || '未知错误'}`;
+}
+
+/**
+ * 大模型翻译的系统指令：只输出译文，原样保留占位符和格式。
+ * @param {string} lang 目标语言码
+ * @returns {string} 指令
+ */
+export function buildLlmTranslatePrompt(lang) {
+    const name = TRANSLATE_LANGUAGES.find(language => language.code === lang)?.name || lang;
+    return [
+        `You are a professional translator. Translate the user's text into ${name}.`,
+        '- Output only the translation: no explanations, notes, quotes or code fences.',
+        '- Keep every placeholder such as [[0]], ((1)) or ⟦2⟧ exactly as written, in the same order.',
+        '- Keep line breaks, Markdown, emoji, names and proper nouns.',
+        `- Leave parts that are already in ${name} unchanged.`,
+    ].join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

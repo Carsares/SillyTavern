@@ -42,8 +42,16 @@ const textCompletionCases = [
 
 // Every API save now asks the hidden generation engine to reload its settings, so the engine frame is always stubbed:
 // the real engine would boot a whole legacy page in the middle of a page that only mocks the settings endpoints.
+// The settings get an empty model service registry unless they bring one, so opening the connection tab does not run
+// the first-visit migration (it writes the settings); { migrated: false } keeps the settings as given to test it.
 // Returns the live list of bridge requests the page posted to the stub.
-async function mockModernApiShell(page, settingsBundle, secretState = {}, bridgeOptions = {}) {
+async function mockModernApiShell(page, settingsBundle, secretState = {}, bridgeOptions = {}, { migrated = true } = {}) {
+    if (migrated && typeof settingsBundle.settings === 'string') {
+        const settings = settingsBundle.settings ? JSON.parse(settingsBundle.settings) : {};
+        settings.extension_settings ??= {};
+        settings.extension_settings.modelServices ??= { services: [], scenes: { chat: { serviceId: '' }, translation: { serviceId: '', model: '', maxOutputTokens: 4096 } } };
+        settingsBundle.settings = JSON.stringify(settings);
+    }
     const bridgeCalls = await mockBridgeFrame(page, bridgeOptions);
     await page.route('**/csrf-token', route => route.fulfill({
         status: 200,
@@ -175,6 +183,8 @@ async function editTextCompletionModelAndKey(page, item, saved, secretWrites) {
         await keyInput.fill(item.secretValue);
         await keyInput.press('Enter');
         await expect.poll(() => secretWrites.length).toBe(item.expectedSecretWrites.length);
+        // wait for the write to finish: leaving the page aborts it, and the failed save would offer the key again
+        await expect(saveStatus(page)).toContainText(/API Key\s*已保存/);
     } else {
         await expect(keyInput).toHaveCount(0);
     }
@@ -766,7 +776,6 @@ test.describe('Modern connection settings', () => {
         await mockModernApiShell(page, settingsBundle);
         const saved = await routeSettingsSave(page, settingsBundle);
         const secretWrites = await routeSecretWrites(page);
-
         for (const [index, item] of textCompletionCases.entries()) {
             const savedTextgen = {
                 type: item.type,
@@ -1452,5 +1461,195 @@ test.describe('Modern API connection profiles', () => {
 
         const recent = await page.evaluate(() => JSON.parse(localStorage.getItem('st-modern-recent-models') || '{}'));
         expect(recent['openai:custom']).toEqual(['custom/new-model']);
+    });
+});
+
+// 模型服务和场景（components/model-services.js、actions/model-services.js）：登记一次地址和密钥，对话、翻译场景直接选用。
+test.describe('Modern model services', () => {
+    const chatService = { id: 'svc-chat', name: 'saved.example', provider: 'custom', baseUrl: 'https://saved.example/v1', secretId: 'custom-1', defaultModel: 'custom/saved-model' };
+    const chatSettings = (modelServices) => ({
+        main_api: 'openai',
+        chat_completion_source: 'custom',
+        oai_settings: { chat_completion_source: 'custom', custom_url: 'https://saved.example/v1', custom_model: 'custom/saved-model', openai_max_context: 128000 },
+        ...(modelServices ? { extension_settings: { modelServices } } : {}),
+    });
+
+    // 密钥写入、轮换、删除和模型列表的替身：写入返回新条目 id，并像服务端一样记进密钥状态
+    async function routeServiceSecrets(page, secretState) {
+        const calls = { writes: [], rotates: [], deletes: [], models: [], tests: [] };
+        await page.route('**/api/secrets/write', route => {
+            const body = route.request().postDataJSON();
+            calls.writes.push(body);
+            const id = `new-${calls.writes.length}`;
+            const entries = secretState[body.key] ?? [];
+            const active = body.activate === false ? entries.length === 0 : true;
+            if (active) {
+                entries.forEach(entry => { entry.active = false; });
+            }
+            entries.push({ id, value: '*******key', label: body.label, active });
+            secretState[body.key] = entries;
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id }) });
+        });
+        await page.route('**/api/secrets/rotate', route => {
+            const body = route.request().postDataJSON();
+            calls.rotates.push(body);
+            (secretState[body.key] ?? []).forEach(entry => { entry.active = entry.id === body.id; });
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        });
+        await page.route('**/api/secrets/delete', route => {
+            const body = route.request().postDataJSON();
+            calls.deletes.push(body);
+            secretState[body.key] = (secretState[body.key] ?? []).filter(entry => entry.id !== body.id);
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        });
+        await page.route('**/api/backends/chat-completions/status', route => {
+            calls.models.push(route.request().postDataJSON());
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'deepseek-reasoner' }, { id: 'deepseek-chat' }] }) });
+        });
+        await page.route('**/api/model-services/test', route => {
+            calls.tests.push(route.request().postDataJSON());
+            return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: 'OK', model: 'deepseek-chat', finishReason: 'stop' }) });
+        });
+        return calls;
+    }
+
+    test('the first visit registers the current connection as a service with its active key and keeps the connection', async ({ page }) => {
+        const settingsBundle = { settings: JSON.stringify(chatSettings()), ...emptyPresets() };
+        const secretState = { api_key_custom: [{ id: 'custom-0', value: '*******old', label: 'old', active: false }, { id: 'custom-1', value: '*******abc', label: 'chat', active: true }] };
+        await mockModernApiShell(page, settingsBundle, secretState, {}, { migrated: false });
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const calls = await routeServiceSecrets(page, secretState);
+
+        await page.goto('/modern/?view=api');
+        await expect.poll(() => saved.bodies.length).toBe(1);
+        const registry = saved.bodies[0].extension_settings.modelServices;
+        expect(registry.services).toHaveLength(1);
+        expect(registry.services[0]).toMatchObject({ name: 'saved.example', provider: 'custom', baseUrl: 'https://saved.example/v1', secretId: 'custom-1', defaultModel: 'custom/saved-model' });
+        expect(registry.scenes.chat.serviceId).toBe(registry.services[0].id);
+        // the connection itself and the keys are untouched
+        expect(saved.bodies[0].oai_settings).toEqual(chatSettings().oai_settings);
+        expect(calls.writes).toHaveLength(0);
+        expect(calls.rotates).toHaveLength(0);
+
+        const card = page.locator('[data-model-service-card]');
+        await expect(card).toHaveCount(1);
+        await expect(card).toContainText('对话、翻译在用');
+        await expect(card.locator('[data-model-service-state]')).toHaveText('可用');
+        await expect(page.locator('[data-scene-chat-service]')).toHaveValue(registry.services[0].id);
+        // the chat scene uses the service: only the model and the sampling fields are left to edit
+        await expect(page.locator('[data-api-source]')).toHaveCount(0);
+        await expect(page.locator('[data-api-model]')).toHaveValue('custom/saved-model');
+        await expect(page.locator('[data-scene-translation-service] option').first()).toContainText('跟随对话场景（saved.example · custom/saved-model）');
+
+        // once a registry exists, a later visit does not register again
+        await page.reload();
+        await expect(card).toHaveCount(1);
+        await page.waitForTimeout(300);
+        expect(saved.bodies).toHaveLength(1);
+    });
+
+    test('adds a service without changing the active key, uses it for translation, tests it and deletes it with its key', async ({ page }) => {
+        const settingsBundle = {
+            settings: JSON.stringify(chatSettings({ services: [chatService], scenes: { chat: { serviceId: 'svc-chat' }, translation: { serviceId: '', model: '', maxOutputTokens: 4096 } } })),
+            ...emptyPresets(),
+        };
+        const secretState = { api_key_custom: [{ id: 'custom-1', value: '*******abc', label: 'chat', active: true }], api_key_deepseek: [{ id: 'ds-0', value: '*******chat', label: 'other', active: true }] };
+        await mockModernApiShell(page, settingsBundle, secretState);
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const calls = await routeServiceSecrets(page, secretState);
+
+        await page.goto('/modern/?view=api');
+        await expect(page.locator('[data-model-service-card]')).toHaveCount(1);
+
+        await page.locator('[data-model-service-add-open]').click();
+        await page.locator('[data-new-service-provider]').selectOption('deepseek');
+        // DeepSeek has a fixed address: the address box goes away
+        await expect(page.locator('[data-new-service-base-url-field]')).toBeHidden();
+        await page.locator('[data-new-service-name]').fill('DeepSeek 翻译');
+        await page.locator('[data-new-service-key]').fill('sk-deepseek-1');
+        await page.locator('[data-new-service-model]').fill('deepseek-chat');
+        await page.locator('[data-model-service-add-submit]').click();
+
+        const card = page.locator('[data-model-service-card]').filter({ hasText: 'DeepSeek 翻译' });
+        await expect(card).toBeVisible();
+        await expect(card.locator('[data-model-service-state]')).toHaveText('可用');
+        expect(calls.writes).toEqual([{ key: 'api_key_deepseek', value: 'sk-deepseek-1', label: 'model service: DeepSeek 翻译', activate: false }]);
+        // the key the chat may be using stays the active one
+        expect(secretState.api_key_deepseek.map(entry => [entry.id, entry.active])).toEqual([['ds-0', true], ['new-1', false]]);
+        const added = saved.bodies.at(-1).extension_settings.modelServices.services.find(service => service.name === 'DeepSeek 翻译');
+        expect(added).toMatchObject({ provider: 'deepseek', baseUrl: '', secretId: 'new-1', defaultModel: 'deepseek-chat' });
+        // the model list is read right away with the key of this service
+        await expect.poll(() => calls.models.length).toBe(1);
+        expect(calls.models[0]).toEqual({ chat_completion_source: 'deepseek', secret_id: 'new-1' });
+        await expect(card).toContainText('已读取 2 个模型');
+
+        // the translation scene picks the service and gets its default model
+        await page.locator('[data-scene-translation-service]').selectOption(added.id);
+        await expect.poll(() => saved.bodies.at(-1).extension_settings.modelServices.scenes.translation).toMatchObject({ serviceId: added.id, model: 'deepseek-chat' });
+        await expect(page.locator('[data-scene-translation-model]')).toHaveValue('deepseek-chat');
+        const maxTokens = page.locator('[data-scene-translation-max-tokens]');
+        const before = saved.bodies.length;
+        await maxTokens.fill('100');
+        await maxTokens.press('Enter');
+        await expect(page.locator('[data-api-field-error="scene-translation-maxOutputTokens"]')).toContainText('256 到 65,536');
+        await expect(saveStatus(page)).toContainText('有字段未保存');
+        expect(saved.bodies).toHaveLength(before);
+        await maxTokens.fill('8192');
+        await maxTokens.press('Enter');
+        await expect.poll(() => saved.bodies.at(-1).extension_settings.modelServices.scenes.translation.maxOutputTokens).toBe(8192);
+
+        await card.locator('[data-model-service-test]').click();
+        await expect(card.locator('[data-model-service-test-result]')).toHaveText('可用：deepseek-chat 回复「OK」');
+        expect(calls.tests).toEqual([{ serviceId: added.id }]);
+
+        // in use by the translation scene: it cannot be deleted
+        await expect(card.locator('[data-model-service-delete]')).toBeDisabled();
+        await page.locator('[data-scene-translation-service]').selectOption('');
+        await expect.poll(() => saved.bodies.at(-1).extension_settings.modelServices.scenes.translation.serviceId).toBe('');
+        await card.locator('[data-model-service-delete]').click();
+        await card.locator('[data-model-service-delete-confirm]').click();
+        await expect(page.locator('[data-model-service-card]')).toHaveCount(1);
+        expect(saved.bodies.at(-1).extension_settings.modelServices.services.map(service => service.id)).toEqual(['svc-chat']);
+        await expect.poll(() => calls.deletes).toEqual([{ key: 'api_key_deepseek', id: 'new-1' }]);
+
+        // the chat connection was never touched
+        expect(calls.rotates).toHaveLength(0);
+        expect(saved.bodies.at(-1).oai_settings).toEqual(chatSettings().oai_settings);
+    });
+
+    test('choosing a service for the chat scene writes its source and model and makes its key the active one', async ({ page }) => {
+        const deepseek = { id: 'svc-ds', name: 'DeepSeek', provider: 'deepseek', baseUrl: '', secretId: 'ds-2', defaultModel: 'deepseek-chat' };
+        const settingsBundle = {
+            settings: JSON.stringify(chatSettings({ services: [chatService, deepseek], scenes: { chat: { serviceId: 'svc-chat' }, translation: { serviceId: '', model: '', maxOutputTokens: 4096 } } })),
+            ...emptyPresets(),
+        };
+        const secretState = {
+            api_key_custom: [{ id: 'custom-1', value: '*******abc', label: 'chat', active: true }],
+            api_key_deepseek: [{ id: 'ds-1', value: '*******one', label: 'one', active: true }, { id: 'ds-2', value: '*******two', label: 'two', active: false }],
+        };
+        const bridgeCalls = await mockModernApiShell(page, settingsBundle, secretState);
+        const saved = await routeSettingsSave(page, settingsBundle);
+        const calls = await routeServiceSecrets(page, secretState);
+
+        await page.goto('/modern/?view=api');
+        await page.locator('[data-scene-chat-service]').selectOption('svc-ds');
+        await expect.poll(() => calls.rotates).toEqual([{ key: 'api_key_deepseek', id: 'ds-2' }]);
+        const body = saved.bodies.at(-1);
+        expect(body).toMatchObject({ main_api: 'openai', chat_completion_source: 'deepseek', oai_settings: { chat_completion_source: 'deepseek', deepseek_model: 'deepseek-chat', custom_url: 'https://saved.example/v1' } });
+        expect(body.extension_settings.modelServices.scenes.chat.serviceId).toBe('svc-ds');
+        expect(bridgeCalls.some(call => call.action === 'reloadSettings')).toBe(true);
+        await expect(page.locator('[data-api-model]')).toHaveValue('deepseek-chat');
+        await expect(page.locator('[data-model-service-card="svc-ds"]')).toContainText('对话、翻译在用');
+
+        // direct configuration shows the source fields again and forgets the chat service
+        await page.locator('[data-scene-chat-service]').selectOption('');
+        await expect(page.locator('[data-api-source]')).toHaveValue('deepseek');
+        await expect.poll(() => saved.bodies.at(-1).extension_settings.modelServices.scenes.chat.serviceId).toBe('');
+
+        // other interfaces switch the main API and show their editor
+        await page.locator('[data-scene-chat-service]').selectOption('__other__');
+        await expect.poll(() => saved.bodies.at(-1).main_api).toBe('textgenerationwebui');
+        await expect(page.locator('[data-textgen-type]')).toBeVisible();
+        expect(calls.rotates).toHaveLength(1);
     });
 });

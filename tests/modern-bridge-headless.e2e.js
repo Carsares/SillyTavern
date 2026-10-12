@@ -1227,6 +1227,57 @@ test.describe('Modern bridge engine sync', () => {
         expect(errors).toEqual([]);
     });
 
+    // The reply language of the settings center (power_user.reply_language, absent = Simplified Chinese) is a system line
+    // placed right after the chat history, so an English card still answers in the chosen language.
+    test('puts the reply language right after the chat history and drops it when no language is set', async ({ page }) => {
+        test.setTimeout(120_000);
+
+        let replyLanguage;
+        const { character, chatId, errors } = await routeStopFixture(page);
+        const modelRequests = await routeStubbedChatCompletion(page, 'A reply.', {
+            patchSettings: settings => {
+                // The test data only has the legacy global prompt order (100000); the engine builds 100001 in memory at boot,
+                // and a settings reload would drop it again. A saved 100001 order keeps the prompt whole across reloads.
+                const order = settings.oai_settings.prompt_order || [];
+                if (!order.some(item => item.character_id === 100001) && order[0]) {
+                    settings.oai_settings.prompt_order = [...order, { ...structuredClone(order[0]), character_id: 100001 }];
+                }
+                settings.power_user = { ...(settings.power_user || {}) };
+                if (replyLanguage === undefined) {
+                    delete settings.power_user.reply_language;
+                } else {
+                    settings.power_user.reply_language = replyLanguage;
+                }
+            },
+        });
+
+        await page.goto('/index.html?modernBridge=1', { waitUntil: 'load' });
+        expect((await callBridge(page, 'reloadCharacter', {}, 'language-boot')).error).toBeFalsy();
+
+        const first = await callBridge(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'Tell me about the tower.' }, 'language-default');
+        expect(first.error).toBeFalsy();
+        const messages = modelRequests[0].messages;
+        const instruction = messages.findIndex(message => String(message.content).includes('Write the next reply in Simplified Chinese'));
+        const userMessage = messages.findIndex(message => String(message.content).includes('Tell me about the tower.'));
+        expect(instruction).toBeGreaterThan(-1);
+        expect(userMessage).toBeGreaterThan(-1);
+        expect(instruction).toBeGreaterThan(userMessage);
+        expect(messages[instruction].role).toBe('system');
+
+        replyLanguage = 'en';
+        expect((await callBridge(page, 'reloadSettings', {}, 'language-en')).error).toBeFalsy();
+        const english = await callBridge(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'And now?' }, 'language-english');
+        expect(english.error).toBeFalsy();
+        expect(JSON.stringify(modelRequests[1].messages)).toContain('Write the next reply in English');
+        expect(JSON.stringify(modelRequests[1].messages)).not.toContain('Simplified Chinese');
+
+        replyLanguage = '';
+        expect((await callBridge(page, 'reloadSettings', {}, 'language-none')).error).toBeFalsy();
+        await callBridge(page, 'generate', { avatar: character.avatar, groupId: null, chat: chatId, type: 'normal', message: 'Any language.' }, 'language-none-generate');
+        expect(JSON.stringify(modelRequests[2].messages)).not.toContain('Write the next reply in');
+        expect(errors).toEqual([]);
+    });
+
     // A reload must never interleave with a running generation, while stop has to reach it at once even though a
     // generate is still holding the engine.
     test('queues reloads behind a running generation and lets stop through', async ({ page }) => {
@@ -1587,6 +1638,8 @@ test.describe('Modern bridge summaries', () => {
         // The main model got the summary instruction (the classic builder adds it to the regular prompt)
         expect(modelRequests).toHaveLength(1);
         expect(JSON.stringify(modelRequests[0])).toContain('Summarize the most important facts');
+        // A quiet request is not a reply: no reply language is asked for
+        expect(JSON.stringify(modelRequests[0])).not.toContain('Write the next reply in');
         // The next generation injects the new summary
         const injected = await page.evaluate(() => window.SillyTavern.getContext().extensionPrompts['1_memory']?.value);
         expect(injected).toBe('[Summary: The knight swore an oath.]');

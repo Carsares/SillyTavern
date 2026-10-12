@@ -204,22 +204,27 @@ export class SecretManager {
      * @param {string} key Secret key
      * @param {string} value Secret value
      * @param {string} label Label for the secret
+     * @param {{ activate?: boolean }} [options] activate: false keeps the currently active entry of this key active
+     *   (model services store their own entry and read it by id); the first entry of a key is always active
      * @returns {string} The ID of the newly created secret
      */
-    writeSecret(key, value, label = 'Unlabeled') {
+    writeSecret(key, value, label = 'Unlabeled', { activate = true } = {}) {
         const secrets = this._readSecretsFile();
 
         if (!Array.isArray(secrets[key])) {
             secrets[key] = [];
         }
 
-        this._deactivateAllSecrets(secrets[key]);
+        const makeActive = activate || !secrets[key].some(secret => secret.active);
+        if (makeActive) {
+            this._deactivateAllSecrets(secrets[key]);
+        }
 
         const secret = {
             id: uuidv4(),
             value: value,
             label: label,
-            active: true,
+            active: makeActive,
         };
         secrets[key].push(secret);
 
@@ -533,14 +538,14 @@ export const router = express.Router();
 
 router.post('/write', (request, response) => {
     try {
-        const { key, value, label } = request.body;
+        const { key, value, label, activate } = request.body;
 
         if (!key || typeof value !== 'string') {
             return response.status(400).send('Invalid key or value');
         }
 
         const manager = new SecretManager(request.user.directories);
-        const id = manager.writeSecret(key, value, label);
+        const id = manager.writeSecret(key, value, label, { activate: activate !== false });
 
         return response.send({ id });
     } catch (error) {

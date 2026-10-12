@@ -24,6 +24,8 @@ fork 对上游共享后端/前端文件做了散布式改动，是上游同步�
 | `src/endpoints/data-maid.js` | 追加 `usage`、`duplicate-greetings`、`duplicate-greetings/resolve`；`delete` 支持 `detailed` 逐项结果；文件身份校验抽到 `src/file-identity.js` |
 | `src/endpoints/backups.js` | 追加 `POST /chat/stats`（备份统计与按天数预览） |
 | `src/endpoints/translate.js` | 失败返回短 JSON 错误体、成功返回纯文本；不再记录原文与译文；Lingva 失败返回 500；Yandex 分块拼回不再插入逗号 |
+| `src/endpoints/model-services.js`（新增） | `/api/model-services/complete` 按场景调用登记的模型服务（大模型翻译用），`/test` 测试服务；按密钥 id 读取，不记录提示词和密钥 |
+| `src/endpoints/secrets.js` | `/write` 新增可选参数 `activate`（默认 true）；为 false 时写入新密钥但不改变当前启用的那条 |
 | `src/util.js` | `removeOldBackups` 按精确系列匹配（`isBackupOfSeries`） |
 | `src/` 新增文件 | `data-usage.js`、`data-maid-duplicate-greetings.js`、`chat-backup-stats.js`、`settings-snapshots.js`、`file-identity.js`（由上面的 endpoint 调用） |
 | `public/script.js` | legacy bridge（`modernBridge` 协议、`isModernBridgeMode` 特化、生成链路桥接）；引擎串行队列、`integrity` 不一致时重开聊天、`summarize` / `reloadWorldInfo` 等动作、`reloadSettings` 的扩展设置白名单 |
@@ -163,7 +165,9 @@ fork 对上游共享后端/前端文件做了散布式改动，是上游同步�
 ## 10. 新增功能的运维注意
 
 - **「生成引擎未能同步」提示**：设置、聊天文件、角色或世界书已经保存成功，但通知隐藏引擎重载失败（引擎报错，或 30 秒内没有确认）。下一次生成可能仍用旧配置；再保存一次，或刷新页面让引擎重新加载。引擎侧排队的重载之后仍会执行。
-- **翻译与隐私**：文本经本机后端转发给所选翻译服务。默认服务是 `google`（非官方公网接口，可能被限流或在部分网络下不可用）；`bing`、`lingva`、`yandex`、`deepl` 同样走公网，`libre`、`oneringtranslator`、`deeplx` 发往你自己配置的地址。每个服务第一次使用时页面要求确认一次，确认记录在浏览器 `localStorage` 的 `st-modern-translate-privacy-ack`，换服务要重新确认。后端 `/api/translate/*` 不再记录原文和译文，只记长度；上游返回错误时，会把截断到 300 字符的上游错误响应写进 `warn` 日志。API Key 与服务地址写入密钥库，不回显。
+- **大模型翻译（默认）**：翻译方式默认是「大模型翻译」，文本经本机后端发给设置中心「模型连接 → 场景 → 翻译」选的模型服务（没选时跟随对话场景），和聊天一样消耗该服务的额度，不再单独确认隐私。服务端按服务记住的密钥 id 读取密钥，不回退到当前启用的那条；不记录提示词和密钥。回复被截断（超过翻译回复上限，默认 4,096）、只有推理内容或为空时都按失败处理，不保存。
+- **回复语言**：设置中心「语言」默认简体中文，生成时在聊天记录之后加一句英文语言要求（摘要等 quiet 请求不加）。改成「不指定」即不加。主提示词里手写的「Always reply in the same language as …」会和它冲突，「语言」标签会提示并提供删除这一段，不会自动删。
+- **翻译与隐私（机器翻译）**：文本经本机后端转发给所选翻译服务。机器翻译的默认服务是 `google`（非官方公网接口，可能被限流或在部分网络下不可用）；`bing`、`lingva`、`yandex`、`deepl` 同样走公网，`libre`、`oneringtranslator`、`deeplx` 发往你自己配置的地址。每个服务第一次使用时页面要求确认一次，确认记录在浏览器 `localStorage` 的 `st-modern-translate-privacy-ack`，换服务要重新确认。后端 `/api/translate/*` 不再记录原文和译文，只记长度；上游返回错误时，会把截断到 300 字符的上游错误响应写进 `warn` 日志。API Key 与服务地址写入密钥库，不回显。
 - **跨角色搜索**：`POST /api/chats/search-all` 默认 8 秒预算（上限 15 秒）、最多返回 50 个聊天（上限 200），6 个文件并发，按修改时间从新到旧。超时、客户端断开或达到上限时返回 `partial: true` 和 `partialReason`，页面显示「结果不完整」。关键词至少 2 个字符（含中日韩文字时 1 个字也行），最多 10 个词、200 个字符。页面显示「结果不完整」时，更旧的聊天可能没被扫描到，可改用「当前」范围在具体角色里再搜一次。
 - **聊天摘要**：摘要写在消息的 `extra.memory`（已有摘要的消息优先，没有则倒数第二条），生成时多一次主模型调用。bridge 模式下摘要扩展自带的自动触发已关闭，何时摘要由 Modern 决定：每次回复成功后按设置判断，到点才请求引擎。摘要请求会占用引擎串行队列，期间不能发送，可以停止。
 - **连接档案**：应用档案会保存设置、可能轮换密钥（`/api/secrets/rotate`，改变该来源当前启用的密钥，属于全局副作用）并通知引擎重载；生成中禁止切换。聊天输入框旁的「最近使用的模型」记在浏览器 `localStorage` 的 `st-modern-recent-models`（每个来源最多 5 个）。
@@ -173,7 +177,7 @@ fork 对上游共享后端/前端文件做了散布式改动，是上游同步�
 
 先装依赖：`npm install` 和 `npm --prefix tests install`（CI 用 `npm ci`）。
 
-- **Jest 单测**（`tests/*.test.js`，含 `modern-chat-completion-limits`、`modern-character-book`、`modern-chat-summary`、`modern-connection-profiles`、`modern-translation`、`modern-maintenance-actions`，以及后端的 `chat-search-all`、`data-maid-duplicate-greetings`、`data-maid-usage`、`data-maid-safety`、`backup-rotation`、`backup-stats`、`settings-snapshots`、`translate-endpoint`）：`npm run test:unit --prefix tests`。只跑一个文件：在 `tests/` 目录下执行 `node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json <文件名>`（命令取自 `tests/package.json` 的 `test:unit` 脚本）。
+- **Jest 单测**（`tests/*.test.js`，含 `modern-chat-completion-limits`、`modern-character-book`、`modern-chat-summary`、`modern-connection-profiles`、`modern-translation`、`modern-model-services`、`modern-maintenance-actions`，以及后端的 `chat-search-all`、`data-maid-duplicate-greetings`、`data-maid-usage`、`data-maid-safety`、`backup-rotation`、`backup-stats`、`settings-snapshots`、`translate-endpoint`、`model-services-endpoint`）：`npm run test:unit --prefix tests`。只跑一个文件：在 `tests/` 目录下执行 `node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json <文件名>`（命令取自 `tests/package.json` 的 `test:unit` 脚本）。
 - **Playwright E2E**（`tests/modern-*.e2e.js`，新增 `modern-slots`、`modern-engine-sync`、`modern-chat-metadata`、`modern-chat-authors-note`、`modern-chat-background`、`modern-chat-summary`、`modern-chat-connection`、`modern-chat-global-search`、`modern-data-maintenance`、`modern-translation`）：在 `tests/` 目录执行 `npx playwright test --project=default --workers=1`，或在仓库根目录用 `./tests/node_modules/.bin/playwright test tests/modern-slots.e2e.js --config=tests/playwright.config.js`。**不要**在仓库根目录直接 `npx playwright`：根目录与 `tests/` 装的 Playwright 版本不同，会报 “two different versions of @playwright/test”。
 - **多个运行同时跑**：每个运行用自己的端口和输出目录，否则会互相关掉模拟服务器：`PLAYWRIGHT_MOCK_PORT=8123 ./tests/node_modules/.bin/playwright test <文件> --config=tests/playwright.config.js --workers=2 --output=/tmp/<唯一目录>`。端口范围 1024 到 65535，8000（开发服务器）会被拒绝；非 8100 的端口把数据根移到 `tests/.e2e-data-<端口>/`，默认输出目录移到 `tests/test-results-<端口>/`（均已 gitignore）。
 - **无界面引擎契约测试**：`tests/modern-bridge-headless.e2e.js` 用真实的旧版页面验证 bridge 协议（重载、串行、`integrity`、`summarize`、世界书缓存）。改 `public/script.js` 的 bridge 分发区、`core/bridge-protocol.js` 或摘要扩展时必须跑它。
@@ -189,7 +193,8 @@ fork 对上游共享后端/前端文件做了散布式改动，是上游同步�
 - **`reloadSettings` 的同步范围**：生成相关设置、世界书全局参数（扫描深度、预算、递归等）、全局启用的世界书（只保留引擎认识的名字）和角色附加世界书都会同步；世界书部分由 `applyModernBridgeWorldInfoSettings` 只赋值，不重放 `setWorldInfoSettings`（它每次调用都会叠加事件监听）。扩展设置只同步 `memory`、`translate`、`connectionManager`、`note` 四项。
 - **内嵌世界书**：Modern 导入并关联后不会改写卡内的 `character_book`，导出的卡保留原始内容（旧版会用世界书重写）；结构不规范的卡会被后端校验拒绝。
 - **开场白**：卡上空白的备用开场白会被丢弃（旧版保留为空白候选）；「载入备用开场白」只支持单人聊天；本地切换只在聊天只有一条开场白、有多个候选、未被标记 `tainted` 时生效，其余走引擎。
-- **翻译只做显示**：不翻译用户输入，旧扩展的自动翻译模式在页面上只读，只提供「关闭自动翻译」。只有 AI 回复有翻译入口。公网翻译接口可能被限流或不可用。
+- **翻译只做显示**：不翻译用户输入，旧扩展的自动翻译模式在页面上只读，只提供「关闭自动翻译」。只有 AI 回复有翻译入口。公网翻译接口可能被限流或不可用。开场白自动翻译按文字体系判断语言，分不出英语和法语这类同用拉丁字母的语言；同一条开场白每次打开页面最多尝试一次，失败不重试。
+- **模型服务**：第一期只接入服务端适配器能直接调用的聊天补全来源，vertexai 和 azure_openai 不能登记为模型服务；摘要仍走旧版摘要扩展，不能选模型服务。第一次打开「模型连接」且设置里还没有登记表时，会把当前对话连接登记为一条服务（写一次设置，不改连接和密钥）；之后即使删光服务也不会再自动登记。连接档案和模型服务暂时并存，应用档案后对话来源和对话场景记录的服务不一致时，页面按「直接配置」显示。
 - **推理模型参数未实现**：设置页「聊天工具」里的「推理解析」分区只是预留位，当前不显示。
 - **聊天背景**：只接受 `backgrounds/` 与 `user/images/` 下的站内相对路径；动画背景（`gif`、`apng`、`mp4`）在系统开启「减少动态效果」时不显示；没有背景音乐或环境音播放器。
 - **跨角色搜索**：不支持正则和整词匹配；结果最多 50 个聊天，每个聊天最多 3 条片段；达到时间或数量上限时只给部分结果。

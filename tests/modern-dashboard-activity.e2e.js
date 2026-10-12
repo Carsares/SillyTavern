@@ -280,7 +280,9 @@ test.describe('Modern dashboard and activity', () => {
         await expect(page).toHaveURL(/\/modern\/\?view=settings(&|$)/);
         await expect(page.locator('.page-title')).toHaveText('设置中心');
         await expect(page.locator('.settings-tabs [data-settings-section="connection"]')).toHaveAttribute('aria-selected', 'true');
-        await expect(page.locator('[data-api-main]')).toBeVisible();
+        // the chat scene picks a model service, a chat completion source or another main API
+        await expect(page.locator('[data-scene-chat-service]')).toBeVisible();
+        await expect(page.locator('[data-api-source]')).toBeVisible();
     });
 
     test('labels activity metrics in Chinese', async ({ page }) => {

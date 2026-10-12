@@ -53,6 +53,20 @@ export function createApiRouteContext(api) {
         loadHordeModels,
         refreshHordeModels,
         startOpenRouterAuth,
+        getModelServiceUi,
+        hasModelServiceSecret,
+        describeModelServiceUsage,
+        getChatSceneServiceId,
+        ensureModelServicesMigrated,
+        registerCurrentConnection,
+        addModelService,
+        updateModelServiceField,
+        updateModelServiceKey,
+        deleteModelService,
+        selectChatService,
+        updateTranslationScene,
+        loadServiceModels,
+        testModelService,
     } = api;
 
     return {
@@ -71,6 +85,20 @@ export function createApiRouteContext(api) {
         loadHordeModels,
         refreshHordeModels,
         startOpenRouterAuth,
+        getModelServiceUi,
+        hasModelServiceSecret,
+        describeModelServiceUsage,
+        getChatSceneServiceId,
+        ensureModelServicesMigrated,
+        registerCurrentConnection,
+        addModelService,
+        updateModelServiceField,
+        updateModelServiceKey,
+        deleteModelService,
+        selectChatService,
+        updateTranslationScene,
+        loadServiceModels,
+        testModelService,
     };
 }
 

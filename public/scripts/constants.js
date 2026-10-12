@@ -53,6 +53,7 @@ export const inject_ids = {
     CUSTOM_WI_DEPTH: 'customDepthWI',
     CUSTOM_WI_DEPTH_ROLE: (depth, role) => `customDepthWI_${depth}_${role}`,
     CUSTOM_WI_OUTLET: (key) => `customWIOutlet_${key}`,
+    REPLY_LANGUAGE: 'REPLY_LANGUAGE',
 };
 
 export const COMETAPI_IGNORE_PATTERNS = [

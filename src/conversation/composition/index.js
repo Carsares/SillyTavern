@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { createStore } from '../store/index.js';
 import { createRuntime } from '../runtime/index.js';
 import { createMemoryService } from '../memory/index.js';
@@ -18,6 +20,7 @@ import { getTextCapabilities } from '../capabilities/text/index.js';
 import { getAuxiliaryCapabilities } from '../capabilities/auxiliary/index.js';
 import { createProviderAdapter } from '../providers/chat/index.js';
 import { compileContext } from '../../../public/shared/conversation/assembly/index.js';
+import { resolveReplyLanguage } from '../../../public/shared/reply-language.js';
 import { ProtocolError, invariant, TOOL_LIMITS } from '../../../public/shared/conversation/schemas/index.js';
 
 import { createProviderStream, createProviderModel } from '../providers/chat/bridge.js';
@@ -188,7 +191,16 @@ export function createConversationServices({ directory, fetch: fetchImpl, execut
                 },
             };
         }
+        // The global reply language lives in the user's settings.json next to conversation-v1 (Modern settings center).
+        // Read on every compile so a change applies to the next turn; a conversation's own replyLanguage wins.
+        function withGlobalReplyLanguage(snapshot) {
+            if ((snapshot.settings?.replyLanguage ?? snapshot.conversation?.settings?.replyLanguage) !== undefined) return snapshot;
+            let settings;
+            try { settings = JSON.parse(readFileSync(path.join(path.dirname(directory), 'settings.json'), 'utf8')); } catch { return snapshot; }
+            return { ...snapshot, settings: { ...snapshot.settings, replyLanguage: resolveReplyLanguage(settings?.power_user) } };
+        }
         function compile(snapshot, options = {}) {
+            snapshot = withGlobalReplyLanguage(snapshot);
             const capability = options.capabilities ?? capabilities(resolveConnection(snapshot));
             const hydrated = { ...snapshot, messages: snapshot.messages.map(message => ({ ...message,
                 content: hydrateParts(message.content, attachments, capability), ...(message.providerParts ? { providerParts: hydrateParts(message.providerParts, attachments, capability) } : {}), media: hydrateParts(message.media, attachments, capability) })) };

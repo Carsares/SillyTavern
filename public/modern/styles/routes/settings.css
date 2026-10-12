@@ -458,3 +458,54 @@
 .translate-test-result.is-error {
     color: var(--danger);
 }
+
+/* 翻译方式（大模型翻译 / 机器翻译），聊天工具 → 翻译 */
+.translate-mode {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.translate-mode legend {
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.translate-mode .checkbox-card span strong {
+    margin-right: 6px;
+}
+
+.translate-llm {
+    display: grid;
+    gap: 6px;
+    justify-items: start;
+}
+
+.translate-llm p {
+    margin: 0;
+}
+
+/* 「语言」标签里手写语言规则的提示 */
+.settings-language-legacy {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+    font-size: 13px;
+}
+
+.settings-language-legacy > i {
+    margin-top: 3px;
+    color: var(--warning);
+}
+
+.settings-language-legacy p {
+    margin: 4px 0 8px;
+}

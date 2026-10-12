@@ -1,6 +1,7 @@
 import { getSettingsTabs, normalizeSettingsSection } from '../components/settings.js';
 import { getSettingsOptionalParts } from '../components/settings-optional-tabs.js';
 import { createApiEvents } from './api-events.js';
+import { createSettingsLanguageEvents } from './settings-language-events.js';
 import { bindSettingsChatToolsEvents } from './settings-chat-tools-events.js';
 import { bindSettingsMaintenanceEvents } from './settings-maintenance-events.js';
 
@@ -25,6 +26,7 @@ export function createSettingsEvents(ctx) {
     const optionalParts = getSettingsOptionalParts(ctx);
     // 「模型连接」标签的事件只在这个标签打开时处理
     const connectionEvents = createApiEvents(ctx);
+    const languageEvents = createSettingsLanguageEvents(ctx);
     // 「聊天工具」标签和数据维护分区里的控件事件，各自的约定见对应文件顶部注释
     const slotHandlers = [
         bindSettingsChatToolsEvents(ctx),
@@ -53,6 +55,9 @@ export function createSettingsEvents(ctx) {
         }
 
         if (getActiveSection() === 'connection' && await connectionEvents.handleApiClick(event)) {
+            return true;
+        }
+        if (getActiveSection() === 'language' && await languageEvents.handleClick(event)) {
             return true;
         }
 
@@ -152,6 +157,9 @@ export function createSettingsEvents(ctx) {
 
     async function handleSettingsChange(event) {
         if (getActiveSection() === 'connection' && await connectionEvents.handleApiChange(event)) {
+            return true;
+        }
+        if (getActiveSection() === 'language' && await languageEvents.handleChange(event)) {
             return true;
         }
 

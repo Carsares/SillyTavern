@@ -25,6 +25,7 @@ import {
     getTranslateProvider,
     isChineseLanguage,
     isTranslationStale,
+    looksLikeLanguage,
     normalizeLanguageCode,
     protectPlaceholders,
     replaceCharacterFieldValue,
@@ -89,6 +90,34 @@ describe('translate settings', () => {
     test('replaces unknown values by defaults', () => {
         const settings = { extension_settings: { translate: { provider: 'nope', target_language: 'xx', auto_mode: 'weird', deepl_endpoint: 'x' } } };
         expect(resolveTranslateSettings(settings)).toMatchObject({ provider: 'google', target_language: 'en', auto_mode: 'none', deepl_endpoint: 'free' });
+    });
+
+    test('defaults to LLM translation, following the reply language, with greeting translation on', () => {
+        expect(resolveTranslateSettings({})).toMatchObject({ mode: 'llm', follow_reply_language: true, auto_greeting: true, target_language: 'zh-CN' });
+        expect(resolveTranslateSettings({ power_user: { reply_language: 'ja' } }).target_language).toBe('ja');
+        // follow / none have no language of their own: the stored or default target stays
+        expect(resolveTranslateSettings({ power_user: { reply_language: 'follow' } }).target_language).toBe('zh-CN');
+        expect(resolveTranslateSettings({ extension_settings: { translate: { mode: 'machine', auto_greeting: false } } })).toMatchObject({ mode: 'machine', auto_greeting: false });
+    });
+
+    test('a target chosen before the language tab existed is kept until the user chooses to follow', () => {
+        const chosen = { power_user: { reply_language: 'en' }, extension_settings: { translate: { target_language: 'ko' } } };
+        expect(resolveTranslateSettings(chosen)).toMatchObject({ follow_reply_language: false, target_language: 'ko' });
+        chosen.extension_settings.translate.follow_reply_language = true;
+        expect(resolveTranslateSettings(chosen).target_language).toBe('en');
+    });
+});
+
+describe('looksLikeLanguage', () => {
+    test('tells scripts apart and leaves short or mixed text alone', () => {
+        expect(looksLikeLanguage('The silver dragon lands on the tower and looks at you.', 'zh-CN')).toBe(false);
+        expect(looksLikeLanguage('银色的巨龙落在塔顶上，看着你。', 'zh-CN')).toBe(true);
+        expect(looksLikeLanguage('銀色の竜が塔の上に降りて、あなたを見つめる。', 'zh-CN')).toBe(false);
+        expect(looksLikeLanguage('銀色の竜が塔の上に降りて、あなたを見つめる。', 'ja')).toBe(true);
+        expect(looksLikeLanguage('은빛 용이 탑 위에 내려앉아 당신을 바라본다.', 'ko')).toBe(true);
+        expect(looksLikeLanguage('银色的巨龙落在塔顶上，看着你。', 'en')).toBe(false);
+        expect(looksLikeLanguage('The silver dragon lands on the tower.', 'en')).toBe(true);
+        expect(looksLikeLanguage('*smiles*', 'zh-CN')).toBe(true);
     });
 });
 
@@ -344,7 +373,7 @@ describe('translateText', () => {
 
 function createClientHarness({ settings = {}, secretState = {}, reply = body => `译:${body.text ?? body.chunks?.join('')}` } = {}) {
     const calls = [];
-    const state = { settings: { extension_settings: { translate: { provider: 'google', target_language: 'zh-CN', ...settings } } }, secretState };
+    const state = { settings: { extension_settings: { translate: { mode: 'machine', provider: 'google', target_language: 'zh-CN', ...settings } } }, secretState };
     // A Response that only offers text(): reading it as JSON would throw, like a bare "42" body would corrupt a number
     const apiFetchResponse = jest.fn(async (url, options) => {
         calls.push({ url, body: options.body });
@@ -420,6 +449,90 @@ describe('translation client', () => {
         const notice = client.getPrivacyNotice();
         expect(notice).toMatchObject({ providerId: 'google', acknowledged: false });
         expect(notice.text).toContain('第三方翻译服务');
+    });
+});
+
+describe('LLM translation client', () => {
+    const service = { id: 'svc-a', name: 'DeepSeek', provider: 'deepseek', secretId: 'key-a', defaultModel: 'deepseek-chat' };
+
+    function createLlmHarness({ reply = body => ({ content: `译:${body.messages[1].content}`, finishReason: 'stop' }), scenes = { translation: { serviceId: 'svc-a', model: '' } }, services = [service], mainApi = 'openai', secretState = {} } = {}) {
+        const calls = [];
+        const state = {
+            settings: {
+                main_api: mainApi,
+                oai_settings: { chat_completion_source: 'custom', custom_url: 'https://chat.example.test/v1', custom_model: 'chat-model' },
+                extension_settings: { translate: { mode: 'llm', target_language: 'zh-CN' }, modelServices: { services, scenes } },
+            },
+            secretState,
+        };
+        const apiFetchResponse = jest.fn(async (url, options) => {
+            calls.push({ url, body: options.body });
+            const answer = await reply(options.body);
+            if (answer instanceof Error) {
+                throw answer;
+            }
+            return { json: async () => answer };
+        });
+        return { client: createTranslationClient({ state, apiFetchResponse }), calls, apiFetchResponse };
+    }
+
+    test('sends each chunk to the translation scene with a system instruction, macros protected', async () => {
+        const { client, calls } = createLlmHarness();
+        const result = await client.translate('Hello {{user}}.');
+        expect(result).toMatchObject({ ok: true, text: '译:Hello {{user}}.', provider: 'llm', lang: 'zh-CN' });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toBe('/api/model-services/complete');
+        expect(calls[0].body.scene).toBe('translation');
+        expect(calls[0].body.messages[0]).toMatchObject({ role: 'system' });
+        expect(calls[0].body.messages[0].content).toContain('Chinese (Simplified)');
+        expect(calls[0].body.messages[1]).toEqual({ role: 'user', content: 'Hello [[1]].' });
+        expect(client.describeTranslator()).toBe('大模型翻译 · DeepSeek · deepseek-chat');
+        expect(client.getPrivacyNotice()).toMatchObject({ providerId: 'llm', acknowledged: true });
+    });
+
+    test('strips one outer code fence the model added', async () => {
+        const { client } = createLlmHarness({ reply: () => ({ content: '```text\n你好\n```', finishReason: 'stop' }) });
+        expect((await client.translate('Hello')).text).toBe('你好');
+    });
+
+    test('a truncated, reasoning-only or empty reply is a failure, not a translation', async () => {
+        const truncated = createLlmHarness({ reply: () => ({ content: '半截', finishReason: 'length' }) });
+        await expect(truncated.client.translate('Hello')).rejects.toThrow('回复上限');
+        const reasoning = createLlmHarness({ reply: () => ({ content: '', hasReasoning: true, finishReason: 'stop' }) });
+        await expect(reasoning.client.translate('Hello')).rejects.toThrow('只给出了推理内容');
+        const empty = createLlmHarness({ reply: () => ({ content: ' ', finishReason: 'stop' }) });
+        await expect(empty.client.translate('Hello')).rejects.toThrow('空内容');
+    });
+
+    test('a dropped placeholder is reported like for machine translation', async () => {
+        const { client } = createLlmHarness({ reply: body => ({ content: body.messages[1].content.replace(/\[\[\d+\]\]/g, ''), finishReason: 'stop' }) });
+        const result = await client.translate('Hello {{user}}.');
+        expect(result.ok).toBe(false);
+    });
+
+    test('backend error codes become instructions', async () => {
+        const failure = body => Object.assign(new Error('failed'), { status: 502, body: JSON.stringify(body) });
+        const { client } = createLlmHarness({ reply: () => failure({ error: 'provider-http-error', message: 'The model service returned HTTP 429.', detail: 'Rate limit' }) });
+        await expect(client.translate('Hello')).rejects.toThrow('模型服务返回了错误（Rate limit）');
+    });
+
+    test('says what is missing before sending anything', async () => {
+        const noKey = createLlmHarness({ services: [{ ...service, secretId: '' }] });
+        expect(noKey.client.checkProviderReady().reason).toContain('还没有保存 API Key');
+        await expect(noKey.client.translate('Hello')).rejects.toThrow('API Key');
+        expect(noKey.apiFetchResponse).not.toHaveBeenCalled();
+
+        const gone = createLlmHarness({ scenes: { translation: { serviceId: 'svc-gone' } } });
+        expect(gone.client.checkProviderReady().reason).toContain('已经删除');
+
+        const otherApi = createLlmHarness({ scenes: { translation: { serviceId: '' } }, mainApi: 'kobold' });
+        expect(otherApi.client.checkProviderReady().reason).toContain('还没有可用的模型服务');
+
+        // following an unregistered chat connection needs that source to have a saved key
+        const following = createLlmHarness({ scenes: { translation: { serviceId: '' } }, services: [] });
+        expect(following.client.checkProviderReady().reason).toContain('对话连接');
+        const followingReady = createLlmHarness({ scenes: { translation: { serviceId: '' } }, services: [], secretState: { api_key_custom: [{ id: '1', active: true }] } });
+        expect(followingReady.client.checkProviderReady().ready).toBe(true);
     });
 });
 
@@ -657,7 +770,7 @@ describe('chat translation actions', () => {
             { name: 'Me', is_user: true, mes: 'hi', send_date: 2 },
         ];
         const state = {
-            settings: { extension_settings: { translate: { provider: 'google', target_language: 'zh-CN', ...settings } } },
+            settings: { extension_settings: { translate: { mode: 'machine', provider: 'google', target_language: 'zh-CN', ...settings } } },
             secretState: {},
             engine: { generating: false },
             selected: { chat: 'chat-1' },
@@ -826,7 +939,7 @@ describe('chat translation actions', () => {
         expect(apiFetch.mock.calls.filter(([url]) => url === '/api/secrets/delete').map(([, options]) => options.body)).toEqual([{ key: 'lingva_url' }]);
         const saved = apiFetch.mock.calls.find(([url]) => url === '/api/settings/save')[1].body;
         expect(saved.other).toBe('kept');
-        expect(saved.extension_settings.translate).toEqual({ provider: 'deepl', target_language: 'ja', deepl_endpoint: 'pro', internal_language: 'ja', auto_mode: 'responses' });
+        expect(saved.extension_settings.translate).toEqual({ mode: 'machine', provider: 'deepl', target_language: 'ja', follow_reply_language: false, deepl_endpoint: 'pro', internal_language: 'ja', auto_mode: 'responses' });
         expect(bridgeReload.reloadSettings).toHaveBeenCalledTimes(1);
         expect(order.indexOf('/api/settings/save')).toBeLessThan(order.indexOf('reloadSettings'));
         expect(order.indexOf('reloadSettings')).toBeLessThan(order.indexOf('loadData'));
@@ -854,6 +967,53 @@ describe('chat translation actions', () => {
         await actions.testTranslateProvider({ refresh: () => {} });
         expect(calls[0].body).toEqual({ text: 'Hello, world!', lang: 'zh-CN' });
         expect(state.chatTranslation.settingsTest).toMatchObject({ running: false, result: '译:Hello, world!', error: '' });
+    });
+
+    describe('foreign greeting', () => {
+        const greeting = () => [{ name: 'Alice', is_user: false, mes: 'The silver dragon lands on the tower.', send_date: 1 }];
+
+        function createGreetingHarness(options = {}) {
+            const harness = createHarness({ messages: greeting(), ...options });
+            harness.state.route = 'chat';
+            return harness;
+        }
+
+        test('is translated once, quietly, after the provider was acknowledged', async () => {
+            const harness = createGreetingHarness();
+            // machine translation that was never acknowledged: nothing is sent on its own
+            await harness.actions.maybeAutoTranslateGreeting();
+            expect(harness.calls).toHaveLength(0);
+
+            const acknowledged = createGreetingHarness();
+            localStorage.setItem('st-modern-translate-privacy-ack', JSON.stringify(['google']));
+            await acknowledged.actions.maybeAutoTranslateGreeting();
+            expect(acknowledged.chat[0].extra).toMatchObject({ display_text: '译:The silver dragon lands on the tower.', display_text_lang: 'zh-CN' });
+            expect(acknowledged.chat[0].mes).toBe('The silver dragon lands on the tower.');
+            expect(acknowledged.toasts).toHaveLength(0);
+
+            await acknowledged.actions.maybeAutoTranslateGreeting();
+            expect(acknowledged.calls).toHaveLength(1);
+        });
+
+        test('a failure is not retried while the page stays open', async () => {
+            localStorage.setItem('st-modern-translate-privacy-ack', JSON.stringify(['google']));
+            const harness = createGreetingHarness({ translate: () => Object.assign(new Error('failed'), { status: 500 }) });
+            await harness.actions.maybeAutoTranslateGreeting();
+            await harness.actions.maybeAutoTranslateGreeting();
+            expect(harness.calls).toHaveLength(1);
+            expect(harness.saves).toHaveLength(0);
+        });
+
+        test('is left alone when switched off, already in the target language, or written by the user', async () => {
+            localStorage.setItem('st-modern-translate-privacy-ack', JSON.stringify(['google']));
+            const off = createGreetingHarness({ settings: { auto_greeting: false } });
+            await off.actions.maybeAutoTranslateGreeting();
+            const chinese = createGreetingHarness({ messages: [{ name: 'Alice', is_user: false, mes: '银色的巨龙落在塔顶上，看着你。', send_date: 1 }] });
+            await chinese.actions.maybeAutoTranslateGreeting();
+            const user = createGreetingHarness({ messages: [{ name: 'Me', is_user: true, mes: 'The silver dragon lands on the tower.', send_date: 1 }] });
+            await user.actions.maybeAutoTranslateGreeting();
+            expect([off, chinese, user].flatMap(harness => harness.calls)).toHaveLength(0);
+        });
     });
 });
 
@@ -915,7 +1075,7 @@ describe('character translation actions', () => {
             ...formOverride,
         };
         const state = {
-            settings: { extension_settings: { translate: { provider: 'google', target_language: 'zh-CN' } } },
+            settings: { extension_settings: { translate: { mode: 'machine', provider: 'google', target_language: 'zh-CN' } } },
             secretState: {},
             selected: { character: 'alice.png', chat: '' },
             characterEditing: { avatar: 'alice.png', form: { ...baselineForm }, errors: {}, baseline: { ...baselineForm } },

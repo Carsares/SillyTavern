@@ -237,3 +237,47 @@
 .connection-result-list .is-skipped i {
     color: var(--warning);
 }
+
+/* ===== 模型服务和场景（components/model-services.js） ===== */
+
+.model-service-list {
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+}
+
+.model-service-card {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+}
+
+.model-service-card .form-grid {
+    gap: 10px;
+}
+
+.model-service-test {
+    margin: 0;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.model-service-add {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 12px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+}
+
+.model-scene {
+    display: grid;
+    gap: 12px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+}
+
+.model-scene:first-of-type {
+    padding-top: 0;
+    border-top: 0;
+}

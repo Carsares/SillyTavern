@@ -1,6 +1,10 @@
-// 翻译请求客户端（B3）：把「翻译一段文本」接到后端 /api/translate/<服务>，聊天消息翻译、角色卡翻译、设置页的测试共用。
-// 只读 state.settings（翻译设置）和 state.secretState（密钥是否已填写），不写任何东西。
+// 翻译请求客户端（B3）：把「翻译一段文本」接到后端，聊天消息翻译、角色卡翻译、设置页的测试共用。
+// 大模型翻译走 /api/model-services/complete（翻译场景），机器翻译走 /api/translate/<服务>。
+// 只读 state.settings（翻译设置、模型服务）和 state.secretState（密钥是否已填写），不写任何东西。
 import {
+    LLM_TRANSLATION,
+    buildLlmTranslatePrompt,
+    describeLlmTranslateFailure,
     describeTranslateFailure,
     describeTranslatePrivacy,
     getOneRingLanguages,
@@ -8,6 +12,7 @@ import {
     resolveTranslateSettings,
     translateText as runTranslation,
 } from '../core/translation.js';
+import { describeServiceProblem, getServiceProblem, resolveSceneTarget } from '../../shared/model-services.js';
 
 const PRIVACY_ACK_STORAGE_KEY = 'st-modern-translate-privacy-ack';
 
@@ -66,11 +71,37 @@ export function createTranslationClient({ state, apiFetchResponse }) {
     }
 
     /**
+     * 大模型翻译实际用的服务和模型；没配好时 error 是原因（面向用户的中文）。
+     * @returns {{ target: ReturnType<typeof resolveSceneTarget> | null, error: string }} 结果
+     */
+    function getLlmTarget() {
+        let target;
+        try {
+            target = resolveSceneTarget(state.settings, 'translation');
+        } catch (error) {
+            return { target: null, error: describeLlmTranslateFailure({ code: error?.code }) };
+        }
+        if (!target.implicit) {
+            const problem = getServiceProblem(target.service);
+            if (problem) {
+                return { target, error: `模型服务「${target.service.name}」${describeServiceProblem(target.service)}。到「设置 → 模型连接 → 模型服务」补上。` };
+            }
+        } else if (!hasSecret(target.service.secretKey)) {
+            return { target, error: `对话连接（${target.service.name}）还没有保存 API Key。到「设置 → 模型连接」填写。` };
+        }
+        return { target, error: '' };
+    }
+
+    /**
      * 这个翻译服务缺不缺必需的密钥或地址；缺的话请求发出去也只会失败，不如先说明。
      * @param {ReturnType<typeof resolveTranslateSettings>} [settings] 翻译设置
      * @returns {{ ready: boolean, reason: string }} ready 为 false 时 reason 是要补什么
      */
     function checkProviderReady(settings = getSettings()) {
+        if (settings.mode === 'llm') {
+            const { error } = getLlmTarget();
+            return { ready: !error, reason: error };
+        }
         const provider = getTranslateProvider(settings.provider);
         if (!provider) {
             return { ready: false, reason: '没有选择翻译服务。' };
@@ -90,6 +121,15 @@ export function createTranslationClient({ state, apiFetchResponse }) {
      * @returns {{ providerId: string, text: string, acknowledged: boolean }} 隐私提示
      */
     function getPrivacyNotice(settings = getSettings()) {
+        // 大模型翻译发给用户自己配置的模型服务，和聊天一样，不再单独确认
+        if (settings.mode === 'llm') {
+            const { target } = getLlmTarget();
+            return {
+                providerId: LLM_TRANSLATION.id,
+                text: target ? `翻译会把文本发给模型服务「${target.service.name}」（${target.model}）。` : '翻译会把文本发给翻译场景的模型服务。',
+                acknowledged: true,
+            };
+        }
         const provider = getTranslateProvider(settings.provider);
         if (!provider) {
             return { providerId: settings.provider, text: '', acknowledged: true };
@@ -112,6 +152,45 @@ export function createTranslationClient({ state, apiFetchResponse }) {
             default:
                 return { text, lang };
         }
+    }
+
+    /**
+     * 用大模型翻译一块文本。截断、只有推理内容、空回复都算失败，免得把半截或空的译文存下来。
+     * @param {string} text 一块文本
+     * @param {string} lang 目标语言码
+     * @param {AbortSignal} [signal] 取消信号
+     * @returns {Promise<string>} 译文
+     */
+    async function requestLlmChunk(text, lang, signal) {
+        let result;
+        try {
+            const response = await apiFetchResponse('/api/model-services/complete', {
+                body: {
+                    scene: 'translation',
+                    messages: [
+                        { role: 'system', content: buildLlmTranslatePrompt(lang) },
+                        { role: 'user', content: text },
+                    ],
+                },
+                signal,
+            });
+            result = await response.json();
+        } catch (error) {
+            if (error?.name === 'AbortError') {
+                throw new TranslateError('翻译已取消。', 'AbortError');
+            }
+            throw new TranslateError(describeLlmTranslateFailure(error));
+        }
+        const content = typeof result?.content === 'string' ? result.content : '';
+        if (result?.finishReason === 'length') {
+            throw new TranslateError(describeLlmTranslateFailure({ code: 'truncated' }));
+        }
+        if (!content.trim()) {
+            throw new TranslateError(describeLlmTranslateFailure({ code: result?.hasReasoning ? 'reasoning_only' : 'empty_response' }));
+        }
+        // 模型偶尔会把译文包进代码块，去掉最外层的一对
+        const fenced = content.match(/^\s*```[\w-]*\n([\s\S]*?)\n```\s*$/);
+        return fenced ? fenced[1] : content;
     }
 
     /**
@@ -159,7 +238,8 @@ export function createTranslationClient({ state, apiFetchResponse }) {
      * @returns {Promise<import('../core/translation.js').TranslateTextResult & { lang: string, provider: string }>} 译文和占位符核对结果
      */
     async function translate(text, { lang = '', settings = getSettings(), imageMode = 'split', signal } = {}) {
-        const provider = getTranslateProvider(settings.provider);
+        const llm = settings.mode === 'llm';
+        const provider = llm ? LLM_TRANSLATION : getTranslateProvider(settings.provider);
         if (!provider) {
             throw new TranslateError('没有选择翻译服务。');
         }
@@ -174,7 +254,7 @@ export function createTranslationClient({ state, apiFetchResponse }) {
                 chunkLimit: provider.chunkLimit,
                 imageMode,
                 signal,
-                translateChunk: chunk => requestChunk(chunk, targetLanguage, settings, signal),
+                translateChunk: chunk => (llm ? requestLlmChunk(chunk, targetLanguage, signal) : requestChunk(chunk, targetLanguage, settings, signal)),
             });
             return { ...result, lang: targetLanguage, provider: provider.id };
         } catch (error) {
@@ -189,8 +269,23 @@ export function createTranslationClient({ state, apiFetchResponse }) {
         }
     }
 
+    /**
+     * 当前翻译方式的显示名：大模型翻译时带上服务和模型。
+     * @param {ReturnType<typeof resolveTranslateSettings>} [settings] 翻译设置
+     * @returns {string} 显示名
+     */
+    function describeTranslator(settings = getSettings()) {
+        if (settings.mode === 'llm') {
+            const { target } = getLlmTarget();
+            return target ? `${LLM_TRANSLATION.label} · ${target.service.name} · ${target.model}` : LLM_TRANSLATION.label;
+        }
+        return getTranslateProvider(settings.provider)?.label || settings.provider;
+    }
+
     return {
         checkProviderReady,
+        describeTranslator,
+        getLlmTarget,
         getPrivacyNotice,
         getSettings,
         hasSecret,

@@ -473,11 +473,15 @@ export function createConnectionFieldAutosave({ state, render, autosave }) {
         }
 
         if (resolution.secret) {
+            // 写之前先清空输入框：保存进行中离开输入框（或换页）不会把同一个密钥再写一遍；失败时放回，方便重试
+            const typed = target.value;
+            target.value = '';
             const result = await autosave.commitSecret({ ...resolution.secret, description: resolution.label });
             if (result.ok) {
-                target.value = '';
                 markControlClean(target);
                 render();
+            } else if (!target.value) {
+                target.value = typed;
             }
             return true;
         }

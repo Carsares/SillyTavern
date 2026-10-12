@@ -206,8 +206,10 @@ test.describe('Modern workspace', () => {
         await expect(diagnostic('测试详情')).toContainText('deepseek-ai/DeepSeek-V4-Pro');
         await expect(diagnostic('最近测试')).toHaveText('1 条');
 
-        await page.locator('[data-api-main]').selectOption('textgenerationwebui');
+        // another main API is picked in the chat scene; its editor brings the main API select back
+        await page.locator('[data-scene-chat-service]').selectOption('__other__');
         await expect(page.locator('[data-textgen-type]')).toBeVisible();
+        await expect(page.locator('[data-api-main]')).toHaveValue('textgenerationwebui');
         await expect(page.locator('[data-save-api-connection]')).toHaveCount(0);
     });
 

@@ -1,15 +1,17 @@
-// 设置中心：模型连接、界面、聊天工具、数据与备份、系统信息五个标签。
+// 设置中心：模型连接、语言、界面、聊天工具、数据与备份、系统信息六个标签。
 // 能改的字段都是改动即保存（actions/settings-autosave.js），页头的状态标签显示最近一次保存的结果。
 import { renderSettingsSaveStatus } from '../actions/settings-autosave.js';
 import { settingsSectionAliases } from '../core/constants.js';
 import { createApiComponents } from './api.js';
 import { getSettingsOptionalParts } from './settings-optional-tabs.js';
+import { createSettingsLanguageComponents } from './settings-language.js';
 import { createSettingsPreferenceComponents } from './settings-preferences.js';
 import { createSettingsSnapshotComponents } from './settings-snapshots.js';
 import { createSettingsStatusComponents } from './settings-status.js';
 
 export const BUILT_IN_SETTINGS_TABS = Object.freeze([
     Object.freeze({ id: 'connection', icon: 'fa-plug', label: '模型连接' }),
+    Object.freeze({ id: 'language', icon: 'fa-language', label: '语言' }),
     Object.freeze({ id: 'preferences', icon: 'fa-palette', label: '界面' }),
     Object.freeze({ id: 'data', icon: 'fa-database', label: '数据与备份' }),
     Object.freeze({ id: 'system', icon: 'fa-circle-info', label: '系统信息' }),
@@ -49,6 +51,7 @@ export function createSettingsComponents(ctx) {
     const { renderConnectionTab } = createApiComponents(ctx);
     const { renderSettingsSnapshots } = createSettingsSnapshotComponents(ctx);
     const { renderSettingsPreferencesSection } = createSettingsPreferenceComponents(ctx);
+    const { renderSettingsLanguageSection } = createSettingsLanguageComponents(ctx);
     const { renderSettingsSystemSection } = createSettingsStatusComponents(ctx);
     // 「聊天工具」标签和数据维护分区：对应面板报告可用时才出现，见 settings-optional-tabs.js
     const optionalParts = getSettingsOptionalParts(ctx);
@@ -60,7 +63,7 @@ export function createSettingsComponents(ctx) {
         const maintenanceAvailable = optionalParts.maintenance.isAvailable();
 
         return `
-        ${pageHead('设置中心', '模型连接、界面、聊天工具和数据备份都在这里，改动会自动保存。', renderSettingsSaveStatus(state.settingsAutosave, escapeHtml))}
+        ${pageHead('设置中心', '模型连接、语言、界面、聊天工具和数据备份都在这里，改动会自动保存。', renderSettingsSaveStatus(state.settingsAutosave, escapeHtml))}
         ${renderSettingsTabs(tabs, activeSection)}
         <div class="settings-tab-body" data-settings-panel="${escapeHtml(activeSection)}">
             ${renderSection(activeSection, maintenanceAvailable)}
@@ -71,6 +74,9 @@ export function createSettingsComponents(ctx) {
     function renderSection(section, maintenanceAvailable) {
         if (section === 'connection') {
             return renderConnectionTab();
+        }
+        if (section === 'language') {
+            return renderSettingsLanguageSection();
         }
         if (section === 'preferences') {
             return renderSettingsPreferencesSection();

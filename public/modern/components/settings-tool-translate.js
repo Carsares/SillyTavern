@@ -7,15 +7,50 @@
 // 内部语言和自动模式在这里只读：一期只做手动显示翻译，自动翻译由旧版扩展在引擎里执行，界面只提供「关闭自动翻译」。
 import {
     AUTO_MODE_LABELS,
+    LLM_TRANSLATION,
     TRANSLATE_LANGUAGES,
     TRANSLATE_PROVIDERS,
+    describeLlmTranslateFailure,
     describeTranslatePrivacy,
     getLanguageLabel,
     getTranslateProvider,
     resolveTranslateSettings,
 } from '../core/translation.js';
+import { describeServiceProblem, resolveSceneTarget } from '../../shared/model-services.js';
 
 const COMMON_LANGUAGE_CODES = Object.freeze(['zh-CN', 'zh-TW', 'en', 'ja', 'ko']);
+
+/**
+ * 目标语言下拉的选项：常用语言在前，其余按名称排序。设置中心「语言」标签也用它。
+ * @param {string} selected 选中的语言码
+ * @param {(value: unknown) => string} escapeHtml 转义函数
+ * @returns {string} HTML
+ */
+export function renderTranslateLanguageOptions(selected, escapeHtml) {
+    const option = code => `<option value="${escapeHtml(code)}" ${code === selected ? 'selected' : ''}>${escapeHtml(getLanguageLabel(code))}</option>`;
+    const rest = TRANSLATE_LANGUAGES
+        .filter(language => !COMMON_LANGUAGE_CODES.includes(language.code))
+        .sort((first, second) => first.name.localeCompare(second.name));
+    return `
+            <optgroup label="常用">${COMMON_LANGUAGE_CODES.map(option).join('')}</optgroup>
+            <optgroup label="全部语言">${rest.map(language => option(language.code)).join('')}</optgroup>`;
+}
+
+/**
+ * 大模型翻译实际使用的服务和模型，或者还缺什么。
+ * @param {Record<string, any>} settings state.settings
+ * @returns {{ text: string, problem: string }} 说明
+ */
+export function describeLlmTranslationTarget(settings) {
+    try {
+        const target = resolveSceneTarget(settings, 'translation');
+        const problem = target.implicit ? '' : describeServiceProblem(target.service);
+        const origin = target.followsChat ? '（跟随对话场景）' : '';
+        return { text: `${target.service.name} · ${target.model}${origin}`, problem };
+    } catch (error) {
+        return { text: '', problem: describeLlmTranslateFailure({ code: error?.code }) };
+    }
+}
 
 /**
  * 「测试翻译」的结果块；测试按钮点击后直接替换这个节点，不重绘整个设置页（免得丢掉还没保存的输入）。
@@ -39,32 +74,12 @@ export function renderTranslateTestResult(test, escapeHtml) {
     return `<div class="translate-test-result is-${state}" role="status" data-translate-test-result data-translate-test-state="${state}">${body}</div>`;
 }
 
-// 五项设置全是翻译扩展的出厂值：多半是从没改过，而不是有意把目标语言设成英语
-function looksLikeFactoryDefaults(settings) {
-    return settings.configured
-        && settings.provider === 'google'
-        && settings.target_language === 'en'
-        && settings.internal_language === 'en'
-        && settings.auto_mode === 'none'
-        && settings.deepl_endpoint === 'free';
-}
-
 export function createSettingsToolTranslate(ctx) {
     const { state, escapeHtml } = ctx;
 
     function getActiveSecret(secretKey) {
         const entries = state.secretState?.[secretKey];
         return Array.isArray(entries) ? (entries.find(entry => entry?.active) || entries[0] || null) : null;
-    }
-
-    function renderLanguageOptions(selected) {
-        const option = code => `<option value="${escapeHtml(code)}" ${code === selected ? 'selected' : ''}>${escapeHtml(getLanguageLabel(code))}</option>`;
-        const rest = TRANSLATE_LANGUAGES
-            .filter(language => !COMMON_LANGUAGE_CODES.includes(language.code))
-            .sort((first, second) => first.name.localeCompare(second.name));
-        return `
-            <optgroup label="常用">${COMMON_LANGUAGE_CODES.map(option).join('')}</optgroup>
-            <optgroup label="全部语言">${rest.map(language => option(language.code)).join('')}</optgroup>`;
     }
 
     // API Key 不回显（密码框，粘贴后失焦即保存，点「清除」删除已保存的值）；服务地址不是机密，后端也不打码，所以直接填进输入框
@@ -144,17 +159,43 @@ export function createSettingsToolTranslate(ctx) {
         const testing = Boolean(ui.settingsTest?.running);
         const hasUrl = provider?.urlSecret ? Boolean(getActiveSecret(provider.urlSecret)) : false;
 
+        const llm = settings.mode === 'llm';
+        const llmTarget = llm ? describeLlmTranslationTarget(state.settings) : null;
+
         return `
         <section class="form-section translate-settings" data-translate-settings>
             <div>
                 <h3 class="form-section-title">翻译</h3>
-                <p class="panel-subtitle">给聊天消息和角色卡提供手动翻译：译文只用于显示，原文不会被改动。</p>
+                <p class="panel-subtitle">给聊天消息和角色卡提供翻译：译文只用于显示，原文不会被改动。翻译成 <strong data-translate-target-label>${escapeHtml(getLanguageLabel(settings.target_language))}</strong>，在「语言」标签里修改。</p>
             </div>
+            <fieldset class="translate-mode" data-translate-mode-group>
+                <legend>翻译方式</legend>
+                <label class="checkbox-card">
+                    <input type="radio" name="translate-mode" value="llm" data-translate-mode ${llm ? 'checked' : ''}>
+                    <span><strong>${escapeHtml(LLM_TRANSLATION.label)}</strong>（推荐）用「模型连接」里翻译场景的模型，译文更贴合角色扮演的语气</span>
+                </label>
+                <label class="checkbox-card">
+                    <input type="radio" name="translate-mode" value="machine" data-translate-mode ${llm ? '' : 'checked'}>
+                    <span><strong>机器翻译</strong>Google、DeepL 等翻译服务，速度快，不消耗模型额度</span>
+                </label>
+            </fieldset>
+            ${llm ? `
+            <div class="translate-llm" data-translate-llm>
+                <p class="${llmTarget.problem ? 'warning-text' : 'panel-subtitle'}" data-translate-llm-target>
+                    ${llmTarget.text ? `当前使用：<strong>${escapeHtml(llmTarget.text)}</strong>` : ''}
+                    ${llmTarget.problem ? escapeHtml(llmTarget.problem) : ''}
+                </p>
+                <p class="panel-subtitle">文本会发给这个模型服务，和聊天一样消耗它的额度。</p>
+                <button class="secondary-button compact-button" type="button" data-settings-section="connection">
+                    <i class="fa-solid fa-plug" aria-hidden="true"></i>
+                    在模型连接里修改
+                </button>
+            </div>` : `
             <div class="translate-privacy" role="note" data-translate-privacy>
                 <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
                 <div>
                     <strong>隐私提示</strong>
-                    <p>翻译会把消息或角色卡的文字发送给所选的翻译服务。Google、Bing、Yandex、DeepL 和 Lingva 公共实例是第三方公网服务，文字会离开你的电脑；LibreTranslate、DeepLX、OneRingTranslator 发送到你填写的地址。</p>
+                    <p>机器翻译会把消息或角色卡的文字发送给所选的翻译服务。Google、Bing、Yandex、DeepL 和 Lingva 公共实例是第三方公网服务，文字会离开你的电脑；LibreTranslate、DeepLX、OneRingTranslator 发送到你填写的地址。</p>
                     <p data-translate-privacy-current>${escapeHtml(provider ? describeTranslatePrivacy(provider, hasUrl) : '')}</p>
                 </div>
             </div>
@@ -165,14 +206,7 @@ export function createSettingsToolTranslate(ctx) {
                         ${TRANSLATE_PROVIDERS.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === settings.provider ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
                     </select>
                 </label>
-                <label class="field-label">
-                    <span>目标语言</span>
-                    <select class="select-input" data-translate-target-language>
-                        ${renderLanguageOptions(settings.target_language)}
-                    </select>
-                </label>
             </div>
-            ${looksLikeFactoryDefaults(settings) ? '<p class="panel-subtitle translate-default-hint" data-translate-default-hint><i class="fa-solid fa-circle-info" aria-hidden="true"></i> 目标语言还是翻译扩展的出厂值（英语）。要把消息和角色卡翻译成中文，选「简体中文」即可。</p>' : ''}
             <p class="panel-subtitle" data-translate-provider-description>${escapeHtml(provider?.description || '')}</p>
             <div class="translate-secret-grid">
                 <div class="translate-secret-row" data-translate-for="deepl" ${settings.provider === 'deepl' ? '' : 'hidden'}>
@@ -185,7 +219,7 @@ export function createSettingsToolTranslate(ctx) {
                     </label>
                 </div>
                 ${TRANSLATE_PROVIDERS.map(item => `${item.keySecret ? renderSecretRow(item, 'key', settings.provider) : ''}${item.urlSecret ? renderSecretRow(item, 'url', settings.provider) : ''}`).join('')}
-            </div>
+            </div>`}
             <div class="translate-readonly" data-translate-internal-language>
                 <strong>内部语言（只读）：${escapeHtml(getLanguageLabel(settings.internal_language))}</strong>
                 <p class="panel-subtitle">沿用的扩展设置，用于「翻译输入」和 OneRingTranslator 的源语言；Modern 的手动翻译只用目标语言，不使用它。</p>

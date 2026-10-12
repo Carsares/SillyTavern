@@ -207,7 +207,7 @@ test('known rejection exposes unsupported fields and retains both drafts without
 
 test('unsupported settings are explained in Chinese and keep the field name', () => {
     const unsupported = fields => describeAgentError({ code: 'workspace-unsupported', message: 'Selected workspace settings cannot be represented by this Agent adapter', details: { fields } });
-    assert.equal(unsupported(['main_api']), 'Agent 暂不支持当前设置：当前 API 类型不是对话补全（Chat Completion）。Agent 只支持对话补全类连接，请在 API 页面切换后重试（main_api）');
+    assert.equal(unsupported(['main_api']), 'Agent 暂不支持当前设置：当前 API 类型不是对话补全（Chat Completion）。Agent 只支持对话补全类连接，请在设置中心的「模型连接」里切换后重试（main_api）');
     assert.match(unsupported(['worldbook.entry.sticky']), /世界书条目启用了 Agent 暂不支持的功能.*（worldbook\.entry\.sticky）$/);
     assert.match(unsupported(['preset.prompt.position', 'character.description.macros']), /提示词条目.*；文本里有 Agent 不支持的宏/);
     assert.match(unsupported(['made.up.field']), /该设置无法转换（made\.up\.field）$/);

@@ -288,7 +288,7 @@ test.describe('Settings tab slots', () => {
         await openSettings(page);
 
         const tabs = page.locator('.settings-tabs [data-settings-section]');
-        await expect(tabs).toHaveText([/模型连接/, /界面/, /数据与备份/, /系统信息/]);
+        await expect(tabs).toHaveText([/模型连接/, /语言/, /界面/, /数据与备份/, /系统信息/]);
         await expect(page.locator('[data-settings-section="chat-tools"]')).toHaveCount(0);
         await expect(page.getByRole('tab', { name: '聊天工具' })).toHaveCount(0);
 
@@ -311,7 +311,7 @@ test.describe('Settings tab slots', () => {
         await openSettings(page);
 
         const tabs = page.locator('.settings-tabs [data-settings-section]');
-        await expect(tabs).toHaveText([/模型连接/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
+        await expect(tabs).toHaveText([/模型连接/, /语言/, /界面/, /聊天工具/, /数据与备份/, /系统信息/]);
 
         const chatToolsTab = page.locator('[data-settings-section="chat-tools"]');
         await expect(page.getByRole('tab', { name: '聊天工具' })).toHaveCount(1);
@@ -340,7 +340,7 @@ test.describe('Settings tab slots', () => {
         await openSettings(page);
 
         const tabs = page.locator('.settings-tabs [data-settings-section]');
-        await expect(tabs).toHaveText([/模型连接/, /界面/, /数据与备份/, /系统信息/]);
+        await expect(tabs).toHaveText([/模型连接/, /语言/, /界面/, /数据与备份/, /系统信息/]);
         await expect(page.locator('[data-settings-maintenance]')).toHaveCount(0);
 
         await page.locator('[data-settings-section="data"]').click();

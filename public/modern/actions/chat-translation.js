@@ -7,6 +7,7 @@ import { describeReloadFailure, noEngineSync } from '../core/bridge-reload.js';
 import { saveSettingsSerialized } from '../core/keyed-queue.js';
 import {
     LEGACY_TRANSLATE_DEFAULTS,
+    TRANSLATE_MODES,
     TRANSLATE_PROVIDERS,
     applyMessageTranslation,
     canTranslateMessage,
@@ -19,7 +20,10 @@ import {
     getMessageUiKey,
     getOriginalReasoning,
     getTranslateProvider,
+    getTranslatorLabel,
+    looksLikeLanguage,
     normalizeLanguageCode,
+    resolveTranslateSettings,
 } from '../core/translation.js';
 import { TranslateError, createTranslationClient, rememberPrivacyAck } from './translation-client.js';
 
@@ -114,7 +118,7 @@ export function createChatTranslationActions({
         const settings = client.getSettings();
         return {
             text: client.getPrivacyNotice(settings).text,
-            providerLabel: getTranslateProvider(settings.provider)?.label || settings.provider,
+            providerLabel: getTranslatorLabel(settings),
             targetLabel: getLanguageShortLabel(settings.target_language),
         };
     }
@@ -124,9 +128,9 @@ export function createChatTranslationActions({
      * 第一次使用某个翻译服务时先在消息下面显示隐私确认，确认后用 { confirmed: true } 再调用。
      * 失败时说明留在消息下面（state.chatTranslation.errors），不抛错。
      * @param {number | string} messageIndex 消息位置
-     * @param {{ confirmed?: boolean }} [options] confirmed：用户已确认隐私提示
+     * @param {{ confirmed?: boolean, quiet?: boolean }} [options] confirmed：用户已确认隐私提示；quiet：成功时不弹提示（自动翻译开场白）
      */
-    async function translateModernMessage(messageIndex, { confirmed = false } = {}) {
+    async function translateModernMessage(messageIndex, { confirmed = false, quiet = false } = {}) {
         const ui = ensureChatTranslationState(state);
         if (state.engine.generating) {
             throw new Error('生成中不能翻译消息。');
@@ -208,7 +212,9 @@ export function createChatTranslationActions({
             }, { groupMode });
             engineSync = saved.engineSync;
             delete ui.viewOriginal[key];
-            showToast('消息已翻译', `已翻译为${getLanguageShortLabel(translation.lang)}（${getTranslateProvider(settings.provider)?.label || settings.provider}）${doneNote ? `；${doneNote}` : ''}`);
+            if (!quiet) {
+                showToast('消息已翻译', `已翻译为${getLanguageShortLabel(translation.lang)}（${client.describeTranslator(settings)}）${doneNote ? `；${doneNote}` : ''}`);
+            }
         } catch (error) {
             // 失败说明直接显示在这条消息下面（带「重试」），不再弹提示盖住它
             if (error?.name !== 'AbortError') {
@@ -223,6 +229,57 @@ export function createChatTranslationActions({
         const sync = await engineSync;
         if (sync && sync.ok === false) {
             showToast('消息已翻译', `已保存到聊天文件${describeReloadFailure(sync)}`);
+        }
+    }
+
+    // 本次打开页面里已经尝试过自动翻译的开场白（聊天、候选、原文、目标语言），失败也不重复尝试
+    const autoGreetingAttempts = new Set();
+
+    /**
+     * 打开聊天时自动翻译外语开场白（设置中心「语言」里的开关，默认开）：第一条消息是角色的开场白、还没有当前语言的译文、
+     * 看起来不是目标语言时，按当前翻译方式翻译一次，只写显示译文。机器翻译还没确认过隐私提示时不自动发。
+     * 由聊天页每次渲染后调用，满足条件才会真的翻译，同一条开场白每次打开页面最多尝试一次。
+     * @returns {Promise<void>}
+     */
+    async function maybeAutoTranslateGreeting() {
+        if (state.route !== 'chat' || state.engine.generating) {
+            return;
+        }
+        const settings = client.getSettings();
+        if (!settings.auto_greeting) {
+            return;
+        }
+        let target;
+        try {
+            target = resolveMessageTarget(0);
+        } catch {
+            return;
+        }
+        const { message, chatId } = target;
+        const source = String(message?.mes ?? '');
+        if (!canTranslateMessage(message) || message.is_user || !source.trim()) {
+            return;
+        }
+        const extra = message.extra || {};
+        const signature = createSourceSignature(source);
+        if (extra.display_text && extra.display_text_src === signature && extra.display_text_lang === settings.target_language) {
+            return;
+        }
+        if (looksLikeLanguage(source, settings.target_language)) {
+            return;
+        }
+        const attemptKey = `${chatId}|${message.swipe_id ?? 0}|${signature}|${settings.target_language}`;
+        if (autoGreetingAttempts.has(attemptKey)) {
+            return;
+        }
+        autoGreetingAttempts.add(attemptKey);
+        if (!client.checkProviderReady(settings).ready || !client.getPrivacyNotice(settings).acknowledged) {
+            return;
+        }
+        try {
+            await translateModernMessage(0, { quiet: true });
+        } catch {
+            // 自动翻译失败不打扰：失败说明已经留在这条消息下面
         }
     }
 
@@ -337,9 +394,9 @@ export function createChatTranslationActions({
     }
 
     /**
-     * 保存翻译设置：服务、目标语言、DeepL 接口；新填的密钥和地址写进密钥库（空输入不动已有值），清除项从密钥库删除。
-     * internal_language 和 auto_mode 保持原值。
-     * @param {{ provider: string, target_language: string, deepl_endpoint: string, secrets?: Record<string, string>, clear?: string[] }} values 表单取值
+     * 保存翻译设置：翻译方式、机器翻译服务、DeepL 接口，以及（给了时）目标语言；新填的密钥和地址写进密钥库（空输入不动已有值），
+     * 清除项从密钥库删除。internal_language 和 auto_mode 保持原值；目标语言现在由设置中心「语言」标签管理，表单里没有时不改。
+     * @param {{ mode?: string, provider: string, target_language?: string, deepl_endpoint: string, secrets?: Record<string, string>, clear?: string[] }} values 表单取值
      * @param {{ quiet?: boolean }} [options] quiet 见 persistTranslateSettings
      */
     async function saveTranslateSettings(values, { quiet = false } = {}) {
@@ -348,11 +405,14 @@ export function createChatTranslationActions({
             return;
         }
         assertSettingsLoaded();
-        const provider = getTranslateProvider(values?.provider);
+        const current = resolveTranslateSettings(state.settings);
+        const mode = TRANSLATE_MODES.includes(values?.mode) ? values.mode : current.mode;
+        const provider = getTranslateProvider(values?.provider || current.provider);
         if (!provider) {
             throw new Error('请选择翻译服务。');
         }
-        const targetLanguage = normalizeLanguageCode(values?.target_language);
+        const hasTarget = values?.target_language !== undefined;
+        const targetLanguage = hasTarget ? normalizeLanguageCode(values.target_language) : current.target_language;
         if (!targetLanguage) {
             throw new Error('请选择目标语言。');
         }
@@ -377,10 +437,14 @@ export function createChatTranslationActions({
             }
 
             const translate = ensureTranslateSettingsObject();
+            translate.mode = mode;
             translate.provider = provider.id;
-            translate.target_language = targetLanguage;
+            if (hasTarget) {
+                translate.target_language = targetLanguage;
+                translate.follow_reply_language = false;
+            }
             translate.deepl_endpoint = values.deepl_endpoint === 'pro' ? 'pro' : 'free';
-            await persistTranslateSettings('翻译设置已保存', `${provider.label} / ${getLanguageLabel(targetLanguage)}`, { quiet });
+            await persistTranslateSettings('翻译设置已保存', `${mode === 'llm' ? '大模型翻译' : provider.label} / ${getLanguageLabel(targetLanguage)}`, { quiet });
         } finally {
             ui.settingsSaving = false;
             render();
@@ -420,7 +484,9 @@ export function createChatTranslationActions({
         refresh();
         try {
             const settings = client.getSettings();
-            rememberPrivacyAck(settings.provider);
+            if (settings.mode !== 'llm') {
+                rememberPrivacyAck(settings.provider);
+            }
             const result = await client.translate('Hello, world!', { settings });
             ui.settingsTest = { running: false, result: result.text, error: '' };
         } catch (error) {
@@ -432,6 +498,7 @@ export function createChatTranslationActions({
     return {
         getChatTranslationNotice,
         translateModernMessage,
+        maybeAutoTranslateGreeting,
         toggleModernMessageTranslationView,
         clearModernMessageTranslation,
         cancelModernMessageTranslationConfirm,

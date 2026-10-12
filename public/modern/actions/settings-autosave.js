@@ -287,14 +287,17 @@ export function createSettingsAutosave({ state, apiFetch, showToast, reloadSetti
 
     /**
      * 写入一个密钥，然后刷新密钥保存状态。
-     * @param {{ key: string, value: string, label: string, description?: string }} options 密钥名、明文、记录标签、提示用名称
-     * @returns {Promise<{ ok: boolean, error?: Error }>} 结果
+     * @param {{ key: string, value: string, label: string, description?: string, activate?: boolean }} options 密钥名、明文、记录标签、
+     *   提示用名称；activate 为 false 时不改变这个密钥名下当前启用的那条（模型服务按 id 读取自己那条）
+     * @returns {Promise<{ ok: boolean, id?: string, error?: Error }>} 结果，成功时带新密钥条目的 id
      */
-    function commitSecret({ key, value, label, description = '密钥' }) {
+    function commitSecret({ key, value, label, description = '密钥', activate = true }) {
         setStatus('saving', `正在保存${description}…`);
         return track((async () => {
+            let id = '';
             try {
-                await apiFetch('/api/secrets/write', { body: { key, value, label } });
+                const result = await apiFetch('/api/secrets/write', { body: { key, value, label, ...(activate ? {} : { activate: false }) } });
+                id = typeof result?.id === 'string' ? result.id : '';
             } catch (error) {
                 setStatus('error', withSuffix(description, '保存失败'), error.message);
                 showToast(withSuffix(description, '保存失败'), error.message);
@@ -306,7 +309,7 @@ export function createSettingsAutosave({ state, apiFetch, showToast, reloadSetti
                 // 读不到最新状态不影响已经写入的密钥，下次整页刷新会再读
             }
             setStatus('saved', withSuffix(description, '已保存'));
-            return { ok: true };
+            return { ok: true, id };
         })());
     }
 

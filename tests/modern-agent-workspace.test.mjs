@@ -9,7 +9,8 @@ import { createRenderer } from '../public/modern/shell/renderer.js';
 import { createRouter } from '../public/modern/shell/router.js';
 import { agentWorkspaceUrl, initialAgentConversation } from '../public/modern/conversation/core/navigation.js';
 
-const originalRoutes = ['dashboard', 'chat', 'characters', 'groups', 'worldbooks', 'presets', 'personas', 'assets', 'remoteResources', 'api', 'extensions', 'activity', 'settings'];
+// The former API page is the settings center's 模型连接 tab now (core/constants.js routeAliases).
+const originalRoutes = ['dashboard', 'chat', 'characters', 'groups', 'worldbooks', 'presets', 'personas', 'assets', 'remoteResources', 'extensions', 'activity', 'settings'];
 const source = file => readFile(new URL(`../public/modern/${file}`, import.meta.url), 'utf8');
 
 // Minimal DOM implementation: no browser, app server, network or provider calls.
@@ -33,7 +34,7 @@ function contentFixture() {
 
 test('Agent is additive to every original Modern page and the existing route registry', async () => {
     assert.deepEqual(routes.filter(route => route.id !== 'agent').map(route => route.id), originalRoutes);
-    assert.equal(routes.length, 14); assert.equal(routeLabels.agent, 'Agent 会话');
+    assert.equal(routes.length, 13); assert.equal(routeLabels.agent, 'Agent 会话');
     const registry = await source('shell/routes.js');
     for (const route of originalRoutes) assert.match(registry, new RegExp(`${route}: create\\w+Route\\(routeContext\\)`));
     assert.match(registry, /agent: createAgentRoute\(\)/);

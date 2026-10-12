@@ -42,6 +42,8 @@ async function mockModernInspectorWorkspace(page, { openPreference = 'true', oai
                 preset_settings_openai: 'Inspector Preset',
                 ...oaiSettings,
             },
+            // an existing (empty) model service registry: opening the 模型连接 tab does not register the connection
+            extension_settings: { modelServices: { services: [], scenes: {} } },
         }),
         openai_setting_names: ['Inspector Preset'],
         openai_settings: [JSON.stringify({ chat_completion_source: 'siliconflow' })],

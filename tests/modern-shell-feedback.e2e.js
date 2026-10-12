@@ -23,7 +23,8 @@ const customDeepSeekSettings = {
 
 async function mockShellWorkspace(page, settings, secretState = {}) {
     const now = Date.now();
-    const fixture = createModernResourceFixture({ settings, secretState });
+    // an existing (empty) model service registry: opening the 模型连接 tab does not register the connection
+    const fixture = createModernResourceFixture({ settings: { extension_settings: { modelServices: { services: [], scenes: {} } }, ...settings }, secretState });
     await mockModernWorkspace(page, fixture);
     await page.route('**/api/characters/chats', route => fulfillJson(route, [{
         file_id: 'alice-chat',

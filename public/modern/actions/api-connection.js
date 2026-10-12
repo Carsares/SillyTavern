@@ -5,6 +5,7 @@ import { createApiNovelConnectionActions } from './api-novel-connection.js';
 import { createApiHordeConnectionActions } from './api-horde-connection.js';
 import { createApiOAuthActions } from './api-oauth.js';
 import { createConnectionFieldAutosave } from './api-autosave.js';
+import { createModelServiceActions } from './model-services.js';
 import { createSettingsAutosave } from './settings-autosave.js';
 import { noEngineSync } from '../core/bridge-reload.js';
 
@@ -24,6 +25,7 @@ export function createApiConnectionActions({
     // 设置中心共用的「改动即保存」：模型连接、界面偏好和聊天工具都从这里写入并显示保存状态
     const settingsAutosave = createSettingsAutosave({ state, apiFetch, showToast, reloadSettings });
     const connectionFieldAutosave = createConnectionFieldAutosave({ state, render, autosave: settingsAutosave });
+    const modelServices = createModelServiceActions({ state, apiFetch, render, showToast, autosave: settingsAutosave });
 
     function getOaiSettings() {
         return state.settings.oai_settings || {};
@@ -141,5 +143,19 @@ export function createApiConnectionActions({
         refreshHordeModels,
         startOpenRouterAuth,
         completeOpenRouterAuthFromUrl,
+        getModelServiceUi: modelServices.getUi,
+        hasModelServiceSecret: modelServices.hasServiceSecret,
+        describeModelServiceUsage: modelServices.describeServiceUsage,
+        getChatSceneServiceId: modelServices.getChatSceneServiceId,
+        ensureModelServicesMigrated: modelServices.ensureMigrated,
+        registerCurrentConnection: modelServices.registerCurrentConnection,
+        addModelService: modelServices.addService,
+        updateModelServiceField: modelServices.updateServiceField,
+        updateModelServiceKey: modelServices.updateServiceKey,
+        deleteModelService: modelServices.deleteService,
+        selectChatService: modelServices.selectChatService,
+        updateTranslationScene: modelServices.updateTranslationScene,
+        loadServiceModels: modelServices.loadServiceModels,
+        testModelService: modelServices.testService,
     };
 }

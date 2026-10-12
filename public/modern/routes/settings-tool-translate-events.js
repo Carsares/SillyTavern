@@ -7,7 +7,7 @@ import { createCoalescedRunner } from '../actions/settings-autosave.js';
 import { renderTranslateTestResult } from '../components/settings-tool-translate.js';
 import { describeTranslatePrivacy, getTranslateProvider } from '../core/translation.js';
 
-const AUTOSAVE_SELECTOR = '[data-translate-provider], [data-translate-target-language], [data-translate-deepl-endpoint], input[data-translate-secret]';
+const AUTOSAVE_SELECTOR = '[data-translate-mode], [data-translate-provider], [data-translate-deepl-endpoint], input[data-translate-secret]';
 
 function closest(event, selector) {
     return event.target instanceof Element ? event.target.closest(selector) : null;
@@ -17,7 +17,7 @@ function closest(event, selector) {
  * 读出表单。服务地址只在改动后才提交（避免每次保存都往密钥库追加一条相同的记录），清空表示删除；
  * API Key 留空表示不改，勾选「清除」才删除。
  * @param {Element} root 翻译设置分区
- * @returns {{ provider: string, target_language: string, deepl_endpoint: string, secrets: Record<string, string>, clear: string[] }} 表单取值
+ * @returns {{ mode: string, provider: string, deepl_endpoint: string, secrets: Record<string, string>, clear: string[] }} 表单取值（目标语言在「语言」标签里，不在这张表单）
  */
 export function readTranslateSettingsForm(root) {
     const read = selector => {
@@ -55,9 +55,10 @@ export function readTranslateSettingsForm(root) {
         }
     });
 
+    const mode = root.querySelector('input[data-translate-mode]:checked');
     return {
+        mode: mode instanceof HTMLInputElement ? mode.value : '',
         provider: read('[data-translate-provider]'),
-        target_language: read('[data-translate-target-language]'),
         deepl_endpoint: read('[data-translate-deepl-endpoint]') || 'free',
         secrets,
         clear,
